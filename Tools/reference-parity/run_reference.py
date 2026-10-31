@@ -24036,6 +24036,425 @@ def run_ltx2(image):
     return outputs["l25"].clone().contiguous()
 
 
+def _ltx2_video_vae_tiny(**over):
+    from diffusers import AutoencoderKLLTX2Video
+
+    # The released LTX-2.3 decoder's arrangement at a thirty-second of its width: four up blocks
+    # (spatiotemporal, spatiotemporal, temporal, spatial) whose channel factors (2, 2, 1, 2) halve
+    # the width after the depth-to-space shuffle, so every upsampler's channel arithmetic is the
+    # release's.
+    settings = dict(
+        in_channels=3, out_channels=3, latent_channels=8,
+        block_out_channels=(8, 16, 32, 32), decoder_block_out_channels=(8, 16, 16, 32),
+        layers_per_block=(1, 1, 1, 1, 1), decoder_layers_per_block=(1, 2, 1, 1, 1),
+        spatio_temporal_scaling=(True, True, True, True),
+        decoder_spatio_temporal_scaling=(True, True, True, True),
+        decoder_inject_noise=(False, False, False, False, False),
+        downsample_type=("spatial", "temporal", "spatiotemporal", "spatiotemporal"),
+        upsample_type=("spatiotemporal", "spatiotemporal", "temporal", "spatial"),
+        upsample_residual=(False, False, False, False), upsample_factor=(2, 2, 1, 2),
+        timestep_conditioning=False, patch_size=4, patch_size_t=1, resnet_norm_eps=1e-6,
+        scaling_factor=1.0, encoder_causal=True, decoder_causal=False,
+        encoder_spatial_padding_mode="zeros", decoder_spatial_padding_mode="zeros",
+        spatial_compression_ratio=32, temporal_compression_ratio=8)
+    settings.update(over)
+    return AutoencoderKLLTX2Video(**settings)
+
+
+def run_ltx2_video_vae(image):
+    """The LTX-2 video autoencoder's DECODER (`AutoencoderKLLTX2Video`, Lightricks) at a tiny random
+    configuration, in the arrangement LTX-2.3 releases and in the residual-upsampler arrangement the
+    class also carries.
+
+    The decoder is LTX-Video 0.9.5's shape with three changes: every normalization is an
+    affine-free per-pixel RMS norm over the channel axis (`PerChannelRMSNorm`, eps 1e-8, a square
+    root rather than an rsqrt), a resnet whose width changes normalizes its shortcut with an AFFINE
+    LayerNorm before a plain 1x1x1 convolution, and the temporal padding replicates the edge frames
+    on BOTH sides when the decode is not causal (the release decodes non-causally). Each upsampler is
+    a convolution followed by a depth-to-space shuffle over (time, height, width) that drops the
+    first `stride_t - 1` frames, so a causal latent of `F` frames decodes to `8 (F - 1) + 1`.
+
+    Seams after `conv_in`, the mid block, every up block and the output norm localize a
+    disagreement. Prefixes `rel.` (the release's arrangement) and `res.` (residual upsamplers,
+    reflect spatial padding). Runs under the `qwenimage` oracle env. `image` unused.
+    """
+    generator = torch.Generator().manual_seed(21)
+    latent = torch.randn(1, 8, 3, 2, 3, generator=generator)
+    extra = {"latent": latent.contiguous()}
+    output = None
+    for prefix, settings in (("rel", {}),
+                             ("res", dict(upsample_residual=(True, True, True, True),
+                                          decoder_spatial_padding_mode="reflect"))):
+        model = _randomized(_ltx2_video_vae_tiny(**settings), seed=23, scale=0.2)
+        seams = {}
+        decoder = model.decoder
+        decoder.conv_in.register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("conv_in", o.detach().clone()))
+        decoder.mid_block.register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("mid", o.detach().clone()))
+        for index, block in enumerate(decoder.up_blocks):
+            block.register_forward_hook(
+                lambda m, i, o, s=seams, k=index: s.__setitem__(f"up{k}", o.detach().clone()))
+        decoder.norm_out.register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("norm_out", o.detach().clone()))
+        with torch.no_grad():
+            decoded = model.decode(latent, return_dict=False)[0]
+        extra[f"{prefix}.decoded"] = decoded.contiguous()
+        for key, value in seams.items():
+            extra[f"{prefix}.seam.{key}"] = value.contiguous()
+        for key, value in model.state_dict().items():
+            if key.startswith("decoder.") or key.startswith("latents_"):
+                extra[f"w::{prefix}.{key}"] = value.float().contiguous()
+        output = decoded
+    globals()["_extra"] = extra
+    return output.clone().contiguous()
+
+
+def _ltx2_audio_vae_tiny():
+    from diffusers import AutoencoderKLLTX2Audio
+
+    # The released arrangement (pixel norms, causal along the time axis, three resolutions, two
+    # resnets each, no attention) at a sixteenth of its width. `base_channels` is also the width of
+    # the latents' normalization statistics, which the pipeline applies to the packed latent, so it
+    # equals `latent_channels · mel_bins / 4` here as it does in the release.
+    return AutoencoderKLLTX2Audio(
+        base_channels=8, output_channels=2, ch_mult=(1, 2, 4), num_res_blocks=2,
+        attn_resolutions=None, in_channels=2, resolution=256, latent_channels=2, norm_type="pixel",
+        causality_axis="height", dropout=0.0, mid_block_add_attention=False, sample_rate=16000,
+        mel_hop_length=160, is_causal=True, mel_bins=16, double_z=True)
+
+
+def run_ltx2_audio_vae(image):
+    """The LTX-2 audio autoencoder's DECODER (`AutoencoderKLLTX2Audio`) at a tiny random
+    configuration in the released arrangement.
+
+    A latent spectrogram `[B, C, T, M]` (time on the height axis, mel bins on the width) decodes
+    to a stereo log-mel spectrogram. Every convolution is causal along TIME: it pads the full
+    `(kernel − 1)` on the past side and splits the mel padding evenly. Normalization is an
+    affine-free per-pixel RMS norm (eps 1e-6). Each upsample doubles both axes by nearest
+    neighbour, convolves causally, and then drops the first time row, so `T` latent frames decode
+    to `4 T − 3` mel frames, which the decoder then crops or zero-pads to exactly that length and
+    to the configured mel bins. Runs under the `qwenimage` oracle env. `image` unused.
+    """
+    model = _randomized(_ltx2_audio_vae_tiny(), seed=29, scale=0.2)
+    generator = torch.Generator().manual_seed(31)
+    latent = torch.randn(1, 2, 5, 4, generator=generator)
+    seams = {}
+    decoder = model.decoder
+    decoder.conv_in.register_forward_hook(lambda m, i, o: seams.__setitem__("conv_in", o.detach().clone()))
+    decoder.mid.block_2.register_forward_hook(lambda m, i, o: seams.__setitem__("mid", o.detach().clone()))
+    for level, stage in enumerate(decoder.up):
+        if hasattr(stage, "upsample"):
+            stage.upsample.register_forward_hook(
+                lambda m, i, o, k=level: seams.__setitem__(f"up{k}", o.detach().clone()))
+    with torch.no_grad():
+        decoded = model.decode(latent, return_dict=False)[0]
+    extra = {"latent": latent.contiguous(), "decoded": decoded.contiguous()}
+    extra |= {f"seam.{k}": v.contiguous() for k, v in seams.items()}
+    for key, value in model.state_dict().items():
+        if key.startswith("decoder.") or key.startswith("latents_"):
+            extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return decoded.clone().contiguous()
+
+
+def _ltx2_vocoder_tiny(**over):
+    from diffusers.pipelines.ltx2.vocoder import LTX2VocoderWithBWE
+
+    # The released `LTX2VocoderWithBWE` arrangement (snake-beta activations behind anti-aliasing,
+    # three resnets per upsample, no output bias, a 3x bandwidth extension) at a small width. The
+    # STFT is scaled with the vocoder: the vocoder's total upsampling equals the STFT hop, and the
+    # extension generator's total upsampling equals three hops, as in the release (160 and 240
+    # over a hop of 80).
+    settings = dict(
+        in_channels=16, hidden_channels=32, out_channels=2,
+        upsample_kernel_sizes=[11, 4], upsample_factors=[5, 2],
+        resnet_kernel_sizes=[3, 7, 11], resnet_dilations=[[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+        act_fn="snakebeta", leaky_relu_negative_slope=0.1, antialias=True, antialias_ratio=2,
+        antialias_kernel_size=12, final_act_fn=None, final_bias=False,
+        bwe_in_channels=16, bwe_hidden_channels=16, bwe_out_channels=2,
+        bwe_upsample_kernel_sizes=[12, 11], bwe_upsample_factors=[6, 5],
+        bwe_resnet_kernel_sizes=[3, 7, 11], bwe_resnet_dilations=[[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+        bwe_act_fn="snakebeta", bwe_leaky_relu_negative_slope=0.1, bwe_antialias=True,
+        bwe_antialias_ratio=2, bwe_antialias_kernel_size=12, bwe_final_act_fn=None,
+        bwe_final_bias=False, filter_length=32, hop_length=10, window_length=32, num_mel_channels=8,
+        input_sampling_rate=16000, output_sampling_rate=48000)
+    settings.update(over)
+    return LTX2VocoderWithBWE(**settings)
+
+
+def _ltx2_vocoder_buffers(model):
+    """Gives the vocoder's STFT the buffers a release carries in place of random ones: a Hann-windowed
+    real DFT basis and a non-negative mel filterbank. `_randomized` leaves the anti-aliasing filters
+    random, which the record carries as weights."""
+    stft = model.mel_stft.stft_fn
+    length = stft.forward_basis.shape[-1]
+    frequencies = length // 2 + 1
+    window = torch.hann_window(length, periodic=True, dtype=torch.float64)
+    n = torch.arange(length, dtype=torch.float64)
+    k = torch.arange(frequencies, dtype=torch.float64)[:, None]
+    real = torch.cos(2 * math.pi * k * n / length) * window
+    imaginary = -torch.sin(2 * math.pi * k * n / length) * window
+    stft.forward_basis.copy_(torch.cat([real, imaginary]).float()[:, None, :])
+    torch.manual_seed(7)
+    mel = model.mel_stft.mel_basis
+    mel.copy_(torch.rand(mel.shape) * 0.2)
+
+
+def run_ltx2_vocoder(image):
+    """The LTX-2.3 vocoder with bandwidth extension (`LTX2VocoderWithBWE`) at a tiny random
+    configuration in the released arrangement.
+
+    Two BigVGAN-style generators run in sequence. The first turns the stereo mel spectrogram into a
+    16 kHz waveform; a CAUSAL STFT (left padding only, `window − hop`, bases from the checkpoint)
+    and a mel filterbank turn that waveform back into a log-mel, which the second generator turns
+    into a residual at 48 kHz; a fixed Hann-windowed sinc resampler lifts the 16 kHz waveform by 3x
+    for the skip, and the sum is clamped to [−1, 1]. Every activation is snake-beta
+    (`x + sin²(α x) / (β + 1e-9)` with α and β stored as logarithms) wrapped in a 2x anti-aliased
+    up-activate-down step whose Kaiser filters the release stores; each upsample stage averages
+    three dilated resnets. Seams: the first generator's waveform, the log-mel, and the residual.
+    Runs under the `qwenimage` oracle env. `image` unused.
+    """
+    model = _randomized(_ltx2_vocoder_tiny(), seed=33, scale=0.1)
+    with torch.no_grad():
+        _ltx2_vocoder_buffers(model)
+    generator = torch.Generator().manual_seed(35)
+    mel = torch.randn(1, 2, 6, 8, generator=generator)
+    seams = {}
+    model.vocoder.register_forward_hook(lambda m, i, o: seams.__setitem__("vocoder", o.detach().clone()))
+    model.mel_stft.register_forward_hook(lambda m, i, o: seams.__setitem__("log_mel", o[0].detach().clone()))
+    model.bwe_generator.register_forward_hook(lambda m, i, o: seams.__setitem__("residual", o.detach().clone()))
+    with torch.no_grad():
+        waveform = model(mel)
+    extra = {"mel": mel.contiguous(), "waveform": waveform.contiguous()}
+    extra |= {f"seam.{k}": v.contiguous() for k, v in seams.items()}
+    extra["resampler_filter"] = model.resampler.filter.float().contiguous()
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return waveform.clone().contiguous()
+
+
+def _ltx2_connectors_tiny(**over):
+    from diffusers.pipelines.ltx2.connectors import LTX2TextConnectors
+
+    settings = dict(
+        caption_channels=12, text_proj_in_factor=3,
+        video_connector_num_attention_heads=2, video_connector_attention_head_dim=8,
+        video_connector_num_layers=2, video_connector_num_learnable_registers=4, video_gated_attn=True,
+        audio_connector_num_attention_heads=2, audio_connector_attention_head_dim=4,
+        audio_connector_num_layers=2, audio_connector_num_learnable_registers=4, audio_gated_attn=True,
+        connector_rope_base_seq_len=4096, rope_theta=10000.0, rope_double_precision=True,
+        causal_temporal_positioning=False, rope_type="split", per_modality_projections=True,
+        video_hidden_dim=16, audio_hidden_dim=8, proj_bias=True)
+    settings.update(over)
+    return LTX2TextConnectors(**settings)
+
+
+def run_ltx2_connectors(image):
+    """The LTX-2.3 text connectors (`LTX2TextConnectors`) at a tiny random configuration in the
+    released arrangement.
+
+    The text encoder's hidden states from EVERY layer (the embedding included) arrive stacked on a
+    trailing axis. Each token's state is RMS-normalized over the hidden axis per layer (eps 1e-6, no
+    weight), flattened hidden-major, zeroed on padding, scaled by `sqrt(modality width / hidden)`,
+    and projected separately for video and audio. Each modality then runs its own 1-D transformer:
+    the valid tokens move to the FRONT in their original order and the tail fills with learnable
+    registers indexed by absolute position, after which nothing is masked; a split rotary at
+    positions `i / 4096`; pre-normalized blocks of a gated across-heads-normed attention and a
+    gelu-tanh feed-forward; an affine-free final RMS norm. The video embedding is multiplied by the
+    returned mask, which the registers leave all ones.
+
+    Batch row 0 is left-padded (5 of 8 tokens valid), row 1 is full. Runs under the `qwenimage`
+    oracle env. `image` unused.
+    """
+    model = _randomized(_ltx2_connectors_tiny(), seed=39, scale=0.2)
+    generator = torch.Generator().manual_seed(41)
+    hidden = torch.randn(2, 8, 12, 3, generator=generator) * 3
+    mask = torch.tensor([[0, 0, 0, 1, 1, 1, 1, 1], [1] * 8], dtype=torch.int64)
+    seams = {}
+    model.video_text_proj_in.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("video_proj", o.detach().clone()))
+    model.audio_text_proj_in.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("audio_proj", o.detach().clone()))
+    model.video_connector.transformer_blocks[0].register_forward_hook(
+        lambda m, i, o: seams.__setitem__("video_block0", o.detach().clone()))
+    with torch.no_grad():
+        video, audio, out_mask = model(hidden.flatten(2, 3), mask, padding_side="left")
+    extra = {"hidden": hidden.flatten(2, 3).contiguous(), "mask": mask.to(torch.int32).contiguous(),
+             "video": video.contiguous(), "audio": audio.contiguous(),
+             "out_mask": out_mask.to(torch.int32).contiguous()}
+    extra |= {f"seam.{k}": v.contiguous() for k, v in seams.items()}
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return video.clone().contiguous()
+
+
+def run_ltx2_guidance(image):
+    """The LTX-2 transformer's sampling-time paths at the tiny `l23` configuration, which the
+    pipeline's default guidance exercises and `run_ltx2` does not: a text attention mask turned
+    into a `-10000` additive bias, `use_cross_timestep` (each modality's cross-modal modulation reads
+    the OTHER modality's sigma), spatio-temporal guidance (in the listed blocks both self-attentions
+    return their value projection, still gated and projected out), and modality isolation (both
+    cross-modal attentions skipped). Runs under the `qwenimage` oracle env. `image` unused.
+    """
+    frames, height, width, audio_frames, text = 2, 2, 3, 4, 5
+    tokens = frames * height * width
+    generator = torch.Generator().manual_seed(43)
+    hidden = torch.randn(1, tokens, 8, generator=generator)
+    audio_hidden = torch.randn(1, audio_frames, 6, generator=generator)
+    encoder = torch.randn(1, text, 32, generator=generator)
+    audio_encoder = torch.randn(1, text, 16, generator=generator)
+    timestep = torch.full((1, tokens), 600.0)
+    audio_timestep = torch.full((1, audio_frames), 300.0)
+    sigma = torch.tensor([700.0])
+    audio_sigma = torch.tensor([200.0])
+    mask = torch.tensor([[1, 1, 1, 0, 1]], dtype=torch.int64)
+    model = _randomized(_ltx2_tiny(), seed=37)
+    extra = {"hidden": hidden.contiguous(), "audio_hidden": audio_hidden.contiguous(),
+             "encoder": encoder.contiguous(), "audio_encoder": audio_encoder.contiguous(),
+             "timestep": timestep.contiguous(), "audio_timestep": audio_timestep.contiguous(),
+             "sigma": sigma.contiguous(), "audio_sigma": audio_sigma.contiguous(),
+             "mask": mask.to(torch.int32).contiguous()}
+    cases = {"mask": dict(encoder_attention_mask=mask, audio_encoder_attention_mask=mask),
+             "cross": dict(use_cross_timestep=True, audio_sigma=audio_sigma),
+             "stg": dict(spatio_temporal_guidance_blocks=[1]),
+             "isolate": dict(isolate_modalities=True)}
+    for name, arguments in cases.items():
+        with torch.no_grad():
+            video, audio = model(
+                hidden_states=hidden, audio_hidden_states=audio_hidden, encoder_hidden_states=encoder,
+                audio_encoder_hidden_states=audio_encoder, timestep=timestep,
+                audio_timestep=audio_timestep, sigma=sigma, num_frames=frames, height=height,
+                width=width, audio_num_frames=audio_frames, return_dict=False, **arguments)
+        extra[f"{name}.video"] = video.contiguous()
+        extra[f"{name}.audio"] = audio.contiguous()
+    for key, value in model.state_dict().items():
+        extra[f"w::{key}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return extra["stg.video"].clone().contiguous()
+
+
+def run_ltx2_pipeline(image):
+    """The LTX-2.3 text-to-video-and-audio pipeline (`LTX2Pipeline`) end to end at tiny random
+    configurations of every stage, from injected starting noise, with the release's default guidance.
+
+    The text front end is measured from token ids: a tiny Gemma 3 decoder runs on a LEFT-padded
+    prompt pair (negative first, as the pipeline batches them), every hidden state is stacked and
+    flattened as `_get_gemma_prompt_embeds` does, and the pipeline takes those embeddings. Each step
+    runs the transformer three times: the guided pair (negative, positive), a spatio-temporal
+    guidance pass with block 1's self-attentions perturbed, and a modality-isolated pass. The four
+    predictions combine in x0 space (`x − σ v`): classifier-free guidance per modality (video 3,
+    audio 7), STG at 1, modality guidance at 3, then the guidance rescale at 0.7 against the
+    conditional prediction's unbiased standard deviation, and back to a velocity for the Euler step.
+    Two identical schedulers advance the video and audio latents. The video latents are
+    denormalized by the VAE's channel statistics and decoded; the audio latents are denormalized
+    PACKED, unpacked, decoded to a mel spectrogram, and vocoded. Seams: the prompt embeddings, the
+    connector outputs, every transformer call at the first step, both final latents, the decoded
+    video, the mel spectrogram, and the waveform. Runs under the `qwenimage` oracle env. `image`
+    unused.
+    """
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    from diffusers.pipelines.ltx2.pipeline_ltx2 import LTX2Pipeline
+    from transformers import Gemma3ForCausalLM, Gemma3TextConfig
+
+    text_config = Gemma3TextConfig(
+        vocab_size=64, hidden_size=12, intermediate_size=24, num_hidden_layers=2,
+        num_attention_heads=2, num_key_value_heads=1, head_dim=8, query_pre_attn_scalar=8,
+        sliding_window=4, layer_types=["sliding_attention", "full_attention"], rope_theta=10000.0,
+        rope_local_base_freq=10000.0, rms_norm_eps=1e-6, max_position_embeddings=64,
+        attn_logit_softcapping=None, final_logit_softcapping=None, pad_token_id=0)
+    text_config._attn_implementation = "eager"
+    text_encoder = _randomized(Gemma3ForCausalLM(text_config), seed=45, scale=0.2)
+
+    # The connectors emit text at the transformer's attention widths, as the release's 4096 and 2048.
+    connectors = _randomized(_ltx2_connectors_tiny(
+        video_connector_attention_head_dim=16, video_hidden_dim=32,
+        audio_connector_attention_head_dim=8, audio_hidden_dim=16), seed=47, scale=0.2)
+    transformer = _randomized(_ltx2_tiny(audio_in_channels=8, audio_out_channels=8), seed=49)
+    vae = _randomized(_ltx2_video_vae_tiny(), seed=51, scale=0.2)
+    audio_vae = _randomized(_ltx2_audio_vae_tiny(), seed=53, scale=0.2)
+    # The vocoder reads the stereo mel spectrogram flattened over its 16 bins.
+    vocoder = _randomized(_ltx2_vocoder_tiny(in_channels=32), seed=55, scale=0.1)
+    torch.manual_seed(57)
+    with torch.no_grad():
+        _ltx2_vocoder_buffers(vocoder)
+        for owner in (vae, audio_vae):
+            owner.latents_mean.copy_(torch.randn(owner.latents_mean.shape) * 0.1)
+            owner.latents_std.copy_(torch.rand(owner.latents_std.shape) * 0.5 + 0.75)
+    scheduler = FlowMatchEulerDiscreteScheduler(
+        base_image_seq_len=1024, base_shift=0.95, invert_sigmas=False, max_image_seq_len=4096,
+        max_shift=2.05, num_train_timesteps=1000, shift=1.0, shift_terminal=0.1,
+        stochastic_sampling=False, time_shift_type="exponential", use_beta_sigmas=False,
+        use_dynamic_shifting=True, use_exponential_sigmas=False, use_karras_sigmas=False)
+
+    # A prompt of five tokens and a negative prompt of two, left-padded to eight: the connectors'
+    # four registers divide the length, as the release's 128 divide its 1024.
+    length = 8
+    positive = [2, 17, 33, 9, 41]
+    negative = [2, 5]
+    ids = torch.zeros(2, length, dtype=torch.int64)
+    mask = torch.zeros(2, length, dtype=torch.int64)
+    for row, tokens in enumerate((negative, positive)):
+        ids[row, length - len(tokens):] = torch.tensor(tokens)
+        mask[row, length - len(tokens):] = 1
+    with torch.no_grad():
+        states = text_encoder(input_ids=ids, attention_mask=mask, output_hidden_states=True).hidden_states
+    embeds = torch.stack(states, dim=-1).flatten(2, 3)
+
+    pipe = LTX2Pipeline(scheduler=scheduler, vae=vae, audio_vae=audio_vae, text_encoder=None,
+                        tokenizer=None, connectors=connectors, transformer=transformer, vocoder=vocoder)
+    pipe.set_progress_bar_config(disable=True)
+
+    frames, height, width, frame_rate, steps = 9, 64, 96, 24.0, 3
+    latent_frames, latent_height, latent_width = (frames - 1) // 8 + 1, height // 32, width // 32
+    audio_frames = round(frames / frame_rate * 16000 / 160 / 4)
+    generator = torch.Generator().manual_seed(59)
+    latents = torch.randn(1, latent_frames * latent_height * latent_width, 8, generator=generator)
+    audio_latents = torch.randn(1, audio_frames, 8, generator=generator)
+
+    seams = {"calls": []}
+    transformer.register_forward_hook(
+        lambda m, i, o: seams["calls"].append((o[0].detach().clone(), o[1].detach().clone())))
+    connectors.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("connectors", tuple(t.detach().clone() for t in o)))
+    vae.decoder.register_forward_pre_hook(
+        lambda m, i: seams.__setitem__("video_latent", i[0].detach().clone()))
+    audio_vae.decoder.register_forward_pre_hook(
+        lambda m, i: seams.__setitem__("audio_latent", i[0].detach().clone()))
+    vocoder.register_forward_pre_hook(lambda m, i: seams.__setitem__("mel", i[0].detach().clone()))
+    with torch.no_grad():
+        video, audio = pipe(
+            prompt_embeds=embeds[1:], prompt_attention_mask=mask[1:],
+            negative_prompt_embeds=embeds[:1], negative_prompt_attention_mask=mask[:1],
+            height=height, width=width, num_frames=frames, frame_rate=frame_rate,
+            num_inference_steps=steps, guidance_scale=3.0, stg_scale=1.0, modality_scale=3.0,
+            guidance_rescale=0.7, audio_guidance_scale=7.0, audio_stg_scale=1.0,
+            audio_modality_scale=3.0, audio_guidance_rescale=0.7, spatio_temporal_guidance_blocks=[1],
+            latents=latents, audio_latents=audio_latents, output_type="pt", return_dict=False)
+
+    extra = {"ids": ids.to(torch.int32).contiguous(), "mask": mask.to(torch.int32).contiguous(),
+             "embeds": embeds.contiguous(), "latents": latents.contiguous(),
+             "audio_latents": audio_latents.contiguous(), "video": video.float().contiguous(),
+             "audio": audio.float().contiguous(),
+             "seam.video_latent": seams["video_latent"].contiguous(),
+             "seam.audio_latent": seams["audio_latent"].contiguous(), "seam.mel": seams["mel"].contiguous(),
+             "seam.connector_video": seams["connectors"][0].contiguous(),
+             "seam.connector_audio": seams["connectors"][1].contiguous(),
+             "sigmas": scheduler.sigmas.float().contiguous()}
+    for index, (call_video, call_audio) in enumerate(seams["calls"][:3]):
+        extra[f"seam.step0.call{index}.video"] = call_video.contiguous()
+        extra[f"seam.step0.call{index}.audio"] = call_audio.contiguous()
+    for owner, module in (("text", text_encoder), ("connectors", connectors),
+                          ("transformer", transformer), ("vae", vae), ("audio_vae", audio_vae),
+                          ("vocoder", vocoder)):
+        for key, value in module.state_dict().items():
+            extra[f"w::{owner}.{key}"] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return video.float().clone().contiguous()
+
+
 def run_flux2_vae(image):
     """FLUX.2's autoencoder at a tiny random configuration, and the latent codec the pipeline wraps
     it in, from diffusers' AutoencoderKLFlux2.
@@ -24731,7 +25150,7 @@ def run_flux2_prompt(image, checkpoint):
 
 MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_llava_tiny, "flux2_scheduler": run_flux2_scheduler, "flux2_text": run_flux2_text,
           "flux2_inpaint": run_flux2_inpaint, "flux2_kv": run_flux2_kv,
-          "flux2_text_mistral": run_flux2_text_mistral, "flux2_vae": run_flux2_vae, "ltx2": run_ltx2, "flux2": run_flux2, "muscriptor": run_muscriptor, "qwenimage21": run_qwenimage21, "qwen3vl_retrieval_loss": run_qwen3vl_retrieval_loss, "storm": run_storm, "qwen4_exp": run_qwen4_exp, "deepseek_v4_release_decode": run_deepseek_v4_release_decode, "deepseek_v4_release_decode_bf16": run_deepseek_v4_release_decode_bf16, "deepseek_v4_pro_release_decode": run_deepseek_v4_pro_release_decode, "deepseek_v4_pro_release_decode_bf16": run_deepseek_v4_pro_release_decode_bf16, "deepseek_v4_pro_dspark": run_deepseek_v4_pro_dspark, "deepseek_v4_pro_dspark_bf16": run_deepseek_v4_pro_dspark_bf16, "deepseek_v4_release": run_deepseek_v4_release, "deepseek_v4_release_bf16": run_deepseek_v4_release_bf16, "deepseek_v4_pro_release": run_deepseek_v4_pro_release, "deepseek_v4_pro_release_bf16": run_deepseek_v4_pro_release_bf16, "deepseek_v41": run_deepseek_v41, "deepseek_v41_quantized": run_deepseek_v41_quantized, "deepseek_v41_bf16": run_deepseek_v41_bf16, "deepseek_v41_bf16_plain": run_deepseek_v41_bf16_plain, "deepseek_v41_decode": run_deepseek_v41_decode, "deepseek_v41_decode_bf16": run_deepseek_v41_decode_bf16, "deepseek_v41_dspark_bf16": run_deepseek_v41_dspark_bf16, "deepseek_v41_vision_bf16": run_deepseek_v41_vision_bf16, "deepseek_v41_vl_router": run_deepseek_v41_vl_router, "deepseek_v41_vl_router_bf16": run_deepseek_v41_vl_router_bf16, "deepseek_v41_vision": run_deepseek_v41_vision, "deepseek_v41_image": run_deepseek_v41_image, "deepseek_v41_dspark": run_deepseek_v41_dspark, "deepseek_v41_dspark_quantized": run_deepseek_v41_dspark_quantized, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
+          "flux2_text_mistral": run_flux2_text_mistral, "flux2_vae": run_flux2_vae, "ltx2": run_ltx2, "ltx2_video_vae": run_ltx2_video_vae, "ltx2_audio_vae": run_ltx2_audio_vae, "ltx2_vocoder": run_ltx2_vocoder, "ltx2_connectors": run_ltx2_connectors, "ltx2_guidance": run_ltx2_guidance, "ltx2_pipeline": run_ltx2_pipeline, "flux2": run_flux2, "muscriptor": run_muscriptor, "qwenimage21": run_qwenimage21, "qwen3vl_retrieval_loss": run_qwen3vl_retrieval_loss, "storm": run_storm, "qwen4_exp": run_qwen4_exp, "deepseek_v4_release_decode": run_deepseek_v4_release_decode, "deepseek_v4_release_decode_bf16": run_deepseek_v4_release_decode_bf16, "deepseek_v4_pro_release_decode": run_deepseek_v4_pro_release_decode, "deepseek_v4_pro_release_decode_bf16": run_deepseek_v4_pro_release_decode_bf16, "deepseek_v4_pro_dspark": run_deepseek_v4_pro_dspark, "deepseek_v4_pro_dspark_bf16": run_deepseek_v4_pro_dspark_bf16, "deepseek_v4_release": run_deepseek_v4_release, "deepseek_v4_release_bf16": run_deepseek_v4_release_bf16, "deepseek_v4_pro_release": run_deepseek_v4_pro_release, "deepseek_v4_pro_release_bf16": run_deepseek_v4_pro_release_bf16, "deepseek_v41": run_deepseek_v41, "deepseek_v41_quantized": run_deepseek_v41_quantized, "deepseek_v41_bf16": run_deepseek_v41_bf16, "deepseek_v41_bf16_plain": run_deepseek_v41_bf16_plain, "deepseek_v41_decode": run_deepseek_v41_decode, "deepseek_v41_decode_bf16": run_deepseek_v41_decode_bf16, "deepseek_v41_dspark_bf16": run_deepseek_v41_dspark_bf16, "deepseek_v41_vision_bf16": run_deepseek_v41_vision_bf16, "deepseek_v41_vl_router": run_deepseek_v41_vl_router, "deepseek_v41_vl_router_bf16": run_deepseek_v41_vl_router_bf16, "deepseek_v41_vision": run_deepseek_v41_vision, "deepseek_v41_image": run_deepseek_v41_image, "deepseek_v41_dspark": run_deepseek_v41_dspark, "deepseek_v41_dspark_quantized": run_deepseek_v41_dspark_quantized, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "mimi": run_mimi, "chronos": run_chronos,
           "dcn": run_dcn,
           "segformer_loss": run_segformer_loss, "basic_pitch_targets": run_basic_pitch_targets, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "rtdetr_loss": run_rtdetr_loss, "rtdetr_training_forward": run_rtdetr_training_forward, "rtdetr_training_setup": run_rtdetr_training_setup, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,

@@ -1007,7 +1007,7 @@ let backend = try NFKMLXStableAudioGenerator.backend(directoryURL: dir)
 | Z-Image / Z-Image-Turbo | ``NFKMLXZImageGenerator``, ``NFKMLXZImagePipeline`` | ``NFKMLXZImageTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) + Qwen3-4B | `NFKMLXZImageConfiguration`, the Flux VAE configuration, and `NFKMLXFlowMatchConfiguration.zImageTurbo` / `.zImage`, each read from the release | `z-image`; `backend(directoryURL:)`, `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
 | SANA | ``NFKMLXSANAGenerator``, ``NFKMLXSANAPipeline`` | ``NFKMLXSANATransformerNet`` + ``NFKMLXDCAutoencoderNet`` | `NFKMLXSANAConfiguration.base`, or `configuration(fromHuggingFace:)`; `NFKMLXDCAEConfiguration.sana`; `NFKMLXDPMSolverConfiguration.sana`; caption from ``NFKMLXGemma2Net`` | `sana`; `backend(directoryURL:)`, `generator(directoryURL:residency:)`; the pipeline alone: `pipeline(directoryURL:)`, `init(transformer:vae:)` | ``NFKMLXGenerationBackend`` (``NFKMLXDPMSolverScheduler``) |
 | LTX-Video 0.9.0 | ``NFKMLXLTXVideoGenerator``, ``NFKMLXLTXPipeline`` | ``NFKMLXLTXTransformerNet`` + ``NFKMLXLTXVideoVAENet`` | `NFKMLXLTXTransformerConfiguration.base`; `NFKMLXLTXVAEConfiguration.base`; `NFKMLXFlowMatchConfiguration.ltxVideo`; `NFKMLXT5Configuration.xxl` | `ltx-video-0.9.0`; `backend(directoryURL:)`, `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
-| LTX-2 (audio-video transformer) | — | ``NFKMLXLTX2TransformerNet`` | `NFKMLXLTX2Configuration.ltx23` / `.ltx25` | Swift API (the forward takes `MLXArray`) | — |
+| LTX-2.3 / LTX-2.5 (video and its soundtrack) | ``NFKMLXLTX2Generator``, ``NFKMLXLTX2Pipeline`` | ``NFKMLXLTX2TransformerNet`` + ``NFKMLXLTX2VideoDecoderNet`` + ``NFKMLXLTX2AudioDecoderNet`` + ``NFKMLXLTX2VocoderNet`` + ``NFKMLXLTX2ConnectorsNet`` | `NFKMLXLTX2Configuration.ltx23` / `.ltx25`; `NFKMLXLTX2VideoVAEConfiguration.ltx23`; `NFKMLXLTX2AudioVAEConfiguration.ltx23`; `NFKMLXLTX2VocoderConfiguration.ltx23`; `NFKMLXLTX2ConnectorConfiguration.ltx23`; `NFKMLXFlowMatchConfiguration.ltxVideoPipeline` | `ltx-2.3` · `ltx-2.5`; `backend(directoryURL:)`, `generator(directoryURL:residency:)`, `generator(variant:repo:revision:cacheDirectoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
 | Wan 2.1 T2V / Wan 2.2 TI2V-5B | ``NFKMLXWanVideoGenerator``, ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` | `NFKMLXWanConfiguration.base`; `NFKMLXWanVAEConfiguration.wan22` / `.wan21`; `NFKMLXUniPCConfiguration.wan`; `NFKMLXT5Configuration.umt5XXL` | `wan`; `backend(directoryURL:)`, `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXUniPCScheduler``) |
 | Qwen-Image 2.1 | ``NFKMLXQwenImageGenerator``, ``NFKMLXQwenImagePipeline`` | ``NFKMLXQwenImageNet`` + ``NFKMLXWanVideoVAENet`` (`.qwenImage21`) | `NFKMLXQwenImageConfiguration.base`, `NFKMLXWanVAEConfiguration.qwenImage21`, and `NFKMLXFlowMatchConfiguration.qwenImage21`, each read from the release | `qwen-image-2.1`; `backend(directoryURL:)`, `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
 | Wan 2.2 Animate | ``NFKMLXWanAnimateGenerator`` | ``NFKMLXWanAnimateNet`` | a diffusers release directory (`Wan-AI/Wan2.2-Animate-2-14B-Diffusers` or `…-Distilled-Diffusers`); `NFKMLXWanAnimateConfiguration.base` (14B) / `.tiny` for the transformer alone | `wan2.2-animate-14b`, `wan2.2-animate-14b-distilled`; `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (`NFKInputImage` + `NFKInputVideo` → `NFKOutputVideo`) |
@@ -1075,9 +1075,11 @@ let backend = try NFKMLXLTXVideoGenerator.backend(directoryURL: dir)
 let vae = try NFKMLXLTXVideoVAE.vae(configuration: .base, weightsURL: vaeURL); let t5 = try NFKMLXT5Encoder.encoder(configuration: .xxl, directory: t5Dir)
 let ltx = try NFKMLXLTXVideoGenerator.generator(directoryURL: dir)   // loads the whole release, text encoder included
 let pipeline = try NFKMLXLTXPipeline.pipeline(directoryURL: dir)     // the DiT and VAE alone; or NFKMLXLTXPipeline(transformer:vae:scalingFactor:) over NFKMLXLTXTransformer.makeNet / NFKMLXLTXVideoVAE.makeNet
-// LTX-2 (audio-video transformer)
+// LTX-2 (registered as ltx-2.3 and ltx-2.5): a clip and its soundtrack
+let backend = try NFKMLXLTX2Generator.backend(directoryURL: dir)
+let ltx2 = try NFKMLXLTX2Generator.generator(directoryURL: dir, residency: .automatic)   // staged, streamed where a stage does not fit
+let (frames, waveform) = try ltx2.clip(forPrompt: "a drummer in the rain", frames: 121, width: 768, height: 512)
 let dit = NFKMLXLTX2TransformerNet(.ltx25); try NFKMLXLTX2TransformerNet.loadWeights(into: dit, from: transformerDir)
-// Swift only — the forward denoises the video and audio latents together and returns both
 // Wan 2.2 Animate (reference image + driving video → video; registered as wan2.2-animate-14b)
 let backend = try NFKMLXWanAnimateGenerator.backend(directoryURL: releaseDirectory)
 // the generator:
@@ -1138,6 +1140,9 @@ NFKMLXReferenceModels.registerAll(); let backend = try NFKMLXModelRegistry.backe
 [NFKMLXSANAGenerator generatorWithDirectoryURL:dir error:&error]
 // LTX-Video
 [NFKMLXLTXVideoGenerator backendWithDirectoryURL:dir error:&error]
+// LTX-2: the movie's audio track is the soundtrack, which also comes back alone under NFKOutputAudio
+[NFKMLXLTX2Generator backendWithDirectoryURL:dir error:&error]
+[NFKMLXLTX2Generator backendWithVariant:NFKMLXLTX2VariantLtx23 repo:nil revision:nil cacheDirectoryURL:nil residency:NFKMLXResidencyAutomatic error:&error]
 // Wan
 [NFKMLXWanVideoGenerator backendWithDirectoryURL:dir error:&error]
 // Qwen-Image 2.1

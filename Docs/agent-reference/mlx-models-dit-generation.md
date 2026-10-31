@@ -134,11 +134,94 @@ arithmetic as before.
   tanh-approximate GELU. Without the refusal the gate case would surface as a missing `to_gate_logits`
   at load rather than as the configuration that asked for it.
 
-  Spatio-temporal guidance is not built. It is a sampling-time trick (replace an attention with its
-  value projection on perturbed batch elements) with no weights behind it, and the reference's
-  perturbed processor is identical to the plain one when nothing is perturbed. The audio and video
-  VAEs, the Gemma-4 text front end with its connectors, the vocoder and the pipeline are the remaining
-  stages. Customization is offline-only: no size of this model fits a consumer machine.
+  The sampler's guidance passes reach the forward through switches with no weights behind them, each
+  measured against the reference (`run_reference.py ltx2_guidance`, `IK_PARITY_LTX2_GUIDANCE`): a text
+  mask turned into a `-10000` additive bias (video velocity 0.9999999999995736), the cross timestep, where
+  each modality's cross-modal modulation reads the other modality's sigma (0.9999999999995539),
+  spatio-temporal guidance, where the listed blocks' two self-attentions return their value projection,
+  still gated and projected out (0.9999999999996152), and modality isolation, which skips both
+  cross-modal attentions (0.9999999999995779). Only the whole-batch perturbation is built: the pipeline's
+  perturbed pass is a batch of one, so the reference's per-element `lerp` mask is never partial.
+  `predictions(_:frames:height:width:audioFrames:fps:crossTimestep:)` runs several passes block by block,
+  so a streamed block (`NFKMLXLayerStream`, `layerStream`) is read once a step for the guided pair, the
+  perturbed pass, and the isolated pass together.
+
+- The LTX-2 stages around the transformer, each at reference parity against diffusers at a tiny random
+  configuration on the first numeric run, and held to the released LTX-2.3 headers by shape
+  (`shapes.py diffusers/LTX-2.3-Diffusers <dir> <component>`, `testLTX2StagesMatchTheReleasedShapes`):
+  - `NFKMLXLTX2VideoDecoderNet` (`AutoencoderKLLTX2Video`, decoder only; generation never encodes). LTX-Video
+    0.9.5's shape with an affine-free per-pixel RMS norm computed with a square root (eps 1e-8), an
+    affine LayerNorm before the plain 1×1×1 shortcut convolution where a resnet changes width, and time
+    padded by replicating the edge frames on both sides, the release decoding non-causally. Each up block's
+    shuffle factor divides the width after the depth-to-space step, so the released four blocks run at
+    1024 → 512 → 512 → 256 → 128 channels. The patch unshuffle pairs the LAST patch axis with height. Decoded
+    clip 0.9999999999991949 in the released arrangement, 0.9999999999987124 with residual upsamplers and
+    reflected padding (`run_reference.py ltx2_video_vae`, `IK_PARITY_LTX2_VIDEO_VAE`), every seam from
+    `conv_in` through `norm_out` above 0.99999999999932. 84 decoder tensors, 0 missing / mismatched /
+    unaccounted. The latents' per-channel mean and standard deviation load with it.
+  - `NFKMLXLTX2AudioDecoderNet` (`AutoencoderKLLTX2Audio`, decoder only). Time is the height axis and the
+    mel bins the width; every convolution pads the whole `kernel − 1` on the past side of time and splits
+    the mel padding; an upsample doubles both axes by nearest neighbour, convolves, and drops the first
+    time row, so `T` latent frames decode to `4 T − 3` mel frames. Decoded mel 0.9999999999995411
+    (`ltx2_audio_vae`, `IK_PARITY_LTX2_AUDIO_VAE`). 56 decoder tensors, 0 missing / mismatched / unaccounted.
+    The latents' statistics have the PACKED width (`latent_channels · mel_bins / 4`, 128), so the pipeline
+    denormalizes before unpacking.
+  - `NFKMLXLTX2VocoderNet` (`LTX2VocoderWithBWE`). A BigVGAN-style generator to 16 kHz, a causal STFT (left
+    padding `window − hop`) and mel filterbank whose bases the checkpoint stores, a second generator to a
+    48 kHz residual, and a fixed Hann-windowed sinc resampler for the skip, clamped. Snake-beta with α and β
+    stored as logarithms, inside a 2x anti-aliased up-activate-down step whose Kaiser filters the checkpoint
+    also stores; the resampler's filter is not stored and is computed (0.9999999999999913 against the
+    reference's). Waveform 0.999999999999905 (`ltx2_vocoder`, `IK_PARITY_LTX2_VOCODER`), the base waveform
+    0.9999999999998893 and the extension's log-mel 0.9999999999999956. 1226 tensors read; the inverse STFT
+    basis is stored and never read.
+  - `NFKMLXLTX2ConnectorsNet` (`LTX2TextConnectors`, LTX-2.3's per-modality projections). Each token's
+    hidden state at every encoder layer is RMS-normed per layer, scaled by `sqrt(width / hidden)` and
+    projected per modality; the valid tokens move to the front, the tail fills with the learnable
+    registers indexed by absolute position, and an 8-layer gated transformer with a split rotary at
+    `i / 4096` follows. After the fill the transformer's text mask is all ones. Video text
+    0.9999999999999744, audio 0.9999999999999788, with a left-padded row and a full row
+    (`ltx2_connectors`, `IK_PARITY_LTX2_CONNECTORS`). 262 tensors. LTX-2.0's shared projection, connectors
+    without registers, the interleaved rotary and causal positions are refused by name.
+- `NFKMLXLTX2Pipeline` and `NFKMLXLTX2Generator` — LTX-2 text-to-video-and-audio end to end. The text
+  encoder runs over the prompt's REAL tokens only: the reference left-pads to 1024 and masks the padding,
+  no real token attends to padding, and the registers replace the padded rows, so only the rotary's
+  absolute offset differs, which the attention scores do not depend on. A step runs the guided pair
+  (negative first), the perturbed pass (block 28 by default, `min(28, layers − 1)`), and the isolated pass;
+  the predictions combine in x0 space with classifier-free guidance per modality (video 3, audio 7),
+  spatio-temporal guidance 1, modality guidance 3, and the 0.7 rescale against the conditional prediction's
+  UNBIASED standard deviation, then return to a velocity for the Euler step of two identical flow schedules
+  (`.ltxVideoPipeline`, every pass's timestep `1000 σ`). Measured whole at tiny configurations of every stage
+  from injected starting noise (`ltx2_pipeline`, `IK_PARITY_LTX2_PIPELINE`, three steps): text states from
+  token ids 0.99999999999999 / 0.9999999999999495, connector streams 0.9999999999999266 / 0.9999999999999686,
+  final video latent 0.9999999999997726, final audio latent 0.9999999999998175, clip 0.9999999999993114, mel
+  0.9999999999990724, waveform 0.9999999999988513. A tiny release written to disk runs through the public
+  directory factory and the backend (`testATinyReleaseGeneratesAClipWithItsSoundtrack`), and a transformer
+  whose blocks stream from that release gives the held one's velocities to 1e-12.
+
+  The generator stages the Gemma text encoder, the connectors, and the transformer with both decoders and
+  the vocoder, and streams the transformer's blocks and the text encoder's layers where a stage does not
+  fit alone (`NFKMLXResidencyBudget.plan`, three stages). The transformer loads as published (bfloat16) or
+  at float32 through the precision option, and takes a runtime weight quantization where it is held whole;
+  a quantization with streamed blocks is refused. The text encoder loads at bfloat16 and widens to float32
+  where the budget holds it; Gemma 3 (LTX-2.3) and Gemma 4, dense and unified (LTX-2.5), are read. The
+  backend writes the clip as a QuickTime movie whose 16-bit PCM audio track is the soundtrack
+  (`NFKMLXVideoFile.write(_:framesPerSecond:soundtrack:to:)`) and the soundtrack alone as a 48 kHz WAV.
+  Memory, measured from the LTX-2.3 headers: text encoder 24.4 GB at bfloat16 (48.7 GB float32), connectors
+  6.3 GB, transformer and decoders 41.6 GB as published (79.6 GB at float32); the download is 94.9 GB. A
+  512 GB Mac holds every stage resident at float32.
+
+  **LTX-2.5.** The repositories are gated and this machine's token has not accepted the gate (2026-10-31:
+  the API's detail endpoint answers, every file answers 403). Its tree is public: the text encoder is 23.9
+  GB (Gemma 4 12B at bfloat16), the connectors, the autoencoders and the vocoder are LTX-2.3's sizes, and
+  `transformer/` holds two 38 GB shard sets of which its gated index names one. `.ltx25`'s three switches
+  are measured (`run_ltx2`'s `l25` half); its geometry, its connectors' configuration, and its text
+  encoder's `model_type` are unverified until the gate opens, and the catalog's LTX-2.5 memory facts count
+  both shard sets. The generator tells the releases apart by the transformer's switches, and the registry
+  refuses one release's directory under the other's name. LTX-2.5's modular pipeline decodes video with a
+  diffusion decoder by default; `LTX2Pipeline`, which this port follows, decodes with the autoencoder.
+  Neither the diffusion decoder, the duration head, the prompt enhancer, nor the latent upsamplers are built.
+
+  Customization is offline-only: no size of this model fits a consumer machine.
 
 - `NFKMLXT5Encoder` (`@objc`) — the T5 v1.1 text encoder (`T5EncoderModel`), the text conditioning for the
   LTX pipeline and a reusable building block (the same family conditions Wan / PixArt / SD3 / Flux). A

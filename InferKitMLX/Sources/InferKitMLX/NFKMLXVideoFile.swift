@@ -66,12 +66,32 @@ public enum NFKMLXVideoFile {
         return Clip(frames: frames, framesPerSecond: rate > 0 ? rate : 30)
     }
 
+    /// A soundtrack a clip carries: interleaved samples in `−1…1`.
+    public struct Soundtrack {
+        public let samples: [Float]
+        public let sampleRate: Int
+        public let channels: Int
+
+        public init(samples: [Float], sampleRate: Int, channels: Int) {
+            self.samples = samples
+            self.sampleRate = sampleRate
+            self.channels = channels
+        }
+    }
+
     /// Encodes `frames` to an H.264 clip at `url`, replacing anything already there.
     ///
     /// @discussion Every frame must share the first one's dimensions; the encoder is configured from
     /// them. A mismatch throws rather than being scaled silently, because which frame was resized
     /// would otherwise be invisible in the result.
     public static func write(_ frames: [CGImage], framesPerSecond: Double, to url: URL) throws {
+        try write(frames, framesPerSecond: framesPerSecond, soundtrack: nil, to: url)
+    }
+
+    /// ``write(_:framesPerSecond:to:)`` with `soundtrack` as the clip's audio track, 16-bit linear PCM at
+    /// the soundtrack's rate. Introduced in InferKit 0.4.0.
+    public static func write(_ frames: [CGImage], framesPerSecond: Double, soundtrack: Soundtrack?,
+                             to url: URL) throws {
         guard let first = frames.first else {
             throw NFKMLXError.unsupportedConfiguration("a clip needs at least one frame")
         }
@@ -101,6 +121,7 @@ public enum NFKMLXVideoFile {
                 kCVPixelBufferHeightKey as String: height,
             ])
         writer.add(input)
+        let audio = try soundtrack.map { try SoundtrackWriter($0, writer: writer) }
         guard writer.startWriting() else {
             throw NFKMLXError.unsupportedConfiguration("the clip at \(url.lastPathComponent) could not be written")
         }
@@ -120,9 +141,12 @@ public enum NFKMLXVideoFile {
             }
             let time = CMTime(value: CMTimeValue(Double(index) * Double(scale) / framesPerSecond),
                               timescale: scale)
+            // The writer interleaves its tracks, so the soundtrack keeps pace with the frames.
+            try audio?.append(through: Double(index + 1) / framesPerSecond)
             adaptor.append(buffer, withPresentationTime: time)
         }
         input.markAsFinished()
+        try audio?.finish()
 
         let finished = DispatchSemaphore(value: 0)
         writer.finishWriting { finished.signal() }
@@ -133,12 +157,93 @@ public enum NFKMLXVideoFile {
         }
     }
 
+    /// Appends a soundtrack to a writer's audio track in pieces, so it keeps pace with the frames.
+    private final class SoundtrackWriter {
+        let input: AVAssetWriterInput
+        let soundtrack: Soundtrack
+        let format: CMAudioFormatDescription
+        /// The sample frames appended so far.
+        var written = 0
+
+        init(_ soundtrack: Soundtrack, writer: AVAssetWriter) throws {
+            self.soundtrack = soundtrack
+            var layout = AudioChannelLayout()
+            layout.mChannelLayoutTag = soundtrack.channels == 2 ? kAudioChannelLayoutTag_Stereo : kAudioChannelLayoutTag_Mono
+            let layoutData = Data(bytes: &layout, count: MemoryLayout<AudioChannelLayout>.size)
+            input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: soundtrack.sampleRate,
+                AVNumberOfChannelsKey: soundtrack.channels, AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false, AVChannelLayoutKey: layoutData,
+            ])
+            input.expectsMediaDataInRealTime = false
+            guard writer.canAdd(input) else {
+                throw NFKMLXError.unsupportedConfiguration("the clip cannot carry a \(soundtrack.channels)-channel soundtrack")
+            }
+            writer.add(input)
+            let bytesPerFrame = UInt32(2 * soundtrack.channels)
+            var description = AudioStreamBasicDescription(
+                mSampleRate: Float64(soundtrack.sampleRate), mFormatID: kAudioFormatLinearPCM,
+                mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+                mBytesPerPacket: bytesPerFrame, mFramesPerPacket: 1, mBytesPerFrame: bytesPerFrame,
+                mChannelsPerFrame: UInt32(soundtrack.channels), mBitsPerChannel: 16, mReserved: 0)
+            var format: CMAudioFormatDescription?
+            guard CMAudioFormatDescriptionCreate(allocator: kCFAllocatorDefault, asbd: &description, layoutSize: 0,
+                                                 layout: nil, magicCookieSize: 0, magicCookie: nil, extensions: nil,
+                                                 formatDescriptionOut: &format) == noErr, let format else {
+                throw NFKMLXError.unsupportedConfiguration("the soundtrack's format could not be described")
+            }
+            self.format = format
+        }
+
+        var totalFrames: Int { soundtrack.samples.count / soundtrack.channels }
+
+        /// Appends the soundtrack up to `seconds`.
+        func append(through seconds: Double) throws {
+            let end = min(totalFrames, Int((seconds * Double(soundtrack.sampleRate)).rounded(.up)))
+            guard end > written else { return }
+            while !input.isReadyForMoreMediaData {
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+            let channels = soundtrack.channels
+            var pcm = soundtrack.samples[(written * channels) ..< (end * channels)].map {
+                Int16((max(-1, min(1, $0)) * 32767).rounded())
+            }
+            let length = pcm.count * MemoryLayout<Int16>.size
+            var block: CMBlockBuffer?
+            guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: length,
+                                                     blockAllocator: kCFAllocatorDefault, customBlockSource: nil,
+                                                     offsetToData: 0, dataLength: length, flags: 0,
+                                                     blockBufferOut: &block) == noErr, let block,
+                  pcm.withUnsafeMutableBytes({
+                      CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0,
+                                                    dataLength: length)
+                  }) == noErr else {
+                throw NFKMLXError.unsupportedConfiguration("the soundtrack could not be buffered")
+            }
+            var sample: CMSampleBuffer?
+            let start = CMTime(value: CMTimeValue(written), timescale: CMTimeScale(soundtrack.sampleRate))
+            guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+                allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: format,
+                sampleCount: end - written, presentationTimeStamp: start, packetDescriptions: nil,
+                sampleBufferOut: &sample) == noErr, let sample, input.append(sample) else {
+                throw NFKMLXError.unsupportedConfiguration("the soundtrack could not be written")
+            }
+            written = end
+        }
+
+        /// Appends the rest of the soundtrack and closes its track.
+        func finish() throws {
+            try append(through: Double(totalFrames) / Double(soundtrack.sampleRate))
+            input.markAsFinished()
+        }
+    }
+
     /// Runs an asynchronous AVFoundation load and waits for it.
     ///
     /// AVFoundation deprecated its synchronous property accessors, and this file's contract is
     /// synchronous: a backend's `runInferenceForRequest:` blocks, and the caller already runs it off
     /// the main thread. The wait must therefore not happen on the cooperative pool.
-    private static func blocking<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) throws -> T {
+    static func blocking<T: Sendable>(_ work: @escaping @Sendable () async throws -> T) throws -> T {
         let box = NFKMLXVideoLoadBox<T>()
         let finished = DispatchSemaphore(value: 0)
         Task.detached(priority: .userInitiated) {

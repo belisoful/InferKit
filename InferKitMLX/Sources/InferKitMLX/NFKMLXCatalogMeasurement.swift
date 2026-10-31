@@ -231,6 +231,18 @@ extension NFKMLXLoadPlan {
         "qwen-image": staged(["text_encoder": .stored], denoiser: [:], controlNet: nil, vae: .float32),
         "ltx-video": staged(["text_encoder": .float32], denoiser: ["transformer": .float32], controlNet: nil,
                             vae: .stored),
+        // The text encoder loads at bfloat16 and widens to float32 only where the budget holds it; the
+        // connectors load as stored; the decoders and the vocoder at float32. The precision option
+        // converts the transformer alone.
+        "ltx-2": {
+            var plan = NFKMLXLoadPlan(precision: .stored,
+                                      directories: ["text_encoder": .bfloat16, "vae": .float32, "audio_vae": .float32,
+                                                    "vocoder": .float32],
+                                      stages: [["text_encoder"], ["connectors"],
+                                               ["transformer", "vae", "audio_vae", "vocoder"]])
+            plan.castDirectories = ["transformer"]
+            return plan
+        }(),
         // umT5 widens to float32 only where the budget holds it, so the plan counts it at bfloat16. The
         // precision option converts the transformer alone.
         "wan": {

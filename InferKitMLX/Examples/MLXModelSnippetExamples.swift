@@ -126,20 +126,34 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertEqual(image.shape, [1, 8, 8, 3])
     }
 
-    // Docs/examples.md: LTX-2 audio and video. A tiny random transformer stands in for the release.
-    func testExampleLTX2Transformer() throws {
+    // Docs/examples.md: LTX-2 audio and video, the pieces. Tiny random stages stand in for the release, which
+    // NFKMLXLTX2Generator.generator(directoryURL:residency:) assembles.
+    func testExampleLTX2Pipeline() throws {
         try requireMLXRuntime()
         NFKMLXRandom.seed(17)
-        let ltx2 = NFKMLXLTX2TransformerNet(.tiny)
-        let (videoVelocity, audioVelocity) = ltx2(
-            video: MLXRandom.normal([1, 12, 8]), audio: MLXRandom.normal([1, 4, 6]),
-            text: MLXRandom.normal([1, 5, 32]), audioText: MLXRandom.normal([1, 5, 16]),
-            timestep: MLXArray.full([1, 12], values: MLXArray(Float(500))),
-            audioTimestep: MLXArray.full([1, 4], values: MLXArray(Float(500))),
-            sigma: MLXArray([Float(0.5)]), frames: 2, height: 2, width: 3, audioFrames: 4)
-        eval(videoVelocity, audioVelocity)
-        XCTAssertEqual(videoVelocity.shape, [1, 12, 8], "one velocity per video token")
-        XCTAssertEqual(audioVelocity.shape, [1, 4, 6], "one velocity per audio frame")
+        var transformerConfiguration = NFKMLXLTX2Configuration.tiny
+        transformerConfiguration.audioInChannels = 8
+        transformerConfiguration.audioOutChannels = 8
+        var vocoderConfiguration = NFKMLXLTX2VocoderConfiguration.tiny
+        vocoderConfiguration.vocoder.inChannels = 32
+        let transformer = NFKMLXLTX2TransformerNet(transformerConfiguration)
+        let videoDecoder = NFKMLXLTX2VideoDecoderNet(.tiny), audioDecoder = NFKMLXLTX2AudioDecoderNet(.tiny)
+        let vocoder = NFKMLXLTX2VocoderNet(vocoderConfiguration)
+        let videoStatistics = (mean: MLXArray.zeros([8]), std: MLXArray.ones([8]))
+        let audioStatistics = (mean: MLXArray.zeros([8]), std: MLXArray.ones([8]))
+        let videoNoise = MLXRandom.normal([1, 12, 8]), audioNoise = MLXRandom.normal([1, 9, 8])
+        let videoText = MLXRandom.normal([2, 8, 32]), audioText = MLXRandom.normal([2, 8, 16])
+
+        let pipeline = NFKMLXLTX2Pipeline(
+            transformer: transformer, videoDecoder: videoDecoder, videoStatistics: videoStatistics,
+            audioDecoder: audioDecoder, audioStatistics: audioStatistics, vocoder: vocoder)
+        let (videoLatents, audioLatents) = try pipeline.denoise(
+            video: videoNoise, audio: audioNoise, text: videoText, audioText: audioText,
+            frames: 2, height: 2, width: 3, audioFrames: 9, frameRate: 24, steps: 2, perturbedBlocks: [1])
+        let clip = pipeline.decodeVideo(videoLatents, frames: 2, height: 2, width: 3)
+        let waveform = pipeline.decodeAudio(audioLatents)
+        XCTAssertEqual(clip.shape, [1, 9, 64, 96, 3], "eight frames per latent frame after the first")
+        XCTAssertEqual(waveform.shape, [1, 990, 2], "a stereo soundtrack")
     }
 
     // Docs/examples.md: Wan 2.2 Animate. The generator needs the release directory; the tiny

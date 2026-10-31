@@ -534,7 +534,15 @@ The figures have three limits:
 - ``NFKMLXLTXVideoVAENet``
 - ``NFKMLXLTXTransformer``
 - ``NFKMLXLTXTransformerNet``
+- ``NFKMLXLTX2Generator``
+- ``NFKMLXLTX2Variant``
+- ``NFKMLXLTX2ParameterKey``
+- ``NFKMLXLTX2Pipeline``
 - ``NFKMLXLTX2TransformerNet``
+- ``NFKMLXLTX2ConnectorsNet``
+- ``NFKMLXLTX2VideoDecoderNet``
+- ``NFKMLXLTX2AudioDecoderNet``
+- ``NFKMLXLTX2VocoderNet``
 - ``NFKMLXWanPipeline``
 - ``NFKMLXWanTransformerNet``
 - ``NFKMLXWanVideoVAENet``

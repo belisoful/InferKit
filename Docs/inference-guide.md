@@ -1856,15 +1856,17 @@ alternatives.
     including the empty think block `enable_thinking=False` appends), and the empirical sigma shift
     that depends on the step count as well as the sequence length. [dev] reads Mistral-Small 3, which
     this package does not carry, and is gated besides, so the end-to-end path is klein's.
-  - `LTX-2` (22B, community license) — **the transformer is SHIPPED** (`NFKMLXLTX2TransformerNet`),
-    the first model here that denoises video and AUDIO together. Six attentions a block, an
+  - `LTX-2` (22B, community license) — **SHIPPED end to end** (`NFKMLXLTX2Generator`, registered as
+    `ltx-2.3` and `ltx-2.5`), the first model here that denoises video and AUDIO together. Six attentions a block, an
     across-heads query/key norm, per-head sigmoid gates, and a split rotary positioned by each patch's
     midpoint in seconds and pixels. At reference parity against diffusers in both released
     arrangements (LTX-2.3 video 0.9999999999996182 / audio 0.9999999999999584; LTX-2.5 video
     0.9999999999996512 / audio 0.9999999999996835) and held to the released LTX-2.3 headers by shape
     (4186 tensors, 0 missing / mismatched / unaccounted). Every LTX-2.5 repository is gated, so the
-    shape check runs against LTX-2.3, the same class. The video and audio autoencoders, the Gemma-4
-    text front end with its connectors, the vocoder and the pipeline are the remaining stages.
+    shape check runs against LTX-2.3, the same class. The video and audio decoders, the text
+    connectors, the vocoder with bandwidth extension, and the pipeline with its three guidance passes
+    ship at parity too (tiny pipeline clip 0.9999999999993114, waveform 0.9999999999988513), each
+    released LTX-2.3 stage held to its headers by shape.
   - `Qwen-Image 2.1` (7.1B, Qwen Research License) — **SHIPPED end to end.** A single-stream DiT whose
     attention is BLOCK-CAUSAL (`q >= kv or same image block`), so the caption reads causally while each
     image block stays bidirectional within itself, and whose text half modulates from timestep zero so

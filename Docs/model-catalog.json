@@ -24772,6 +24772,1064 @@
       ]
     },
     {
+      "displayName" : "LTX-2.3",
+      "engine" : "mlx",
+      "family" : "ltx-2",
+      "id" : "ltx-2.3",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "LTX-2 Community License Agreement",
+        "note" : "Entities with annual revenue of US$10 million or more need a paid commercial license.",
+        "restrictsCommercialUse" : true,
+        "url" : "https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "bfloat16"
+        }
+      },
+      "options" : [
+        {
+          "default" : 121,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 768,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 512,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 24,
+          "help" : "The frame rate the clip is conditioned on and written at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 30,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 3,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 7,
+          "help" : "The soundtrack's classifier-free guidance weight.",
+          "key" : "NFKMLXLTX2ParameterAudioGuidanceScale",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Soundtrack guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "The weight of the pass whose self-attention is perturbed. 0 skips that pass.",
+          "key" : "NFKMLXLTX2ParameterSpatioTemporalGuidanceScale",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Spatio-temporal guidance"
+        },
+        {
+          "default" : 3,
+          "help" : "The weight of the pass that hears no video and sees no audio. 1 skips that pass.",
+          "key" : "NFKMLXLTX2ParameterModalityGuidanceScale",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Modality guidance"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "How far the guided prediction is pulled back to the conditional one's spread. 0 turns it off.",
+          "key" : "NFKMLXLTX2ParameterGuidanceRescale",
+          "kind" : "json",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance rescale"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 72340001932,
+                "residentBytes" : 72340001932
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 41620896684,
+                "residentBytes" : 41620896684
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6035879596,
+                "residentBytes" : 6035879596
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 41620896684,
+                "residentBytes" : 41620896684
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 79589111212,
+                "residentBytes" : 79589111212
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the transformer loads at. As published keeps its own weights; another choice converts them as it loads. The other stages load as their parity records were measured.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 41620896684,
+                "residentBytes" : 41620896684
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14028785760,
+                "residentBytes" : 14028785760
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11269888608,
+                "residentBytes" : 11269888608
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9890440032,
+                "residentBytes" : 9890440032
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8510991456,
+                "residentBytes" : 8510991456
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7131542880,
+                "residentBytes" : 7131542880
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5752094304,
+                "residentBytes" : 5752094304
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video",
+        "audio"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie whose audio track is the soundtrack.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        },
+        {
+          "help" : "The generated soundtrack alone, a stereo WAV at 48 kHz.",
+          "key" : "audio",
+          "required" : true,
+          "title" : "Soundtrack",
+          "valueType" : "audio"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 15 in place of 30: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 15
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "ltx-2.3",
+      "requirements" : {
+        "minimumMemoryBytes" : 54018663506,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that films a clip and its soundtrack together from a prompt.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "LTX-2.3",
+          "downloadBytes" : 94933740168,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 24374650080,
+                  "checkpoint" : 48749300160,
+                  "float32" : 48749300160
+                },
+                "id" : "text_encoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 448297984,
+                  "checkpoint" : 896595968,
+                  "float32" : 896595968
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 21518303232,
+                  "checkpoint" : 43036606464,
+                  "float32" : 43036606464
+                },
+                "layerCount" : 48,
+                "quantizableElements" : 11035588608,
+                "title" : "text_encoder",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 6344455168,
+                  "checkpoint" : 6344455168,
+                  "float32" : 12688910336
+                },
+                "id" : "connectors",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 403005504,
+                  "checkpoint" : 403005504,
+                  "float32" : 806011008
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 3224044032,
+                  "checkpoint" : 3224044032,
+                  "float32" : 6448088064
+                },
+                "layerCount" : 8,
+                "quantizableElements" : 3170893824,
+                "title" : "connectors"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 41611434924,
+                  "checkpoint" : 41620896684,
+                  "float32" : 79589111212,
+                  "loaded" : 41620896684
+                },
+                "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 773390720,
+                  "checkpoint" : 773587328,
+                  "float32" : 1546781440
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 37122754560,
+                  "checkpoint" : 37132191744,
+                  "float32" : 74245509120
+                },
+                "layerCount" : 48,
+                "quantizableElements" : 18698731520,
+                "title" : "transformer, vae, audio_vae, vocoder"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 54018663506,
+          "parameterCount" : 35256830427,
+          "peakBytes" : 41620896684,
+          "precision" : "float32",
+          "registryName" : "ltx-2.3",
+          "residentBytes" : 41620896684,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 623,
+                "optional" : false,
+                "path" : "model_index.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 487,
+                "optional" : false,
+                "path" : "scheduler/scheduler_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2960,
+                "optional" : false,
+                "path" : "text_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 108642,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 33384568,
+                "optional" : false,
+                "path" : "tokenizer/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "4667f2089529e8e7657cfb6d1c19910ae71ff5f28aa7ab2ff2763330affad795"
+              },
+              {
+                "bytes" : 1155387,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 662,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 817,
+                "optional" : false,
+                "path" : "connectors/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 6344489120,
+                "optional" : true,
+                "path" : "connectors/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "e2bf5ca48db13cea180ecff2d8e8e1224fcea8cc04d41721e704c6034f914722"
+              },
+              {
+                "bytes" : 30629,
+                "optional" : true,
+                "path" : "connectors/diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 1317,
+                "optional" : false,
+                "path" : "transformer/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 455948,
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 1480,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1452233194,
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "425f0dfa227dee5d0ff3d9720563370810409a439c302ca74f0f944057ce55c5"
+              },
+              {
+                "bytes" : 505,
+                "optional" : false,
+                "path" : "audio_vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 106507972,
+                "optional" : false,
+                "path" : "audio_vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "45dcb1c3cffc8c8b7710a04dd19500e481daff31f5ea8e8529f2cf697c439d12"
+              },
+              {
+                "bytes" : 1478,
+                "optional" : false,
+                "path" : "vocoder/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 258305056,
+                "optional" : false,
+                "path" : "vocoder/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "c99dde145a982974bc4c39608b3b929f232f0126a55d8326a47ad54f486ae23c"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "8eee8edcf067e838b843f926ec4d4cc9b2be1aaf",
+            "repository" : "diffusers/LTX-2.3-Diffusers",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "LTX-2.5",
+      "engine" : "mlx",
+      "family" : "ltx-2",
+      "id" : "ltx-2.5",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : true,
+        "name" : "LTX-2.x Community License Agreement",
+        "note" : "Entities with annual revenue of US$10 million or more need a paid commercial license.",
+        "restrictsCommercialUse" : true,
+        "url" : "https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 121,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 768,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 512,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 24,
+          "help" : "The frame rate the clip is conditioned on and written at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 30,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 3,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 7,
+          "help" : "The soundtrack's classifier-free guidance weight.",
+          "key" : "NFKMLXLTX2ParameterAudioGuidanceScale",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Soundtrack guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "The weight of the pass whose self-attention is perturbed. 0 skips that pass.",
+          "key" : "NFKMLXLTX2ParameterSpatioTemporalGuidanceScale",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Spatio-temporal guidance"
+        },
+        {
+          "default" : 3,
+          "help" : "The weight of the pass that hears no video and sees no audio. 1 skips that pass.",
+          "key" : "NFKMLXLTX2ParameterModalityGuidanceScale",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Modality guidance"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "How far the guided prediction is pulled back to the conditional one's spread. 0 turns it off.",
+          "key" : "NFKMLXLTX2ParameterGuidanceRescale",
+          "kind" : "json",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance rescale"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 108042976358,
+                "residentBytes" : 108042976358
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the transformer loads at. As published keeps its own weights; another choice converts them as it loads. The other stages load as their parity records were measured.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 77778938814,
+                "residentBytes" : 77778938814
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video",
+        "audio"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie whose audio track is the soundtrack.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        },
+        {
+          "help" : "The generated soundtrack alone, a stereo WAV at 48 kHz.",
+          "key" : "audio",
+          "required" : true,
+          "title" : "Soundtrack",
+          "valueType" : "audio"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 15 in place of 30: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 15
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "ltx-2.5",
+      "requirements" : {
+        "minimumMemoryBytes" : 96557536600,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that films a clip and its soundtrack together from a prompt.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "LTX-2.5",
+          "downloadBytes" : 108075674304,
+          "id" : "default",
+          "isDefault" : true,
+          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 403), audio_vae/diffusion_pytorch_model.safetensors (HTTP 403), vocoder/diffusion_pytorch_model.safetensors (HTTP 403) and 18 more",
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 23919548424
+                },
+                "id" : "text_encoder",
+                "title" : "text_encoder",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 6344489120
+                },
+                "id" : "connectors",
+                "title" : "connectors"
+              },
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 77778938814
+                },
+                "id" : "transformer",
+                "title" : "transformer, vae, audio_vae, vocoder"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 96557536600,
+          "peakBytes" : 77778938814,
+          "registryName" : "ltx-2.5",
+          "residentBytes" : 77778938814,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 971,
+                "optional" : false,
+                "path" : "model_index.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 489,
+                "optional" : false,
+                "path" : "scheduler/scheduler_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 4594,
+                "optional" : false,
+                "path" : "text_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 66306,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 32169626,
+                "optional" : false,
+                "path" : "tokenizer/tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 3735,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 817,
+                "optional" : false,
+                "path" : "connectors/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 6344489120,
+                "optional" : true,
+                "path" : "connectors/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 30629,
+                "optional" : true,
+                "path" : "connectors/diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 1440,
+                "optional" : false,
+                "path" : "transformer/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 446505,
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 1480,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1452233194,
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 505,
+                "optional" : false,
+                "path" : "audio_vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 106507972,
+                "optional" : false,
+                "path" : "audio_vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 1478,
+                "optional" : false,
+                "path" : "vocoder/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 258305056,
+                "optional" : false,
+                "path" : "vocoder/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "4791a1100e0cf97f7ed5c55c12dd71dce13f9dd3",
+            "repository" : "Lightricks/LTX-2.5-Diffusers",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "LTX-Video 0.9.0",
       "engine" : "mlx",
       "family" : "ltx-video",

@@ -199,7 +199,7 @@ enum NFKMLXCatalogVideo {
     // MARK: - Video generation
 
     static var generators: [NFKMLXCatalogEntry] {
-        [ltxVideo] + wanEntries + wanAnimateEntries
+        [ltxVideo] + ltx2Entries + wanEntries + wanAnimateEntries
     }
 
     /// The options a text-to-video generator reads.
@@ -236,6 +236,55 @@ enum NFKMLXCatalogVideo {
                                  source: NFKMLXCatalogImage.hubRelease(NFKMLXLTXVideoGenerator.releaseRepo,
                                                                        components: NFKMLXLTXVideoGenerator.releaseComponents),
                                  residencies: NFKMLXCatalogImage.stagedResidencies)
+    }
+
+    /// The guidance options LTX-2's sampler reads beside the video's classifier-free guidance.
+    static var ltx2GuidanceOptions: [NFKModelOption] {
+        [.option(NFKMLXLTX2ParameterKey.audioGuidanceScale, title: "Soundtrack guidance",
+                 help: "The soundtrack's classifier-free guidance weight.", defaultValue: 7, minimum: 0),
+         .option(NFKMLXLTX2ParameterKey.spatioTemporalGuidanceScale, title: "Spatio-temporal guidance",
+                 help: "The weight of the pass whose self-attention is perturbed. 0 skips that pass.", defaultValue: 1,
+                 minimum: 0),
+         .option(NFKMLXLTX2ParameterKey.modalityGuidanceScale, title: "Modality guidance",
+                 help: "The weight of the pass that hears no video and sees no audio. 1 skips that pass.",
+                 defaultValue: 3, minimum: 0),
+         .option(NFKMLXLTX2ParameterKey.guidanceRescale, title: "Guidance rescale",
+                 help: "How far the guided prediction is pulled back to the conditional one's spread. 0 turns it off.",
+                 defaultValue: 0.7, minimum: 0, maximum: 1)]
+    }
+
+    /// The LTX-2 releases: one transformer that films a clip and its soundtrack together.
+    static var ltx2Entries: [NFKMLXCatalogEntry] {
+        NFKMLXLTX2Variant.allCases.map { variant in
+            let license: NFKModelLicense
+            switch variant {
+            case .ltx23:
+                license = .license(nil, name: "LTX-2 Community License Agreement",
+                                   url: "https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2",
+                                   restrictsCommercialUse: true,
+                                   note: "Entities with annual revenue of US$10 million or more need a paid commercial license.")
+            case .ltx25:
+                license = .license(nil, name: "LTX-2.x Community License Agreement",
+                                   url: "https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x", gated: true,
+                                   restrictsCommercialUse: true,
+                                   note: "Entities with annual revenue of US$10 million or more need a paid commercial license.")
+            }
+            return NFKMLXCatalogImage.model(
+                variant.modelName, variant.displayName, family: "ltx-2",
+                summary: "A diffusion transformer that films a clip and its soundtrack together from a prompt.",
+                tasks: [NFKModelTaskVideoGeneration],
+                inputs: promptInputs,
+                outputs: [clipOutput("The generated clip as a QuickTime movie whose audio track is the soundtrack."),
+                          .output(NFKOutputAudio, required: true, title: "Soundtrack",
+                                  help: "The generated soundtrack alone, a stereo WAV at 48 kHz.")],
+                parameters: videoOptions(frames: 121, width: 768, height: 512, framesPerSecond: 24,
+                                         frameRateHelp: "The frame rate the clip is conditioned on and written at.",
+                                         steps: 30, guidance: 3) + ltx2GuidanceOptions,
+                license: license,
+                source: NFKMLXCatalogImage.hubRelease(variant.releaseRepo,
+                                                      components: NFKMLXLTX2Generator.releaseComponents),
+                residencies: NFKMLXCatalogImage.streamedStageResidencies)
+        }
     }
 
     /// The Wan releases other than Wan 2.1 T2V 1.3B, which `wan` builds.

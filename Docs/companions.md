@@ -691,8 +691,17 @@ models.
   directions), an across-heads RMS query/key norm, per-head sigmoid gates, and a split rotary whose
   positions are each patch's midpoint in seconds and pixels. At reference parity against diffusers in
   BOTH released arrangements (LTX-2.3's and LTX-2.5's three switches), and held to the released
-  LTX-2.3 headers by shape (4186 tensors, 0 missing / mismatched / unaccounted). The two VAEs, the
-  Gemma-4 text front end, the vocoder and the pipeline are the remaining stages.
+  LTX-2.3 headers by shape (4186 tensors, 0 missing / mismatched / unaccounted).
+- **`NFKMLXLTX2Generator`** — LTX-2.3 and LTX-2.5 end to end: a prompt in, a clip and its soundtrack
+  out. The Gemma text encoder's every hidden state feeds the text connectors (`NFKMLXLTX2ConnectorsNet`),
+  the transformer samples both latents with the reference's guidance (classifier-free, spatio-temporal,
+  modality, and the rescale), the video decoder (`NFKMLXLTX2VideoDecoderNet`) and the audio decoder
+  (`NFKMLXLTX2AudioDecoderNet`) decode them, and the vocoder with bandwidth extension
+  (`NFKMLXLTX2VocoderNet`) turns the mel spectrogram into 48 kHz stereo. Every stage at parity against
+  diffusers, the whole pipeline too (clip 0.9999999999993114, waveform 0.9999999999988513 at tiny
+  configurations), and each released LTX-2.3 stage held to its headers by shape. The movie the backend
+  writes carries the soundtrack as its audio track. The stages load in turn and stream where one does
+  not fit; LTX-2.5's repositories are gated.
 - **`NFKMLXQwenImagePipeline`** — Qwen-Image 2.1 text-to-image: a 7.1B block-causal DiT, a
   vision-language text encoder, and a single-frame autoencoder. The caption and the image latents share
   one sequence, read causally, while each image block stays bidirectional within itself, and the text

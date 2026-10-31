@@ -213,6 +213,9 @@ residual or the velocity objective is known, and the working set is what rules i
 | `NFKMLXSANATransformerNet` | trainable | LoRA | partial | The measured `Sana_600M` release holds with the backbone frozen. NVlabs' own script is unread, which item 5 of the minimum set needs. |
 | `NFKMLXLTXTransformer` | offline | — | internal | 2B at ~7.7 GB sharded, before a video-length activation stack. |
 | `NFKMLXLTX2TransformerNet` | offline | — | public | No size of this 22B model fits a consumer machine. |
+| `NFKMLXLTX2ConnectorsNet` | offline | — | public | 3.2B, trained only through the 22B transformer it conditions. |
+| `NFKMLXLTX2VideoDecoderNet`, `NFKMLXLTX2AudioDecoderNet` | offline | — | public | Decoder-only ports: generation never encodes, so neither autoencoder's reconstruction objective can be formed without its encoder. |
+| `NFKMLXLTX2VocoderNet` | offline | — | public | The objective is adversarial, and the release ships the two generators and the STFT bases (1227 tensors) with no discriminator. |
 | `NFKMLXT5Encoder` | offline | — | internal | T5-XXL is ~19 GB at float32, the memory crux of the LTX pipeline. |
 | `NFKMLXZImageTransformerNet` | offline | — | partial | 6B, past the working set at the released precision. |
 | `NFKMLXWanTransformerNet` | offline | — | partial | The `.base` geometry is the 14B release. Wan 2.1 at 1.3B would hold, but its activation stack is unmeasured. |
@@ -222,7 +225,7 @@ residual or the velocity objective is known, and the working set is what rules i
 | `NFKMLXFlux2TransformerNet` | offline | — | public | The smallest release is 3.88B and `[dev]` is 32B. |
 | `NFKMLXSD3ControlNetNet` | offline | — | public | Its zero-initialized residuals take their gradient through the frozen 2B to 8B base. |
 | `NFKMLXFluxControlNetNet` | offline | — | public | The same residual gradient through the frozen 12B FLUX.1 transformer. |
-| `NFKMLXLTXPipeline`, `NFKMLXSD3Pipeline`, `NFKMLXFluxPipeline`, `NFKMLXQwenImagePipeline`, `NFKMLXFlux` | offline | — | mixed | The glue holds no weights of its own and inherits its transformer's working set. |
+| `NFKMLXLTXPipeline`, `NFKMLXLTX2Pipeline`, `NFKMLXSD3Pipeline`, `NFKMLXFluxPipeline`, `NFKMLXQwenImagePipeline`, `NFKMLXFlux` | offline | — | mixed | The glue holds no weights of its own and inherits its transformer's working set. |
 | `NFKMLXQwenImageVAE` | untrainable | — | public | No autoencoder training code in QwenLM/Qwen-Image or either release. The same holds for `NFKMLXWanVideoVAENet` (Wan 2.1 and 2.2 define no objective) and `NFKMLXDCAutoencoderNet` (DC-Gen's trainer leaves `forward_train` unimplemented; a DC-Gen commit that implements it reopens this); `NFKMLXFlux2LatentCodec` holds no learnable parameter. |
 | `NFKMLXLTXVideoVAE` | untrainable | — | internal | Lightricks/LTX-Video publishes no autoencoder training code; its only backward pass through the autoencoder is a smoke test on random input, and LTX-Video-Trainer freezes the autoencoder. |
 | `NFKMLXFlowMatchScheduler`, `NFKMLXDPMSolverScheduler`, `NFKMLXUniPCScheduler` | untrainable | — | n/a | Value types with no parameters. |

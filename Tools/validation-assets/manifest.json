@@ -6023,6 +6023,12 @@
         "qwen4_exp",
         "flux2",
         "ltx2",
+        "ltx2_video_vae",
+        "ltx2_audio_vae",
+        "ltx2_vocoder",
+        "ltx2_connectors",
+        "ltx2_guidance",
+        "ltx2_pipeline",
         "flux2_vae",
         "flux2_text",
         "flux2_scheduler",
@@ -6315,6 +6321,30 @@
       "subfolder": "transformer",
       "directory": "ltx2-23-22b",
       "note": "LTX-2.3 22B audio-video transformer (`LTX2VideoTransformer3DModel`, 4186 tensors across 8 shards, 19.0 GB bf16). Every LTX-2.5 repository is gated (`Lightricks/LTX-2.5`, `LTX-2.5-Diffusers`, `LTX-2.5-Pre-Trained`), and accepting a license is a user action, so the structural check runs against LTX-2.3, the same class at the arrangement its `config.json` declares (`rope_type` split, `cross_attn_mod` true, `use_prompt_embeddings` false). LTX-2.5's three declared differences — `ff_bias` false, `use_prompt_adaln_single` false, `use_keyframes_abs_pos_embedding` true — are measured numerically instead, by the `l25` half of `run_reference.py ltx2`. `Lightricks/LTX-2.3` itself ships a single-file checkpoint with no config, which is why the diffusers organization's conversion is the source here."
+    },
+    {
+      "repo": "diffusers/LTX-2.3-Diffusers",
+      "subfolder": "vae",
+      "directory": "ltx2-23-vae",
+      "note": "The LTX-2.3 video autoencoder (`AutoencoderKLLTX2Video`, 170 tensors, 1.45 GB bf16). NFKMLXLTX2StageTests.testLTX2StagesMatchTheReleasedShapes holds the decoder's 84 tensors and the latent statistics to it; the encoder is not built."
+    },
+    {
+      "repo": "diffusers/LTX-2.3-Diffusers",
+      "subfolder": "audio_vae",
+      "directory": "ltx2-23-audio_vae",
+      "note": "The LTX-2.3 audio autoencoder (`AutoencoderKLLTX2Audio`, 102 tensors, 0.11 GB bf16). The decoder's 56 tensors and the packed-width latent statistics are held to it; the encoder is not built."
+    },
+    {
+      "repo": "diffusers/LTX-2.3-Diffusers",
+      "subfolder": "vocoder",
+      "directory": "ltx2-23-vocoder",
+      "note": "The LTX-2.3 vocoder with bandwidth extension (`LTX2VocoderWithBWE`, 1227 tensors, 0.26 GB bf16): both generators, the anti-aliasing filters, and the STFT bases. The inverse STFT basis is the one stored tensor the port does not read."
+    },
+    {
+      "repo": "diffusers/LTX-2.3-Diffusers",
+      "subfolder": "connectors",
+      "directory": "ltx2-23-connectors",
+      "note": "The LTX-2.3 text connectors (`LTX2TextConnectors`, 262 tensors, 6.3 GB bf16). The release stores them twice, as one file and as two shards with an index; shapes.py reads the shard index."
     },
     {
       "repo": "black-forest-labs/FLUX.2-klein-base-9B",

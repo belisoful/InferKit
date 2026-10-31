@@ -1115,19 +1115,26 @@ final class MLXModelGalleryExamples: XCTestCase {
         eval(wanClip)
         XCTAssertEqual(wanClip.shape[4], 3, "a [B, T, H, W, 3] clip")
 
-        // LTX-2 denoises a video latent and an audio latent together in one transformer. The released
-        // transformer loads through NFKMLXLTX2TransformerNet.loadWeights(into:from:); here a tiny one
-        // predicts both velocities for a 2×2×3 video grid and four audio frames.
-        let ltx2 = NFKMLXLTX2TransformerNet(.tiny)
-        let (videoVelocity, audioVelocity) = ltx2(
-            video: MLXRandom.normal([1, 12, 8]), audio: MLXRandom.normal([1, 4, 6]),
-            text: MLXRandom.normal([1, 5, 32]), audioText: MLXRandom.normal([1, 5, 16]),
-            timestep: MLXArray.full([1, 12], values: MLXArray(Float(500))),
-            audioTimestep: MLXArray.full([1, 4], values: MLXArray(Float(500))),
-            sigma: MLXArray([Float(0.5)]), frames: 2, height: 2, width: 3, audioFrames: 4)
-        eval(videoVelocity, audioVelocity)
-        XCTAssertEqual(videoVelocity.shape, [1, 12, 8])
-        XCTAssertEqual(audioVelocity.shape, [1, 4, 6])
+        // LTX-2 denoises a video latent and an audio latent together in one transformer, then decodes the
+        // clip and vocodes its soundtrack. The released model assembles through
+        // NFKMLXLTX2Generator.generator(directoryURL:residency:), then clip(forPrompt:frames:…); here tiny
+        // random stages run the same pipeline from supplied text streams over a 2×2×3 video grid.
+        var ltx2Configuration = NFKMLXLTX2Configuration.tiny
+        ltx2Configuration.audioInChannels = 8
+        ltx2Configuration.audioOutChannels = 8
+        var ltx2VocoderConfiguration = NFKMLXLTX2VocoderConfiguration.tiny
+        ltx2VocoderConfiguration.vocoder.inChannels = 32
+        let ltx2 = NFKMLXLTX2Pipeline(
+            transformer: NFKMLXLTX2TransformerNet(ltx2Configuration),
+            videoDecoder: NFKMLXLTX2VideoDecoderNet(.tiny), videoStatistics: (MLXArray.zeros([8]), MLXArray.ones([8])),
+            audioDecoder: NFKMLXLTX2AudioDecoderNet(.tiny), audioStatistics: (MLXArray.zeros([8]), MLXArray.ones([8])),
+            vocoder: NFKMLXLTX2VocoderNet(ltx2VocoderConfiguration))
+        let (ltx2Video, ltx2Audio) = try ltx2.denoise(
+            video: MLXRandom.normal([1, 12, 8]), audio: MLXRandom.normal([1, 9, 8]),
+            text: MLXRandom.normal([2, 8, 32]), audioText: MLXRandom.normal([2, 8, 16]),
+            frames: 2, height: 2, width: 3, audioFrames: 9, frameRate: 24, steps: 2, perturbedBlocks: [1])
+        XCTAssertEqual(ltx2.decodeVideo(ltx2Video, frames: 2, height: 2, width: 3).shape, [1, 9, 64, 96, 3])
+        XCTAssertEqual(ltx2.decodeAudio(ltx2Audio).shape, [1, 990, 2], "a stereo soundtrack at three times the base rate")
 
         // Wan 2.2 Animate drives a reference character with a motion video in two passes: the reference
         // pass fills a key/value cache, and each generation pass attends over it. Here a tiny random

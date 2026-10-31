@@ -258,6 +258,12 @@ struct NFKMLXLoadProfile {
         "flux2": [.diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32])],
         "wan": [.diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32])],
         "stable-diffusion-3": [.diffusionPipeline(streamedStage: "transformer")],
+        // The transformer takes the precision option and a runtime weight quantization where it is held
+        // whole; the text encoder widens where the budget holds it, and both stream their layers.
+        "ltx-2": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                    defaultPrecision: NFKModelPrecisionCheckpoint, precisionStage: "transformer",
+                                    quantizes: true, widenedStages: ["text_encoder": NFKModelPrecisionFloat32],
+                                    halvesSteps: true)],
         "sana": [.diffusionPipeline()],
         "z-image": [.diffusionPipeline()],
         "qwen-image": [.diffusionPipeline()],

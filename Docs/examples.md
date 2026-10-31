@@ -24,7 +24,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Image → 3D object](#image--3d-object) — TripoSR, Stable Fast 3D, `NFKMesh`, `NFKMeshMaterial`
 - [Many tensors in and out](#many-tensors-in-and-out)
 - [Diffusion: upscale, depth, inpaint](#diffusion-upscale-depth-inpaint) — bring-your-own MLX diffusion
-- [Text → video](#text--video) — LTX-Video and Wan, staged
+- [Text → video](#text--video) — LTX-Video, LTX-2 (with its soundtrack), and Wan, staged
 - [Structured output and tools](#structured-output-and-tools) — Apple
 - [Models as tools](#models-as-tools) — one model calls another: `NFKBackendTool`, `NFKToolLoop`
 - [Audio → text](#audio--text-transcription) — remote transcription (Whisper)
@@ -3337,31 +3337,58 @@ LTX-Video, 4 for Wan), and a side to a multiple of its spatial compression. Both
 default to empty, and guidance above 1 guides against it. The Wan 2.1 14B transformer is 28 GB on its
 own, beyond a 32 GB machine in any placement.
 
-### LTX-2 audio and video (`NFKMLXLTX2TransformerNet`)
+### LTX-2 audio and video (`NFKMLXLTX2Generator`)
 
 LTX-2 generates a clip and its soundtrack together. One transformer denoises a video latent and an audio
 latent in the same pass: every block runs self-attention and text cross-attention in each modality, and
-attention from each modality to the other. `NFKMLXLTX2TransformerNet` is that transformer, at reference
-parity against diffusers' `LTX2VideoTransformer3DModel` at a tiny random configuration and held to the
-LTX-2.3 release by shape. The release's two autoencoders, text front end, and vocoder are not ported, so
-the caller supplies the latents and the text states.
+attention from each modality to the other. `NFKMLXLTX2Generator` assembles LTX-2.3 or LTX-2.5 from its
+diffusers release directory: the Gemma text encoder, the text connectors, the transformer, the video and
+audio decoders, and the vocoder with bandwidth extension, which brings the soundtrack to 48 kHz. Each
+denoising step runs the guided pair, a spatio-temporal guidance pass, and a modality-isolation pass, as
+diffusers' `LTX2Pipeline` does, and the generator's properties set each scale.
 
 ```swift
-let transformerDirectory = release.appending(path: "transformer")             // Lightricks/LTX-2.3
-let ltx2 = NFKMLXLTX2TransformerNet(try NFKMLXLTX2TransformerNet.configuration(
-    fromHuggingFace: transformerDirectory.appending(path: "config.json")))
-try NFKMLXLTX2TransformerNet.loadWeights(into: ltx2, from: transformerDirectory, precision: .checkpoint)
-
-let (videoVelocity, audioVelocity) = ltx2(
-    video: videoLatents, audio: audioLatents,         // [1, frames · height · width, 128], [1, audioFrames, 128]
-    text: textStates, audioText: audioTextStates,
-    timestep: timesteps, audioTimestep: audioTimesteps, sigma: sigma,
-    frames: frames, height: height, width: width, audioFrames: audioFrames)
+let ltx2 = try NFKMLXLTX2Generator.generator(directoryURL: ltx2Release, residency: .automatic)
+ltx2.steps = 30
+let (frames, soundtrack) = try ltx2.clip(forPrompt: "a drummer playing in the rain", frames: 121,
+                                         width: 768, height: 512, seed: 0)
+// frames [121, 512, 768, 3] in 0…1; soundtrack [samples, 2] at ltx2.audioSampleRate (48 kHz)
 ```
 
-The timesteps are per token, `[1, videoTokens]` and `[1, audioFrames]`, already multiplied by the
-release's 1000; `sigma` is `[1]`. `NFKMLXLTX2Configuration.ltx25` carries LTX-2.5's three switches. The
-22B transformer is about 44 GB at the released bfloat16, beyond a 32 GB machine.
+<!-- objc-check: given NSURL *ltx2Release; -->
+```objc
+id<NFKInferenceBackend> ltx2 = [NFKMLXLTX2Generator backendWithDirectoryURL:ltx2Release
+                                                                  residency:NFKMLXResidencyAutomatic
+                                                                      error:&error];
+NFKInferenceRequest *request = [[NFKInferenceRequest alloc]
+    initWithInputs:@{ NFKInputPrompt: @"a drummer playing in the rain" }
+        parameters:@{ NFKParameterFrameCount: @121, NFKParameterSteps: @30,
+                      NFKMLXLTX2ParameterKey.audioGuidanceScale: @7 }];
+NFKInferenceResult *clip = [ltx2 runInferenceForRequest:request error:&error];
+NFKVideoAsset *movie = [clip outputForKey:NFKOutputVideo];       // its audio track is the soundtrack
+NFKAudioAsset *soundtrack = [clip outputForKey:NFKOutputAudio];  // the soundtrack alone, a stereo WAV
+```
+
+The release's transformer says which release it is, and `generator(variant:repo:revision:cacheDirectoryURL:residency:)`
+downloads one by `NFKMLXLTX2Variant`: `.ltx23` reads `diffusers/LTX-2.3-Diffusers` (about 95 GB) and `.ltx25`
+the gated `Lightricks/LTX-2.5-Diffusers`. The stages load in turn where they do not fit together, and a stage
+that does not fit alone streams its layers from the release on every pass. The 22B transformer is 38 GB at
+the released bfloat16, so LTX-2 runs streamed on a 32 GB machine and resident on a large one.
+
+A caller that runs its own sampler builds the pieces. `NFKMLXLTX2Pipeline` chains the transformer, the
+decoders and the vocoder; `textStates(_:tokens:)` stacks a Gemma 3 decoder's hidden states and
+`NFKMLXLTX2ConnectorsNet` turns them into the two text streams.
+
+```swift
+let pipeline = NFKMLXLTX2Pipeline(
+    transformer: transformer, videoDecoder: videoDecoder, videoStatistics: videoStatistics,
+    audioDecoder: audioDecoder, audioStatistics: audioStatistics, vocoder: vocoder)
+let (videoLatents, audioLatents) = try pipeline.denoise(
+    video: videoNoise, audio: audioNoise, text: videoText, audioText: audioText,   // negative row, then positive
+    frames: 16, height: 16, width: 24, audioFrames: 126, frameRate: 24, steps: 30, perturbedBlocks: [28])
+let clip = pipeline.decodeVideo(videoLatents, frames: 16, height: 16, width: 24)    // [1, 121, 512, 768, 3]
+let waveform = pipeline.decodeAudio(audioLatents)                                   // [1, samples, 2]
+```
 
 ### Wan 2.2 Animate (`NFKMLXWanAnimateGenerator`, `NFKMLXWanAnimateNet`)
 
@@ -4390,7 +4417,7 @@ let sd3      = try NFKMLXSD3Generator.generator(directoryURL: sd3Dir, residency:
 let ltxVideo = try NFKMLXLTXVideoGenerator.generator(directoryURL: ltxDir, residency: .automatic)    // "ltx-video-0.9.0"; video(forPrompt:frames:width:height:seed:)
 let wan      = try NFKMLXWanVideoGenerator.generator(directoryURL: wanDir, residency: .automatic)    // "wan"; Wan 2.1 T2V and Wan 2.2 TI2V-5B
 let sana     = try NFKMLXSANAPipeline.pipeline(directoryURL: sanaDir)          // SANA: the linear-attention DiT chained with NFKMLXDCAutoencoderNet(.sana)
-let ltx2     = NFKMLXLTX2TransformerNet(.ltx23)                                // LTX-2: one transformer predicts the video and audio velocities; .ltx25 is the later release
+let ltx2     = try NFKMLXLTX2Generator.generator(directoryURL: ltx2Dir, residency: .automatic)   // "ltx-2.3" / "ltx-2.5"; clip(forPrompt:frames:width:height:seed:) → frames and soundtrack
 let animate  = NFKMLXWanAnimate.makeNet(.base)                                 // Wan 2.2 Animate 14B: loadWeights(into:fromDirectory:), extractReference(…) fills an NFKMLXWanAnimateKVCache, generate(…) reads it
 let animator = try NFKMLXWanAnimateGenerator.generator(directoryURL: animateDir, residency: .automatic)  // "wan2.2-animate-14b"; video(referenceImage:drivingFrames:drivingFramesPerSecond:prompt:)
 

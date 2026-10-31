@@ -1196,6 +1196,7 @@
 		@[ NFKMLXZImageGenerator.class, @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:" ],
 		@[ NFKMLXSD3Generator.class, @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:" ],
 		@[ NFKMLXLTXVideoGenerator.class, @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:" ],
+		@[ NFKMLXLTX2Generator.class, @"generatorWithVariant:repo:revision:cacheDirectoryURL:residency:error:" ],
 		@[ NFKMLXWanVideoGenerator.class, @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:" ],
 		@[ NFKMLXLanguage.class, @"backendWithRepo:revision:cacheDirectoryURL:residency:error:" ],
 		@[ NFKMLXGemmaLanguage.class, @"gemmaBackendWithRepo:revision:cacheDirectoryURL:residency:error:" ],
@@ -1825,12 +1826,23 @@
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:NFKMLXWanAnimateGenerator.distilledModelName]);
 }
 
+// LTX-2: each release by its variant, the registry name and the repository its download factories read.
+- (void)testLTX2VariantsNameTheirReleases
+{
+	XCTAssertEqualObjects([NFKMLXLTX2Generator modelNameForVariant:NFKMLXLTX2VariantLtx23], @"ltx-2.3");
+	XCTAssertEqualObjects([NFKMLXLTX2Generator modelNameForVariant:NFKMLXLTX2VariantLtx25], @"ltx-2.5");
+	XCTAssertEqualObjects([NFKMLXLTX2Generator releaseRepoForVariant:NFKMLXLTX2VariantLtx23], @"diffusers/LTX-2.3-Diffusers");
+	XCTAssertEqualObjects([NFKMLXLTX2Generator releaseRepoForVariant:NFKMLXLTX2VariantLtx25], @"Lightricks/LTX-2.5-Diffusers");
+	XCTAssertNotNil(NFKMLXLTX2ParameterKey.spatioTemporalGuidanceScale);
+}
+
 // Every shipped model runs from Objective-C as a backend: each model class answers its backend factories,
 // the generators and model objects wrap themselves as backends, and every name is registered.
 - (void)testEveryModelReachesObjectiveCAsABackend
 {
 	NSDictionary<NSString *, NSArray<NSString *> *> *factories = @{
 		NSStringFromClass([NFKMLXLTXVideoGenerator class]): @[ @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXLTX2Generator class]): @[ @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:", @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:error:", @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:", @"generatorWithDirectoryURL:error:", @"generatorWithDirectoryURL:residency:error:", @"generatorWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:" ],
 		NSStringFromClass([NFKMLXWanVideoGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
 		NSStringFromClass([NFKMLXZImageGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
 		NSStringFromClass([NFKMLXQwenImageGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
@@ -1870,12 +1882,12 @@
 			XCTAssertTrue([modelClass respondsToSelector:NSSelectorFromString(selector)], @"%@ +%@", className, selector);
 		}
 	}
-	NSArray<Class> *wrappers = @[ [NFKMLXChronos class], [NFKMLXDepth3Estimator class], [NFKMLXFlux class], [NFKMLXFlux2 class], [NFKMLXFluxControlNetGenerator class], [NFKMLXLTXVideoGenerator class], [NFKMLXModernBERTReranker class], [NFKMLXPixtral class], [NFKMLXQwen3VL class], [NFKMLXQwen3VLReranker class], [NFKMLXQwenImageGenerator class], [NFKMLXSANAGenerator class], [NFKMLXSD3ControlNetGenerator class], [NFKMLXSD3Generator class], [NFKMLXSmolVLM class], [NFKMLXTimesFM class], [NFKMLXWanVideoGenerator class], [NFKMLXZImageGenerator class] ];
+	NSArray<Class> *wrappers = @[ [NFKMLXChronos class], [NFKMLXDepth3Estimator class], [NFKMLXFlux class], [NFKMLXFlux2 class], [NFKMLXFluxControlNetGenerator class], [NFKMLXLTXVideoGenerator class], [NFKMLXLTX2Generator class], [NFKMLXModernBERTReranker class], [NFKMLXPixtral class], [NFKMLXQwen3VL class], [NFKMLXQwen3VLReranker class], [NFKMLXQwenImageGenerator class], [NFKMLXSANAGenerator class], [NFKMLXSD3ControlNetGenerator class], [NFKMLXSD3Generator class], [NFKMLXSmolVLM class], [NFKMLXTimesFM class], [NFKMLXWanVideoGenerator class], [NFKMLXZImageGenerator class] ];
 	for (Class wrapper in wrappers) {
 		XCTAssertTrue([wrapper instancesRespondToSelector:@selector(inferenceBackend)], @"%@ -inferenceBackend", wrapper);
 	}
 	[NFKMLXReferenceModels registerAll];
-	NSArray<NSString *> *names = @[ @"ltx-video-0.9.0", @"wan", @"z-image", @"qwen-image-2.1", @"sd3", @"flux.1-schnell", @"flux.2-klein-4b", @"smolvlm2-500m", @"qwen3-vl-2b", @"pixtral-12b", @"gte-reranker-modernbert-base", @"qwen3-vl-reranker-2b", @"chronos-bolt-base", @"timesfm-2.5-200m", @"sam2-video", @"rife-clip", @"video-super-resolution-clip", @"robust-video-matting-clip", @"robust-video-matting-resnet50-clip", @"sana", @"sam3", @"flux.1-controlnet", @"sd3-controlnet", @"fastspeech2-voice", @"clip-probe", @"gemma4-multimodal" ];
+	NSArray<NSString *> *names = @[ @"ltx-video-0.9.0", @"ltx-2.3", @"ltx-2.5", @"wan", @"z-image", @"qwen-image-2.1", @"sd3", @"flux.1-schnell", @"flux.2-klein-4b", @"smolvlm2-500m", @"qwen3-vl-2b", @"pixtral-12b", @"gte-reranker-modernbert-base", @"qwen3-vl-reranker-2b", @"chronos-bolt-base", @"timesfm-2.5-200m", @"sam2-video", @"rife-clip", @"video-super-resolution-clip", @"robust-video-matting-clip", @"robust-video-matting-resnet50-clip", @"sana", @"sam3", @"flux.1-controlnet", @"sd3-controlnet", @"fastspeech2-voice", @"clip-probe", @"gemma4-multimodal" ];
 	for (NSString *name in names) {
 		XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:name], @"%@", name);
 	}

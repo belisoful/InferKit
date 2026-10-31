@@ -287,7 +287,7 @@ The diffusion pipelines are covered in <doc:DiffusionAndSchedulers>.
 | ``NFKMLXZImageGenerator`` / ``NFKMLXZImagePipeline`` | ``NFKMLXZImageTransformerNet`` + the Flux VAE + Qwen3 | Z-Image text-to-image from a release, staged where it does not fit whole; image-to-image through the pipeline |
 | ``NFKMLXSANAPipeline`` | ``NFKMLXSANATransformerNet`` + ``NFKMLXDCAutoencoderNet`` + Gemma 2 | SANA text-to-image |
 | ``NFKMLXLTXVideoGenerator`` / ``NFKMLXLTXPipeline`` | ``NFKMLXLTXTransformer`` + ``NFKMLXLTXVideoVAE`` + T5-XXL | LTX-Video text-to-video |
-| ``NFKMLXLTX2TransformerNet`` | the LTX-2 audio-video transformer alone | one transformer denoising a video latent and an audio latent together |
+| ``NFKMLXLTX2Generator`` / ``NFKMLXLTX2Pipeline`` | ``NFKMLXLTX2TransformerNet`` + both LTX-2 decoders + the vocoder + the text connectors + Gemma | LTX-2.3 and LTX-2.5: a clip and its soundtrack from one prompt, staged and streamed where a stage does not fit |
 | ``NFKMLXWanVideoGenerator`` / ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` + umT5 | Wan text-to-video |
 | ``NFKMLXWanAnimateGenerator`` | ``NFKMLXWanAnimateNet``, ``NFKMLXWanAnimateImageEncoderNet``, ``NFKMLXWanVideoVAENet`` | Wan 2.2 Animate 2: a reference character driven by a video's motion, end to end from a release directory (standard and distilled; streamed or packed to fit the transformer) |
 | ``NFKMLXQwenImageGenerator`` / ``NFKMLXQwenImagePipeline`` | ``NFKMLXQwenImageNet`` + the Wan VAE at `.qwenImage21` + a Qwen3-VL 8B text encoder | Qwen-Image 2.1 text-to-image (Qwen Research License, non-commercial) |
