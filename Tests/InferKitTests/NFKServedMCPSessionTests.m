@@ -4,7 +4,8 @@
 //
 //  MCP sessions on the server's endpoint over real HTTP on a loopback port: initialize issues one, the
 //  client's first request that carries its id starts it, DELETE and idleness end it, the event stream
-//  carries pings whose answers keep it, and an unknown or ended session is 404. Expiry runs on a clock
+//  carries pings whose answers keep it, an unknown or ended session is 404, and each tools/call reaches
+//  its tool with its caller. Expiry runs on a clock
 //  the test advances, with intervals long enough that the store's own timer never reaches them.
 //
 
@@ -73,6 +74,21 @@
 		}
 		return nil;
 	}
+}
+
+@end
+
+/*! A subclass that answers with the session its call came in. */
+@interface NFKSessionNamingTool : NFKInferenceTool
+@end
+
+@implementation NFKSessionNamingTool
+
+- (nullable NFKToolResult *)resultForArguments:(NSDictionary<NSString *, id> *)arguments
+										caller:(nullable NFKToolCaller *)caller
+										 error:(NSError **)error
+{
+	return [NFKToolResult resultWithText:caller.sessionIdentifier ?: @"no session"];
 }
 
 @end
@@ -483,6 +499,132 @@
 		return [self.recorder endedSessionWithIdentifier:identifier] != nil;
 	} description:@"the delegate learns the session ended"];
 	XCTAssertEqual([self.recorder endedSessionWithIdentifier:identifier].endReason, NFKServerMCPSessionEndReasonRevoked);
+}
+
+#pragma mark The caller
+
+/*! Calls tool name in the session, presenting key and the extra headers, and returns the call's text. */
+- (nullable NSString *)callTool:(NSString *)name inSession:(nullable NSString *)identifier key:(nullable NSString *)key
+						headers:(nullable NSDictionary<NSString *, NSString *> *)extra
+{
+	NSMutableDictionary<NSString *, NSString *> *headers = [NSMutableDictionary dictionaryWithDictionary:[self headersPresentingKey:key] ?: @{}];
+	[headers addEntriesFromDictionary:extra ?: @{}];
+	headers[@"Mcp-Session-Id"] = identifier;
+	NSDictionary *message = @{ @"jsonrpc": @"2.0", @"id": @3, @"method": @"tools/call", @"params": @{ @"name": name, @"arguments": @{} } };
+	NSHTTPURLResponse *response = nil;
+	NSDictionary *reply = [self send:@"POST" body:message headers:headers response:&response];
+	XCTAssertEqual(response.statusCode, 200);
+	return reply[@"result"][@"content"][0][@"text"];
+}
+
+- (void)testEachSessionsCallReachesTheToolWithItsCaller
+{
+	self.server.requiresAPIKeyOnLoopback = YES;
+	[self.server addAPIKey:@"key-one" named:@"desk" scopes:NFKServerKeyScopeMCP];
+	NSMutableArray<NFKToolCaller *> *callers = [NSMutableArray array];
+	[self.server addTool:[NFKInferenceTool toolWithName:@"whoami" description:@"Names the caller." parameters:@{ @"type": @"object" }
+										  callerHandler:^NFKToolResult *(NSDictionary *arguments, NFKToolCaller *caller, NSError **error) {
+		@synchronized (callers) {
+			[callers addObject:caller];
+		}
+		return [NFKToolResult resultWithText:caller.clientName ?: @"no session"];
+	}]];
+	NSString *left = [self startSessionAs:@"claude-code" key:@"key-one"];
+	NSString *right = [self startSessionAs:@"codex-mcp-client" key:@"key-one"];
+
+	NSDictionary<NSString *, NSString *> *leftHeaders = @{ @"X-Harness-Name": @"left", @"Cookie": @"session=abc",
+														   @"Proxy-Authorization": @"Basic eA==" };
+	XCTAssertEqualObjects([self callTool:@"whoami" inSession:left key:@"key-one" headers:leftHeaders], @"claude-code");
+	XCTAssertEqualObjects([self callTool:@"whoami" inSession:right key:@"key-one" headers:@{ @"X-Harness-Name": @"right" }], @"codex-mcp-client");
+	XCTAssertEqualObjects([self callTool:@"whoami" inSession:nil key:@"key-one" headers:nil], @"no session");
+	XCTAssertEqual(callers.count, 3u);
+
+	XCTAssertEqualObjects(callers[0].sessionIdentifier, left);
+	XCTAssertEqualObjects(callers[0].clientVersion, @"2.1.0");
+	XCTAssertEqualObjects(callers[0].keyName, @"desk");
+	XCTAssertEqualObjects([callers[0] valueForHeader:@"x-harness-name"], @"left");
+	XCTAssertGreaterThan(callers[0].clientAddress.length, 0u);
+	XCTAssertNil(callers[0].headers[@"authorization"], @"the key a request presents stays with the server");
+	XCTAssertNil(callers[0].headers[@"cookie"]);
+	XCTAssertNil(callers[0].headers[@"proxy-authorization"]);
+	XCTAssertEqualObjects(callers[1].sessionIdentifier, right);
+	XCTAssertEqualObjects([callers[1] valueForHeader:@"x-harness-name"], @"right");
+	XCTAssertNil(callers[2].sessionIdentifier, @"a request without a session has no session");
+	XCTAssertNil(callers[2].clientName);
+	XCTAssertEqualObjects(callers[2].keyName, @"desk", @"and still names its key");
+}
+
+- (void)testASubclassReadsTheSessionItsCallCameIn
+{
+	[self.server addTool:[[NFKSessionNamingTool alloc] initWithName:@"session" description:@"Names the session." parameters:@{ @"type": @"object" }]];
+	NSString *identifier = [self startSessionAs:@"gemini-cli" key:nil];
+	XCTAssertEqualObjects([self callTool:@"session" inSession:identifier key:nil headers:nil], identifier);
+	XCTAssertEqualObjects([self callTool:@"session" inSession:nil key:nil headers:nil], @"no session");
+}
+
+- (void)testAStartedCallHoldsNoThreadAndTheClientLeavingCancelsIt
+{
+	NSMutableArray<void (^)(NFKToolResult *)> *completions = [NSMutableArray array];
+	NSMutableArray<NFKToolCaller *> *callers = [NSMutableArray array];
+	NSMutableIndexSet *cancelled = [NSMutableIndexSet indexSet];
+	[self.server addTool:[NFKInferenceTool toolWithName:@"inbox_wait" description:@"Waits for a message." parameters:@{ @"type": @"object" }
+										   startHandler:^dispatch_block_t (NSDictionary *arguments, NFKToolCaller *caller,
+																		   void (^completion)(NFKToolResult *)) {
+		NSUInteger index = 0;
+		@synchronized (completions) {
+			index = completions.count;
+			[completions addObject:completion];
+			[callers addObject:caller];
+		}
+		return ^{
+			@synchronized (completions) {
+				[cancelled addIndex:index];
+			}
+		};
+	}]];
+	NSString *identifier = [self startSessionAs:@"claude-code" key:nil];
+	NSDictionary *call = @{ @"jsonrpc": @"2.0", @"id": @4, @"method": @"tools/call", @"params": @{ @"name": @"inbox_wait", @"arguments": @{} } };
+	NSArray *batch = @[ call, @{ @"jsonrpc": @"2.0", @"id": @5, @"method": @"tools/call", @"params": @{ @"name": @"inbox_wait", @"arguments": @{} } } ];
+	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:self.server.localMCPURL];
+	request.HTTPMethod = @"POST";
+	request.HTTPBody = [NSJSONSerialization dataWithJSONObject:batch options:0 error:NULL];
+	[request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+	[request setValue:identifier forHTTPHeaderField:@"Mcp-Session-Id"];
+	XCTestExpectation *answered = [self expectationWithDescription:@"the batch is answered"];
+	__block NSArray *replies = nil;
+	[[NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+		replies = data != nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+		[answered fulfill];
+	}] resume];
+	[self waitUntil:^BOOL {
+		@synchronized (completions) {
+			return completions.count == 2;
+		}
+	} description:@"both calls of the batch start while neither has an answer"];
+	XCTAssertEqualObjects(callers[0].sessionIdentifier, identifier);
+	XCTAssertEqualObjects(callers[1].clientName, @"claude-code");
+	completions[1]([NFKToolResult resultWithText:@"second"]);
+	completions[0]([NFKToolResult resultWithText:@"first"]);
+	[self waitForExpectations:@[ answered ] timeout:10];
+	XCTAssertEqualObjects(replies[0][@"result"][@"content"][0][@"text"], @"first", @"the replies keep the batch's order");
+	XCTAssertEqualObjects(replies[1][@"result"][@"content"][0][@"text"], @"second");
+
+	request.HTTPBody = [NSJSONSerialization dataWithJSONObject:call options:0 error:NULL];
+	NSURLSession *leaving = [NSURLSession sessionWithConfiguration:NSURLSessionConfiguration.ephemeralSessionConfiguration];
+	NSURLSessionDataTask *task = [leaving dataTaskWithRequest:request];
+	[task resume];
+	[self waitUntil:^BOOL {
+		@synchronized (completions) {
+			return completions.count == 3;
+		}
+	} description:@"the third call starts"];
+	[leaving invalidateAndCancel];
+	[self waitUntil:^BOOL {
+		@synchronized (completions) {
+			return [cancelled containsIndex:2];
+		}
+	} description:@"the client leaving cancels the started call"];
+	completions[2]([NFKToolResult resultWithText:@"too late"]);
 }
 
 @end

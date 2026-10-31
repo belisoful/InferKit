@@ -1300,7 +1300,11 @@ Protocol at `/mcp` (Streamable HTTP), so Claude Code, Claude Desktop, and any MC
 model as a tool. Only the added tools are listed, each with its description and schema, and a call's
 text, images, and audio come back as MCP content. The route takes the server's key, and refuses a
 browser request whose `Origin` names another site, so a page elsewhere cannot post to a local server;
-the `Host` check above is what stops DNS rebinding. `NFKMCPClient` reads any MCP server's tools back as `NFKInferenceTool`, so a loop gives a
+the `Host` check above is what stops DNS rebinding. A tool built with a caller handler, or a subclass
+that overrides `resultForArguments:caller:error:`, learns who called it as an `NFKToolCaller`: the MCP
+session, the client's name and version, the key name, the address, and the request's headers. A tool
+built with a start handler answers later without holding a thread, for a call that waits.
+`NFKMCPClient` reads any MCP server's tools back as `NFKInferenceTool`, so a loop gives a
 model a remote server's tools beside its own. On macOS it also launches a server as a program and
 speaks to it over stdio, given the command, arguments, environment, and working directory an agent's
 `mcp add --transport stdio` takes. The server inherits only a few variables (`HOME`, `PATH`, `USER`,

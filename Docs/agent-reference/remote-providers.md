@@ -1486,8 +1486,9 @@ machine's remote clients reach a model this process hosts. Files:
   - `Origin`: absent is allowed, since a non-browser client sends none. localhost, 127.0.0.1, `::1`,
     or the request's own `Host` is allowed. Anything else, `null` included, is 403, against DNS
     rebinding.
-  - A call runs on a user-initiated global queue through `invokeWithArguments:`, so the schema check
-    runs server-side too.
+  - A call starts on a user-initiated global queue through `startWithArguments:caller:completion:`,
+    so the schema check runs server-side too. A tool without a start handler runs there through
+    `invokeWithArguments:caller:`; one with a start handler returns at once and holds no worker.
   - Content: `NFKMCPCallResult` writes text, then each `imagePNGs` image, then `NFKOutputAudio`'s
     file as `audio` with a MIME type by extension, `NFKOutputVideo` as an embedded resource
     (`inferkit:///<file name>`), and a dictionary `NFKOutputStructured` as `structuredContent`.
@@ -2272,6 +2273,31 @@ an app can list the agents connected to its `/mcp` and see them leave.
   interval starting the timer, and a session bound to its key and ended by the key's revocation. The
   expiry tests drive the store's injected clock (`uptimeProvider`) and call its sweep, so no
   wall-clock interval decides them. `NFKServedMCPTests`' bare GET expects `Allow: GET, POST, DELETE`.
+
+**The caller of a tool call (2026-10-31).** Asked for by an app that carries messages between the
+coding agents connected to its `/mcp`: a tool must tell its callers apart, and an argument the caller
+writes can be spoofed.
+
+- `NFKServedMCPSessionStore`'s `callerOfRequest:session:` builds one `NFKToolCaller` per POST, reading
+  the session record's id, client name, and version on the store's lock. A request without
+  `Mcp-Session-Id`, or a batch whose `initialize` issues the session, carries nil in those three. The
+  key name comes from the request, so it is set without a session too.
+- Decision: the caller's headers leave out `authorization`, `proxy-authorization`, `cookie`,
+  `x-api-key`, and `x-goog-api-key`. The key name identifies the key, and a tool has no use for a
+  secret; a cookie reaches `/mcp` from a localhost page the Origin check admits. Every other header passes, so an app
+  that launches an agent names it with a header of its own in the agent's MCP config.
+- The endpoint offers a call to the server's `toolStarter` (model tools) first, then starts it through
+  the tool. `replyTo:` answers only an unknown tool's call. A start handler's cancel block joins the
+  exchange's cancels; `fillSlot:` ignores a second completion.
+- Start handlers exist for a call that waits minutes (an inbox wait). On a worker it would hold a
+  global-queue thread for the whole wait, and about 64 such waits starve the pool, as model tools did
+  before the tool starter.
+- The plugin registry's in-process tool wrapper forwards the caller to the plugin's own tool. The
+  plugin channel does not carry it, so a plugin process's tool sees nil.
+- Tests: `NFKInferenceToolTests` (4 for the caller), and `NFKServedMCPSessionTests` (3): two sessions
+  under one key each reaching the tool with their own caller and header, and a call without a session;
+  a subclass reading the session; a batch of start-handler calls starting together, answering in batch
+  order, and a client that leaves cancelling its started call.
 
 **Hosting updates (2026-10-13).** Asked for by an app's service, which restarts the same server for a
 port or exposure change and pins models its user marks.

@@ -252,7 +252,9 @@ NS_SWIFT_SENDABLE
 				was issued lapses unreported. MCPSessions lists the sessions. Only the added tools are
 				listed; a hosted model is a tool when an NFKBackendTool for it is added, or when
 				addToolForModelName:outputModality:purpose:error: adds one named NFKModelToolName of the
-				model's name. A tool's text,
+				model's name. Each call reaches its tool with an NFKToolCaller: the session, the
+				client's name and version, the key name, the address, and the request's headers, so a
+				tool tells its callers apart. A tool's text,
 				the images it shows the model, and the audio it generates come back as MCP content. The
 				route takes a key with NFKServerKeyScopeMCP, and refuses a browser request whose Origin
 				names another host.

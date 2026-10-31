@@ -351,6 +351,24 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 
 #pragma mark Activity
 
+/*! The caller of a request's tool calls: the session it carries, or none, with the request's headers
+	other than those that carry a credential. */
+- (NFKToolCaller *)callerOfRequest:(NFKHTTPRequest *)request session:(nullable NFKServedMCPSessionRecord *)record
+{
+	NSMutableDictionary<NSString *, NSString *> *headers = [request.headers mutableCopy] ?: [NSMutableDictionary dictionary];
+	[headers removeObjectsForKeys:@[ @"authorization", @"proxy-authorization", @"cookie", @"x-api-key", @"x-goog-api-key" ]];
+	NSString *identifier = nil;
+	NSString *clientName = nil;
+	NSString *clientVersion = nil;
+	@synchronized (self) {
+		identifier = record.identifier;
+		clientName = record.clientName;
+		clientVersion = record.clientVersion;
+	}
+	return [[NFKToolCaller alloc] initWithSessionIdentifier:identifier clientName:clientName clientVersion:clientVersion
+													keyName:request.keyName clientAddress:request.clientAddress ?: @"" headers:headers];
+}
+
 - (void)beginRequestInSession:(nullable NFKServedMCPSessionRecord *)record
 {
 	@synchronized (self) {
@@ -707,6 +725,7 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 		}
 	}
 	[sessions beginRequestInSession:session];
+	NFKToolCaller *caller = [sessions callerOfRequest:request session:session];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		NFKServedMCPExchange *exchange = [[NFKServedMCPExchange alloc] initWithResponse:response];
 		NSString *issued = nil;
@@ -715,7 +734,8 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 				[sessions receivedResponseWithIdentifier:message[@"id"] inSession:session];
 				continue;
 			}
-			NSDictionary *reply = [self answer:message tools:tools instructions:instructions toolStarter:toolStarter exchange:exchange];
+			NSDictionary *reply = [self answer:message tools:tools instructions:instructions toolStarter:toolStarter caller:caller
+								 exchange:exchange];
 			NSDictionary *result = reply[@"result"];
 			if (issued == nil && [message[@"method"] isEqual:@"initialize"] && [result isKindOfClass:NSDictionary.class]) {
 				NSDictionary *params = [message[@"params"] isKindOfClass:NSDictionary.class] ? message[@"params"] : @{};
@@ -803,11 +823,13 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 }
 
 /*! Answers one message into exchange: a reply now, a slot a started tool call fills later, or nothing for
-	a notification. Returns the reply it gave now, which initialize's session reads. */
+	a notification. Returns the reply it gave now, which initialize's session reads. A tool call the
+	toolStarter does not start starts through the tool itself, for caller. */
 + (nullable NSDictionary *)answer:(id)message
 							tools:(NSArray<NFKInferenceTool *> *)tools
 					 instructions:(nullable NSString *)instructions
 					  toolStarter:(nullable NFKServedMCPToolStarter)toolStarter
+						   caller:(NFKToolCaller *)caller
 						 exchange:(NFKServedMCPExchange *)exchange
 {
 	NSDictionary *refusal = [self envelopeErrorOf:message];
@@ -834,15 +856,20 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 	}
 	params = [params isKindOfClass:NSDictionary.class] ? NFKServedWithoutNulls(params) : @{};
 	NFKInferenceTool *tool = [method isEqualToString:@"tools/call"] ? [self toolNamed:params[@"name"] in:tools] : nil;
-	if (tool != nil && toolStarter != nil) {
+	if (tool != nil) {
 		NSUInteger slot = [exchange reserveSlot];
+		NSDictionary *arguments = params[@"arguments"] ?: @{};
 		__block BOOL completed = NO;
+		void (^completion)(NFKToolResult *) = ^(NFKToolResult *result) {
+			completed = YES;
+			[exchange fillSlot:slot reply:[self callReplyWithIdentifier:identifier result:result]];
+		};
 		dispatch_block_t cancel = nil;
 		@try {
-			cancel = toolStarter(tool, params[@"arguments"] ?: @{}, ^(NFKToolResult *result) {
-				completed = YES;
-				[exchange fillSlot:slot reply:[self callReplyWithIdentifier:identifier result:result]];
-			});
+			cancel = toolStarter != nil ? toolStarter(tool, arguments, completion) : nil;
+			if (cancel == nil && !completed) {
+				cancel = [tool startWithArguments:arguments caller:caller completion:completion];
+			}
 		} @catch (NSException *exception) {
 			[exchange fillSlot:slot reply:[self errorWithIdentifier:identifier code:NFKJSONRPCInternalError
 														   message:NFKServedExceptionError(exception).localizedDescription]];
@@ -850,12 +877,7 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 		}
 		if (cancel != nil) {
 			[exchange addCancel:cancel];
-			return nil;
 		}
-		if (completed) {
-			return nil;
-		}
-		[exchange fillSlot:slot reply:[self replyTo:message params:params tools:tools instructions:instructions]];
 		return nil;
 	}
 	NSDictionary *reply = [self replyTo:message params:params tools:tools instructions:instructions];
@@ -883,7 +905,7 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 	}
 }
 
-/*! The reply to a well-formed request, run on the calling thread; a tool that raises answers -32603. */
+/*! The reply to a well-formed request other than a call of a listed tool, run on the calling thread. */
 + (NSDictionary *)replyTo:(NSDictionary *)message params:(NSDictionary *)params tools:(NSArray<NFKInferenceTool *> *)tools instructions:(nullable NSString *)instructions
 {
 	id identifier = message[@"id"];
@@ -903,16 +925,8 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 	}
 	if ([method isEqualToString:@"tools/call"]) {
 		NSString *name = params[@"name"];
-		NFKInferenceTool *tool = [self toolNamed:name in:tools];
-		if (tool == nil) {
-			return [self errorWithIdentifier:identifier code:NFKJSONRPCInvalidParams
-									 message:[NSString stringWithFormat:@"no tool named %@", name ?: @"(none)"]];
-		}
-		@try {
-			return [self callReplyWithIdentifier:identifier result:[tool invokeWithArguments:params[@"arguments"] ?: @{}]];
-		} @catch (NSException *exception) {
-			return [self errorWithIdentifier:identifier code:NFKJSONRPCInternalError message:NFKServedExceptionError(exception).localizedDescription];
-		}
+		return [self errorWithIdentifier:identifier code:NFKJSONRPCInvalidParams
+								 message:[NSString stringWithFormat:@"no tool named %@", name ?: @"(none)"]];
 	}
 	return [self errorWithIdentifier:identifier code:NFKJSONRPCMethodNotFound message:[@"no method " stringByAppendingString:method]];
 }

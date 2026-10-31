@@ -1153,12 +1153,13 @@ static const NSTimeInterval NFKPluginRegistryDefaultVerificationTimeout = 120;
 		NSDictionary *parameters = [declaration[@"parameters"] isKindOfClass:NSDictionary.class] ? declaration[@"parameters"]
 			: @{ @"type": @"object" };
 		NFKInferenceTool *tool = [NFKInferenceTool toolWithName:name description:summary parameters:parameters
-														handler:^NFKToolResult * _Nullable(NSDictionary<NSString *, id> *arguments, NSError **error) {
+												  callerHandler:^NFKToolResult * _Nullable(NSDictionary<NSString *, id> *arguments,
+																						   NFKToolCaller *caller, NSError **error) {
 			NFKPluginRegistry *registry = weakSelf;
 			NFKLoadedPlugin *loaded = registry != nil ? [registry loadedPluginForManifest:manifest error:error] : nil;
 			for (NFKInferenceTool *own in loaded.tools) {
 				if ([own.name isEqualToString:name]) {
-					return [own resultForArguments:arguments error:error];
+					return [own resultForArguments:arguments caller:caller error:error];
 				}
 			}
 			if (loaded != nil || registry == nil) {

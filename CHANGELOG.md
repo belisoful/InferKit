@@ -108,6 +108,27 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A tool served on /mcp learns its caller
+
+- Every `tools/call` through an `NFKInferenceServer`'s `/mcp` reaches its tool with an `NFKToolCaller`:
+  the session's `Mcp-Session-Id`, the client name and version from that session's `initialize`, the key
+  name, the client address, and the request's headers by lowercase name. The headers that carry a
+  credential (`authorization`, `proxy-authorization`, `cookie`, `x-api-key`, `x-goog-api-key`) are left
+  out. A request without a session carries
+  no session, client name, or version. Before, a tool received only its arguments, so it could not tell
+  two MCP clients apart.
+- `+toolWithName:description:parameters:callerHandler:` builds a tool whose handler receives the caller.
+  A subclass overrides `-resultForArguments:caller:error:`, whose base runs the handler or calls
+  `-resultForArguments:error:`, so an existing subclass runs unchanged.
+- `+toolWithName:description:parameters:startHandler:` builds a tool that starts without holding the
+  calling thread, calls its completion once, and returns a cancel block, which the server runs when the
+  client leaves. The calls of a batch then run at once. `-startWithArguments:caller:completion:` starts
+  any tool; a tool without a start handler runs on the calling thread and completes before returning.
+- `-invokeWithArguments:caller:` runs a tool for a caller. A tool run anywhere other than `/mcp` (a tool
+  loop, `-invokeWithArguments:`) sees a nil caller.
+- A plugin's in-process tool passes the caller to the plugin's own tool. A plugin process's tool does
+  not receive it.
+
 #### A texture's PNG keeps its straight color
 
 - `NFKImageCoding` reads a BGRA8 or RGBA8 `MTLTexture` as straight (unpremultiplied) color, the
