@@ -26850,8 +26850,8 @@ CHECKPOINT_MODELS["triposr"] = run_triposr
 def _sf3d_model(checkpoint):
     """`SF3D.from_pretrained` on the release directory (`config.yaml` + `model.safetensors`), on the CPU.
 
-    The `sf3d` package comes from IK_SF3D_SRC (the repository at ff21fc4 under
-    ~/.inferkit-validation/src/sf3d-ff21fc4). Its `rembg`, `gpytoolbox`, and `pynanoinstantmeshes` imports
+    The `sf3d` package comes from IK_SF3D_SRC (the repository at ff21fc4, stored at
+    <validation root>/sources/refsrc/sf3d-ff21fc4). Its `rembg`, `gpytoolbox`, and `pynanoinstantmeshes` imports
     are stubbed: background removal and the two remeshers do not run here. The tokenizer's
     `Dinov2Model.from_pretrained("facebook/dinov2-large")` builds from facebook/dinov2-large's
     configuration alone, and the material estimator's OpenCLIP tower is created without its laion2b
@@ -26861,10 +26861,7 @@ def _sf3d_model(checkpoint):
     import importlib
     import types
     os.environ["SF3D_USE_CPU"] = "1"
-    source = os.environ.get("IK_SF3D_SRC") or next(
-        (path for path in (os.path.join(VALIDATION_ROOT, "src", "sf3d-ff21fc4"),
-                           os.path.expanduser("~/.inferkit-validation/src/sf3d-ff21fc4")) if os.path.isdir(path)),
-        os.path.join(VALIDATION_ROOT, "src", "sf3d-ff21fc4"))
+    source = os.environ.get("IK_SF3D_SRC") or os.path.join(VALIDATION_ROOT, "sources", "refsrc", "sf3d-ff21fc4")
     if source not in sys.path:
         sys.path.insert(0, source)
     for name in ("rembg", "gpytoolbox", "pynanoinstantmeshes"):
