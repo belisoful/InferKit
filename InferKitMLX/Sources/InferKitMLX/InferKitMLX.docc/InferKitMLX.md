@@ -541,6 +541,12 @@ The figures have three limits:
 - ``NFKMLXWanAnimate``
 - ``NFKMLXWanAnimateNet``
 - ``NFKMLXWanAnimateKVCache``
+- ``NFKMLXWanAnimateGenerator``
+- ``NFKMLXWanAnimateVariant``
+- ``NFKMLXWanAnimatePipeline``
+- ``NFKMLXWanAnimateSchedule``
+- ``NFKMLXWanAnimateImageEncoderNet``
+- ``NFKMLXWanAnimateImageEncoderConfiguration``
 - ``NFKMLXQwenImageGenerator``
 - ``NFKMLXQwenImage``
 - ``NFKMLXQwenImageNet``

@@ -69604,6 +69604,920 @@
       ]
     },
     {
+      "displayName" : "Wan 2.2 Animate 2 14B",
+      "engine" : "mlx",
+      "family" : "wan-animate",
+      "id" : "wan2.2-animate-14b",
+      "inputModalities" : [
+        "image",
+        "video",
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The character to animate.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Reference image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "The motion to follow, resampled to the frame rate.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Driving video",
+          "valueType" : "video"
+        },
+        {
+          "help" : "A description of the character's appearance and the background.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from, read where the guidance is not 1.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 640,
+          "help" : "With the height, the frame's area; the reference image sets its shape.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 800,
+          "help" : "With the width, the frame's area.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 24,
+          "help" : "The rate the driving video is resampled to and the clip plays at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 40,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 3,
+          "help" : "The classifier-free guidance weight. Other than 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 81,
+          "help" : "The frames each segment denoises.",
+          "key" : "NFKMLXParameterSegmentLength",
+          "kind" : "json",
+          "minimum" : 2,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Segment length"
+        },
+        {
+          "default" : 1,
+          "help" : "The frames each segment carries over from the one before it.",
+          "key" : "NFKMLXParameterCarriedFrames",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Carried frames"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 91333790924,
+                "residentBytes" : 91333790924
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 24710932044,
+                "residentBytes" : 24710932044
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19054999116,
+                "residentBytes" : 19054999116
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16227032652,
+                "residentBytes" : 16227032652
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13399066188,
+                "residentBytes" : 13399066188
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10571099724,
+                "residentBytes" : 10571099724
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7743133260,
+                "residentBytes" : 7743133260
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The animated clip as a QuickTime movie, one frame per resampled driving frame.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 20 in place of 40: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 20
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-animate-14b",
+      "requirements" : {
+        "minimumMemoryBytes" : 59077232730,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that animates the character in a reference image with the motion of a driving video.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 Animate 2 14B",
+          "downloadBytes" : 45925700726,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 45666895462,
+                  "checkpoint" : 45920680524,
+                  "float32" : 91333790924
+                },
+                "id" : "model",
+                "quantizableElements" : 22623731712,
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 59077232730,
+          "parameterCount" : 22833447731,
+          "peakBytes" : 45920680524,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-animate-14b",
+          "residentBytes" : 45920680524,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 560,
+                "optional" : false,
+                "path" : "model_index.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 978,
+                "optional" : false,
+                "path" : "scheduler/scheduler_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2081,
+                "optional" : true,
+                "path" : "modular_model_index.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 806,
+                "optional" : false,
+                "path" : "text_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 22512,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "tokenizer/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 61786,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 7079,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 498,
+                "optional" : false,
+                "path" : "image_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1261596224,
+                "optional" : true,
+                "path" : "image_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "e672f7dcb7f46458f8edc218669bc25d7ab1fc48bec53e8bd5b957bc1386a5e4"
+              },
+              {
+                "optional" : true,
+                "path" : "image_encoder/model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 457,
+                "optional" : false,
+                "path" : "transformer/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 119890,
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 898,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 507591892,
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "d6e524b3fffede1787a74e81b30976dce5400c4439ba64222168e607ed19e793"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "7d48412d7b903ff3a89f4f5a960d99e1899605a1",
+            "repository" : "Wan-AI/Wan2.2-Animate-2-14B-Diffusers",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Wan 2.2 Animate 2 14B Distilled",
+      "engine" : "mlx",
+      "family" : "wan-animate",
+      "id" : "wan2.2-animate-14b-distilled",
+      "inputModalities" : [
+        "image",
+        "video",
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The character to animate.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Reference image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "The motion to follow, resampled to the frame rate.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Driving video",
+          "valueType" : "video"
+        },
+        {
+          "help" : "A description of the character's appearance and the background.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from, read where the guidance is not 1.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 640,
+          "help" : "With the height, the frame's area; the reference image sets its shape.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 800,
+          "help" : "With the width, the frame's area.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 24,
+          "help" : "The rate the driving video is resampled to and the clip plays at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 10,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 1,
+          "help" : "The classifier-free guidance weight. Other than 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 81,
+          "help" : "The frames each segment denoises.",
+          "key" : "NFKMLXParameterSegmentLength",
+          "kind" : "json",
+          "minimum" : 2,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Segment length"
+        },
+        {
+          "default" : 1,
+          "help" : "The frames each segment carries over from the one before it.",
+          "key" : "NFKMLXParameterCarriedFrames",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Carried frames"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 91333790924,
+                "residentBytes" : 91333790924
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 45920680524,
+                "residentBytes" : 45920680524
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 24710932044,
+                "residentBytes" : 24710932044
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19054999116,
+                "residentBytes" : 19054999116
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16227032652,
+                "residentBytes" : 16227032652
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13399066188,
+                "residentBytes" : 13399066188
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10571099724,
+                "residentBytes" : 10571099724
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7743133260,
+                "residentBytes" : 7743133260
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The animated clip as a QuickTime movie, one frame per resampled driving frame.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 5 in place of 10: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 5
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-animate-14b-distilled",
+      "requirements" : {
+        "minimumMemoryBytes" : 59077232730,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that animates the character in a reference image with the motion of a driving video.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 Animate 2 14B Distilled",
+          "downloadBytes" : 45925700325,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 45666895462,
+                  "checkpoint" : 45920680524,
+                  "float32" : 91333790924
+                },
+                "id" : "model",
+                "quantizableElements" : 22623731712,
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 59077232730,
+          "parameterCount" : 22833447731,
+          "peakBytes" : 45920680524,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-animate-14b-distilled",
+          "residentBytes" : 45920680524,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 564,
+                "optional" : false,
+                "path" : "model_index.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 487,
+                "optional" : false,
+                "path" : "scheduler/scheduler_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2167,
+                "optional" : true,
+                "path" : "modular_model_index.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 806,
+                "optional" : false,
+                "path" : "text_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 22512,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "tokenizer/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 61786,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 7079,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 498,
+                "optional" : false,
+                "path" : "image_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1261596224,
+                "optional" : true,
+                "path" : "image_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "e672f7dcb7f46458f8edc218669bc25d7ab1fc48bec53e8bd5b957bc1386a5e4"
+              },
+              {
+                "optional" : true,
+                "path" : "image_encoder/model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 457,
+                "optional" : false,
+                "path" : "transformer/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 119890,
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 898,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 507591892,
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "d6e524b3fffede1787a74e81b30976dce5400c4439ba64222168e607ed19e793"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "59e4141466bcb1bf9733eca1bc78be6891c9fbdf",
+            "repository" : "Wan-AI/Wan2.2-Animate-2-14B-Distilled-Diffusers",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "Wan 2.2 TI2V 5B",
       "engine" : "mlx",
       "family" : "wan",

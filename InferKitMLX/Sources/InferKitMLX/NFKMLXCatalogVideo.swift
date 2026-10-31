@@ -199,7 +199,7 @@ enum NFKMLXCatalogVideo {
     // MARK: - Video generation
 
     static var generators: [NFKMLXCatalogEntry] {
-        [ltxVideo] + wanEntries
+        [ltxVideo] + wanEntries + wanAnimateEntries
     }
 
     /// The options a text-to-video generator reads.
@@ -274,6 +274,44 @@ enum NFKMLXCatalogVideo {
                                                 precisionStage: "transformer")
             }
             return entry
+        }
+    }
+
+    /// Wan 2.2 Animate 2's two releases, ``NFKMLXWanAnimateGenerator/modelName`` and
+    /// ``NFKMLXWanAnimateGenerator/distilledModelName``. ``NFKMLXWanAnimateGenerator/register()`` registers both.
+    static var wanAnimateEntries: [NFKMLXCatalogEntry] {
+        [(NFKMLXWanAnimateVariant.standard, NFKMLXWanAnimateGenerator.modelName, "Wan 2.2 Animate 2 14B"),
+         (.distilled, NFKMLXWanAnimateGenerator.distilledModelName, "Wan 2.2 Animate 2 14B Distilled")].map {
+            variant, name, displayName in
+            NFKMLXCatalogImage.model(
+                name, displayName, family: "wan-animate",
+                summary: "A diffusion transformer that animates the character in a reference image with the motion of a driving video.",
+                tasks: [NFKModelTaskVideoGeneration],
+                inputs: [NFKMLXCatalogImage.imageInput("The character to animate.", title: "Reference image"),
+                         .input(NFKInputVideo, required: true, title: "Driving video",
+                                help: "The motion to follow, resampled to the frame rate."),
+                         .input(NFKInputPrompt, title: "Prompt", help: "A description of the character's appearance and the background."),
+                         .input(NFKInputNegativePrompt, title: "Negative prompt",
+                                help: "What to steer away from, read where the guidance is not 1.")],
+                outputs: [clipOutput("The animated clip as a QuickTime movie, one frame per resampled driving frame.")],
+                parameters: [
+                    NFKMLXCatalogImage.widthOption(640, help: "With the height, the frame's area; the reference image sets its shape."),
+                    NFKMLXCatalogImage.heightOption(800, help: "With the width, the frame's area."),
+                    .option(NFKParameterFramesPerSecond, title: "Frame rate",
+                            help: "The rate the driving video is resampled to and the clip plays at.", defaultValue: 24.0,
+                            minimum: 1),
+                    NFKMLXCatalogImage.seedOption(0), NFKMLXCatalogImage.stepsOption(variant.defaultSteps),
+                    NFKMLXCatalogImage.guidanceOption(Double(variant.defaultGuidance),
+                                                      help: "The classifier-free guidance weight. Other than 1 the clip guides against the negative prompt."),
+                    .option(NFKMLXGenerationParameterKey.segmentLength, title: "Segment length",
+                            help: "The frames each segment denoises.", defaultValue: 81, minimum: 2, step: 1),
+                    .option(NFKMLXGenerationParameterKey.carriedFrames, title: "Carried frames",
+                            help: "The frames each segment carries over from the one before it.", defaultValue: 1,
+                            minimum: 0, step: 1),
+                ],
+                license: .apache2(),
+                source: NFKMLXCatalogImage.hubRelease(variant.repository, components: NFKMLXWanAnimateGenerator.releaseComponents),
+                residencies: NFKMLXCatalogImage.streamedStageResidencies)
         }
     }
 

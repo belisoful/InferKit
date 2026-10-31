@@ -3313,6 +3313,33 @@
       "note": "VGG-16 with torchvision's ImageNet weights (timm/vgg16.tv_in1k, BSD-3-Clause), ~553 MB float32. The perceptual loss network of the Cosmos Tokenizer post-training objective: only `features.*` (the 13 convolutions, ~58 MB) is read. The objective oracle loads this same file into torchvision's vgg16."
     },
     {
+      "key": "WAN_ANIMATE",
+      "repo": "Wan-AI/Wan2.2-Animate-2-14B-Diffusers",
+      "directory": "wan-animate-2-14b-diffusers",
+      "files": [
+        "model_index.json",
+        "modular_model_index.json",
+        "configuration.json",
+        "scheduler/scheduler_config.json",
+        "transformer/config.json",
+        "transformer/diffusion_pytorch_model.safetensors.index.json",
+        "text_encoder/config.json",
+        "text_encoder/model.safetensors.index.json",
+        "image_encoder/config.json",
+        "image_encoder/model.safetensors",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.safetensors",
+        "tokenizer/spiece.model",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_WAN_ANIMATE": ""
+      },
+      "note": "Wan 2.2 Animate 2 in the diffusers layout (about 50 GB whole, Apache-2.0); the distilled release Wan-AI/Wan2.2-Animate-2-14B-Distilled-Diffusers shares every shape and samples with Euler instead of DPM-Solver++. Only the small files, the image encoder (1.26 GB bf16) and the Wan 2.1 VAE (0.5 GB float32) are fetched; the transformer (32.8 GB) and umT5-XXL (11.4 GB) are held by shape under shapes/wan-animate-2-14b-diffusers-{transformer,text-encoder,image-encoder,vae}. The end-to-end parity runs on two test-dev releases, the release's own layout, keys and stored types at a small geometry with seeded random weights: Tools/wan-animate-testdev/make_testdev.py --release <this directory, or the distilled one's small files> --out <dir> -> IK_VAL_WAN_ANIMATE_TESTDEV / IK_VAL_WAN_ANIMATE_DISTILLED_TESTDEV. Records: run_reference.py wan_animate_pipeline --checkpoint <test-dev dir> -> IK_PARITY_WAN_ANIMATE_PIPELINE / IK_PARITY_WAN_ANIMATE_DISTILLED_PIPELINE, under the wananimate oracle env."
+    },
+    {
       "key": "QWEN_IMAGE",
       "repo": "Qwen/Qwen-Image-2.1",
       "directory": "qwen-image-2.1",
@@ -5856,6 +5883,7 @@
       "note": "WanAnimate2Transformer3DModel arrived in diffusers 0.40, which needs a modern torch; the 3.9 environments top out at diffusers 0.36, so this one is built on Homebrew python@3.12. Its transformers is the modern one too (5.x), which is where Sam2VideoModel lives, so the SAM 2 video oracle runs here. `scipy` is here for the SAM 3 objective, whose matcher calls `linear_sum_assignment`.",
       "modes": [
         "wan_animate",
+        "wan_animate_pipeline",
         "sam2_video",
         "sam3_vision",
         "sam3_text",
@@ -6099,6 +6127,27 @@
   },
   "shapes_comment": "Releases held to the module STRUCTURALLY (every parameter's shape against the safetensors headers, no weights downloaded): `python3 shapes.py <repo> <validation root>/shapes/<directory>`; `IK_SHAPES_ROOT` names the parent, and NFKMLXReleasedSizesTests reads each entry by directory name.",
   "shapes": [
+    {
+      "repo": "Wan-AI/Wan2.2-Animate-2-14B-Diffusers",
+      "subfolder": "transformer",
+      "directory": "wan-animate-2-14b-diffusers-transformer",
+      "note": "The released diffusers layout of Wan 2.2 Animate 2: 1303 transformer tensors at bf16, 242 umT5-XXL tensors at bf16, 519 CLIP ViT-H/14 tensors at bf16 under vision_model., 194 Wan 2.1 VAE tensors at float32. NFKMLXWanAnimatePipelineTests.testTheReleaseMatchesItsLoaders holds every stage to them."
+    },
+    {
+      "repo": "Wan-AI/Wan2.2-Animate-2-14B-Diffusers",
+      "subfolder": "text_encoder",
+      "directory": "wan-animate-2-14b-diffusers-text-encoder"
+    },
+    {
+      "repo": "Wan-AI/Wan2.2-Animate-2-14B-Diffusers",
+      "subfolder": "image_encoder",
+      "directory": "wan-animate-2-14b-diffusers-image-encoder"
+    },
+    {
+      "repo": "Wan-AI/Wan2.2-Animate-2-14B-Diffusers",
+      "subfolder": "vae",
+      "directory": "wan-animate-2-14b-diffusers-vae"
+    },
     {
       "repo": "Wan-AI/Wan2.2-Animate-2-14B",
       "file": "wan_animate_2/wan_animate_2_bf16.safetensors",

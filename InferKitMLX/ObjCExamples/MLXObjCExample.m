@@ -1788,6 +1788,43 @@
 	CGImageRelease(plate);
 }
 
+// Docs/examples.md: Wan 2.2 Animate. The generator assembles a diffusers release directory and animates a
+// reference image with a driving clip; its backend reads NFKInputImage and NFKInputVideo:
+//   NFKMLXWanAnimateGenerator *animator = [NFKMLXWanAnimateGenerator generatorWithDirectoryURL:dir
+//                                                                                     residency:NFKMLXResidencyAutomatic
+//                                                                                         error:&error];
+//   NSArray *frames = [animator framesForReferenceImage:character drivingFrames:motion drivingFramesPerSecond:30
+//                                                 prompt:@"..." negativePrompt:nil seed:0 error:&error];
+- (void)testObjectiveCReachesWanAnimate
+{
+	for (NSString *selector in @[ @"generatorWithDirectoryURL:error:", @"generatorWithDirectoryURL:residency:error:",
+								  @"generatorWithDirectoryURL:residency:precision:quantizationBits:error:",
+								  @"generatorWithVariant:repo:revision:cacheDirectoryURL:residency:error:",
+								  @"generatorWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:",
+								  @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:",
+								  @"backendWithDirectoryURL:residency:precision:quantizationBits:error:",
+								  @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:error:",
+								  @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:",
+								  @"register" ]) {
+		XCTAssertTrue([NFKMLXWanAnimateGenerator respondsToSelector:NSSelectorFromString(selector)], @"+%@", selector);
+	}
+	for (NSString *selector in @[ @"inferenceBackend", @"framesForReferenceImage:drivingFrames:drivingFramesPerSecond:prompt:negativePrompt:seed:error:",
+								  @"setSegmentLength:", @"setCarriedFrames:", @"setSteps:", @"setGuidance:", @"streamedLayerCount",
+								  @"quantizationBits", @"holdsStagesResident" ]) {
+		XCTAssertTrue([NFKMLXWanAnimateGenerator instancesRespondToSelector:NSSelectorFromString(selector)], @"-%@", selector);
+	}
+	XCTAssertEqualObjects(NFKMLXGenerationParameterKey.segmentLength, @"NFKMLXParameterSegmentLength");
+	XCTAssertEqualObjects(NFKMLXGenerationParameterKey.carriedFrames, @"NFKMLXParameterCarriedFrames");
+	XCTAssertNotEqual(NFKMLXWanAnimateVariantStandard, NFKMLXWanAnimateVariantDistilled);
+	NSError *error = nil;
+	XCTAssertNil([NFKMLXWanAnimateGenerator generatorWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent-wan-animate"]
+															 residency:NFKMLXResidencyAutomatic error:&error]);
+	XCTAssertNotNil(error);
+	[NFKMLXReferenceModels registerAll];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:NFKMLXWanAnimateGenerator.modelName]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:NFKMLXWanAnimateGenerator.distilledModelName]);
+}
+
 // Every shipped model runs from Objective-C as a backend: each model class answers its backend factories,
 // the generators and model objects wrap themselves as backends, and every name is registered.
 - (void)testEveryModelReachesObjectiveCAsABackend

@@ -262,6 +262,11 @@ struct NFKMLXLoadProfile {
         "z-image": [.diffusionPipeline()],
         "qwen-image": [.diffusionPipeline()],
         "ltx-video": [.diffusionPipeline()],
+        // Wan Animate streams the transformer's blocks it cannot hold, widens every stage to float32, or
+        // packs the blocks' linear layers to 2 to 8 bits.
+        "wan-animate": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                          defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true,
+                                          streamedStage: "transformer", halvesSteps: true)],
         "minimax-music": [.diffusionPipeline()],
         "stable-audio": [.diffusionPipeline()],
     ]

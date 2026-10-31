@@ -3363,16 +3363,37 @@ The timesteps are per token, `[1, videoTokens]` and `[1, audioFrames]`, already 
 release's 1000; `sigma` is `[1]`. `NFKMLXLTX2Configuration.ltx25` carries LTX-2.5's three switches. The
 22B transformer is about 44 GB at the released bfloat16, beyond a 32 GB machine.
 
-### Wan 2.2 Animate (`NFKMLXWanAnimateNet`)
+### Wan 2.2 Animate (`NFKMLXWanAnimateGenerator`, `NFKMLXWanAnimateNet`)
 
-Wan 2.2 Animate drives a reference character image with the motion of a driving video. Generation runs
-in two passes over one transformer. The reference pass runs the character's latents through the stack
-and stores every block's keys and values in an `NFKMLXWanAnimateKVCache`. Each denoising step over a
-chunk of the video then attends over that cache.
+Wan 2.2 Animate 2 animates the character in a reference image with the motion of a driving video. The
+generator assembles a diffusers release directory (`Wan-AI/Wan2.2-Animate-2-14B-Diffusers`, or the
+distilled `…-Distilled-Diffusers`): umT5-XXL, the CLIP ViT-H/14 image encoder, the 14B transformer, and
+the Wan 2.1 autoencoder.
+
+```swift
+let animator = try NFKMLXWanAnimateGenerator.generator(directoryURL: animateRelease, residency: .automatic)
+let clip = try animator.video(referenceImage: character, drivingFrames: motionFrames,
+                              drivingFramesPerSecond: 30, prompt: appearance)   // [frames, H, W, 3] in 0...1
+let animation = animator.inferenceBackend()   // NFKInputImage + NFKInputVideo in, NFKOutputVideo out
+```
+
+Both inputs are letterboxed into one frame, `width` × `height` in area (640 × 800 by default) at the
+reference image's aspect ratio, and the driving video is resampled to 24 frames per second. The clip is
+denoised in segments of `segmentLength` frames (81) that each carry `carriedFrames` (1) from the one
+before, so a clip of any length takes the memory of one segment. The release is about 50 GB; a 4-bit
+load (`generator(directoryURL:residency:precision:quantizationBits:)`) holds the transformer in about
+9.6 GB, and `NFKMLXResidency.streamed` reads the blocks it cannot hold from the release on every pass.
+The pipeline is at reference parity against diffusers' modular `WanAnimate2Blocks` end to end, over a
+small random release in the released layout.
+
+The transformer runs on its own in two passes. The reference pass runs the character's latents
+through the stack and stores every block's keys and values in an `NFKMLXWanAnimateKVCache`. Each
+denoising step over a chunk of the video then attends over that cache.
 
 ```swift
 let animate = NFKMLXWanAnimate.makeNet(.base)                 // the Wan2.2-Animate-2-14B geometry
-try NFKMLXWanAnimate.loadWeights(into: animate, fromDirectory: animateRelease, precision: .checkpoint)
+try NFKMLXWanAnimate.loadWeights(into: animate, fromDirectory: animateRelease.appendingPathComponent("transformer"),
+                                 precision: .checkpoint)
 let cache = NFKMLXWanAnimate.makeCache(layerCount: 40)
 _ = try animate.extractReference(latent: referenceLatent, condition: referenceCondition,
                                  text: textStates, imageEmbeddings: clipFeatures, into: cache)
@@ -3386,7 +3407,7 @@ Latents are `[channels, frames, height, width]`, `text` is the text encoder's st
 the configured length, and `imageEmbeddings` is the CLIP image encoder's features, `[tokens, 1280]`. `referenceGrid` is the patch grid the reference pass read, `videoFrames` the whole
 video's latent frame count, and `videoArea` its patch count per frame. The released model is 32.8 GB in
 bfloat16 and its pipeline about 50 GB, which no 32 GiB machine holds; `loadWeights(into:fromDirectory:precision:)`
-maps the release's names onto the module, and the tensor inventory is held to the release. The transformer is at reference parity against diffusers'
+reads the diffusers release's `transformer/` as stored and maps the original release's names onto the module, and the tensor inventory is held to the release. The transformer is at reference parity against diffusers'
 `WanAnimate2Transformer3DModel` at a tiny configuration, across both passes and a chunked generation, and
 held to the release by shape.
 
@@ -4371,6 +4392,7 @@ let wan      = try NFKMLXWanVideoGenerator.generator(directoryURL: wanDir, resid
 let sana     = try NFKMLXSANAPipeline.pipeline(directoryURL: sanaDir)          // SANA: the linear-attention DiT chained with NFKMLXDCAutoencoderNet(.sana)
 let ltx2     = NFKMLXLTX2TransformerNet(.ltx23)                                // LTX-2: one transformer predicts the video and audio velocities; .ltx25 is the later release
 let animate  = NFKMLXWanAnimate.makeNet(.base)                                 // Wan 2.2 Animate 14B: loadWeights(into:fromDirectory:), extractReference(…) fills an NFKMLXWanAnimateKVCache, generate(…) reads it
+let animator = try NFKMLXWanAnimateGenerator.generator(directoryURL: animateDir, residency: .automatic)  // "wan2.2-animate-14b"; video(referenceImage:drivingFrames:drivingFramesPerSecond:prompt:)
 
 // ControlNet and image prompts
 let sdControl   = try NFKMLXModelRegistry.backend(named: "diffusion-controlnet", weightsURL: nil)  // the SD ControlNet wiring, a control map under NFKInputControl; NFKMLXReferenceModels.registerControlNet() first

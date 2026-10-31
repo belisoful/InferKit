@@ -2000,13 +2000,19 @@ alternatives.
     it end to end** (DiT + UniPC flow sampler → 3D VAE decode; caller supplies the umT5 embedding).
     The released UniPC sampler is now ported (`NFKMLXUniPCScheduler`, at reference parity), and umT5
     is verified (`NFKMLXT5Encoder` per-layer-bias mode) — Wan runs end to end from a raw prompt.
-    **Wan 2.2 Animate 2 is SHIPPED as far as this machine reaches** (`NFKMLXWanAnimateNet`): the
+    **Wan 2.2 Animate 2 is SHIPPED** (`NFKMLXWanAnimateGenerator`, `wan2.2-animate-14b` and the distilled
+    `wan2.2-animate-14b-distilled`): a reference image and a driving video in, a clip out, end to end from
+    the diffusers release directory. The transformer (`NFKMLXWanAnimateNet`) is the
     character-animation DiT, which adds an image cross-attention branch and an in-context reference
     mechanism — one pass stores the reference latents' keys and values, each denoising pass attends
     over them per frame. Reference parity across both passes at a tiny configuration (reference pass
     0.9999999999999781, generation 0.99999999999998, a chunked generation 0.9999999999999801), and
     the released 14B file held to the module by shape (1303 tensors, nothing missing or unaccounted).
-    Its 32.8 GB of weights exceed a 32 GiB workstation, so there is no pipeline and no backend.
+    The pipeline adds the CLIP ViT-H/14 image encoder and the segment loop (frame-rate resampling,
+    letterboxing, zigzag padding, a per-segment encode and reference pass, and a per-segment decode whose
+    last frames condition the next segment), at reference parity against diffusers' modular
+    `WanAnimate2Blocks` end to end over a small random release in the released layout. The 50 GB
+    release runs where the transformer streams its blocks or packs them (about 9.6 GB at 4 bits).
 
 One port waits on weight access here rather than on engineering: pyannote diarization (gated
 `pyannote/segmentation-3.0`). It needs a credential the way the gated Stable Diffusion 2.1 base does,

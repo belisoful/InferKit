@@ -135,7 +135,7 @@ Demucs, and HT Demucs ship.
 | `NFKMLXRIFE` | trainable | full | internal | The reference distills through the `block_tea` teacher the entry records as dropped at load. |
 | `NFKMLXRAFT` | trainable | full | internal | 5.3M parameters. The sequence loss needs ground-truth flow, and the correlation volume bounds the crop size. |
 | `NFKMLXVideoSR` | trainable | full | internal | BasicVSR's mmediting configuration supplies the loss and the reduced SPyNet rate. Memory scales with clip length. |
-| `NFKMLXWanAnimate` | offline | — | public | The smallest released form is 32.8 GB in bfloat16 against 32 GiB of unified memory. |
+| `NFKMLXWanAnimate` | offline | — | public | The smallest released form is 32.8 GB in bfloat16 against 32 GiB of unified memory, and its pipeline about 50 GB. A 4-bit load runs inference in about 9.6 GB, but the packed weights take no gradient, so a training step still needs the bfloat16 transformer and its optimizer state. The pipeline (`NFKMLXWanAnimateGenerator`) is inference only for the same reason. |
 | `NFKMLXRIFEv4` | ships | full | public | The v4.15 training code Practical-RIFE links: VGG-19 perceptual minus 0.1 SSIM, the encoder-feature and L1 terms, a teacher blended from the blocks' own flows, AdamW. Every gradient at its float32 floor; the update within float32 rounding with Adam's first-step sign ties pinned. |
 | `NFKMLXVideoBackend` | untrainable | — | n/a | The AVFoundation decode and encode layer holds no parameters. |
 

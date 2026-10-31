@@ -248,6 +248,7 @@ The loaders below read one release, or a model type no judge can tell apart, and
   (one release, whose geometry is a `config.yaml` with no `model_type`), and Stable Fast 3D (one release,
   a `config.yaml` with no `model_type`, and a tetrahedral grid from its code repository).
 - The diffusers pipelines state `_class_name`, not `model_type`, so no repository matches them by type.
+  Wan 2.2 Animate 2 is one of them: its two releases share one geometry and differ in the scheduler.
 
 `testEveryStoredReleaseIsReadByItsOwnFamilysJudgment` judges each shipped release whose directory the
 validation store holds with safetensors weights against its own entry: the Qwen3 sizes, gpt-oss,

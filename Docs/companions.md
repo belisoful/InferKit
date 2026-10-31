@@ -701,12 +701,17 @@ models.
   normalization; the autoencoder is the Wan 2.2 residual VAE specialized to one frame. Every stage is
   at reference parity against diffusers on its own, and the glue against diffusers' own pipeline. The
   weights are under the Qwen Research License, which is non-commercial.
-- **`NFKMLXWanAnimate`** — the Wan 2.2 Animate 2 denoising transformer
-  (`NFKMLXWanAnimateNet`): the Wan block with an image cross-attention branch, and an in-context
-  reference mechanism built on `NFKMLXWanAnimateKVCache` — one pass stores the reference latents'
-  keys and values, each denoising pass attends over them per frame. The released 14B weights exceed a
-  workstation, so the arithmetic is measured at a tiny configuration and the release is held to the
-  module by shape.
+- **`NFKMLXWanAnimateGenerator`** — Wan 2.2 Animate 2 character animation, a reference image and a
+  driving video in and a clip out (`wan2.2-animate-14b`, and the 10-step `wan2.2-animate-14b-distilled`).
+  The pipeline letterboxes both inputs into one frame, resamples the video to 24 frames per second, and
+  denoises it in overlapping segments, each conditioned on the frames the one before it decoded. Its
+  stages are umT5-XXL, the CLIP ViT-H/14 image encoder (`NFKMLXWanAnimateImageEncoderNet`), the Wan 2.1
+  autoencoder, and the 14B transformer (`NFKMLXWanAnimateNet`): the Wan block with an image
+  cross-attention branch, and an in-context reference mechanism built on `NFKMLXWanAnimateKVCache` —
+  one pass stores the driving segment's keys and values, each denoising pass attends over them per
+  frame. The release is about 50 GB; the transformer streams the blocks a machine cannot hold or packs
+  them to 2 to 8 bits (about 9.6 GB at 4). The pipeline is at reference parity end to end over a small
+  random release in the released layout, and every released stage is held to its loader by shape.
 - **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
   3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
   a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`).

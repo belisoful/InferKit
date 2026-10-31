@@ -353,6 +353,10 @@ public final class NFKMLXWanAnimateNet: Module {
     let config: NFKMLXWanAnimateConfiguration
     let rope: NFKZImageRope
 
+    /// The reader of the blocks a streamed load leaves in the release, read in their turn on every pass;
+    /// nil where every block is held.
+    var layerStream: NFKMLXLayerStream?
+
     public init(_ config: NFKMLXWanAnimateConfiguration) {
         self.config = config
         self.rope = NFKZImageRope(axesDims: config.ropeAxes, theta: config.ropeTheta)
@@ -379,8 +383,8 @@ public final class NFKMLXWanAnimateNet: Module {
     public func extractReference(latent: MLXArray, condition: MLXArray, text: MLXArray,
                                  imageEmbeddings: MLXArray?, into cache: NFKMLXWanAnimateKVCache)
         throws -> MLXArray {
-        try run(latent: latent, condition: condition, text: text, imageEmbeddings: imageEmbeddings,
-                timestep: MLXArray(Float(1)), cache: cache, reference: nil, video: nil)
+        try run(latent: latent, condition: condition, passes: [(text, false)], imageEmbeddings: imageEmbeddings,
+                timestep: MLXArray(Float(1)), cache: cache, reference: nil, video: nil)[0]
     }
 
     /// One denoising step over a chunk of the video, attending over the cached reference tokens.
@@ -395,16 +399,42 @@ public final class NFKMLXWanAnimateNet: Module {
     ///   - referenceGrid: the patch grid of the latents the extract pass ran over.
     ///   - videoFrames: the full video's latent frame count (`originLength / 4 + 1` upstream).
     ///   - videoArea: the full video's patch count per frame (`height · width / 256` upstream).
+    ///   - unconditional: whether this is the unconditional pass of classifier-free guidance, which
+    ///     skips block ``unconditionalSkippedBlock``.
     public func generate(latent: MLXArray, condition: MLXArray, text: MLXArray,
                          imageEmbeddings: MLXArray?, timestep: MLXArray,
                          cache: NFKMLXWanAnimateKVCache, referenceGrid: (Int, Int, Int),
-                         videoFrames: Int, videoArea: Int) throws -> MLXArray {
+                         videoFrames: Int, videoArea: Int, unconditional: Bool = false) throws -> MLXArray {
+        try generate(latent: latent, condition: condition, passes: [(text, unconditional)],
+                     imageEmbeddings: imageEmbeddings, timestep: timestep, cache: cache,
+                     referenceGrid: referenceGrid, videoFrames: videoFrames, videoArea: videoArea)[0]
+    }
+
+    /// One denoising step's passes over a chunk, each with its own text and its own unconditional flag,
+    /// every block run for each pass in turn so that a streamed block is read once for all of them.
+    /// Each output is the one ``generate(latent:condition:text:imageEmbeddings:timestep:cache:referenceGrid:videoFrames:videoArea:unconditional:)``
+    /// gives that pass alone.
+    func generate(latent: MLXArray, condition: MLXArray, passes: [(text: MLXArray, unconditional: Bool)],
+                  imageEmbeddings: MLXArray?, timestep: MLXArray, cache: NFKMLXWanAnimateKVCache,
+                  referenceGrid: (Int, Int, Int), videoFrames: Int, videoArea: Int) throws -> [MLXArray] {
         let grid = NFKWanAnimateGrid(frames: referenceGrid.0, height: referenceGrid.1,
                                      width: referenceGrid.2)
-        return try run(latent: latent, condition: condition, text: text,
-                       imageEmbeddings: imageEmbeddings, timestep: timestep, cache: cache,
-                       reference: grid, video: (videoFrames, videoArea))
+        return try run(latent: latent, condition: condition, passes: passes, imageEmbeddings: imageEmbeddings,
+                       timestep: timestep, cache: cache, reference: grid, video: (videoFrames, videoArea))
     }
+
+    /// Throws the first failed read of a streamed block, and clears it so the next pass reads every
+    /// block again. Every pass after a failed read skips every block, so a caller holding a streamed
+    /// transformer checks after each pass. Nothing is thrown where every block is held.
+    func verifyStream() throws {
+        guard let stream = layerStream, let failure = stream.readFailure else { return }
+        stream.clearFailure()
+        throw failure
+    }
+
+    /// The block the unconditional generation pass skips. The reference names the index outright,
+    /// so a configuration with fewer blocks skips none.
+    public static let unconditionalSkippedBlock = 9
 
     /// Position ids `[N, 3]` for a patch grid, offset per axis and advancing the frame axis by
     /// `timeStride`. A negative width offset resolves to the grid's own width, as the reference's
@@ -544,12 +574,13 @@ public final class NFKMLXWanAnimateNet: Module {
         return concatenated(perFrame, axis: 0)
     }
 
-    /// `latent` and `condition` `[C, F, H, W]`, `text` `[Lc, textDim]`, `imageEmbeddings`
-    /// `[Li, imageDim]`. `reference` and `video` are set for the generation pass only.
-    private func run(latent: MLXArray, condition: MLXArray, text: MLXArray,
+    /// `latent` and `condition` `[C, F, H, W]`, each pass's text `[Lc, textDim]`, `imageEmbeddings`
+    /// `[Li, imageDim]`. `reference` and `video` are set for the generation pass only; the extract pass
+    /// runs one pass.
+    private func run(latent: MLXArray, condition: MLXArray, passes: [(text: MLXArray, unconditional: Bool)],
                      imageEmbeddings: MLXArray?, timestep: MLXArray,
                      cache: NFKMLXWanAnimateKVCache, reference: NFKWanAnimateGrid?,
-                     video: (frames: Int, area: Int)?) throws -> MLXArray {
+                     video: (frames: Int, area: Int)?) throws -> [MLXArray] {
         guard cache.layerCount == config.layers else {
             throw NFKMLXError.unsupportedConfiguration(
                 "the cache holds \(cache.layerCount) layers, the model has \(config.layers)")
@@ -562,7 +593,7 @@ public final class NFKMLXWanAnimateNet: Module {
         // 1. Patch embedding over the latent and its conditioning latent, concatenated by channel.
         let stacked = concatenated([latent, condition], axis: 0)           // [inChannels, F, H, W]
         let ndhwc = stacked.transposed(1, 2, 3, 0).expandedDimensions(axis: 0)
-        var hidden = patchEmbedded(ndhwc).reshaped([grid.tokens, dim])
+        let embedded = patchEmbedded(ndhwc).reshaped([grid.tokens, dim])
 
         // 2. Time and text conditioning. The reference pass is modulated at a fixed timestep, which
         //    `extractReference` supplies.
@@ -572,13 +603,14 @@ public final class NFKMLXWanAnimateNet: Module {
         let projection = (timeProjection[1] as! Linear)(NFKReferenceRounding.silu(temb))  // [1, 6·dim]
         let blockModulation = projection.reshaped([6, dim])
 
-        var padded = text
-        if text.dim(0) < config.textLength {
-            padded = concatenated([text, MLXArray.zeros([config.textLength - text.dim(0), text.dim(1)],
-                                                         dtype: text.dtype)], axis: 0)
+        let contexts = passes.map { pass -> MLXArray in
+            var padded = pass.text
+            if pass.text.dim(0) < config.textLength {
+                padded = concatenated([pass.text, MLXArray.zeros([config.textLength - pass.text.dim(0), pass.text.dim(1)],
+                                                                  dtype: pass.text.dtype)], axis: 0)
+            }
+            return (textEmbedding[2] as! Linear)(NFKReferenceRounding.geluTanh((textEmbedding[0] as! Linear)(padded)))
         }
-        let context = (textEmbedding[2] as! Linear)(
-            NFKReferenceRounding.geluTanh((textEmbedding[0] as! Linear)(padded)))
         let image = imageEmbeddings.flatMap { embeddings in
             imageProjection.map { $0(embeddings) }
         }
@@ -596,47 +628,83 @@ public final class NFKMLXWanAnimateNet: Module {
             generationSin = table.sin
         }
 
-        // 4. Blocks.
+        // 4. Blocks. Each block runs every pass in turn; the unconditional pass skips one block.
+        var hiddens = passes.map { _ in embedded }
         for (index, block) in blocks.enumerated() {
-            let rows = block.modulationRows(blockModulation)
-            let normalized = block.modulated(hidden, scale: rows[1], shift: rows[0])
-            let (query, key, value) = block.selfAttention.project(normalized)
-
-            var attended: MLXArray
-            if let video, let reference {
-                let q = zImageApplyRope(query, cos: generationCos!, sin: generationSin!)
-                let k = zImageApplyRope(key, cos: generationCos!, sin: generationSin!)
-                let cached = try cache.read(layer: index)
-                let referenceKey = zImageApplyRope(cached.key, cos: referenceCos, sin: referenceSin)
-                attended = maskedAttention(query: q, key: k, value: value,
-                                           referenceKey: referenceKey, referenceValue: cached.value,
-                                           grid: grid, reference: reference,
-                                           videoFrames: video.frames, videoArea: video.area)
-            } else {
-                cache.store(key: key, value: value, layer: index)
-                let q = zImageApplyRope(query, cos: referenceCos, sin: referenceSin)
-                        .transposed(1, 0, 2).expandedDimensions(axis: 0)
-                let k = zImageApplyRope(key, cos: referenceCos, sin: referenceSin)
-                        .transposed(1, 0, 2).expandedDimensions(axis: 0)
-                let v = value.transposed(1, 0, 2).expandedDimensions(axis: 0)
-                attended = NFKReferenceRounding.flashAttention(
-                    queries: q, keys: k, values: v, scale: 1.0 / sqrt(Float(config.headDim)),
-                    mask: nil)[0].transposed(1, 0, 2)
+            let cached = reference != nil ? try cache.read(layer: index) : nil
+            let runs = passes.indices.filter { !(passes[$0].unconditional && index == Self.unconditionalSkippedBlock) }
+            guard let outputs = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
+                runs.map { pass -> (hidden: MLXArray, stored: (key: MLXArray, value: MLXArray)?) in
+                    blockForward(block, hiddens[pass], modulation: blockModulation, context: contexts[pass],
+                                 image: image, grid: grid, reference: reference, video: video, cached: cached,
+                                 referenceRope: (referenceCos, referenceSin),
+                                 generationRope: generationCos.map { ($0, generationSin!) })
+                }
+            }, keeping: { outputs in
+                outputs.flatMap { [$0.hidden] + ($0.stored.map { [$0.key, $0.value] } ?? []) }
+            }) else {
+                continue
             }
-            let merged = block.selfAttention.output(attended.reshaped([grid.tokens, dim]))
-            hidden = block.residual(hidden, merged * rows[2])
-            hidden = hidden + block.crossAttention(block.norm3(hidden), text: context, image: image)
-            let fed = block.feedForward(block.modulated(hidden, scale: rows[4], shift: rows[3]))
-            hidden = NFKReferenceRounding.isReduced(hidden)
-                ? (hidden.asType(.float32) + fed.asType(.float32) * rows[5].asType(.float32)).asType(hidden.dtype)
-                : hidden + fed * rows[5]
+            for (pass, output) in zip(runs, outputs) {
+                hiddens[pass] = output.hidden
+                if let stored = output.stored {
+                    cache.store(key: stored.key, value: stored.value, layer: index)
+                }
+            }
         }
 
         // 5. Head and unpatchify.
-        let out = head(hidden, temb: temb[0])                              // [N, C·pt·ph·pw]
         let c = config.outChannels
-        let patched = out.reshaped([grid.frames, grid.height, grid.width, pt, ph, pw, c])
-        return patched.transposed(6, 0, 3, 1, 4, 2, 5).reshaped([c, f, h, w])
+        return hiddens.map { hidden in
+            let out = head(hidden, temb: temb[0])                          // [N, C·pt·ph·pw]
+            let patched = out.reshaped([grid.frames, grid.height, grid.width, pt, ph, pw, c])
+            return patched.transposed(6, 0, 3, 1, 4, 2, 5).reshaped([c, f, h, w])
+        }
+    }
+
+    /// One block over one pass. The extract pass (`reference` nil) returns the block's pre-rotary keys
+    /// and values for the cache beside its output.
+    private func blockForward(_ block: NFKWanAnimateBlock, _ hidden: MLXArray, modulation: MLXArray,
+                              context: MLXArray, image: MLXArray?, grid: NFKWanAnimateGrid,
+                              reference: NFKWanAnimateGrid?, video: (frames: Int, area: Int)?,
+                              cached: (key: MLXArray, value: MLXArray)?,
+                              referenceRope: (cos: MLXArray, sin: MLXArray),
+                              generationRope: (cos: MLXArray, sin: MLXArray)?)
+        -> (hidden: MLXArray, stored: (key: MLXArray, value: MLXArray)?) {
+        let dim = config.dim
+        let rows = block.modulationRows(modulation)
+        let normalized = block.modulated(hidden, scale: rows[1], shift: rows[0])
+        let (query, key, value) = block.selfAttention.project(normalized)
+
+        var attended: MLXArray
+        var stored: (key: MLXArray, value: MLXArray)?
+        if let video, let reference, let cached, let generationRope {
+            let q = zImageApplyRope(query, cos: generationRope.cos, sin: generationRope.sin)
+            let k = zImageApplyRope(key, cos: generationRope.cos, sin: generationRope.sin)
+            let referenceKey = zImageApplyRope(cached.key, cos: referenceRope.cos, sin: referenceRope.sin)
+            attended = maskedAttention(query: q, key: k, value: value,
+                                       referenceKey: referenceKey, referenceValue: cached.value,
+                                       grid: grid, reference: reference,
+                                       videoFrames: video.frames, videoArea: video.area)
+        } else {
+            stored = (key, value)
+            let q = zImageApplyRope(query, cos: referenceRope.cos, sin: referenceRope.sin)
+                    .transposed(1, 0, 2).expandedDimensions(axis: 0)
+            let k = zImageApplyRope(key, cos: referenceRope.cos, sin: referenceRope.sin)
+                    .transposed(1, 0, 2).expandedDimensions(axis: 0)
+            let v = value.transposed(1, 0, 2).expandedDimensions(axis: 0)
+            attended = NFKReferenceRounding.flashAttention(
+                queries: q, keys: k, values: v, scale: 1.0 / sqrt(Float(config.headDim)),
+                mask: nil)[0].transposed(1, 0, 2)
+        }
+        let merged = block.selfAttention.output(attended.reshaped([grid.tokens, dim]))
+        var next = block.residual(hidden, merged * rows[2])
+        next = next + block.crossAttention(block.norm3(next), text: context, image: image)
+        let fed = block.feedForward(block.modulated(next, scale: rows[4], shift: rows[3]))
+        next = NFKReferenceRounding.isReduced(next)
+            ? (next.asType(.float32) + fed.asType(.float32) * rows[5].asType(.float32)).asType(next.dtype)
+            : next + fed * rows[5]
+        return (next, stored)
     }
 }
 

@@ -29,6 +29,7 @@ import MLX
 ///   property, set by key-value coding;
 /// - the staged generators (FLUX.1 and its ControlNet, FLUX.2, SD3 and its ControlNet, SANA, Z-Image,
 ///   Qwen-Image, Wan, LTX-Video, MiniMax Music 3, Stable Audio Open): residency.
+/// - Wan 2.2 Animate: residency, precision, and a runtime weight quantization of the transformer's blocks.
 ///
 /// A generator reports whether it holds its stages, so a backend's `modelInfo` names the residency an
 /// automatic load resolved to under `NFKModelInfoResidency`. Introduced in InferKit 0.4.0.
@@ -331,7 +332,7 @@ enum NFKMLXOptionRegistrations {
         }
     }
 
-    /// Wan, LTX-Video, and MiniMax Music 3.
+    /// Wan, Wan Animate, LTX-Video, and MiniMax Music 3.
     private static func registerVideoAndMusicGenerators() {
         let residency: Set<String> = [NFKModelLoadOptionResidency]
         // The precision option converts Wan 2.1's float32 transformer to bfloat16 as it loads.
@@ -341,6 +342,16 @@ enum NFKMLXOptionRegistrations {
             let generator = try NFKMLXWanVideoGenerator.generator(
                 directoryURL: url, residency: options.residency,
                 transformerType: try options.bfloat16Cast(of: name, offersBFloat16: name != "wan2.2-ti2v-5b"))
+            report(generator.holdsStagesResident, to: options)
+            return generator.inferenceBackend()
+        }
+        registerDirectoryModels(registryNames(families: ["wan-animate"]),
+                                consumes: residency.union([NFKModelLoadOptionPrecision]).union(quantizationKeys)) {
+            url, _, options in
+            let generator = try NFKMLXWanAnimateGenerator.generator(
+                directoryURL: url, residency: options.residency, precision: options.precision ?? .checkpoint,
+                quantizationBits: options.quantizationBits ?? 0, budget: NFKMLXResidencyBudget.current(),
+                groupSize: options.quantizationGroupSize)
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }

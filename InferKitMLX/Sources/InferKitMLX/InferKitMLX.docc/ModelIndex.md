@@ -1010,7 +1010,7 @@ let backend = try NFKMLXStableAudioGenerator.backend(directoryURL: dir)
 | LTX-2 (audio-video transformer) | — | ``NFKMLXLTX2TransformerNet`` | `NFKMLXLTX2Configuration.ltx23` / `.ltx25` | Swift API (the forward takes `MLXArray`) | — |
 | Wan 2.1 T2V / Wan 2.2 TI2V-5B | ``NFKMLXWanVideoGenerator``, ``NFKMLXWanPipeline`` | ``NFKMLXWanTransformerNet`` + ``NFKMLXWanVideoVAENet`` | `NFKMLXWanConfiguration.base`; `NFKMLXWanVAEConfiguration.wan22` / `.wan21`; `NFKMLXUniPCConfiguration.wan`; `NFKMLXT5Configuration.umt5XXL` | `wan`; `backend(directoryURL:)`, `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXUniPCScheduler``) |
 | Qwen-Image 2.1 | ``NFKMLXQwenImageGenerator``, ``NFKMLXQwenImagePipeline`` | ``NFKMLXQwenImageNet`` + ``NFKMLXWanVideoVAENet`` (`.qwenImage21`) | `NFKMLXQwenImageConfiguration.base`, `NFKMLXWanVAEConfiguration.qwenImage21`, and `NFKMLXFlowMatchConfiguration.qwenImage21`, each read from the release | `qwen-image-2.1`; `backend(directoryURL:)`, `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
-| Wan 2.2 Animate | ``NFKMLXWanAnimate`` | ``NFKMLXWanAnimateNet`` | `NFKMLXWanAnimateConfiguration.base` (14B) / `.tiny`; ``NFKMLXWanAnimateKVCache`` holds the reference pass | `let dit = NFKMLXWanAnimate.makeNet(.base); try NFKMLXWanAnimate.loadWeights(into: dit, fromDirectory: dir)`<br>`let cache = NFKMLXWanAnimateKVCache(layerCount: 40)`; Swift only — the configuration is a Swift struct | — (released weights exceed a workstation) |
+| Wan 2.2 Animate | ``NFKMLXWanAnimateGenerator`` | ``NFKMLXWanAnimateNet`` | a diffusers release directory (`Wan-AI/Wan2.2-Animate-2-14B-Diffusers` or `…-Distilled-Diffusers`); `NFKMLXWanAnimateConfiguration.base` (14B) / `.tiny` for the transformer alone | `wan2.2-animate-14b`, `wan2.2-animate-14b-distilled`; `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (`NFKInputImage` + `NFKInputVideo` → `NFKOutputVideo`) |
 | Stable Diffusion 3 / 3.5 | ``NFKMLXSD3Generator``, ``NFKMLXSD3Pipeline`` | ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` + CLIP-L, CLIP-G and T5-XXL | `NFKMLXSD3Configuration`, the autoencoder configuration, and the flow shift, each read from the release | `sd3` · `sd3-medium` · `sd3.5-large` · `sd3.5-large-turbo` (4 steps, guidance 0); `backend(directoryURL:)`, `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
 | FLUX.1 (text-to-image) | ``NFKMLXFlux`` | ``NFKMLXFluxTextEncoder`` + ``NFKMLXFluxPipeline`` | read from the diffusers release directory | `flux.1-schnell`; `backend(directoryURL:)`, `flux(directoryURL:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
 | FLUX.1 (transformer + sampler) | ``NFKMLXFluxPipeline`` | ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) | `NFKMLXFluxConfiguration.dev` / `.schnell`; `NFKMLXFlowMatchConfiguration.flux` / `.fluxSchnell`; text from CLIP-L (pooled) + T5-XXL | Swift API (`generate(promptEmbeds:pooled:…)`) | ``NFKMLXFlowMatchScheduler`` |
@@ -1078,10 +1078,14 @@ let pipeline = try NFKMLXLTXPipeline.pipeline(directoryURL: dir)     // the DiT 
 // LTX-2 (audio-video transformer)
 let dit = NFKMLXLTX2TransformerNet(.ltx25); try NFKMLXLTX2TransformerNet.loadWeights(into: dit, from: transformerDir)
 // Swift only — the forward denoises the video and audio latents together and returns both
-// Wan 2.2 Animate
+// Wan 2.2 Animate (reference image + driving video → video; registered as wan2.2-animate-14b)
+let backend = try NFKMLXWanAnimateGenerator.backend(directoryURL: releaseDirectory)
+// the generator:
+let animator = try NFKMLXWanAnimateGenerator.generator(directoryURL: releaseDirectory, residency: .automatic)
+let clip = try animator.video(referenceImage: character, drivingFrames: frames, drivingFramesPerSecond: 30, prompt: appearance)
+// Objective-C: [NFKMLXWanAnimateGenerator backendWithDirectoryURL:dir error:&error]
+// the transformer alone (Swift only — NFKMLXWanAnimateConfiguration is a Swift struct):
 let animate = NFKMLXWanAnimate.makeNet(.base); try NFKMLXWanAnimate.loadWeights(into: animate, fromDirectory: dir)
-let cache = NFKMLXWanAnimateKVCache(layerCount: 40)
-// Swift only — NFKMLXWanAnimateConfiguration is a Swift struct
 
 // Qwen-Image 2.1 (text-to-image; registered as qwen-image-2.1)
 let backend = try NFKMLXQwenImageGenerator.backend(directoryURL: releaseDirectory)

@@ -1148,6 +1148,32 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(animated.dim(0), 4, "the predicted sample keeps the latent channels")
     }
 
+    // MARK: Reference image + driving video → video (Wan 2.2 Animate)
+
+    func testCharacterAnimationPipeline() throws {
+        try requireMLXRuntime()
+        // The released pipeline assembles from its diffusers release directory through
+        // NFKMLXWanAnimateGenerator.generator(directoryURL:residency:), then
+        // video(referenceImage:drivingFrames:drivingFramesPerSecond:prompt:…) or inferenceBackend().
+        // Here the segment loop runs a tiny transformer and autoencoder from supplied encoder features.
+        NFKMLXRandom.seed(14)
+        let vae = NFKMLXWanVideoVAENet(NFKMLXWanVAEConfiguration(
+            baseDim: 8, decoderBaseDim: 8, zDim: 4, dimMult: [1, 1, 1, 1], numResBlocks: 1,
+            temporalDownsample: [false, true, true], patchSize: 1, inChannels: 3, isResidual: false))
+        let transformer = NFKMLXWanAnimateNet(NFKMLXWanAnimateConfiguration(
+            inChannels: 12, outChannels: 4, dim: 32, heads: 2, layers: 2, ffnDim: 48, textDim: 10, textLength: 16))
+        let pipeline = NFKMLXWanAnimatePipeline(transformer: transformer, vae: vae,
+                                                latentsMean: MLXArray.zeros([4]), latentsStd: MLXArray.ones([4]))
+        let segments = try NFKWanAnimateSegments(realFrames: 5, segmentLength: 5, carriedFrames: 1)
+        let clip = try pipeline.animate(
+            reference: MLXRandom.uniform(low: -1, high: 1, [32, 32, 3]),
+            driving: MLXRandom.uniform(low: -1, high: 1, [5, 32, 32, 3]), segments: segments,
+            prompt: MLXRandom.normal([6, 10]), negativePrompt: nil, referencePrompt: MLXRandom.normal([4, 10]),
+            imageEmbeddings: MLXRandom.normal([5, 1280]), drivingImageEmbeddings: MLXRandom.normal([5, 1280]),
+            steps: 2, guidance: 1, noise: { _, shape in MLXRandom.normal(shape) })
+        XCTAssertEqual(clip.shape, [5, 32, 32, 3], "one frame per driving frame")
+    }
+
     // MARK: Inpainting & latent diffusion (built by factory)
 
     func testInpaintingAndDiffusionModels() throws {

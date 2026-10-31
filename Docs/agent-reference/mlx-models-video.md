@@ -184,6 +184,70 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   configuration a test can train is not the released model. The oracle is `wananimatevenv` (Homebrew
   3.12, diffusers 0.40.0, torch 2.14.0), which is the only environment here carrying
   `WanAnimate2Transformer3DModel` — the 3.9 environments top out at diffusers 0.36.
+- `NFKMLXWanAnimateGenerator` (`@objc`) — Wan 2.2 Animate 2 end to end from its diffusers release
+  (`Wan-AI/Wan2.2-Animate-2-14B-Diffusers` as `wan2.2-animate-14b`, and the distilled
+  `…-Distilled-Diffusers` as `wan2.2-animate-14b-distilled`; Apache-2.0), measured against diffusers'
+  modular `WanAnimate2Blocks` / `WanAnimate2DistilledBlocks`. The original-layout repository
+  (`Wan-AI/Wan2.2-Animate-2-14B`: `.pth` encoders, no configuration files) is not read; its transformer
+  header is the one `testWanAnimateMatchesTheReleasedShapes` holds. The stages:
+  - umT5-XXL (`NFKMLXT5Encoder`) for the prompt, the negative prompt, and the fixed reference prompt
+    `人物动作的参考视频`. The modular pipeline tokenizes the prompt as written, with no whitespace cleanup.
+  - The image encoder, `NFKMLXWanAnimateImageEncoderNet`: transformers' `CLIPVisionModel` (open-clip's
+    XLM-RoBERTa ViT-H/14 visual tower, exact gelu) read at `hidden_states[-2]`, so the last block and
+    the post-norm never run. Its input is the −1…1 frame resized to 224 by torch's non-antialiased
+    bicubic (a = −0.75), mapped to 0…1 and normalized by CLIP's mean and std. It encodes the reference
+    image (every denoising pass) and the driving video's first padded frame (the extract pass).
+    transformers 5 saves the class without its `vision_model.` level; the release, saved by 4.57,
+    has it, and the loader reads the release's names.
+  - The Wan 2.1 autoencoder (`NFKMLXWanVideoVAENet`), the encode its deterministic mean, standardized
+    by multiplying by the reciprocal standard deviation and undone by dividing by it, as the reference
+    writes it.
+  - The schedule the release's `scheduler_config.json` names (`NFKMLXWanAnimateSchedule`):
+    `DPMSolverMultistepScheduler` (dpmsolver++, flow, midpoint, shift 5) for the standard release and
+    `FlowMatchEulerDiscreteScheduler` (static shift 5) for the distilled one. The standard config writes
+    `lambda_min_clipped: -Infinity`, which only a JSON5 read accepts. The variant is read from the
+    scheduler class.
+  The segment loop (`NFKMLXWanAnimatePipeline`), per the reference's blocks:
+  - Frame size: the reference image's size rounded to multiples of 16 sets the aspect ratio (Python's
+    `round`, ties to even), the target area sets the size, both sides truncated to multiples of 16. The
+    crop box uses the ROUNDED image size while the letterbox paste uses the TRUE one, so the two can
+    differ by a row (1920 × 1080 into 640 × 800 gives a 528 × 944 frame and a 527-row crop).
+  - Letterbox: PIL's 8-bit resample (`NFKMLXPILResample`), bicubic for the image and bilinear for the
+    video, pasted on black at `((W − w) / 2, (H − h) / 2)`.
+  - Frame rate: the nearest source frame to each target time, ties to even; the backend resamples from
+    the movie's own rate.
+  - Zigzag padding: the last `padding` real frames appended reversed, so every segment is
+    `segmentLength` frames. A clip shorter than its own padding is refused: the reference's slice wraps
+    below zero there and its segment shapes no longer agree.
+  - Per segment: the driving slice encoded on its own (the causal autoencoder makes slicing one
+    whole-video encode a different computation) under an all-ones mask; the previous segment's last
+    `carriedFrames` decoded frames, zeros after, encoded under a mask of those frames (the bicubic
+    resize the reference applies is to the same size, an identity); fresh noise, schedule, and cache;
+    the extract pass; the guided loop; the decode of the latent frames after the reference frame, the
+    first `carriedFrames` dropped after the first segment.
+  - Guidance: the unconditional pass skips block 9 by index (`unconditionalSkippedBlock`), a constant
+    in the reference's forward; a stack of fewer blocks skips none. Both passes of a step run block by
+    block (`generate(…passes:…)`), so a streamed block is read once per step.
+  Runtime: staged residency (encoders, then transformer + autoencoder); `.streamed` holds the first
+  transformer blocks that fit and reads the rest from the release on every pass (bit-exact against held
+  blocks); `quantizationBits` 2 to 8 packs every linear layer inside the blocks as each block loads, so
+  the bfloat16 form is never held whole (the released transformer at 8 / 6 / 4 / 3 / 2 bits: 17.65 /
+  13.61 / 9.58 / 7.56 / 5.54 GB, against 32.79 GB). A packed transformer does not stream. Precision
+  `.checkpoint` keeps every stage's stored type (bfloat16, the autoencoder float32); `.float32` widens all
+  of them. The model has no key-value cache across requests, no draft, and no streamed partial output:
+  each segment's frames exist only once its loop ends, and the backend reports progress per step.
+  **Measured on a test-dev release.** `Tools/wan-animate-testdev/make_testdev.py` builds every component
+  through its own reference class from the release's own `config.json`, with only the size keys reduced
+  (transformer 64 wide, 2 heads, 10 blocks; umT5 32 wide over the full 256,384-token vocabulary;
+  CLIP 1,280 wide, which the transformer's projector reads, 3 layers; autoencoder base width 8), seeds the
+  weights, and saves them in the release's stored types, so the directory carries the release's layout,
+  file names, and keys. The release's tokenizer, scheduler, image processor, and index files are copied.
+  `run_reference.py wan_animate_pipeline` runs the modular blocks over it at float32: a 70 × 50 reference
+  image and a 17-frame 30 × 40 driving clip at 30 fps, resampled to 13 frames, letterboxed to 64 × 48,
+  padded to 17, two 9-frame segments carrying one frame, three steps. Standard release (DPM-Solver++, guidance 3, the unconditional pass skipping block 9): prompt features 0.9999999999998531, reference prompt 0.9999999999999162, reference image CLIP 0.9999999999994768, driving frame CLIP 0.9999999999994958, reference latents 0.9999999999999623, clip 0.9999999999992298 (max |difference| 4.5e-6).
+  Distilled release (Euler, no guidance): the same encoder figures and clip 0.9999999999992134 (max |difference| 4.9e-6). The token ids of all three prompts are exact, and the letterboxed image and video agree with PIL's to 1e-6. An 8-bit packed transformer holds the clip at 0.999999113826966 against float32. The released stages are held to their loaders by shape
+  (`testTheReleaseMatchesItsLoaders`: transformer 1303, umT5 242, image encoder 519, autoencoder 194
+  tensors, none missing, mismatched, or unconsumed). Customization is ruled out as for the transformer.
 - `NFKMLXVJEPA2` (`@objc`) — V-JEPA 2 (`VJEPA2Model` and `VJEPA2ForVideoClassification`, Meta, MIT), a
   self-supervised video ViT that maps a clip to a per-token feature sequence for retrieval or as a video
   encoder for a vision-language model; the classification releases add an attentive pooler and a linear

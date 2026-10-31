@@ -142,10 +142,16 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertEqual(audioVelocity.shape, [1, 4, 6], "one velocity per audio frame")
     }
 
-    // Docs/examples.md: Wan 2.2 Animate. The tiny configuration stands in for the 14B geometry, whose
-    // release NFKMLXWanAnimate.loadWeights(into:fromDirectory:precision:) reads (NFKMLXWanAnimateTests).
+    // Docs/examples.md: Wan 2.2 Animate. The generator needs the release directory; the tiny
+    // configuration stands in for the 14B transformer, whose release
+    // NFKMLXWanAnimate.loadWeights(into:fromDirectory:precision:) reads (NFKMLXWanAnimateTests).
     func testExampleWanAnimate() throws {
         try requireMLXRuntime()
+        XCTAssertThrowsError(try NFKMLXWanAnimateGenerator.generator(
+            directoryURL: URL(fileURLWithPath: "/nonexistent-wan-animate"), residency: .automatic))
+        XCTAssertTrue(NFKMLXWanAnimateGenerator.instancesRespond(to: NSSelectorFromString(
+            "framesForReferenceImage:drivingFrames:drivingFramesPerSecond:prompt:negativePrompt:seed:error:")))
+        XCTAssertTrue(NFKMLXWanAnimateGenerator.instancesRespond(to: NSSelectorFromString("inferenceBackend")))
         NFKMLXRandom.seed(18)
         let animate = NFKMLXWanAnimate.makeNet(.tiny)
         let cache = NFKMLXWanAnimate.makeCache(layerCount: 2)

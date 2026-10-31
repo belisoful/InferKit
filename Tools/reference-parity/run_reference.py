@@ -24944,6 +24944,156 @@ def run_wan_pipeline(image, checkpoint):
 CHECKPOINT_MODELS["wan_pipeline"] = run_wan_pipeline
 
 
+def run_wan_animate_pipeline(image, checkpoint):
+    """Wan 2.2 Animate 2's character-animation glue, from diffusers' own modular `WanAnimate2Blocks` (or
+    `WanAnimate2DistilledBlocks` for a distilled release), end to end over a release directory.
+
+    `--checkpoint` is a test-dev release (`Tools/wan-animate-testdev/make_testdev.py`): the diffusers
+    release's own layout, file names, keys, and stored types at a small geometry with seeded random weights.
+    Every component loads from it through its own class and runs at float32. The reference image is
+    70 × 50 and the driving video 17 frames of 30 × 40 at 30 fps, so the run resamples the video to 24 fps
+    (13 frames), letterboxes both inputs into a 64 × 48 frame (bicubic for the image, bilinear for the video),
+    zigzag-pads the video to 17 frames, and denoises two 9-frame segments that overlap by one carried frame,
+    each over three steps. The standard release guides at 3 (the unconditional pass skips block 9); the
+    distilled one runs unguided Euler steps.
+
+    The record carries the inputs' pixels, the token ids, every encoder output, each segment's latents,
+    noise, conditioning, final latents, and decoded frames, the first transformer outputs of segment 0, and
+    the final clip (`[frames, height, width, 3]` in 0...1). `image` unused.
+    """
+    import json as json_module
+
+    import PIL.Image
+    from diffusers import AutoencoderKLWan, WanAnimate2Transformer3DModel
+    import diffusers
+    from diffusers.modular_pipelines import wan_animate_2 as animate
+    from diffusers.modular_pipelines.wan_animate_2 import denoise as denoise_module
+    from diffusers.modular_pipelines.wan_animate_2 import encoders as encoders_module
+    from transformers import AutoTokenizer, CLIPVisionModel, UMT5EncoderModel
+
+    with open(os.path.join(checkpoint, "modular_model_index.json")) as handle:
+        index = json_module.load(handle)
+    distilled = index["_blocks_class_name"] == "WanAnimate2DistilledBlocks"
+    with open(os.path.join(checkpoint, "scheduler", "scheduler_config.json")) as handle:
+        scheduler_class = getattr(diffusers, json_module.load(handle)["_class_name"])
+
+    components = dict(
+        transformer=WanAnimate2Transformer3DModel.from_pretrained(checkpoint, subfolder="transformer"),
+        vae=AutoencoderKLWan.from_pretrained(checkpoint, subfolder="vae"),
+        text_encoder=UMT5EncoderModel.from_pretrained(checkpoint, subfolder="text_encoder"),
+        image_encoder=CLIPVisionModel.from_pretrained(checkpoint, subfolder="image_encoder"),
+        tokenizer=AutoTokenizer.from_pretrained(checkpoint, subfolder="tokenizer"),
+        scheduler=scheduler_class.from_pretrained(checkpoint, subfolder="scheduler"))
+    for name in ("transformer", "vae", "text_encoder", "image_encoder"):
+        components[name] = components[name].float().eval()
+    blocks = animate.WanAnimate2DistilledBlocks() if distilled else animate.WanAnimate2Blocks()
+    pipeline = blocks.init_pipeline()
+    pipeline.update_components(**components)
+
+    generator = np.random.default_rng(23)
+    reference = (generator.random((9, 7, 3)) * 255).astype(np.uint8)
+    reference = np.asarray(PIL.Image.fromarray(reference).resize((50, 70), PIL.Image.BILINEAR))
+    driving = []
+    for frame in range(17):
+        plate = (generator.random((4, 5, 3)) * 255).astype(np.uint8)
+        driving.append(np.asarray(PIL.Image.fromarray(plate).resize((40, 30), PIL.Image.BILINEAR)))
+
+    captured = {"encode": [], "decode": [], "noise": [], "clip": [], "transformer": []}
+    encode_vae, decode_vae = denoise_module.encode_vae, denoise_module.decode_vae
+    randn_tensor, clip_visual_encode = denoise_module.randn_tensor, encoders_module.clip_visual_encode
+
+    def recording_encode(vae, video):
+        result = encode_vae(vae, video)
+        captured["encode"].append(result.detach().clone())
+        return result
+
+    def recording_decode(vae, latents):
+        captured["decode"].append(latents.detach().clone())
+        return decode_vae(vae, latents)
+
+    def recording_noise(*args, **kwargs):
+        result = randn_tensor(*args, **kwargs)
+        captured["noise"].append(result.detach().clone())
+        return result
+
+    def recording_clip(*args, **kwargs):
+        result = clip_visual_encode(*args, **kwargs)
+        captured["clip"].append(result.detach().clone())
+        return result
+
+    def recording_forward(module, inputs, kwargs, output):
+        if len(captured["transformer"]) < 3:
+            captured["transformer"].append(output.sample[0].detach().clone())
+
+    denoise_module.encode_vae, denoise_module.decode_vae = recording_encode, recording_decode
+    denoise_module.randn_tensor = recording_noise
+    encoders_module.clip_visual_encode = recording_clip
+    handle = components["transformer"].register_forward_hook(recording_forward, with_kwargs=True)
+    prompt = "人物外观描述：一只银灰色的小猫，穿着深蓝色的制服。背景描述：背景为纯白色。"
+    negative = "色调艳丽，过曝，静态，细节模糊不清"
+    arguments = dict(prompt=prompt, image=PIL.Image.fromarray(reference),
+                     driving_video=[PIL.Image.fromarray(frame) for frame in driving], driving_video_fps=30.0,
+                     fps=24, segment_frame_length=9, prev_segment_conditioning_frames=1, height=64, width=48,
+                     num_inference_steps=3, generator=torch.Generator().manual_seed(29), output_type="pt")
+    if not distilled:
+        arguments["negative_prompt"] = negative
+    names = ["videos", "prompt_embeds", "negative_prompt_embeds", "prompt_ref_embeds", "image_pixels",
+             "crop_region", "encoder_hidden_states_image", "driving_video_pixels", "real_frame_len",
+             "num_segments", "condition_clip_context", "reference_image_latents", "height", "width"]
+    try:
+        with torch.no_grad():
+            state = pipeline(output=names, **arguments)
+    finally:
+        denoise_module.encode_vae, denoise_module.decode_vae = encode_vae, decode_vae
+        denoise_module.randn_tensor = randn_tensor
+        encoders_module.clip_visual_encode = clip_visual_encode
+        handle.remove()
+
+    tokenizer = components["tokenizer"]
+    def ids(text):
+        tokens = tokenizer(text, padding="max_length", max_length=512, truncation=True,
+                           add_special_tokens=True, return_tensors="pt")
+        return tokens.input_ids[0].to(torch.int32).contiguous()
+
+    segments = int(state["num_segments"])
+    video = state["videos"][0]                                              # [F, C, H, W] in 0...1
+    extra = {"reference_rgb": torch.from_numpy(reference.copy()),
+             "driving_rgb": torch.from_numpy(np.stack(driving)),
+             "prompt_ids": ids(prompt), "negative_ids": ids(negative if not distilled else ""),
+             "reference_prompt_ids": ids("人物动作的参考视频"),
+             "prompt_embeds": state["prompt_embeds"][0].contiguous(),
+             "reference_prompt_embeds": state["prompt_ref_embeds"][0].contiguous(),
+             "image_pixels": state["image_pixels"][0].permute(1, 2, 0).contiguous(),
+             "driving_pixels": state["driving_video_pixels"][0].permute(1, 2, 3, 0).contiguous(),
+             "crop_region": torch.tensor(list(state["crop_region"]), dtype=torch.int32),
+             "frame_size": torch.tensor([state["height"], state["width"]], dtype=torch.int32),
+             "real_frames": torch.tensor([int(state["real_frame_len"])], dtype=torch.int32),
+             "segments": torch.tensor([segments], dtype=torch.int32),
+             "distilled": torch.tensor([int(distilled)], dtype=torch.int32),
+             "image_embeds": state["encoder_hidden_states_image"][0].contiguous(),
+             "driving_image_embeds": state["condition_clip_context"][0].contiguous(),
+             "reference_image_latents": state["reference_image_latents"].contiguous(),
+             "extract_0": captured["transformer"][0].contiguous(),
+             "conditioned_0": captured["transformer"][1].contiguous(),
+             "video": video.permute(0, 2, 3, 1).contiguous()}
+    if not distilled:
+        extra["negative_prompt_embeds"] = state["negative_prompt_embeds"][0].contiguous()
+        extra["unconditioned_0"] = captured["transformer"][2].contiguous()
+    # Each segment encodes its driving slice and then its carried frames, draws one noise, and decodes
+    # its latents after the reference frame. The reference image's own encode runs in the encoder step,
+    # outside the loop.
+    for segment in range(segments):
+        extra[f"driving_latents_{segment}"] = captured["encode"][2 * segment][0].contiguous()
+        extra[f"carried_latents_{segment}"] = captured["encode"][2 * segment + 1][0].contiguous()
+        extra[f"noise_{segment}"] = captured["noise"][segment].contiguous()
+        extra[f"final_latents_{segment}"] = captured["decode"][segment].contiguous()
+    globals()["_extra"] = extra
+    return extra["video"].clone()
+
+
+CHECKPOINT_MODELS["wan_animate_pipeline"] = run_wan_animate_pipeline
+
+
 def run_z_image_pipeline(image, checkpoint):
     """Z-Image's text-to-image glue, from diffusers' own ZImagePipeline, at a tiny random geometry.
 
