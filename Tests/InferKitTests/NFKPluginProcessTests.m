@@ -721,6 +721,38 @@
 	NSDictionary *call = [self.harness.peers.firstObject receivedMessagesOfType:NFKPluginMessageCallTool].firstObject;
 	XCTAssertEqualObjects(call[@"tool"], @"shout");
 	XCTAssertEqualObjects(call[@"arguments"], (@{ @"text": @"hi" }));
+	XCTAssertNil(call[@"caller"], @"a call with no caller sends none");
+}
+
+- (void)testAToolCallCarriesItsCallerAndStartsWithoutWaiting
+{
+	NFKPluginProcess *process = [self processWithIdleExit:300];
+	NFKToolCaller *caller = [[NFKToolCaller alloc] initWithSessionIdentifier:@"S1" clientName:@"codex-mcp-client" clientVersion:nil
+																	 keyName:@"desk" clientAddress:@"::1" headers:@{ @"X-Harness-Name": @"right" }];
+	NFKToolResult *result = [process.tools.firstObject invokeWithArguments:@{ @"text": @"hi" } caller:caller];
+	XCTAssertEqualObjects(result.text, @"shout called");
+	NSDictionary *call = [self.harness.peers.firstObject receivedMessagesOfType:NFKPluginMessageCallTool].lastObject;
+	NSDictionary *expected = @{ @"sessionIdentifier": @"S1", @"clientName": @"codex-mcp-client", @"keyName": @"desk",
+								@"clientAddress": @"::1", @"headers": @{ @"x-harness-name": @"right" } };
+	XCTAssertEqualObjects(call[@"caller"], expected, @"a member that is not known is left out");
+
+	XCTestExpectation *answered = [self expectationWithDescription:@"the started call completes"];
+	__block NFKToolResult *started = nil;
+	XCTAssertNil([process.tools.firstObject startWithArguments:@{ @"text": @"again" } caller:caller completion:^(NFKToolResult *finalResult) {
+		started = finalResult;
+		[answered fulfill];
+	}]);
+	[self waitForExpectations:@[ answered ] timeout:10];
+	XCTAssertEqualObjects(started.text, @"shout called");
+	XCTAssertEqualObjects([self.harness.peers.firstObject receivedMessagesOfType:NFKPluginMessageCallTool].lastObject[@"caller"][@"clientName"],
+						  @"codex-mcp-client");
+
+	__block NFKToolResult *refused = nil;
+	[process.tools.firstObject startWithArguments:@{ @"text": @5 } caller:caller completion:^(NFKToolResult *finalResult) {
+		refused = finalResult;
+	}];
+	XCTAssertTrue(refused.isError, @"arguments the schema refuses complete at once without a message");
+	XCTAssertEqual([self.harness.peers.firstObject receivedMessagesOfType:NFKPluginMessageCallTool].count, 2u);
 }
 
 - (void)testAToolErrorKeepsItsDomainAndCode

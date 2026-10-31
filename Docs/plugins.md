@@ -223,7 +223,10 @@ NFK_PLUGIN_EXPORT nfk_plugin_status nfk_plugin_entry(uint32_t host_abi_version, 
 - Whoever allocates frees. A request is valid until `run` returns. The host frees a result with
   `free_payload` and a string with `free_string`.
 - `run` reports progress with `host->report_progress`, polls `host->is_cancelled`, and writes result files
-  to `host->output_directory`. `cancel`, `unload`, `describe_backend`, and `call_tool` are optional.
+  to `host->output_directory`. `cancel`, `unload`, `describe_backend`, `call_tool`, and
+  `call_tool_for_caller` are optional. `call_tool_for_caller` (ABI 1.1) also receives the MCP client
+  that called the tool through a server's `/mcp` as a JSON object, or NULL, and InferKit prefers it
+  when set.
 - A later minor version of the ABI only appends fields. A reader uses a field only when its offset plus
   its size is at most `struct_size`. InferKit accepts any `struct_size` at least the structure's size at
   ABI 1.0, so a plugin built against a later minor version loads.
@@ -257,7 +260,8 @@ descriptor 3 (`INFERKIT_PLUGIN_CHANNEL_FD=3`) and speaks the plugin protocol ove
 3. The app sends `hello`, `describe`, `build`, `prepare`, `run`, `unload`, `release`, `status`,
    `callTool`, `ping`, and `shutdown`, each with an integer `id`, and the program answers each with
    `{"type": "reply", "id": n}` carrying `"result"` or `"error"`. During a run the program sends
-   `progress`. `cancel` names a run, and that run answers `"cancelled": true`.
+   `progress`. A `callTool` for a call made through a server's `/mcp` carries a `caller` object naming
+   the MCP client. `cancel` names a run, and that run answers `"cancelled": true`.
 
 The sample in `Tests/PluginFixtures/executable/sample_executable.m` is a complete program that uses
 Foundation alone. An executable plugin always runs in its own process.

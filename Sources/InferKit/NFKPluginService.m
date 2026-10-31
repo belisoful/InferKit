@@ -842,6 +842,7 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 	NSNumber *identifier = message[@"id"];
 	NSString *name = NFKPluginServiceField(message[@"tool"], NSString.class);
 	NSDictionary *arguments = NFKPluginServiceField(message[@"arguments"], NSDictionary.class) ?: @{};
+	NFKToolCaller *caller = NFKPluginCallerFromJSONObject(message[@"caller"]);
 	id<NFKPlugin> plugin = self.plugin;
 	NFKInferenceTool *tool = nil;
 	for (NFKInferenceTool *candidate in [plugin respondsToSelector:@selector(tools)] ? [plugin tools] : @[]) {
@@ -856,15 +857,16 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 		return;
 	}
 	dispatch_async(self.workQueue, ^{
-		NFKToolResult *result = [tool invokeWithArguments:arguments];
-		NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [self attachmentWriter];
-		NSError *encodeError = nil;
-		id encoded = [[self encoderWithWriter:writer] JSONValueForValue:result key:@"toolResult" error:&encodeError];
-		if (encoded == nil) {
-			[self reply:identifier error:encodeError];
-			return;
-		}
-		[self reply:identifier result:@{ @"toolResult": encoded } descriptors:writer.descriptors];
+		[tool startWithArguments:arguments caller:caller completion:^(NFKToolResult *result) {
+			NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [self attachmentWriter];
+			NSError *encodeError = nil;
+			id encoded = [[self encoderWithWriter:writer] JSONValueForValue:result key:@"toolResult" error:&encodeError];
+			if (encoded == nil) {
+				[self reply:identifier error:encodeError];
+				return;
+			}
+			[self reply:identifier result:@{ @"toolResult": encoded } descriptors:writer.descriptors];
+		}];
 	});
 }
 

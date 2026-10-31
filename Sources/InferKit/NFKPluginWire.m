@@ -489,4 +489,36 @@ BOOL NFKPluginSetError(NSError **error, NSInteger code, NSString *reason)
 
 @end
 
+NSDictionary<NSString *, id> *NFKPluginCallerJSONObject(NFKToolCaller *caller)
+{
+	NSMutableDictionary<NSString *, id> *object = [NSMutableDictionary dictionary];
+	object[@"sessionIdentifier"] = caller.sessionIdentifier;
+	object[@"clientName"] = caller.clientName;
+	object[@"clientVersion"] = caller.clientVersion;
+	object[@"keyName"] = caller.keyName;
+	object[@"clientAddress"] = caller.clientAddress;
+	object[@"headers"] = caller.headers;
+	return object;
+}
+
+NFKToolCaller * _Nullable NFKPluginCallerFromJSONObject(id _Nullable value)
+{
+	if (![value isKindOfClass:NSDictionary.class]) {
+		return nil;
+	}
+	NSString * _Nullable (^string)(NSString *) = ^NSString *(NSString *key) {
+		return [value[key] isKindOfClass:NSString.class] ? value[key] : nil;
+	};
+	NSMutableDictionary<NSString *, NSString *> *headers = [NSMutableDictionary dictionary];
+	NSDictionary *sent = [value[@"headers"] isKindOfClass:NSDictionary.class] ? value[@"headers"] : @{};
+	[sent enumerateKeysAndObjectsUsingBlock:^(id name, id headerValue, BOOL *stop) {
+		if ([name isKindOfClass:NSString.class] && [headerValue isKindOfClass:NSString.class]) {
+			headers[name] = headerValue;
+		}
+	}];
+	return [[NFKToolCaller alloc] initWithSessionIdentifier:string(@"sessionIdentifier") clientName:string(@"clientName")
+											  clientVersion:string(@"clientVersion") keyName:string(@"keyName")
+											  clientAddress:string(@"clientAddress") ?: @"" headers:headers];
+}
+
 #endif

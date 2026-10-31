@@ -237,8 +237,10 @@ static NSInteger NFKServiceTestThreadCount(void)
 {
 	return @[ [NFKInferenceTool toolWithName:@"greet" description:@"Greets a name."
 								  parameters:@{ @"type": @"object", @"properties": @{ @"name": @{ @"type": @"string" } }, @"required": @[ @"name" ] }
-									 handler:^NFKToolResult *(NSDictionary<NSString *, id> *arguments, NSError **error) {
-		return [NFKToolResult resultWithText:[NSString stringWithFormat:@"Hello, %@", arguments[@"name"]]];
+							   callerHandler:^NFKToolResult *(NSDictionary<NSString *, id> *arguments, NFKToolCaller *caller, NSError **error) {
+		NSString *from = caller != nil ? [NSString stringWithFormat:@" from %@ in %@ (%@)", caller.clientName, caller.sessionIdentifier,
+										  [caller valueForHeader:@"x-harness-name"]] : @"";
+		return [NFKToolResult resultWithText:[NSString stringWithFormat:@"Hello, %@%@", arguments[@"name"], from]];
 	}] ];
 }
 
@@ -705,6 +707,18 @@ static NSInteger NFKServiceTestThreadCount(void)
 	XCTAssertEqualObjects(reply[@"result"][@"toolResult"], expected);
 	[self assertReply:[self request:@{ @"type": @"callTool", @"tool": @"absent", @"arguments": @{} }]
 	  failsWithDomain:NFKPluginErrorDomain code:NFKPluginErrorUnknownTool];
+}
+
+- (void)testCallToolPassesItsCallerToTheTool
+{
+	[self startService:[self testService]];
+	[self request:[self hello]];
+	NSDictionary *caller = @{ @"sessionIdentifier": @"S1", @"clientName": @"claude-code", @"clientVersion": @"2.1.0", @"keyName": @"desk",
+							  @"clientAddress": @"127.0.0.1", @"headers": @{ @"x-harness-name": @"left" } };
+	NSDictionary *reply = [self request:@{ @"type": @"callTool", @"tool": @"greet", @"arguments": @{ @"name": @"Ada" }, @"caller": caller }];
+	XCTAssertEqualObjects(reply[@"result"][@"toolResult"][@"text"], @"Hello, Ada from claude-code in S1 (left)");
+	NSDictionary *malformed = [self request:@{ @"type": @"callTool", @"tool": @"greet", @"arguments": @{ @"name": @"Ada" }, @"caller": @"claude-code" }];
+	XCTAssertEqualObjects(malformed[@"result"][@"toolResult"][@"text"], @"Hello, Ada", @"a caller that is not an object is no caller");
 }
 
 - (void)testAnUnknownMessageIsUnsupportedWithAnIdentifierAndIgnoredWithout

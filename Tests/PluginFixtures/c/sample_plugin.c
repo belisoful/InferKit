@@ -1023,8 +1023,9 @@ static void sample_destroy_backend(void *context, nfk_plugin_backend *backend)
 	sample_free(backend);
 }
 
-static nfk_plugin_status sample_call_tool(void *context, const char *tool_name, const char *arguments_json,
-										  char **out_result_json, char **out_error_json)
+/* Echoes "text" after the echo prefix, and names the caller's client after it when there is one. */
+static nfk_plugin_status sample_echo(void *context, const char *tool_name, const char *arguments_json,
+									 const char *caller_name, char **out_result_json, char **out_error_json)
 {
 	const sample_instance *instance = context;
 	*out_result_json = NULL;
@@ -1044,6 +1045,10 @@ static nfk_plugin_status sample_call_tool(void *context, const char *tool_name, 
 	sample_text joined = { 0 };
 	text_append_string(&joined, instance->echo_prefix != NULL ? instance->echo_prefix : "");
 	text_append_string(&joined, echoed);
+	if (caller_name != NULL) {
+		text_append_string(&joined, " for ");
+		text_append_string(&joined, caller_name);
+	}
 	char *combined = text_take(&joined);
 	text_append_json_string(&text, combined != NULL ? combined : "");
 	sample_free(combined);
@@ -1051,6 +1056,22 @@ static nfk_plugin_status sample_call_tool(void *context, const char *tool_name, 
 	json_free(arguments);
 	*out_result_json = text_take(&text);
 	return *out_result_json != NULL ? NFK_PLUGIN_STATUS_OK : NFK_PLUGIN_STATUS_NO_MEMORY;
+}
+
+static nfk_plugin_status sample_call_tool(void *context, const char *tool_name, const char *arguments_json,
+										  char **out_result_json, char **out_error_json)
+{
+	return sample_echo(context, tool_name, arguments_json, NULL, out_result_json, out_error_json);
+}
+
+static nfk_plugin_status sample_call_tool_for_caller(void *context, const char *tool_name, const char *arguments_json,
+													 const char *caller_json, char **out_result_json, char **out_error_json)
+{
+	sample_json *caller = caller_json != NULL ? json_parse(caller_json) : NULL;
+	const char *name = caller != NULL ? json_string_member(caller, "clientName") : NULL;
+	nfk_plugin_status status = sample_echo(context, tool_name, arguments_json, name, out_result_json, out_error_json);
+	json_free(caller);
+	return status;
 }
 
 static void sample_free_payload(void *context, nfk_plugin_payload *payload)
@@ -1116,6 +1137,7 @@ NFK_PLUGIN_EXPORT nfk_plugin_status nfk_plugin_entry(uint32_t host_abi_version, 
 	table->free_payload = sample_free_payload;
 	table->free_string = sample_free_string;
 	table->shutdown = sample_shutdown;
+	table->call_tool_for_caller = sample_call_tool_for_caller;
 	sample_log(instance, NFK_PLUGIN_LOG_INFO, "sample plugin " SAMPLE_PLUGIN_VERSION " started");
 	*out_plugin = table;
 	return NFK_PLUGIN_STATUS_OK;

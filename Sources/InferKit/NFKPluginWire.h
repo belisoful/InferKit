@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 #import <InferKit/NFKPlugin.h>
+#import <InferKit/NFKInferenceTool.h>
 #import "NFKInferenceWireCoding.h"
 
 NS_ASSUME_NONNULL_BEGIN
@@ -181,6 +182,14 @@ extern NSString * const NFKPluginCapabilityFileDescriptors;
 @property (nonatomic, copy, nullable) NSURL *allowedFileDirectoryURL;
 
 @end
+
+/*! A tool call's caller as the callTool message and call_tool_for_caller carry it: sessionIdentifier,
+	clientName, clientVersion, keyName, clientAddress, and headers, each only when known. */
+NSDictionary<NSString *, id> *NFKPluginCallerJSONObject(NFKToolCaller *caller);
+
+/*! The caller a callTool message's caller object names, or nil when value is not an object. A member of
+	the wrong type reads as absent. */
+NFKToolCaller * _Nullable NFKPluginCallerFromJSONObject(id _Nullable value);
 
 /*! The object that owns the files a plugin's result names, or nil. The files last as long as it does, so a
 	holder of the result's file paths keeps it, and need not keep the result's values. */

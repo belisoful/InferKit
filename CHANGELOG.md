@@ -126,8 +126,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   any tool; a tool without a start handler runs on the calling thread and completes before returning.
 - `-invokeWithArguments:caller:` runs a tool for a caller. A tool run anywhere other than `/mcp` (a tool
   loop, `-invokeWithArguments:`) sees a nil caller.
-- A plugin's in-process tool passes the caller to the plugin's own tool. A plugin process's tool does
-  not receive it.
+- A plugin's tool receives the caller wherever it runs: in process, in its own process, where
+  `callTool` carries it as an optional `caller` object, and in a C library, through plugin ABI 1.1's
+  `call_tool_for_caller`. A plugin process's tool also starts without holding the calling thread.
 
 #### A texture's PNG keeps its straight color
 

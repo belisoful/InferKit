@@ -13,7 +13,7 @@
 
 #if defined(__LP64__) && __LP64__
 
-_Static_assert(NFK_PLUGIN_ABI_VERSION == 0x00010000, "the plugin ABI version is 1.0");
+_Static_assert(NFK_PLUGIN_ABI_VERSION == 0x00010001, "the plugin ABI version is 1.1");
 
 _Static_assert(offsetof(nfk_plugin_buffer, struct_size) == 0, "nfk_plugin_buffer.struct_size");
 _Static_assert(offsetof(nfk_plugin_buffer, kind) == 4, "nfk_plugin_buffer.kind");
@@ -60,7 +60,8 @@ _Static_assert(offsetof(nfk_plugin, call_tool) == 72, "nfk_plugin.call_tool");
 _Static_assert(offsetof(nfk_plugin, free_payload) == 80, "nfk_plugin.free_payload");
 _Static_assert(offsetof(nfk_plugin, free_string) == 88, "nfk_plugin.free_string");
 _Static_assert(offsetof(nfk_plugin, shutdown) == 96, "nfk_plugin.shutdown");
-_Static_assert(sizeof(nfk_plugin) == 104, "nfk_plugin size");
+_Static_assert(offsetof(nfk_plugin, call_tool_for_caller) == 104, "nfk_plugin.call_tool_for_caller (1.1)");
+_Static_assert(sizeof(nfk_plugin) == 112, "nfk_plugin size");
 
 _Static_assert(offsetof(nfk_buffer, struct_size) == offsetof(nfk_plugin_buffer, struct_size), "nfk_buffer.struct_size");
 _Static_assert(offsetof(nfk_buffer, kind) == offsetof(nfk_plugin_buffer, kind), "nfk_buffer.kind");

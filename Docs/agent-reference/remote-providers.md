@@ -2292,8 +2292,8 @@ writes can be spoofed.
 - Start handlers exist for a call that waits minutes (an inbox wait). On a worker it would hold a
   global-queue thread for the whole wait, and about 64 such waits starve the pool, as model tools did
   before the tool starter.
-- The plugin registry's in-process tool wrapper forwards the caller to the plugin's own tool. The
-  plugin channel does not carry it, so a plugin process's tool sees nil.
+- The plugin registry's in-process tool wrapper forwards the caller to the plugin's own tool. A plugin
+  process's tool and a C library's tool receive it too (`plugins.md`, "Tools").
 - Tests: `NFKInferenceToolTests` (4 for the caller), and `NFKServedMCPSessionTests` (3): two sessions
   under one key each reaching the tool with their own caller and header, and a call without a session;
   a subclass reading the session; a batch of start-handler calls starting together, answering in batch

@@ -17,9 +17,10 @@ NS_ASSUME_NONNULL_BEGIN
 /*!
 	@class      NFKPluginToolProxy
 	@abstract   One of a plugin's tools, with its name, description, and parameters from the manifest.
-	@discussion A call sends callTool with the arguments and returns the plugin's toolResult. The call
-				starts the plugin's process when none runs, and waits behind a restart in order. An
-				error the plugin reports keeps its domain and code.
+	@discussion A call sends callTool with the arguments, and the caller when there is one, and
+				returns the plugin's toolResult. The call starts the plugin's process when none runs,
+				and waits behind a restart in order. A started call holds no thread while the plugin
+				runs it. An error the plugin reports keeps its domain and code.
 */
 @interface NFKPluginToolProxy : NFKInferenceTool
 

@@ -211,7 +211,7 @@ fields are ignored. An unknown type with an id is answered with an error of
 | `unload` | host | `backend` | (empty) |
 | `release` | host | `backend` | (empty) |
 | `status` | host | `backend` | `backendStatus`, `loaded`, `residentBytes`, `peakBytes` |
-| `callTool` | host | `tool`, `arguments` | `toolResult` |
+| `callTool` | host | `tool`, `arguments`, optional `caller` | `toolResult` |
 | `ping` | host | | (empty) |
 | `shutdown` | host | | (empty); the plugin then exits |
 | `event` | plugin | `event` (`loaded`, `unloaded`), `backend`, `residentBytes`, optional `peakBytes`; or `event` `verified` alone | (none) |
@@ -247,8 +247,10 @@ fields are ignored. An unknown type with an id is answered with an error of
 - The protocol is versioned apart from the API and the plugin ABI: 1.0.
 - `hello` carries the host's version. A different major version fails the handshake
   (`NFKPluginErrorProtocolUnsupported`); the two sides use the lower minor version.
-- The C plugin ABI is 1.0 (`NFK_PLUGIN_ABI_VERSION_MAJOR`, `_MINOR`). A minor version only appends
-  structure fields, and a reader uses a field only when `offsetof + sizeof <= struct_size`.
+- The C plugin ABI is 1.1 (`NFK_PLUGIN_ABI_VERSION_MAJOR`, `_MINOR`). A minor version only appends
+  structure fields, and a reader uses a field only when `offsetof + sizeof <= struct_size`. 1.1 appends
+  `nfk_plugin.call_tool_for_caller` (2026-10-31). The structure sizes at 1.0 stay the minimum the host
+  accepts, and `NFKPluginABILayout.c` pins every 1.0 offset and the 1.1 field's.
 - An array of buffers strides by its first element's `struct_size`, so a reader of an earlier minor
   version steps over fields it does not know. Every element of one array has the same `struct_size`.
   `NFKPluginABILayout.c` asserts that `sizeof(nfk_plugin_buffer)` is a multiple of its alignment, so
@@ -554,6 +556,28 @@ registry-wide setter skips plugins with their own.
 `tools` makes an `NFKPluginToolProxy` per manifest declaration, so listing starts nothing. A call sends
 `callTool` through the same turn as a run. The reply's `toolResult` is the wire coding's tagged tool
 result, a `{text, isError}` object, or a string. An error reply keeps its domain and code.
+
+The caller of a tool called through a server's `/mcp` crosses to every plugin kind (2026-10-31):
+
+- `callTool` carries it as `caller` {`sessionIdentifier`, `clientName`, `clientVersion`, `keyName`,
+  `clientAddress`, `headers`}, each member only when known (`NFKPluginCallerJSONObject`). A call with
+  no caller sends no `caller`. The service reads it with `NFKPluginCallerFromJSONObject`: a value that
+  is not an object is no caller, and a member of the wrong type is absent.
+- The proxy overrides `resultForArguments:caller:error:` (it waits for the reply) and
+  `startWithArguments:caller:completion:`, which completes from the reply handler and holds no thread
+  while the plugin runs the tool. Only starting a stopped process blocks the caller. It returns no
+  cancel block, since the protocol has no message that cancels a tool call.
+- The service starts each call through `startWithArguments:caller:completion:` on its work queue, so a
+  plugin's start-handler tool answers when it completes.
+- A C library: `call_tool_for_caller` when its table covers the field (`NFKCStructCovers`) and it is
+  set, with the caller as the same JSON object or NULL; otherwise `call_tool`, and the caller is
+  dropped. The adapter lists tools when either function is set. The fixture's echo names the caller's
+  client after its text.
+- `NFKPluginLoaderTests`' 1.0 table ends its `struct_size` at `shutdown` and holds a live
+  `call_tool_for_caller` past it; a call with a caller answers through `call_tool`. A control with a
+  1.1-sized table answers through the appended field, so the test discriminates. The longer-structures
+  test sizes its table from `offsetof(nfk_plugin, shutdown)` as well: `sizeof(nfk_plugin)` is the
+  current minor's size, so at 1.1 its "1.0" case had stopped being one.
 
 ## The public interface the host keeps
 

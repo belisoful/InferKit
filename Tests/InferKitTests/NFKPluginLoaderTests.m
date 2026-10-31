@@ -48,7 +48,8 @@ static NSString * const NFKLoaderTestsSecondMajorSource =
 	@"{ *out = &table; return NFK_PLUGIN_STATUS_OK; }\n";
 
 /*! A C plugin whose function table, result payload, and result buffers are each NFK_TEST_LONGER bytes
-	longer than plugin ABI 1.0's, as a plugin built against a later minor version writes them. Model
+	longer than plugin ABI 1.0's, as a plugin built against a later minor version writes them. The table's
+	1.0 size ends at shutdown, since sizeof(nfk_plugin) is the current minor's. Model
 	"invert" answers every run with two attachments, "abcd" under "first" and "wxyz" under "second". */
 static NSString * const NFKLoaderTestsLongerStructuresSource =
 	@"#include <InferKitC/NFKPluginABI.h>\n"
@@ -78,10 +79,35 @@ static NSString * const NFKLoaderTestsLongerStructuresSource =
 	@"static void free_string(void *c, char *s) { free(s); }\n"
 	@"static void shutdown_plugin(void *c) { }\n"
 	@"static struct { nfk_plugin table; unsigned char later[NFK_TEST_LONGER + 1]; } longer_table = {\n"
-	@"  { (uint32_t)(sizeof(nfk_plugin) + NFK_TEST_LONGER), NFK_PLUGIN_ABI_VERSION, 0, describe, create_backend, 0, run, 0, 0,\n"
+	@"  { (uint32_t)(offsetof(nfk_plugin, shutdown) + sizeof(void *) + NFK_TEST_LONGER), NFK_PLUGIN_ABI_VERSION, 0, describe, create_backend, 0, run, 0, 0,\n"
 	@"    destroy_backend, 0, free_payload, free_string, shutdown_plugin } };\n"
 	@"NFK_PLUGIN_EXPORT nfk_plugin_status nfk_plugin_entry(uint32_t v, const nfk_plugin_host *h, const nfk_plugin **out)\n"
 	@"{ *out = &longer_table.table; return NFK_PLUGIN_STATUS_OK; }\n";
+
+/*! A C plugin built against plugin ABI 1.0: its table's struct_size ends at shutdown. The bytes after it
+	hold a call_tool_for_caller the host must not read, which answers "read past 1.0" where call_tool
+	answers "plain". */
+static NSString * const NFKLoaderTestsOneZeroToolSource =
+	@"#include <InferKitC/NFKPluginABI.h>\n"
+	@"#include <stdlib.h>\n"
+	@"#include <string.h>\n"
+	@"static char *copy_string(const char *text) { char *copy = malloc(strlen(text) + 1); strcpy(copy, text); return copy; }\n"
+	@"static nfk_plugin_status describe(void *c, char **json)\n"
+	@"{ *json = copy_string(\"{\\\"models\\\":[{\\\"id\\\":\\\"invert\\\",\\\"family\\\":\\\"sample-invert\\\"}],\\\"tools\\\":[{\\\"name\\\":\\\"echo\\\"}]}\"); return NFK_PLUGIN_STATUS_OK; }\n"
+	@"static nfk_plugin_status create_backend(void *c, const char *m, const char *o, nfk_plugin_backend **b, char **e) { return NFK_PLUGIN_STATUS_FAILED; }\n"
+	@"static nfk_plugin_status run(void *c, nfk_plugin_backend *b, nfk_plugin_run *r, const nfk_plugin_payload *q, nfk_plugin_payload **o, char **e) { return NFK_PLUGIN_STATUS_FAILED; }\n"
+	@"static void destroy_backend(void *c, nfk_plugin_backend *b) { }\n"
+	@"static nfk_plugin_status call_tool(void *c, const char *t, const char *a, char **r, char **e)\n"
+	@"{ *r = copy_string(\"{\\\"text\\\":\\\"plain\\\"}\"); *e = 0; return NFK_PLUGIN_STATUS_OK; }\n"
+	@"static nfk_plugin_status call_tool_for_caller(void *c, const char *t, const char *a, const char *k, char **r, char **e)\n"
+	@"{ *r = copy_string(\"{\\\"text\\\":\\\"read past 1.0\\\"}\"); *e = 0; return NFK_PLUGIN_STATUS_OK; }\n"
+	@"static void free_payload(void *c, nfk_plugin_payload *p) { }\n"
+	@"static void free_string(void *c, char *s) { free(s); }\n"
+	@"static void shutdown_plugin(void *c) { }\n"
+	@"static nfk_plugin table = { (uint32_t)(offsetof(nfk_plugin, shutdown) + sizeof(void *)), NFK_PLUGIN_ABI_VERSION, 0, describe,\n"
+	@"  create_backend, 0, run, 0, 0, destroy_backend, call_tool, free_payload, free_string, shutdown_plugin, call_tool_for_caller };\n"
+	@"NFK_PLUGIN_EXPORT nfk_plugin_status nfk_plugin_entry(uint32_t v, const nfk_plugin_host *h, const nfk_plugin **out)\n"
+	@"{ *out = &table; return NFK_PLUGIN_STATUS_OK; }\n";
 
 @interface NFKPluginLoaderTests : XCTestCase
 @property (nonatomic, strong) NSMutableArray<NSURL *> *temporaryURLs;
@@ -416,6 +442,10 @@ static NSString * const NFKLoaderTestsLongerStructuresSource =
 	NFKToolResult *echo = [plugin.tools.firstObject invokeWithArguments:@{ @"text": @"hi" }];
 	XCTAssertFalse(echo.isError, @"%@", echo.text);
 	XCTAssertEqualObjects(echo.text, @"hi");
+	NFKToolCaller *caller = [[NFKToolCaller alloc] initWithSessionIdentifier:@"S1" clientName:@"gemini-cli" clientVersion:@"0.9"
+																	 keyName:nil clientAddress:@"127.0.0.1" headers:nil];
+	XCTAssertEqualObjects([plugin.tools.firstObject invokeWithArguments:@{ @"text": @"hi" } caller:caller].text, @"hi for gemini-cli",
+						  @"a library with call_tool_for_caller reads the caller");
 }
 
 - (void)testACLibrarysRunReportsProgressAndIsCancelled
@@ -602,6 +632,23 @@ static NSString * const NFKLoaderTestsLongerStructuresSource =
 		XCTAssertEqualObjects(result.outputs[@"second"], [@"wxyz" dataUsingEncoding:NSUTF8StringEncoding],
 							  @"the second buffer is found at its stride of %@ bytes past 1.0's", longerBy[identifier]);
 	}
+}
+
+- (void)testAOneZeroTableRunsItsToolThroughCallToolWithACaller
+{
+	NSURL *fixture = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"];
+	NSURL *library = [self libraryFromSource:NFKLoaderTestsOneZeroToolSource named:@"one_zero_tool" definitions:@[]];
+	NSURL *copy = library != nil ? [self copyOfBundle:fixture identifier:@"com.example.inferkit.loader-test-one-zero-tool"
+											 executable:library editManifest:nil] : nil;
+	XCTAssertNotNil(copy);
+	NSError *error = nil;
+	NFKLoadedPlugin *plugin = copy != nil ? [NFKPluginLoader loadPluginAtURL:copy signaturePolicy:NFKPluginSignaturePolicy.developmentPolicy
+																	   error:&error] : nil;
+	XCTAssertNotNil(plugin, @"a 1.0 table loads under 1.1: %@", error);
+	NFKToolCaller *caller = [[NFKToolCaller alloc] initWithSessionIdentifier:@"S1" clientName:@"claude-code" clientVersion:nil
+																	 keyName:nil clientAddress:@"127.0.0.1" headers:nil];
+	NFKToolResult *result = [plugin.tools.firstObject invokeWithArguments:@{} caller:caller];
+	XCTAssertEqualObjects(result.text, @"plain", @"a field past the table's struct_size is never read");
 }
 
 - (void)testAFunctionTableOfAnotherABIMajorIsRefused

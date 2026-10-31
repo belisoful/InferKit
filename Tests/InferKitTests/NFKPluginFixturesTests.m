@@ -490,6 +490,13 @@ static NSURL *NFKFixtureDiscardedDirectoryOfCache(NSURL *cache)
 	XCTAssertEqual(plugin->call_tool(context, "echo", "{\"text\":\"hi\"}", &toolResult, &errorJSON), NFK_PLUGIN_STATUS_OK);
 	NSString *echoed = NFKFixtureTakeString(plugin, toolResult);
 	XCTAssertTrue([echoed containsString:@"\"text\":\"> hi\""], @"%@", echoed);
+	XCTAssertEqual(plugin->call_tool_for_caller(context, "echo", "{\"text\":\"hi\"}", "{\"clientName\":\"codex\"}", &toolResult, &errorJSON),
+				   NFK_PLUGIN_STATUS_OK);
+	echoed = NFKFixtureTakeString(plugin, toolResult);
+	XCTAssertTrue([echoed containsString:@"\"text\":\"> hi for codex\""], @"%@", echoed);
+	XCTAssertEqual(plugin->call_tool_for_caller(context, "echo", "{\"text\":\"hi\"}", NULL, &toolResult, &errorJSON), NFK_PLUGIN_STATUS_OK);
+	echoed = NFKFixtureTakeString(plugin, toolResult);
+	XCTAssertTrue([echoed containsString:@"\"text\":\"> hi\""], @"a call with no caller passes NULL: %@", echoed);
 	XCTAssertEqual(plugin->call_tool(context, "missing", "{}", &toolResult, &errorJSON), NFK_PLUGIN_STATUS_UNKNOWN_TOOL);
 	XCTAssertTrue([NFKFixtureTakeString(plugin, errorJSON) containsString:@"\"code\":15"]);
 

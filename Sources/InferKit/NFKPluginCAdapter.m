@@ -816,7 +816,7 @@ static const char *NFKPluginCHostOutputDirectory(void *context, nfk_plugin_run *
 
 - (NSArray<NFKInferenceTool *> *)toolsIn:(nullable id)value
 {
-	if (self.table->call_tool == NULL) {
+	if (self.table->call_tool == NULL && [self callerToolFunction] == NULL) {
 		return @[];
 	}
 	NSMutableArray<NFKInferenceTool *> *tools = [NSMutableArray array];
@@ -830,19 +830,29 @@ static const char *NFKPluginCHostOutputDirectory(void *context, nfk_plugin_run *
 		NSDictionary *parameters = [declaration[@"parameters"] isKindOfClass:NSDictionary.class] ? declaration[@"parameters"]
 			: @{ @"type": @"object", @"properties": @{} };
 		[tools addObject:[NFKInferenceTool toolWithName:name description:summary parameters:parameters
-												handler:^NFKToolResult *(NSDictionary<NSString *, id> *arguments, NSError **error) {
+										  callerHandler:^NFKToolResult *(NSDictionary<NSString *, id> *arguments, NFKToolCaller *caller,
+																		 NSError **error) {
 			NFKPluginCAdapter *adapter = weakSelf;
 			if (adapter == nil || adapter.isShutDown) {
 				NFKPluginSetError(error, NFKPluginErrorStopped, @"the plugin has shut down");
 				return nil;
 			}
-			return [adapter callToolNamed:name arguments:arguments error:error];
+			return [adapter callToolNamed:name arguments:arguments caller:caller error:error];
 		}]];
 	}
 	return tools;
 }
 
-- (nullable NFKToolResult *)callToolNamed:(NSString *)name arguments:(NSDictionary<NSString *, id> *)arguments error:(NSError **)error
+/*! The plugin's call_tool_for_caller when its table is long enough to hold it, or NULL. */
+- (nullable nfk_plugin_status (*)(void *, const char *, const char *, const char *, char **, char **))callerToolFunction
+{
+	return NFKCStructCovers(self.table, nfk_plugin, call_tool_for_caller) ? self.table->call_tool_for_caller : NULL;
+}
+
+- (nullable NFKToolResult *)callToolNamed:(NSString *)name
+								arguments:(NSDictionary<NSString *, id> *)arguments
+								   caller:(nullable NFKToolCaller *)caller
+									error:(NSError **)error
 {
 	if (![NSJSONSerialization isValidJSONObject:arguments]) {
 		if (error != NULL) {
@@ -854,7 +864,16 @@ static const char *NFKPluginCHostOutputDirectory(void *context, nfk_plugin_run *
 																   encoding:NSUTF8StringEncoding]);
 	char *resultString = NULL;
 	char *errorString = NULL;
-	nfk_plugin_status status = self.table->call_tool(self.table->context, name.UTF8String, argumentsJSON.bytes, &resultString, &errorString);
+	nfk_plugin_status (*callerTool)(void *, const char *, const char *, const char *, char **, char **) = [self callerToolFunction];
+	nfk_plugin_status status = NFK_PLUGIN_STATUS_OK;
+	if (callerTool != NULL) {
+		NSData *callerJSON = caller != nil ? NFKPluginCString([[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:NFKPluginCallerJSONObject(caller)
+																																  options:0 error:NULL]
+																						 encoding:NSUTF8StringEncoding]) : nil;
+		status = callerTool(self.table->context, name.UTF8String, argumentsJSON.bytes, callerJSON.bytes, &resultString, &errorString);
+	} else {
+		status = self.table->call_tool(self.table->context, name.UTF8String, argumentsJSON.bytes, &resultString, &errorString);
+	}
 	NSString *result = [self takeString:resultString];
 	if (status != NFK_PLUGIN_STATUS_OK) {
 		NSError *failure = [self errorForStatus:status errorString:errorString operation:[NSString stringWithFormat:@"tool %@", name]];

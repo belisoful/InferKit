@@ -54,9 +54,9 @@ extern "C" {
 	Introduced in InferKit 0.4.0. */
 #define NFK_PLUGIN_ABI_VERSION_MAJOR 1
 
-/*! The plugin interface's minor version. Each minor version appends fields to the structures.
-	Introduced in InferKit 0.4.0. */
-#define NFK_PLUGIN_ABI_VERSION_MINOR 0
+/*! The plugin interface's minor version. Each minor version appends fields to the structures: 1.1
+	appends nfk_plugin's call_tool_for_caller. Introduced in InferKit 0.4.0. */
+#define NFK_PLUGIN_ABI_VERSION_MINOR 1
 
 /*! The plugin interface version as one number: the major version in the high 16 bits and the minor
 	version in the low 16 bits. Introduced in InferKit 0.4.0. */
@@ -237,6 +237,12 @@ typedef struct nfk_plugin_host {
 	@field		free_payload Frees a payload the plugin returned.
 	@field		free_string Frees a string the plugin returned.
 	@field		shutdown Frees the plugin. Nothing calls the plugin afterward.
+	@field		call_tool_for_caller Optional. Runs a tool as @c call_tool does, with @c caller_json a
+				UTF-8 JSON object naming the MCP client that called it through a server's /mcp:
+				{"sessionIdentifier", "clientName", "clientVersion", "keyName", "clientAddress",
+				"headers"}, each member present only when known, and "headers" an object by lowercase
+				header name. @c caller_json is NULL for a call with no caller. When it is set, InferKit
+				calls it in place of @c call_tool. Plugin ABI 1.1.
 	Introduced in InferKit 0.4.0.
 */
 typedef struct nfk_plugin {
@@ -258,6 +264,8 @@ typedef struct nfk_plugin {
 	void (*free_payload)(void *context, nfk_plugin_payload *payload);
 	void (*free_string)(void *context, char *string);
 	void (*shutdown)(void *context);
+	nfk_plugin_status (*call_tool_for_caller)(void *context, const char *tool_name, const char *arguments_json,
+											  const char *caller_json, char **out_result_json, char **out_error_json);
 } nfk_plugin;
 
 /*! The type of nfk_plugin_entry, for a host that looks it up with dlsym. Introduced in InferKit 0.4.0. */
