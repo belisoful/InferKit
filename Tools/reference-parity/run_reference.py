@@ -25282,6 +25282,69 @@ CHECKPOINT_MODELS["translategemma_beam"] = run_translategemma_beam
 CHECKPOINT_MODELS["ltx_pipeline"] = run_ltx_pipeline
 
 
+def run_ltx2_real_decoders(image, checkpoint):
+    """The LTX-2.3 video decoder, audio decoder, and vocoder on the RELEASED weights, at float32 from the
+    stored bfloat16, so the figure describes the arithmetic rather than a rounding.
+
+    `--checkpoint` is the `diffusers/LTX-2.3-Diffusers` release directory. Each input is drawn in the
+    latents' own distribution: a standard normal scaled by the autoencoder's per-channel statistics and
+    shifted by its mean, as the pipeline denormalizes before decoding. The vocoder vocodes the audio
+    decoder's own mel spectrogram. Runs under the `qwenimage` oracle env. `image` unused.
+    """
+    from diffusers import AutoencoderKLLTX2Audio, AutoencoderKLLTX2Video
+    from diffusers.pipelines.ltx2.vocoder import LTX2VocoderWithBWE
+
+    generator = torch.Generator().manual_seed(61)
+    extra = {}
+    with torch.no_grad():
+        vae = AutoencoderKLLTX2Video.from_pretrained(os.path.join(checkpoint, "vae"), torch_dtype=torch.float32).eval()
+        noise = torch.randn(1, 128, 3, 4, 6, generator=generator)
+        latent = noise * vae.latents_std.view(1, -1, 1, 1, 1) + vae.latents_mean.view(1, -1, 1, 1, 1)
+        extra["video_latent"] = latent.contiguous()
+        extra["video"] = vae.decode(latent, return_dict=False)[0].contiguous()
+        del vae
+
+        audio_vae = AutoencoderKLLTX2Audio.from_pretrained(os.path.join(checkpoint, "audio_vae"), torch_dtype=torch.float32).eval()
+        packed = torch.randn(1, 7, 128, generator=generator)
+        packed = packed * audio_vae.latents_std + audio_vae.latents_mean
+        audio_latent = packed.unflatten(2, (-1, 16)).transpose(1, 2)
+        extra["audio_latent"] = audio_latent.contiguous()
+        mel = audio_vae.decode(audio_latent, return_dict=False)[0]
+        extra["mel"] = mel.contiguous()
+        del audio_vae
+
+        vocoder = LTX2VocoderWithBWE.from_pretrained(os.path.join(checkpoint, "vocoder"), torch_dtype=torch.float32).eval()
+        extra["waveform"] = vocoder(mel).contiguous()
+    globals()["_extra"] = extra
+    return extra["video"].clone()
+
+
+def run_ltx2_real_connectors(image, checkpoint):
+    """The LTX-2.3 text connectors on the RELEASED weights, at float32 from the stored bfloat16.
+
+    `--checkpoint` is the release directory. The input is 128 tokens of stacked hidden states (3840 wide
+    at 49 layers, a standard normal), the first 96 padding, as the tokenizer left-pads a short prompt;
+    the connectors normalize each layer per token, so the input's scale does not matter. Runs under the
+    `qwenimage` oracle env. `image` unused.
+    """
+    from diffusers.pipelines.ltx2.connectors import LTX2TextConnectors
+
+    generator = torch.Generator().manual_seed(63)
+    hidden = torch.randn(1, 128, 3840 * 49, generator=generator)
+    mask = torch.zeros(1, 128, dtype=torch.int64)
+    mask[:, 96:] = 1
+    with torch.no_grad():
+        connectors = LTX2TextConnectors.from_pretrained(os.path.join(checkpoint, "connectors"), torch_dtype=torch.float32).eval()
+        video, audio, out_mask = connectors(hidden, mask, padding_side="left")
+    globals()["_extra"] = {"valid_hidden": hidden[:, 96:].contiguous(), "video": video.contiguous(),
+                           "audio": audio.contiguous()}
+    return video.clone()
+
+
+CHECKPOINT_MODELS["ltx2_real_decoders"] = run_ltx2_real_decoders
+CHECKPOINT_MODELS["ltx2_real_connectors"] = run_ltx2_real_connectors
+
+
 def run_wan_pipeline(image, checkpoint):
     """Wan 2.1's text-to-video glue, from diffusers' own WanPipeline, at a tiny random geometry.
 

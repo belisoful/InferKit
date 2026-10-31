@@ -524,3 +524,56 @@ extension NFKMLXLTX2StageTests {
                       released: connectors.shapes) { _, shape in shape }
     }
 }
+
+// MARK: - The released weights
+
+extension NFKMLXLTX2StageTests {
+
+    private func release() throws -> URL {
+        guard let path = config["IK_VAL_LTX2_3"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_VAL_LTX2_3 (diffusers/LTX-2.3-Diffusers without its transformer and text encoder weights)")
+        }
+        return URL(fileURLWithPath: path)
+    }
+
+    // The released LTX-2.3 decoders and vocoder through their public loaders at float32, against
+    // diffusers at float32 over the same stored bfloat16 weights: the inputs are drawn in the latents' own
+    // distribution, and the vocoder vocodes the audio decoder's own mel spectrogram.
+    func testLTX2DecodersAndVocoderMatchTheReferenceOnReleasedWeights() throws {
+        let arrays = try record("IK_PARITY_LTX2_REAL_DECODERS", oracle: "ltx2_real_decoders --checkpoint <release>")
+        let directory = try release()
+
+        let videoDecoder = NFKMLXLTX2VideoDecoderNet(try NFKMLXLTX2VideoVAE.configuration(
+            fromHuggingFace: directory.appendingPathComponent("vae/config.json")))
+        try NFKMLXLTX2VideoVAE.loadWeights(into: videoDecoder, from: directory.appendingPathComponent("vae"))
+        let latent = try XCTUnwrap(arrays["video_latent"]).transposed(0, 2, 3, 4, 1)
+        let video = compare("ltx2-23-real video decode", channelsFirst(videoDecoder(latent)), arrays["video"])
+
+        let audioDecoder = NFKMLXLTX2AudioDecoderNet(try NFKMLXLTX2AudioVAE.configuration(
+            fromHuggingFace: directory.appendingPathComponent("audio_vae/config.json")))
+        try NFKMLXLTX2AudioVAE.loadWeights(into: audioDecoder, from: directory.appendingPathComponent("audio_vae"))
+        let mel = audioDecoder(try XCTUnwrap(arrays["audio_latent"]).transposed(0, 2, 3, 1))
+        let melSimilarity = compare("ltx2-23-real mel", mel.transposed(0, 3, 1, 2), arrays["mel"])
+
+        let vocoder = NFKMLXLTX2VocoderNet(try NFKMLXLTX2Vocoder.configuration(
+            fromHuggingFace: directory.appendingPathComponent("vocoder/config.json")))
+        try NFKMLXLTX2Vocoder.loadWeights(into: vocoder, from: directory.appendingPathComponent("vocoder"))
+        let referenceMel = try XCTUnwrap(arrays["mel"]).transposed(0, 2, 3, 1)
+        let waveform = compare("ltx2-23-real waveform", vocoder(referenceMel).transposed(0, 2, 1), arrays["waveform"])
+        print("VALIDATION PARITY ltx2-23-real: video decode cosine \(video), mel \(melSimilarity), waveform \(waveform)")
+    }
+
+    // The released LTX-2.3 connectors at float32 over 128 left-padded tokens, 32 of them real.
+    func testLTX2ConnectorsMatchTheReferenceOnReleasedWeights() throws {
+        let arrays = try record("IK_PARITY_LTX2_REAL_CONNECTORS", oracle: "ltx2_real_connectors --checkpoint <release>")
+        let directory = try release()
+        let net = NFKMLXLTX2ConnectorsNet(try NFKMLXLTX2Connectors.configuration(
+            fromHuggingFace: directory.appendingPathComponent("connectors/config.json")))
+        try NFKMLXLTX2Connectors.loadWeights(into: net, from: directory.appendingPathComponent("connectors"),
+                                             precision: .float32)
+        let (video, audio) = net(validStates: try XCTUnwrap(arrays["valid_hidden"]), length: 128)
+        let videoSimilarity = compare("ltx2-23-real connectors video", video, arrays["video"])
+        let audioSimilarity = compare("ltx2-23-real connectors audio", audio, arrays["audio"])
+        print("VALIDATION PARITY ltx2-23-real-connectors: video text cosine \(videoSimilarity), audio \(audioSimilarity)")
+    }
+}

@@ -149,6 +149,11 @@ arithmetic as before.
 - The LTX-2 stages around the transformer, each at reference parity against diffusers at a tiny random
   configuration on the first numeric run, and held to the released LTX-2.3 headers by shape
   (`shapes.py diffusers/LTX-2.3-Diffusers <dir> <component>`, `testLTX2StagesMatchTheReleasedShapes`):
+  - On the released LTX-2.3 weights, each stage through its public loader at float32 against diffusers at
+    float32 over the same stored bfloat16 (`ltx2_real_decoders`, `ltx2_real_connectors`, `IK_PARITY_LTX2_REAL_*`,
+    `IK_VAL_LTX2_3`; inputs drawn in the latents' own distribution, 128 left-padded text tokens): video
+    decode 0.9999999999934395, mel 0.9999999999999277, 48 kHz waveform 0.9999999999782688, connectors video
+    text 0.9999999999817721, audio 0.9999999999923238.
   - `NFKMLXLTX2VideoDecoderNet` (`AutoencoderKLLTX2Video`, decoder only; generation never encodes). LTX-Video
     0.9.5's shape with an affine-free per-pixel RMS norm computed with a square root (eps 1e-8), an
     affine LayerNorm before the plain 1×1×1 shortcut convolution where a resnet changes width, and time

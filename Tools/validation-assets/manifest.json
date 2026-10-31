@@ -6029,6 +6029,8 @@
         "ltx2_connectors",
         "ltx2_guidance",
         "ltx2_pipeline",
+        "ltx2_real_decoders",
+        "ltx2_real_connectors",
         "flux2_vae",
         "flux2_text",
         "flux2_scheduler",
