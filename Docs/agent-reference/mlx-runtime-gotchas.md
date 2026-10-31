@@ -890,6 +890,13 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     `|x|` exceeds `ln 2 / 2`, by an emulation of the kernel that reproduces the error-function readings above
     bin for bin. The one array call, MetricGAN+'s `expm1(mask * features)`, takes `torchExpm1`, Sleef's
     `expm1f` as torch computes it. Reported upstream as ml-explore/mlx#4765.
+  - **ml-explore/mlx#4780 restores the low-part step (merged 2026-10-31).** The pinned mlx-swift
+    (`9019419`) predates it. Raising the pin past it turns two controls in
+    `testTrainableGELUHoldsFloat32Accuracy` red: MLXNN's `gelu` gradient above 1.4e-7 from float64, and the
+    `erf` mean error above 4 units from 0.94 to 1.25. Each control then needs a form that holds at either
+    version, and the expm1 digest control in the same file is checked again. `torchExpm1` and the GELU
+    kernels stay, because they reproduce torch's kernels bit for bit and the fixed MLX kernel is a
+    different algorithm.
   - **torch 2.13 changed its float32 error function.** From 2.13 on, the exponential inside
     `Vectorized<float>::erf` on NEON is `vexpq_f32_u20` instead of Sleef's `expf`, and a 4-lane vector holding
     an argument beyond 87.34 takes Sleef's for all four lanes. The GELU kernels take torch 2.13's exponential
