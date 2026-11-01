@@ -549,11 +549,19 @@ counts below are the ledger's, over its 167 entries in 151 rows.
   produced before training. `merge(into:)` folds each detour into its base weights (`Linear` computes
   `x·Wᵀ`, so the delta is `(A·B)ᵀ·scale`) and leaves plain layers: the saved file carries no adapter
   keys, so there is no adapter format and no second loading path.
-  Neither `apply` nor `merge` will touch a quantized model. `QuantizedLinear` subclasses `Linear`,
-  so it satisfies a type-based predicate silently while its `weight` holds packed integers — adapting
-  one builds a detour around something that is not a weight. And merging a low-rank delta into a
-  quantized base then requantizing rounds the delta away, so the training is discarded while the file
-  loads without complaint. Merge at float precision, then quantize, in that order.
+  A selected `QuantizedLinear` becomes an `NFKMLXQuantizedLoRALinear` (QLoRA): a `QuantizedLinear`
+  subclass holding the packed weight, its scales, and its biases frozen, with the detour cast to the
+  input's type so the output keeps it. The gradient reaches the detour through `quantizedMM`, and equals
+  a float adapter's over the dequantized weight (`NFKMLXLoRATests`). `NFKMLXTrainer.heldKeys` holds every
+  array of a quantized module except an adapter's `lora_a`/`lora_b`. Two traps the subclass sidesteps:
+  `QuantizedLinear.unfreeze` refreezes all of its own parameters when called on the layer itself, which
+  would include the detour (the root's `unfreeze(keys:)` visits each module directly and never calls that
+  override), and a `@ParameterInfo` array cannot be assigned, only replaced through `update(parameters:)`.
+  `merge` still refuses a quantized model: merging a low-rank delta into a quantized base then
+  requantizing rounds the delta away, so the training is discarded while the file loads without
+  complaint. A run over a quantized base is its adapters: `adapterArrays(of:)` returns them under
+  `<path>.lora_a`/`.lora_b`, and `loadAdapters(_:into:)` places them over a base adapted the same way,
+  refusing a stray path or another rank. Both adapter kinds conform to `NFKMLXLoRAAdapter`.
 - `NFKMLXSegFormerTraining` — the head-only recipe. A consumer rarely wants ADE20K's 150 classes and
   usually wants their own few, which is a decode-head problem: `NFKMLXSegFormerTrainable.decodeHead`
   (the default) freezes the four encoder stages, so the run's memory falls to the head's share.

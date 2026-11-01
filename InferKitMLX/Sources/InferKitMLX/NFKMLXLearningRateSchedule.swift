@@ -88,6 +88,16 @@ public struct NFKMLXLearningRateSchedule {
         }
     }
 
+    /// torch's `LinearLR`: a factor moving linearly from `start` at step zero to `end` at `steps`, held at
+    /// `end` after it.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func linearFactor(steps: Int, start: Float, end: Float) -> NFKMLXLearningRateSchedule {
+        NFKMLXLearningRateSchedule { step in
+            start + (end - start) * Float(min(step, steps)) / Float(max(1, steps))
+        }
+    }
+
     /// transformers' `get_linear_schedule_with_warmup`, the `Trainer`'s default: `k / warmupSteps` during the
     /// warm-up, then a linear fall to zero at `steps`, `(steps − k) / (steps − warmupSteps)`.
     ///

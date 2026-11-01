@@ -25315,6 +25315,455 @@ def run_ltx2_pipeline25(image):
 MODELS["ltx2_pipeline25"] = run_ltx2_pipeline25
 
 
+# `ltx_core` names the LTX-2 transformer's modules apart from diffusers; the `av_ca_*` rules run before
+# the general `adaln_single` one they contain.
+_LTX_CORE_TO_DIFFUSERS = [
+    ("av_ca_video_scale_shift_adaln_single", "av_cross_attn_video_scale_shift"),
+    ("av_ca_audio_scale_shift_adaln_single", "av_cross_attn_audio_scale_shift"),
+    ("av_ca_a2v_gate_adaln_single", "av_cross_attn_video_a2v_gate"),
+    ("av_ca_v2a_gate_adaln_single", "av_cross_attn_audio_v2a_gate"),
+    ("audio_patchify_proj", "audio_proj_in"), ("patchify_proj", "proj_in"),
+    ("audio_prompt_adaln_single", "audio_prompt_adaln"), ("prompt_adaln_single", "prompt_adaln"),
+    ("audio_adaln_single", "audio_time_embed"), ("adaln_single", "time_embed"),
+    ("scale_shift_table_a2v_ca_audio", "audio_a2v_cross_attn_scale_shift_table"),
+    ("scale_shift_table_a2v_ca_video", "video_a2v_cross_attn_scale_shift_table"),
+    (".q_norm.", ".norm_q."), (".k_norm.", ".norm_k.")]
+
+
+def _ltx_core_key_to_diffusers(key):
+    for old, new in _LTX_CORE_TO_DIFFUSERS:
+        key = key.replace(old, new)
+    return key
+
+
+def run_ltx2_loss(image):
+    """The LTX-2 LoRA training objective as Lightricks' trainer computes it (`ltx-trainer` at
+    Lightricks/LTX-2 e98f6d9, `TextToVideoStrategy` with audio): the stretched shifted-logit-normal sigma
+    sampler, noising `(1 - sigma)·clean + sigma·noise` with the first latent frame left clean under
+    first-frame conditioning, the velocity target `noise - clean`, per-token timesteps that are zero on
+    the conditioning tokens, and the loss, a video MSE averaged over the non-conditioning tokens plus an
+    audio MSE, per example, then averaged over the batch.
+
+    The transformer is `ltx_core`'s own `LTXModel` (the trainer's model, not diffusers') at a tiny random
+    configuration in LTX-2.5's arrangement, adapted by peft's LoRA over `to_q`, `to_k`, `to_v`, and
+    `to_out.0` of all six attentions, the trainer's default targets. `ltx_core` modulates the
+    cross-modal attentions differently from diffusers wherever timesteps vary across tokens: the
+    scale/shift reads the modality's own per-token timesteps and the gate reads the other modality's
+    sigma. The trainer passes no keyframe mask, so the keyframe embedding is carried and unread.
+
+    Records: the transformer under diffusers names (`w::`), every adapter in InferKit's layout
+    (`lora::<path>.lora_a` `[in, rank]`, `.lora_b` `[rank, out]`), the sampler's raw draws, the clean
+    latents and noises, the strategy's noised inputs, targets, timesteps, and masks, the predictions, the
+    per-example and mean loss, and each adapter's gradient (`grad::`). A second sampler section
+    (`sampler.*`) holds 64 draws each at 100 and 6000 tokens, either side of the shift's interpolation
+    range. Runs under the `ltxtrain` oracle env (ltx-core and ltx-trainer installed from that commit).
+    `image` unused.
+    """
+    from ltx_core.model.transformer.model import LTXModel, LTXModelType
+    from ltx_trainer.timestep_samplers import ShiftedLogitNormalTimestepSampler
+    from ltx_trainer.training_strategies.flexible import FlexibleStrategy, FlexibleStrategyConfig, ModalityConfig
+    from ltx_trainer.training_strategies.text_to_video import TextToVideoConfig, TextToVideoStrategy
+    from peft import LoraConfig, get_peft_model
+
+    core = LTXModel(
+        model_type=LTXModelType.AudioVideo, num_attention_heads=2, attention_head_dim=16, in_channels=8,
+        out_channels=8, num_layers=2, cross_attention_dim=32, audio_num_attention_heads=2,
+        audio_attention_head_dim=8, audio_in_channels=8, audio_out_channels=8, audio_cross_attention_dim=16,
+        apply_gated_attention=True, cross_attention_adaln=True, use_prompt_adaln_single=True, ff_bias=False,
+        use_keyframes_abs_pos_embedding=True, av_ca_timestep_scale_multiplier=1000, double_precision_rope=True,
+        positional_embedding_max_pos=[20, 64, 64], audio_positional_embedding_max_pos=[20])
+    _randomized(core, seed=37)
+    extra = {f"w::{_ltx_core_key_to_diffusers(k)}": v.float().clone().contiguous()
+             for k, v in core.state_dict().items()}
+
+    rank, alpha = 4, 8
+    model = get_peft_model(core, LoraConfig(r=rank, lora_alpha=alpha, lora_dropout=0.0,
+                                            target_modules=["to_k", "to_q", "to_v", "to_out.0"],
+                                            init_lora_weights=True))
+    # peft starts B at zero, which leaves A's gradient zero; both are drawn so every gradient discriminates.
+    torch.manual_seed(41)
+    adapters = {}
+    for name, module in model.named_modules():
+        if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+            path = name.removeprefix("base_model.model.")
+            a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+            with torch.no_grad():
+                a.copy_(torch.randn(a.shape) * 0.2)
+                b.copy_(torch.randn(b.shape) * 0.2)
+            adapters[path] = (a, b)
+            extra[f"lora::{path}.lora_a"] = a.detach().t().contiguous().clone()
+            extra[f"lora::{path}.lora_b"] = b.detach().t().contiguous().clone()
+    model.train()
+
+    batch_size, frames, height, width, audio_frames = 2, 3, 2, 3, 5
+    generator = torch.Generator().manual_seed(3)
+    clean = torch.randn(batch_size, 8, frames, height, width, generator=generator)
+    audio_clean = torch.randn(batch_size, 8, audio_frames, 1, generator=generator)
+    video_text = torch.randn(batch_size, 4, 32, generator=generator)
+    audio_text = torch.randn(batch_size, 4, 16, generator=generator)
+    video_latents = {"latents": clean, "num_frames": torch.tensor([frames] * batch_size),
+                     "height": torch.tensor([height] * batch_size), "width": torch.tensor([width] * batch_size),
+                     "fps": torch.tensor([24.0] * batch_size)}
+    conditions = {"video_prompt_embeds": video_text, "audio_prompt_embeds": audio_text,
+                  "prompt_attention_mask": torch.ones(batch_size, 4, dtype=torch.long)}
+    patchifier = TextToVideoStrategy(TextToVideoConfig())
+    extra.update({"clean": patchifier._video_patchifier.patchify(clean).contiguous(),
+                  "audio_clean": patchifier._audio_patchifier.patchify(audio_clean).contiguous(),
+                  "video_text": video_text.contiguous(), "audio_text": audio_text.contiguous()})
+
+    real_rand, real_randn, real_randn_like = torch.rand, torch.randn, torch.randn_like
+
+    def logged(function, kind, draws):
+        def draw(*args, **kwargs):
+            value = function(*args, **kwargs)
+            draws.append((kind, value))
+            return value
+        return draw
+
+    def section(prefix, strategy, batch, seed, expected_draws):
+        draws = []
+        torch.manual_seed(seed)
+        torch.rand, torch.randn, torch.randn_like = (logged(real_rand, "rand", draws),
+                                                     logged(real_randn, "randn", draws),
+                                                     logged(real_randn_like, "randn_like", draws))
+        try:
+            inputs = strategy.prepare_training_inputs(batch, ShiftedLogitNormalTimestepSampler())
+        finally:
+            torch.rand, torch.randn, torch.randn_like = real_rand, real_randn, real_randn_like
+        assert [kind for kind, _ in draws] == [kind for kind, _ in expected_draws], [k for k, _ in draws]
+        for (_, name), (_, value) in zip(expected_draws, draws):
+            extra[f"{prefix}.draw.{name}"] = value.contiguous()
+        extra.update({
+            f"{prefix}.sigma": inputs.video.sigma.clone().contiguous(),
+            f"{prefix}.audio_sigma": inputs.audio.sigma.clone().contiguous(),
+            f"{prefix}.noisy": inputs.video.latent.contiguous(),
+            f"{prefix}.audio_noisy": inputs.audio.latent.contiguous(),
+            f"{prefix}.targets": inputs.video_targets.contiguous(),
+            f"{prefix}.audio_targets": inputs.audio_targets.contiguous(),
+            f"{prefix}.timesteps": inputs.video.timesteps.values.contiguous(),
+            f"{prefix}.audio_timesteps": inputs.audio.timesteps.values.contiguous(),
+            f"{prefix}.loss_mask": inputs.video_loss_mask.float().contiguous()})
+        model.zero_grad()
+        video_prediction, audio_prediction = model(video=inputs.video, audio=inputs.audio, perturbations=None)
+        per_example = strategy.compute_loss(video_prediction, audio_prediction, inputs)
+        loss = per_example.mean()
+        loss.backward()
+        extra[f"{prefix}.prediction"] = video_prediction.detach().contiguous()
+        extra[f"{prefix}.audio_prediction"] = audio_prediction.detach().contiguous()
+        extra[f"{prefix}.per_example_loss"] = per_example.detach().contiguous()
+        extra[f"{prefix}.loss"] = loss.detach().reshape(1).contiguous()
+        for path, (a, b) in adapters.items():
+            extra[f"{prefix}.grad::{path}.lora_a"] = a.grad.detach().t().contiguous().clone()
+            extra[f"{prefix}.grad::{path}.lora_b"] = b.grad.detach().t().contiguous().clone()
+        print(f"  {prefix}: loss {float(loss):.8f}, per example {per_example.detach().tolist()}")
+        return inputs, loss
+
+    # `text_to_video`: one sigma for both modalities, the first latent frame conditioned for one example.
+    # It draws the first-frame Bernoulli, the sampler's normal, uniform, and choice, then both noises.
+    inputs, loss = section(
+        "t2v", TextToVideoStrategy(TextToVideoConfig(with_audio=True, first_frame_conditioning_p=0.5)),
+        {"latents": video_latents, "audio_latents": {"latents": audio_clean}, "conditions": dict(conditions)},
+        seed=14, expected_draws=[("rand", "condition"), ("randn", "normal"), ("rand", "uniform"),
+                                 ("rand", "choice"), ("randn_like", "noise"), ("randn_like", "audio_noise")])
+    conditioned = ~inputs.video_loss_mask[:, 0]
+    assert bool(conditioned.any()) and not bool(conditioned.all()), "the seed conditions exactly one example"
+    extra["t2v.conditioned"] = conditioned.float().contiguous()
+
+    # `flexible` as the shipped `t2v_lora.yaml` configures it: both modalities generated, no conditions,
+    # each drawing its own sigma and noise, video first.
+    section(
+        "flex", FlexibleStrategy(FlexibleStrategyConfig(
+            video=ModalityConfig(is_generated=True, latents_dir="latents"),
+            audio=ModalityConfig(is_generated=True, latents_dir="audio_latents"))),
+        {"video_latents": video_latents, "audio_latents": {"latents": audio_clean},
+         "conditions": dict(conditions)},
+        seed=15, expected_draws=[("randn", "normal"), ("rand", "uniform"), ("rand", "choice"),
+                                 ("randn_like", "noise"), ("randn", "audio_normal"), ("rand", "audio_uniform"),
+                                 ("rand", "audio_choice"), ("randn_like", "audio_noise")])
+
+    sampler = ShiftedLogitNormalTimestepSampler()
+    for tokens in (100, 6000):
+        draws = []
+        torch.manual_seed(tokens)
+        torch.rand, torch.randn = logged(real_rand, "rand", draws), logged(real_randn, "randn", draws)
+        try:
+            sigmas = sampler.sample(64, tokens)
+        finally:
+            torch.rand, torch.randn = real_rand, real_randn
+        extra[f"sampler.{tokens}.normal"] = draws[0][1].contiguous()
+        extra[f"sampler.{tokens}.uniform"] = draws[1][1].contiguous()
+        extra[f"sampler.{tokens}.choice"] = draws[2][1].contiguous()
+        extra[f"sampler.{tokens}.sigma"] = sigmas.contiguous()
+
+    globals()["_extra"] = extra
+    return loss.detach().reshape(1).clone().contiguous()
+
+
+MODELS["ltx2_loss"] = run_ltx2_loss
+
+
+def run_ltx2_video_encoder(image):
+    """The LTX-2 video autoencoder's ENCODER (`LTX2VideoEncoder3d` inside `AutoencoderKLLTX2Video`), the
+    stage Lightricks' trainer runs over each clip before training, at the tiny random configuration of
+    `run_ltx2_video_vae` (the released encoder's four downsamplers, spatial, temporal, and spatiotemporal
+    twice, at a thirty-second of its width). Two clips: 9 frames at 64 × 64 and 17 frames at 64 × 96, in
+    `[-1, 1]`. Records the moments `encoder(x)` returns with the log variance's repeats dropped (the means
+    then the one log variance, `[B, C + 1, F', H', W']`), the posterior mode the pipeline takes, and the
+    means normalized by random per-channel statistics, `(mode - latents_mean) / latents_std`, the latents
+    the trainer stores (`ltx_core`'s `VideoEncoder.forward`). Runs under the `ltxtrain` oracle env.
+    `image` unused.
+    """
+    vae = _randomized(_ltx2_video_vae_tiny(), seed=23)
+    generator = torch.Generator().manual_seed(29)
+    vae.latents_mean.copy_(torch.randn(8, generator=generator) * 0.3)
+    vae.latents_std.copy_(torch.rand(8, generator=generator) + 0.5)
+    vae.eval()
+    extra = {f"w::{k}": v.float().clone().contiguous() for k, v in vae.state_dict().items()
+             if k.startswith("encoder.") or k.startswith("latents_")}
+    for name, shape in (("square", (1, 3, 9, 64, 64)), ("wide", (1, 3, 17, 64, 96))):
+        video = torch.rand(shape, generator=generator) * 2 - 1
+        with torch.no_grad():
+            moments = vae.encoder(video)
+            mode = vae.encode(video).latent_dist.mode()
+        channels = vae.config.latent_channels
+        extra[f"{name}.video"] = video.contiguous()
+        extra[f"{name}.moments"] = moments[:, : channels + 1].contiguous()
+        extra[f"{name}.mode"] = mode.contiguous()
+        extra[f"{name}.latents"] = ((mode - vae.latents_mean.view(1, -1, 1, 1, 1))
+                                    / vae.latents_std.view(1, -1, 1, 1, 1)).contiguous()
+    globals()["_extra"] = extra
+    return extra["square.latents"].clone()
+
+
+MODELS["ltx2_video_encoder"] = run_ltx2_video_encoder
+
+
+def run_ltx2_audio_encoder(image):
+    """The LTX-2 audio autoencoder's ENCODER (`LTX2AudioEncoder` inside `AutoencoderKLLTX2Audio`) and the log-mel
+    front end Lightricks' trainer feeds it (`ltx_core`'s `AudioProcessor`: `torchaudio.functional.resample` to
+    16 kHz, then a centered, reflect-padded 1024-point `MelSpectrogram` at hop 160, magnitude, Slaney scale and
+    norm, logged after clamping at 1e-5). The front end runs at the release's 64 mel bins on a stereo clip at
+    24 kHz and one at 44.1 kHz (`front.*`), and at the tiny encoder's 16 bins for the encoder. The encoder is
+    `run_ltx2_audio_vae`'s tiny configuration with random latent statistics; the record holds its moments
+    (`[B, 2C, T', M']`) and the means packed `[B, T', C·M']` and normalized, the latents the trainer stores
+    (`ltx_core`'s `AudioEncoder._normalize_latents`). Runs under the `ltxtrain` oracle env (torchaudio 2.11.0).
+    `image` unused.
+    """
+    import torchaudio
+    from ltx_core.model.audio_vae.ops import AudioProcessor
+    from ltx_core.types import Audio
+
+    generator = torch.Generator().manual_seed(31)
+    extra = {}
+
+    def clip(rate, seconds):
+        t = torch.arange(int(rate * seconds)) / rate
+        tones = torch.stack([torch.sin(2 * math.pi * 440 * t) * 0.4 + torch.sin(2 * math.pi * 3100 * t) * 0.2,
+                             torch.sin(2 * math.pi * 660 * t) * 0.3 + torch.sin(2 * math.pi * 7300 * t) * 0.1])
+        return (tones + torch.randn(tones.shape, generator=generator) * 0.05).float()
+
+    release = AudioProcessor(target_sample_rate=16000, mel_bins=64, mel_hop_length=160, n_fft=1024)
+    for name, rate in (("24k", 24000), ("44k", 44100)):
+        wave = clip(rate, 0.5)
+        extra[f"front.{name}.wave"] = wave.contiguous()
+        extra[f"front.{name}.resampled"] = torchaudio.functional.resample(wave, rate, 16000).contiguous()
+        mel = release.waveform_to_mel(Audio(waveform=wave.unsqueeze(0), sampling_rate=rate))
+        extra[f"front.{name}.mel"] = mel.contiguous()
+
+    vae = _randomized(_ltx2_audio_vae_tiny(), seed=33)
+    vae.latents_mean.copy_(torch.randn(8, generator=generator) * 0.3)
+    vae.latents_std.copy_(torch.rand(8, generator=generator) + 0.5)
+    vae.eval()
+    extra.update({f"w::{k}": v.float().clone().contiguous() for k, v in vae.state_dict().items()
+                  if k.startswith("encoder.") or k.startswith("latents_")})
+    tiny = AudioProcessor(target_sample_rate=16000, mel_bins=16, mel_hop_length=160, n_fft=1024)
+    wave = clip(24000, 0.62)
+    mel = tiny.waveform_to_mel(Audio(waveform=wave.unsqueeze(0), sampling_rate=24000))
+    with torch.no_grad():
+        moments = vae.encoder(mel)
+    means = moments[:, : vae.config.latent_channels]
+    batch, channels, frames, bins = means.shape
+    packed = means.permute(0, 2, 1, 3).reshape(batch, frames, channels * bins)
+    extra["encoder.wave"] = wave.contiguous()
+    extra["encoder.mel"] = mel.contiguous()
+    extra["encoder.moments"] = moments.contiguous()
+    extra["encoder.latents"] = ((packed - vae.latents_mean) / vae.latents_std).contiguous()
+    globals()["_extra"] = extra
+    return extra["encoder.latents"].clone()
+
+
+MODELS["ltx2_audio_encoder"] = run_ltx2_audio_encoder
+
+
+def run_ltx2_stg_mask(image):
+    """Spatio-temporal guidance over PART of a batch in the LTX-2 transformer (`LTX2VideoTransformer3DModel`):
+    the `perturbation_mask` path, where each perturbed block's self-attentions return
+    `lerp(value, attended, mask)` per example, so a 0 perturbs that example and a 1 leaves it attended. A batch
+    of three at `run_ltx2`'s tiny configuration with the mask `[0, 1, 0]` over block 1 (`masked.*`), and the
+    same batch with every example perturbed (`all.*`), the control the masked record must differ from in its
+    middle example. Runs under the `qwenimage` or `ltxtrain` oracle env. `image` unused.
+    """
+    frames, height, width, audio_frames, text = 2, 2, 3, 4, 5
+    tokens = frames * height * width
+    generator = torch.Generator().manual_seed(43)
+    hidden = torch.randn(3, tokens, 8, generator=generator)
+    audio_hidden = torch.randn(3, audio_frames, 6, generator=generator)
+    encoder = torch.randn(3, text, 32, generator=generator)
+    audio_encoder = torch.randn(3, text, 16, generator=generator)
+    timestep = torch.full((3, tokens), 600.0)
+    audio_timestep = torch.full((3, audio_frames), 600.0)
+    sigma = torch.full((3,), 600.0)
+    model = _randomized(_ltx2_tiny(), seed=37)
+    extra = {"hidden": hidden, "audio_hidden": audio_hidden, "encoder": encoder, "audio_encoder": audio_encoder,
+             "timestep": timestep, "audio_timestep": audio_timestep, "sigma": sigma,
+             "mask": torch.tensor([0.0, 1.0, 0.0])}
+    for prefix, mask in (("masked", extra["mask"]), ("all", None)):
+        with torch.no_grad():
+            video, audio = model(
+                hidden_states=hidden, audio_hidden_states=audio_hidden, encoder_hidden_states=encoder,
+                audio_encoder_hidden_states=audio_encoder, timestep=timestep, audio_timestep=audio_timestep,
+                sigma=sigma, num_frames=frames, height=height, width=width, audio_num_frames=audio_frames,
+                spatio_temporal_guidance_blocks=[1], perturbation_mask=mask, return_dict=False)
+        extra[f"{prefix}.video"], extra[f"{prefix}.audio"] = video, audio
+    extra = {k: v.contiguous() for k, v in extra.items()}
+    extra.update({f"w::{k}": v.float().clone().contiguous() for k, v in model.state_dict().items()})
+    globals()["_extra"] = extra
+    return extra["masked.video"].clone()
+
+
+MODELS["ltx2_stg_mask"] = run_ltx2_stg_mask
+
+
+def run_ltx2_duration_head(image):
+    """LTX-2.5's duration head (`LTX2DurationHead`, diffusers `pipelines/ltx2/duration_head.py`) at a tiny random
+    configuration (two pooling queries, so the pooled flatten is measured): the seconds it predicts from video
+    and audio connector outputs, from video alone, and from audio alone. `frames.table` holds
+    `predict_num_frames` for a sweep of durations, frame rates, and windows (rows `[seconds, fps, min, max,
+    frames]`), including windows that clamp, that snap up, and that hold no grid point, run through the
+    reference's own method with its forward replaced by the given duration. Runs under the `ltxtrain` oracle env.
+    `image` unused.
+    """
+    from diffusers.pipelines.ltx2.duration_head import LTX2DurationHead
+
+    head = _randomized(LTX2DurationHead(video_cross_attention_dim=32, audio_cross_attention_dim=16,
+                                        pooler_hidden_dim=16, num_queries=2, num_pooler_heads=2, mlp_hidden_dim=16),
+                       seed=47, scale=0.3)
+    head.eval()
+    generator = torch.Generator().manual_seed(53)
+    video = torch.randn(2, 7, 32, generator=generator)
+    audio = torch.randn(2, 7, 16, generator=generator)
+    with torch.no_grad():
+        extra = {"video": video, "audio": audio, "both": head(video, audio), "video_only": head(video, None),
+                 "audio_only": head(None, audio)}
+    rows = []
+    for seconds in (0.2, 0.9, 1.0, 1.02, 3.3, 5.0, 7.77, 19.9, 20.0, 31.0):
+        for fps, low, high in ((24.0, 1.0, 20.0), (25.0, 1.0, 20.0), (30.0, 2.0, 6.0), (24.0, 1.0, 1.02),
+                               (24.0, 0.04, 0.3), (12.5, 1.0, 20.0)):
+            head.forward = lambda *_, s=seconds: torch.tensor([s])
+            rows.append([seconds, fps, low, high, head.predict_num_frames(
+                None, None, frame_rate=fps, temporal_compression_ratio=8, min_seconds=low, max_seconds=high)])
+    extra["frames.table"] = torch.tensor(rows, dtype=torch.float64)
+    extra = {k: v.contiguous() for k, v in extra.items()}
+    extra.update({f"w::{k}": v.float().clone().contiguous() for k, v in head.state_dict().items()})
+    globals()["_extra"] = extra
+    return extra["both"].clone()
+
+
+MODELS["ltx2_duration_head"] = run_ltx2_duration_head
+
+
+def run_ltx2_real_duration_head(image, checkpoint):
+    """LTX-2.5's RELEASED duration head (`--checkpoint` is the release's `duration_head/` directory) at float32,
+    over connector-shaped inputs (`[1, 1024, 4096]` video and `[1, 1024, 2048]` audio, unit-RMS normals, the
+    scale the connectors' final RMS norm gives): the seconds from both streams, from video alone, and from audio
+    alone. Runs under the `ltxtrain` oracle env. `image` unused.
+    """
+    from diffusers.pipelines.ltx2.duration_head import LTX2DurationHead
+
+    head = LTX2DurationHead.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    generator = torch.Generator().manual_seed(59)
+    video = torch.randn(1, 1024, 4096, generator=generator)
+    audio = torch.randn(1, 1024, 2048, generator=generator)
+    with torch.no_grad():
+        extra = {"video": video, "audio": audio, "both": head(video, audio), "video_only": head(video, None),
+                 "audio_only": head(None, audio)}
+    print(f"  predicted seconds: both {float(extra['both']):.4f}, video {float(extra['video_only']):.4f}, "
+          f"audio {float(extra['audio_only']):.4f}")
+    globals()["_extra"] = {k: v.contiguous() for k, v in extra.items()}
+    return extra["both"].clone()
+
+
+CHECKPOINT_MODELS["ltx2_real_duration_head"] = run_ltx2_real_duration_head
+
+
+def run_ltx2_real_prompt_enhancer(image, checkpoint):
+    """LTX-2.5's RELEASED prompt enhancer (`--checkpoint` holds the release's `prompt_enhancer/` and `processor/`),
+    through diffusers' own `LTX2Pipeline.enhance_prompt` (the Gemma 4 E2B `generate` with
+    `GEMMA4_PROMPT_ENHANCEMENT_CONFIG`: greedy, `no_repeat_ngram_size` 5, 600 new tokens, the release's
+    `generation_config.json` end tokens, and `clean_response`), bound to an object holding only the processor
+    and the enhancer. Two requests, each at bfloat16 (the dtype the pipeline loads) and float32: the left-padded
+    input ids the reference feeds (`<name>.input_ids`, with `<name>.pad` padding positions), the reply ids
+    (`<name>.<dtype>.reply`), each step's five highest processed scores and their ids
+    (`<name>.<dtype>.step_top_scores` / `_ids`, the repeated 5-grams already at -inf), and the cleaned text as
+    UTF-8 bytes (`<name>.<dtype>.text`). `cleaning.*` holds
+    `clean_response` on strings carrying every character it maps. Runs under the `ltxtrain` oracle env.
+    `image` unused.
+    """
+    import types
+    from diffusers.pipelines.ltx2.pipeline_ltx2 import LTX2Pipeline
+    from diffusers.pipelines.ltx2.prompt_enhancement import clean_response
+    from diffusers.pipelines.ltx2.utils import LTX2_5_T2V_DEFAULT_SYSTEM_PROMPT
+    from transformers import AutoProcessor, Gemma4ForConditionalGeneration
+
+    processor = AutoProcessor.from_pretrained(os.path.join(checkpoint, "processor"))
+    requests = {"fox": "a red fox walking through a snowy forest at dawn",
+                "cafe": "Two friends laugh over coffee in a busy cafe; rain taps on the window."}
+    extra = {}
+
+    def utf8(text):
+        return torch.tensor(list(text.encode("utf-8")), dtype=torch.uint8)
+
+    captured = {}
+    for dtype_name, dtype in (("bf16", torch.bfloat16), ("f32", torch.float32)):
+        model = Gemma4ForConditionalGeneration.from_pretrained(os.path.join(checkpoint, "prompt_enhancer"),
+                                                               dtype=dtype).eval()
+        original = model.generate
+
+        def generate(*args, _original=original, **kwargs):
+            captured["input_ids"] = kwargs["input_ids"].clone()
+            captured["attention_mask"] = kwargs["attention_mask"].clone()
+            out = _original(*args, return_dict_in_generate=True, output_scores=True, **kwargs)
+            captured["sequences"] = out.sequences.clone()
+            # `scores` are the processed ones the choice is made from, the repeated 5-grams at -inf.
+            top = torch.stack(out.scores)[:, 0].float().topk(5, dim=-1)
+            captured["top_ids"], captured["top_scores"] = top.indices.to(torch.int32), top.values
+            return out.sequences
+
+        model.generate = generate
+        holder = types.SimpleNamespace(prompt_enhancer=model, processor=processor, text_encoder=None,
+                                       _execution_device=torch.device("cpu"))
+        for name, request in requests.items():
+            text = LTX2Pipeline.enhance_prompt(holder, prompt=request, system_prompt=LTX2_5_T2V_DEFAULT_SYSTEM_PROMPT)[0]
+            ids = captured["input_ids"][0]
+            extra[f"{name}.input_ids"] = ids.to(torch.int32)
+            extra[f"{name}.pad"] = torch.tensor([int((captured["attention_mask"][0] == 0).sum())], dtype=torch.int32)
+            extra[f"{name}.{dtype_name}.reply"] = captured["sequences"][0, ids.shape[0]:].to(torch.int32)
+            extra[f"{name}.{dtype_name}.text"] = utf8(text)
+            extra[f"{name}.{dtype_name}.step_top_ids"] = captured["top_ids"]
+            extra[f"{name}.{dtype_name}.step_top_scores"] = captured["top_scores"]
+            print(f"  {name} {dtype_name}: {len(extra[f'{name}.{dtype_name}.reply'])} reply tokens; {text[:90]!r}")
+        del model
+    for index, raw in enumerate(["\u201cA fox\u201d \u2014 runs\u2013fast\u00a0at 5\u2032 \u22121\u2019s",
+                                 "  ** 3. Caf\u00e9 scene", "12345", "\u00e9t\u00e9 \u2018x\u2019"]):
+        extra[f"cleaning.{index}.in"] = utf8(raw)
+        extra[f"cleaning.{index}.out"] = utf8(clean_response(raw))
+    globals()["_extra"] = {k: v.contiguous() for k, v in extra.items()}
+    return extra["fox.bf16.reply"].float().clone()
+
+
+CHECKPOINT_MODELS["ltx2_real_prompt_enhancer"] = run_ltx2_real_prompt_enhancer
+
+
 def run_ltx2_real_decoders(image, checkpoint):
     """The LTX-2.3 video decoder, audio decoder, and vocoder on the RELEASED weights, at float32 from the
     stored bfloat16, so the figure describes the arithmetic rather than a rounding.

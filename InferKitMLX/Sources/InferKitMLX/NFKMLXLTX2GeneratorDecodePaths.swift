@@ -165,11 +165,15 @@ extension NFKMLXLTX2Generator {
         }
     }
 
-    /// The release components a download fetches for `variant`: LTX-2.5 adds the diffusion decoder and
-    /// both latent upsamplers (2.1 GB).
+    /// The release components a download fetches for `variant`: LTX-2.5 adds the diffusion decoder, both
+    /// latent upsamplers (2.1 GB), and the duration head, and ``NFKMLXLTX2Variant/ltx25Full`` reads the full
+    /// transformer's folder in place of the distilled one.
     static func releaseComponents(for variant: NFKMLXLTX2Variant) -> [NFKMLXReleaseComponent] {
-        guard variant == .ltx25 else { return releaseComponents }
-        return releaseComponents + ["diffusion_decoder", "latent_upsampler", "temporal_latent_upsampler"].map {
+        guard variant != .ltx23 else { return releaseComponents }
+        let components = releaseComponents.map {
+            $0.required.contains("transformer/config.json") ? transformerComponent(variant.transformerFolder) : $0
+        }
+        return components + ["diffusion_decoder", "latent_upsampler", "temporal_latent_upsampler", "duration_head"].map {
             NFKMLXReleaseComponent(required: ["\($0)/config.json", "\($0)/diffusion_pytorch_model.safetensors"])
         }
     }

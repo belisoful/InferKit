@@ -105,12 +105,13 @@ final class NFKLTX2CausalConv3d: Module {
     let kernel: Int
     let reflects: Bool
 
-    init(_ inChannels: Int, _ outChannels: Int, kernel: Int = 3, reflects: Bool) {
+    init(_ inChannels: Int, _ outChannels: Int, kernel: Int = 3, stride: Int = 1, reflects: Bool) {
         self.kernel = kernel
         self.reflects = reflects
         let spatial = reflects ? 0 : kernel / 2
         _conv.wrappedValue = Conv3d(inputChannels: inChannels, outputChannels: outChannels,
-                                    kernelSize: IntOrTriple(kernel), padding: IntOrTriple((0, spatial, spatial)))
+                                    kernelSize: IntOrTriple(kernel), stride: IntOrTriple(stride),
+                                    padding: IntOrTriple((0, spatial, spatial)))
     }
 
     func callAsFunction(_ x: MLXArray, causal: Bool) -> MLXArray {

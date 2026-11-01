@@ -1834,6 +1834,22 @@
 	XCTAssertEqualObjects([NFKMLXLTX2Generator releaseRepoForVariant:NFKMLXLTX2VariantLtx23], @"diffusers/LTX-2.3-Diffusers");
 	XCTAssertEqualObjects([NFKMLXLTX2Generator releaseRepoForVariant:NFKMLXLTX2VariantLtx25], @"Lightricks/LTX-2.5-Diffusers");
 	XCTAssertNotNil(NFKMLXLTX2ParameterKey.spatioTemporalGuidanceScale);
+	XCTAssertEqualObjects([NFKMLXLTX2Generator modelNameForVariant:NFKMLXLTX2VariantLtx25Full], @"ltx-2.5-full");
+	XCTAssertEqualObjects([NFKMLXLTX2Generator releaseRepoForVariant:NFKMLXLTX2VariantLtx25Full], @"Lightricks/LTX-2.5-Diffusers");
+}
+
+// LTX-2.5's customization and front-end surface: a fine-tune's saved adapters apply to a generator, the duration
+// head predicts a clip's length, the prompt enhancer rewrites a request, and a request asks for enhancement by key.
+- (void)testLTX2AdaptersDurationAndEnhancementReachObjectiveC
+{
+	XCTAssertTrue([NFKMLXLTX2Generator instancesRespondToSelector:@selector(applyAdaptersAtURL:error:)]);
+	XCTAssertTrue([NFKMLXLTX2Generator instancesRespondToSelector:@selector(predictedFrameCountForPrompt:error:)]);
+	XCTAssertTrue([NFKMLXLTX2Generator instancesRespondToSelector:@selector(enhancedPrompt:error:)]);
+	XCTAssertTrue([NFKMLXLTX2Generator respondsToSelector:@selector(generatorWithDirectoryURL:variant:residency:error:)]);
+	XCTAssertTrue([NFKMLXLTX2Generator respondsToSelector:@selector(backendWithDirectoryURL:variant:residency:error:)]);
+	XCTAssertTrue([NFKMLXLTX2PromptEnhancer respondsToSelector:@selector(enhancerWithDirectoryURL:error:)]);
+	XCTAssertGreaterThan(NFKMLXLTX2PromptEnhancer.defaultSystemPrompt.length, 1000u);
+	XCTAssertEqualObjects(NFKMLXLTX2ParameterKey.promptEnhancement, @"NFKMLXLTX2ParameterPromptEnhancement");
 }
 
 // LTX-2.5's decode-side paths: the generator's switches and the request keys that set them per request.
@@ -1856,7 +1872,7 @@
 {
 	NSDictionary<NSString *, NSArray<NSString *> *> *factories = @{
 		NSStringFromClass([NFKMLXLTXVideoGenerator class]): @[ @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
-		NSStringFromClass([NFKMLXLTX2Generator class]): @[ @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:", @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:error:", @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:", @"generatorWithDirectoryURL:error:", @"generatorWithDirectoryURL:residency:error:", @"generatorWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXLTX2Generator class]): @[ @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:", @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:error:", @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:", @"generatorWithDirectoryURL:error:", @"generatorWithDirectoryURL:residency:error:", @"generatorWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:", @"backendWithDirectoryURL:variant:residency:error:", @"generatorWithDirectoryURL:variant:residency:error:" ],
 		NSStringFromClass([NFKMLXWanVideoGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
 		NSStringFromClass([NFKMLXZImageGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
 		NSStringFromClass([NFKMLXQwenImageGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],

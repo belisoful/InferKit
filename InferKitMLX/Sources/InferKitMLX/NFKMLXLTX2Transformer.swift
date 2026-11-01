@@ -347,15 +347,17 @@ final class NFKLTX2Attention: Module {
     /// `hidden` is the query side, `context` the key and value side (the same tensor for
     /// self-attention). `queryRotary` and `keyRotary` are nil where the attention does not rotate.
     /// `mask` is additive over the keys, `[B, 1, 1, keys]`. A `perturbed` attention returns its value
-    /// projection in place of the attended values, the spatio-temporal guidance pass.
+    /// projection in place of the attended values, the spatio-temporal guidance pass; with `keep`
+    /// `[B, 1, 1]` it blends the two per example, `value + keep · (attended − value)`, so a 0 perturbs that
+    /// example and a 1 leaves it attended.
     func callAsFunction(_ hidden: MLXArray, context: MLXArray,
                         queryRotary: (MLXArray, MLXArray)?,
                         keyRotary: (MLXArray, MLXArray)?, mask: MLXArray? = nil,
-                        perturbed: Bool = false) -> MLXArray {
+                        perturbed: Bool = false, keep: MLXArray? = nil) -> MLXArray {
         let batch = hidden.dim(0)
         let gates = toGateLogits.map { 2 * NFKReferenceRounding.sigmoid($0(hidden)) }
         let value = toV(context)
-        if perturbed {
+        if perturbed, keep == nil {
             var merged = value.reshaped([batch, -1, heads, headDim])
             if let gates {
                 merged = merged * gates[0..., 0..., 0..., .newAxis]
@@ -376,6 +378,10 @@ final class NFKLTX2Attention: Module {
             queries: split(query), keys: split(key), values: split(value),
             scale: 1 / sqrt(Float(headDim)), mask: mask?.asType(query.dtype))
         var merged = attended.transposed(0, 2, 1, 3)                       // [B, S, heads, headDim]
+        if perturbed, let keep {
+            let projected = value.reshaped([batch, -1, heads, headDim])
+            merged = projected + keep.asType(merged.dtype).reshaped([batch, 1, 1, 1]) * (merged - projected)
+        }
         if let gates {
             merged = merged * gates[0..., 0..., 0..., .newAxis]
         }
@@ -477,8 +483,8 @@ final class NFKLTX2Block: Module {
     /// One block over both streams. `promptModulation` is nil where the release leaves the text
     /// key/value modulation timestep-independent, which is LTX-2.5's arrangement: the per-layer table
     /// is then used on its own. `textMask` and `audioTextMask` are additive over the text tokens;
-    /// `perturbed` replaces both self-attentions with their value projections, and `crossModal` false
-    /// skips both cross-modal attentions.
+    /// `perturbed` replaces both self-attentions with their value projections (blended per example by
+    /// `keep` where it is given), and `crossModal` false skips both cross-modal attentions.
     func callAsFunction(_ streams: Streams, text: MLXArray, audioText: MLXArray,
                         temb: MLXArray, audioTemb: MLXArray,
                         crossScaleShift: MLXArray, audioCrossScaleShift: MLXArray,
@@ -487,7 +493,7 @@ final class NFKLTX2Block: Module {
                         videoRotary: (MLXArray, MLXArray), audioRotary: (MLXArray, MLXArray),
                         crossVideoRotary: (MLXArray, MLXArray),
                         crossAudioRotary: (MLXArray, MLXArray), textMask: MLXArray? = nil,
-                        audioTextMask: MLXArray? = nil, perturbed: Bool = false,
+                        audioTextMask: MLXArray? = nil, perturbed: Bool = false, keep: MLXArray? = nil,
                         crossModal: Bool = true) -> Streams {
         let eps = config.normEps
         var video = streams.video
@@ -499,11 +505,12 @@ final class NFKLTX2Block: Module {
         // 1. Self-attention on each stream.
         let normedVideo = ltx2AffineFreeRMSNorm(video, eps: eps) * (1 + videoMod[1]) + videoMod[0]
         video = video + videoMod[2] * attn1(normedVideo, context: normedVideo,
-                                            queryRotary: videoRotary, keyRotary: nil, perturbed: perturbed)
+                                            queryRotary: videoRotary, keyRotary: nil, perturbed: perturbed,
+                                            keep: keep)
         let normedAudio = ltx2AffineFreeRMSNorm(audio, eps: eps) * (1 + audioMod[1]) + audioMod[0]
         audio = audio + audioMod[2] * audioAttn1(normedAudio, context: normedAudio,
                                                  queryRotary: audioRotary, keyRotary: nil,
-                                                 perturbed: perturbed)
+                                                 perturbed: perturbed, keep: keep)
 
         // 2. Cross-attention over the two text streams. The query is modulated by the block's last
         // three parameters; the key and value side is modulated by the prompt table.
@@ -584,11 +591,16 @@ public struct NFKMLXLTX2Pass {
     public var textMask: MLXArray?
     public var keyframes: MLXArray?
     public var perturbedBlocks: Set<Int>
+    /// Which examples the ``perturbedBlocks`` perturb, `[B]`: 0 where spatio-temporal guidance applies and
+    /// 1 where the example stays attended, the reference's `perturbation_mask`. Nil perturbs every example.
+    public var perturbationMask: MLXArray?
     public var isolatesModalities: Bool
 
     public init(video: MLXArray, audio: MLXArray, text: MLXArray, audioText: MLXArray, timestep: MLXArray,
                 audioTimestep: MLXArray, sigma: MLXArray, audioSigma: MLXArray? = nil, textMask: MLXArray? = nil,
-                keyframes: MLXArray? = nil, perturbedBlocks: Set<Int> = [], isolatesModalities: Bool = false) {
+                keyframes: MLXArray? = nil, perturbedBlocks: Set<Int> = [], perturbationMask: MLXArray? = nil,
+                isolatesModalities: Bool = false) {
+        self.perturbationMask = perturbationMask
         self.video = video
         self.audio = audio
         self.text = text
@@ -671,28 +683,35 @@ public final class NFKMLXLTX2TransformerNet: Module {
     /// text cross-attentions; `crossTimestep` has the video's cross-modal modulation read `audioSigma`
     /// (`sigma` where nil) and the audio's read `sigma`, the pipeline's `use_cross_timestep`;
     /// `perturbedBlocks` lists the blocks whose self-attentions return their value projection
-    /// (spatio-temporal guidance over the whole batch); `isolatesModalities` skips both cross-modal
-    /// attentions in every block.
+    /// (spatio-temporal guidance), over the examples where `perturbationMask` `[B]` is 0, or the whole batch
+    /// where it is nil; `isolatesModalities` skips both cross-modal
+    /// attentions in every block. `gatesReadCrossSigma` has each modality's cross-modal gate read the
+    /// other modality's sigma while its cross-modal scale and shift read its own timestep, the
+    /// arrangement of Lightricks' `ltx_core`, which its trainer trains under; it differs from both
+    /// `crossTimestep` settings only where a modality's timesteps vary across its tokens.
     public func callAsFunction(video videoLatents: MLXArray, audio audioLatents: MLXArray,
                                text: MLXArray, audioText: MLXArray, timestep: MLXArray,
                                audioTimestep: MLXArray, sigma: MLXArray, frames: Int, height: Int,
                                width: Int, audioFrames: Int, fps: Float = 24,
                                keyframes: MLXArray? = nil, textMask: MLXArray? = nil,
                                audioSigma: MLXArray? = nil, crossTimestep: Bool = false,
-                               perturbedBlocks: Set<Int> = [],
+                               gatesReadCrossSigma: Bool = false, perturbedBlocks: Set<Int> = [],
+                               perturbationMask: MLXArray? = nil,
                                isolatesModalities: Bool = false) -> (video: MLXArray, audio: MLXArray) {
         let pass = NFKMLXLTX2Pass(video: videoLatents, audio: audioLatents, text: text, audioText: audioText,
                                   timestep: timestep, audioTimestep: audioTimestep, sigma: sigma,
                                   audioSigma: audioSigma, textMask: textMask, keyframes: keyframes,
-                                  perturbedBlocks: perturbedBlocks, isolatesModalities: isolatesModalities)
+                                  perturbedBlocks: perturbedBlocks, perturbationMask: perturbationMask,
+                                  isolatesModalities: isolatesModalities)
         return predictions([pass], frames: frames, height: height, width: width, audioFrames: audioFrames, fps: fps,
-                           crossTimestep: crossTimestep)[0]
+                           crossTimestep: crossTimestep, gatesReadCrossSigma: gatesReadCrossSigma)[0]
     }
 
     /// The velocity of each of `passes`, each the value the single-pass call gives it alone. Every block
     /// runs every pass in turn, so a streamed block is read once for all of them.
     public func predictions(_ passes: [NFKMLXLTX2Pass], frames: Int, height: Int, width: Int, audioFrames: Int,
-                            fps: Float = 24, crossTimestep: Bool = false) -> [(video: MLXArray, audio: MLXArray)] {
+                            fps: Float = 24, crossTimestep: Bool = false,
+                            gatesReadCrossSigma: Bool = false) -> [(video: MLXArray, audio: MLXArray)] {
         let videoRope = NFKLTX2Rope(dim: config.innerDim, heads: config.numAttentionHeads,
                                     theta: config.ropeTheta)
         let audioRope = NFKLTX2Rope(dim: config.audioInnerDim, heads: config.audioNumAttentionHeads,
@@ -709,7 +728,9 @@ public final class NFKMLXLTX2TransformerNet: Module {
         let crossVideoRotary = crossRope.table(positions: [videoPositions[0]])
         let crossAudioRotary = crossRope.table(positions: audioPositions)
 
-        var prepared = passes.map { prepare($0, crossTimestep: crossTimestep) }
+        var prepared = passes.map {
+            prepare($0, crossTimestep: crossTimestep, gatesReadCrossSigma: gatesReadCrossSigma)
+        }
         for (index, block) in transformerBlocks.enumerated() {
             guard let outputs = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
                 prepared.map { p in
@@ -721,7 +742,7 @@ public final class NFKMLXLTX2TransformerNet: Module {
                           audioRotary: audioRotary, crossVideoRotary: crossVideoRotary,
                           crossAudioRotary: crossAudioRotary, textMask: p.textMask,
                           audioTextMask: p.textMask, perturbed: p.perturbedBlocks.contains(index),
-                          crossModal: p.crossModal)
+                          keep: p.perturbationMask, crossModal: p.crossModal)
                 }
             }, keeping: { outputs in outputs.flatMap { [$0.video, $0.audio] } }) else {
                 continue
@@ -753,10 +774,11 @@ public final class NFKMLXLTX2TransformerNet: Module {
         let promptModulation: MLXArray?, audioPromptModulation: MLXArray?
         let textMask: MLXArray?
         let perturbedBlocks: Set<Int>
+        let perturbationMask: MLXArray?
         let crossModal: Bool
     }
 
-    func prepare(_ pass: NFKMLXLTX2Pass, crossTimestep: Bool) -> Prepared {
+    func prepare(_ pass: NFKMLXLTX2Pass, crossTimestep: Bool, gatesReadCrossSigma: Bool = false) -> Prepared {
         let batch = pass.video.dim(0)
         let sigma = pass.sigma, audioSigma = pass.audioSigma ?? pass.sigma
         var video = projIn(pass.video)
@@ -772,6 +794,8 @@ public final class NFKMLXLTX2TransformerNet: Module {
         let gateScale = config.crossAttentionTimestepScaleMultiplier / config.timestepScaleMultiplier
         let videoCrossTimestep = crossTimestep ? audioSigma.reshaped([-1]) : pass.timestep.reshaped([-1])
         let audioCrossTimestep = crossTimestep ? sigma.reshaped([-1]) : pass.audioTimestep.reshaped([-1])
+        let videoGateTimestep = gatesReadCrossSigma ? audioSigma.reshaped([-1]) : videoCrossTimestep
+        let audioGateTimestep = gatesReadCrossSigma ? sigma.reshaped([-1]) : audioCrossTimestep
 
         var textStream = pass.text, audioTextStream = pass.audioText
         if let captionProjection, let audioCaptionProjection {
@@ -784,13 +808,14 @@ public final class NFKMLXLTX2TransformerNet: Module {
             audioEmbedded: audioEmbedded,
             crossScaleShift: reshaped(crossVideoScaleShift(videoCrossTimestep).modulation),
             audioCrossScaleShift: reshaped(crossAudioScaleShift(audioCrossTimestep).modulation),
-            crossGate: reshaped(crossVideoGate(videoCrossTimestep * gateScale).modulation),
-            audioCrossGate: reshaped(crossAudioGate(audioCrossTimestep * gateScale).modulation),
+            crossGate: reshaped(crossVideoGate(videoGateTimestep * gateScale).modulation),
+            audioCrossGate: reshaped(crossAudioGate(audioGateTimestep * gateScale).modulation),
             promptModulation: promptAdaptiveNorm.map { reshaped($0(sigma.reshaped([-1])).modulation) },
             audioPromptModulation: audioPromptAdaptiveNorm.map { reshaped($0(audioSigma.reshaped([-1])).modulation) },
             // The reference turns the multiplicative mask into a `-10000` bias in the hidden type.
             textMask: pass.textMask.map { ((1 - $0.asType(video.dtype)) * -10000).reshaped([batch, 1, 1, -1]) },
-            perturbedBlocks: pass.perturbedBlocks, crossModal: !pass.isolatesModalities)
+            perturbedBlocks: pass.perturbedBlocks, perturbationMask: pass.perturbationMask,
+            crossModal: !pass.isolatesModalities)
     }
 
     /// Throws the first failed read of a streamed block, and clears it so the next pass reads every block
@@ -887,6 +912,35 @@ public final class NFKMLXLTX2TransformerNet: Module {
     public static func loadWeights(into net: NFKMLXLTX2TransformerNet, from directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
         try loadWeights(into: net, from: directory, precision: precision, streamed: [])
+    }
+
+    /// Loads a released transformer directory into `net` one block at a time, quantizing each block's linear
+    /// layers to `bits` as it arrives, so the float transformer is never resident whole. The layers outside
+    /// the blocks (the input and output projections, the modulation heads) stay at the stored type, as the
+    /// reference trainer's quantizer excludes them.
+    static func loadQuantizedWeights(into net: NFKMLXLTX2TransformerNet, from directory: URL, bits: Int,
+                                     groupSize: Int) throws {
+        // Evaluating the whole network would materialize every block's initial weights, so the layers
+        // outside the blocks are placed and evaluated by themselves, and each block on its own.
+        let outside = try NFKMLXReleaseWeights.materializedArrays(
+            inDirectory: directory, precision: .checkpoint, remap: { block(ofKey: $0) == nil ? $0 : nil })
+        let provided = Set(outside.map(\.0))
+        let missing = net.parameters().flattened().map(\.0)
+            .filter { !$0.hasPrefix("transformer_blocks.") && !provided.contains($0) }
+        guard missing.isEmpty else {
+            throw NFKMLXError.weightsMismatch("the release lacks \(missing.count) transformer weight(s): "
+                                              + missing.prefix(3).joined(separator: ", "))
+        }
+        net.update(parameters: ModuleParameters.unflattened(outside))
+        eval(outside.map(\.1))
+        for (index, layer) in net.transformerBlocks.enumerated() {
+            let arrays = try NFKMLXReleaseWeights.materializedArrays(
+                inDirectory: directory, precision: .checkpoint,
+                remap: { key in block(ofKey: key).flatMap { $0.layer == index ? $0.name : nil } })
+            try NFKMLXWeights.apply(arrays, to: layer, verifyShapes: true)
+            try NFKMLXQuantization.quantize(module: layer, bits: bits, groupSize: groupSize)
+            eval(layer)
+        }
     }
 
     /// The block a released transformer key belongs to and its name inside the block, or nil for a key

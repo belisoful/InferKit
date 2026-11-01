@@ -32,10 +32,13 @@ public struct NFKMLXLTX2AudioVAEConfiguration: Sendable {
     public var melBins: Int
     public var sampleRate: Int
     public var melHopLength: Int
+    /// The encoder's input channels, the spectrogram's two stereo channels.
+    public var inChannels: Int
 
     public init(baseChannels: Int = 128, outputChannels: Int = 2, channelMultipliers: [Int] = [1, 2, 4],
                 resnetBlocks: Int = 2, latentChannels: Int = 8, melBins: Int = 64, sampleRate: Int = 16000,
-                melHopLength: Int = 160) {
+                melHopLength: Int = 160, inChannels: Int = 2) {
+        self.inChannels = inChannels
         self.baseChannels = baseChannels
         self.outputChannels = outputChannels
         self.channelMultipliers = channelMultipliers
@@ -225,7 +228,8 @@ public enum NFKMLXLTX2AudioVAE {
             latentChannels: (json["latent_channels"] as? NSNumber)?.intValue ?? base.latentChannels,
             melBins: (json["mel_bins"] as? NSNumber)?.intValue ?? base.melBins,
             sampleRate: (json["sample_rate"] as? NSNumber)?.intValue ?? base.sampleRate,
-            melHopLength: (json["mel_hop_length"] as? NSNumber)?.intValue ?? base.melHopLength)
+            melHopLength: (json["mel_hop_length"] as? NSNumber)?.intValue ?? base.melHopLength,
+            inChannels: (json["in_channels"] as? NSNumber)?.intValue ?? base.inChannels)
     }
 
     /// Loads a release's `audio_vae/` directory into `decoder`: the `decoder.` tensors, 4-D convolutions

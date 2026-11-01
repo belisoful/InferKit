@@ -238,6 +238,15 @@ enum NFKMLXCatalogVideo {
                                  residencies: NFKMLXCatalogImage.stagedResidencies)
     }
 
+    /// LTX-2.5's prompt enhancement, which reads the release's `prompt_enhancer/` and `processor/` where its
+    /// directory holds them.
+    static var ltx2PromptEnhancementOption: NFKModelOption {
+        .option(NFKMLXLTX2ParameterKey.promptEnhancement, kind: NFKModelOptionKindBoolean, title: "Enhance the prompt",
+                help: "Rewrites the prompt as a long audio-visual caption with the release's Gemma 4 E2B enhancer "
+                    + "before generating. Needs the release's prompt_enhancer/ and processor/ folders (about 10 GB).",
+                defaultValue: false)
+    }
+
     /// The guidance options LTX-2's sampler reads beside the video's classifier-free guidance.
     static var ltx2GuidanceOptions: [NFKModelOption] {
         [.option(NFKMLXLTX2ParameterKey.audioGuidanceScale, title: "Soundtrack guidance",
@@ -277,14 +286,14 @@ enum NFKMLXCatalogVideo {
                                    url: "https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2",
                                    restrictsCommercialUse: true,
                                    note: "Entities with annual revenue of US$10 million or more need a paid commercial license.")
-            case .ltx25:
+            case .ltx25, .ltx25Full:
                 license = .license(nil, name: "LTX-2.x Community License Agreement",
                                    url: "https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x", gated: true,
                                    restrictsCommercialUse: true,
                                    note: "Entities with annual revenue of US$10 million or more need a paid commercial license.")
             }
             return NFKMLXCatalogImage.model(
-                variant.modelName, variant.displayName, family: "ltx-2",
+                variant.modelName, variant.displayName, family: variant == .ltx25Full ? "ltx-2-full" : "ltx-2",
                 summary: "A diffusion transformer that films a clip and its soundtrack together from a prompt.",
                 tasks: [NFKModelTaskVideoGeneration],
                 inputs: promptInputs,
@@ -294,7 +303,7 @@ enum NFKMLXCatalogVideo {
                 parameters: videoOptions(frames: 121, width: 768, height: 512, framesPerSecond: 24,
                                          frameRateHelp: "The frame rate the clip is conditioned on and written at.",
                                          steps: 30, guidance: 3) + ltx2GuidanceOptions
-                    + (variant == .ltx25 ? ltx25DecodePathOptions : []),
+                    + (variant == .ltx23 ? [] : ltx25DecodePathOptions + [ltx2PromptEnhancementOption]),
                 license: license,
                 source: NFKMLXCatalogImage.hubRelease(variant.releaseRepo,
                                                       components: NFKMLXLTX2Generator.releaseComponents(for: variant)),

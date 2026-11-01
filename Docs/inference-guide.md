@@ -1868,7 +1868,10 @@ alternatives.
     ship at parity too (tiny pipeline clip 0.9999999999993114, waveform 0.9999999999988513), each
     released LTX-2.3 stage held to its headers by shape. LTX-2.5's diffusion decoder, both latent
     upsamplers, and the two-stage distilled recipe ship behind opt-in switches (released decoder
-    0.9999999999995941, spatial upsampler 0.9999999999958689, temporal 0.9999999999915022).
+    0.9999999999995941, spatial upsampler 0.9999999999958689, temporal 0.9999999999915022). LTX-2.5's full
+    transformer (`ltx-2.5-full`), duration head (released weights 3.6821983 s against 3.682198 s), and prompt enhancer ship too, with
+    LoRA and QLoRA fine-tuning measured against Lightricks' own trainer (loss 4.416752 equal, worst of 96
+    adapter gradients 0.99999913).
   - `Qwen-Image 2.1` (7.1B, Qwen Research License) — **SHIPPED end to end.** A single-stream DiT whose
     attention is BLOCK-CAUSAL (`q >= kv or same image block`), so the caption reads causally while each
     image block stays bidirectional within itself, and whose text half modulates from timestep zero so

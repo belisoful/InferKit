@@ -705,6 +705,14 @@ models.
   decoder (`NFKMLXLTX2DiffusionDecoderNet`), the two-stage distilled recipe through the spatial latent
   upsampler, and the temporal latent upsampler (`NFKMLXLTX2LatentUpsamplerNet`) run behind opt-in switches,
   each at parity against diffusers on the released weights.
+  Its full transformer (`ltx-2.5-full`) samples guided over the dynamically shifted schedule, its duration
+  head sets a clip's length from its prompt when no frame count is given, and its Gemma 4 E2B prompt enhancer
+  rewrites a short request into the caption style the model was trained on where a request asks for it.
+- **LTX-2 fine-tuning** — Lightricks' trainer recipe: LoRA on the attention projections of every block over
+  a float or 4-bit base (QLoRA), each clip encoded by the video and audio encoders
+  (`NFKMLXLTX2VideoEncoderNet`, `NFKMLXLTX2AudioEncoderNet`) and the trainer's log-mel front end
+  (`trainingExample`), the trainer's flow-matching objective measured against its own code over its own
+  model (`ltx_core`), and the adapters saved alone and applied to a generator (`applyAdaptersAtURL:error:`).
 - **`NFKMLXQwenImagePipeline`** — Qwen-Image 2.1 text-to-image: a 7.1B block-causal DiT, a
   vision-language text encoder, and a single-frame autoencoder. The caption and the image latents share
   one sequence, read causally, while each image block stays bidirectional within itself, and the text

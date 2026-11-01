@@ -90,7 +90,7 @@ final class NFKMLXLoRATests: XCTestCase {
         try requireMLXRuntime()
         let base = Linear(8, 8)
         let adapter = NFKMLXLoRALinear(base: base, rank: 4, alpha: 8, dropout: 0.5)
-        adapter.update(parameters: ModuleParameters.unflattened(["lora_b": MLXRandom.normal([4, 8])]))
+        _ = adapter.update(parameters: ModuleParameters.unflattened(["lora_b": MLXRandom.normal([4, 8])]))
         adapter.train(false)
         let x = input()
         let plain = adapter(x)
@@ -99,7 +99,7 @@ final class NFKMLXLoRATests: XCTestCase {
         adapter.train(true)
         let dropped = adapter(x)
         XCTAssertGreaterThan(abs(dropped - plain).max().item(Float.self), 0)
-        adapter.update(parameters: ModuleParameters.unflattened(["lora_b": MLXArray.zeros([4, 8])]))
+        _ = adapter.update(parameters: ModuleParameters.unflattened(["lora_b": MLXArray.zeros([4, 8])]))
         XCTAssertEqual(abs(adapter(x) - base(x)).max().item(Float.self), 0, "the base path never drops")
     }
 
@@ -257,24 +257,95 @@ final class NFKMLXLoRATests: XCTestCase {
 
     // MARK: Quantized bases
 
-    // `QuantizedLinear` is a subclass of `Linear`, so it satisfies the predicate's type without
-    // announcing itself, and its `weight` holds packed integers rather than the values the layer
-    // computes with. Adapting one would build a detour around something that is not a weight.
-    func testAdaptingAQuantizedLayerIsRefusedRatherThanSilentlyWrong() throws {
+    private final class QuantizedBlock: Module {
+        @ModuleInfo(key: "q") var q: QuantizedLinear
+        init(_ base: Linear) {
+            _q.wrappedValue = QuantizedLinear(base, groupSize: 32, bits: 4)
+        }
+        func callAsFunction(_ x: MLXArray) -> MLXArray { q(x) }
+    }
+
+    private final class FloatBlock: Module {
+        @ModuleInfo(key: "q") var q: Linear
+        init(_ base: Linear) { _q.wrappedValue = base }
+        func callAsFunction(_ x: MLXArray) -> MLXArray { q(x) }
+    }
+
+    // A quantized base takes an adapter (QLoRA): it starts out identical, and only the detour trains.
+    func testAQuantizedLayerIsAdaptedAndOnlyItsDetourTrains() throws {
         try requireMLXRuntime()
-        final class Quantized: Module {
-            @ModuleInfo(key: "q") var q: QuantizedLinear
-            override init() {
-                _q.wrappedValue = QuantizedLinear(Linear(64, 32, bias: false), groupSize: 32, bits: 4)
+        let model = QuantizedBlock(Linear(64, 32, bias: true))
+        let x = MLXRandom.normal([3, 64])
+        let before = model(x)
+        XCTAssertEqual(try NFKMLXLoRA.apply(to: model, rank: 4), 1)
+        XCTAssertTrue(model.q is NFKMLXQuantizedLoRALinear)
+        XCTAssertTrue(arrayEqual(model(x), before).item(Bool.self), "B starts at zero")
+        XCTAssertEqual(Set(model.trainableParameters().flattened().map(\.0)), ["q.lora_a", "q.lora_b"])
+        NFKMLXTrainer.freezeHeldState(of: model)
+        XCTAssertEqual(NFKMLXLoRA.trainableParameterCount(of: model), 64 * 4 + 4 * 32,
+                       "the held packed weights leave the detour trainable")
+    }
+
+    // The detour's gradient through the quantized product is the gradient a float adapter receives over
+    // the dequantized weight, and a step leaves the packed weight where it was.
+    func testAQuantizedAdapterTrainsAsAFloatAdapterOverTheDequantizedWeight() throws {
+        try requireMLXRuntime()
+        let quantized = QuantizedBlock(Linear(64, 32, bias: true))
+        let packed = quantized.q
+        let dequantized = MLX.dequantized(packed.weight, scales: packed.scales, biases: packed.biases,
+                                          groupSize: packed.groupSize, bits: packed.bits)
+        let float = FloatBlock(Linear(weight: dequantized, bias: packed.bias))
+        try NFKMLXLoRA.apply(to: quantized, rank: 4)
+        try NFKMLXLoRA.apply(to: float, rank: 4)
+        let adapter = try XCTUnwrap(quantized.q as? NFKMLXQuantizedLoRALinear)
+        let floatAdapter = try XCTUnwrap(float.q as? NFKMLXLoRALinear)
+        _ = floatAdapter.update(parameters: ModuleParameters.unflattened(["lora_a": adapter.loraA]))
+        let x = MLXRandom.normal([5, 64]), target = MLXRandom.normal([5, 32])
+        func gradient(_ model: Module, _ forward: @escaping (MLXArray) -> MLXArray) -> [String: MLXArray] {
+            let step = valueAndGrad(model: model) { (_: Module, inputs: [MLXArray]) in
+                [mean(square(forward(inputs[0]) - inputs[1]))]
             }
+            return Dictionary(uniqueKeysWithValues: step(model, [x, target]).1.flattened())
         }
-        let model = Quantized()
-        XCTAssertThrowsError(try NFKMLXLoRA.apply(to: model)) { error in
-            guard case NFKMLXError.loRANotApplicable(let message) = error else {
-                return XCTFail("expected loRANotApplicable, got \(error)")
-            }
-            XCTAssertTrue(message.contains("quantized"), "the message names the reason: \(message)")
+        let qGrad = gradient(quantized) { quantized($0) }, fGrad = gradient(float) { float($0) }
+        for key in ["q.lora_a", "q.lora_b"] {
+            let q = try XCTUnwrap(qGrad[key]), f = try XCTUnwrap(fGrad[key])
+            XCTAssertLessThan((q - f).abs().max().item(Float.self), 1e-5 * max(1, f.abs().max().item(Float.self)),
+                              "\(key) gradient")
         }
+        let weightBefore = adapter.weight
+        let optimizer = AdamW(learningRate: 1e-2)
+        let step = valueAndGrad(model: quantized) { (m: QuantizedBlock, inputs: [MLXArray]) in
+            [mean(square(m(inputs[0]) - inputs[1]))]
+        }
+        optimizer.update(model: quantized, gradients: step(quantized, [x, target]).1)
+        eval(quantized)
+        XCTAssertTrue(arrayEqual(adapter.weight, weightBefore).item(Bool.self), "the packed weight is frozen")
+        XCTAssertGreaterThan(adapter.loraB.abs().max().item(Float.self), 0, "the detour moved")
+    }
+
+    // A run over a quantized base is its adapters: saved alone, they reload over a fresh base.
+    func testQuantizedAdaptersSaveAndReloadOverAFreshBase() throws {
+        try requireMLXRuntime()
+        let base = Linear(64, 32, bias: false)
+        let trained = QuantizedBlock(base)
+        try NFKMLXLoRA.apply(to: trained, rank: 4)
+        let adapter = try XCTUnwrap(trained.q as? NFKMLXQuantizedLoRALinear)
+        _ = adapter.update(parameters: ModuleParameters.unflattened(["lora_b": MLXRandom.normal(adapter.loraB.shape)]))
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("lora-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try MLX.save(arrays: NFKMLXLoRA.adapterArrays(of: trained), url: url)
+
+        let reloaded = QuantizedBlock(base)
+        try NFKMLXLoRA.apply(to: reloaded, rank: 4)
+        XCTAssertEqual(try NFKMLXLoRA.loadAdapters(try MLX.loadArrays(url: url), into: reloaded), 1)
+        let x = MLXRandom.normal([3, 64])
+        XCTAssertTrue(arrayEqual(reloaded(x), trained(x)).item(Bool.self))
+
+        let wrongRank = QuantizedBlock(base)
+        try NFKMLXLoRA.apply(to: wrongRank, rank: 8)
+        XCTAssertThrowsError(try NFKMLXLoRA.loadAdapters(try MLX.loadArrays(url: url), into: wrongRank))
     }
 
     // Merging a low-rank delta into a quantized weight and requantizing rounds the delta away, so a
@@ -291,13 +362,11 @@ final class NFKMLXLoRATests: XCTestCase {
             }
         }
         let model = Mixed()
-        // Adapt the plain layer only, which is what a caller quantizing afterward would have done.
-        XCTAssertEqual(try NFKMLXLoRA.apply(to: model, where: { path, _ in path.contains("plain") }), 1)
+        XCTAssertEqual(try NFKMLXLoRA.apply(to: model), 2)
         XCTAssertThrowsError(try NFKMLXLoRA.merge(into: model))
     }
 
-    // A predicate that excludes the quantized layers still works, so a partly quantized model is not
-    // shut out entirely.
+    // A predicate that excludes the quantized layers leaves them as they are.
     func testExcludingTheQuantizedLayersAllowsTheRestToBeAdapted() throws {
         try requireMLXRuntime()
         final class Mixed: Module {
@@ -404,7 +473,7 @@ final class NFKMLXLoRATests: XCTestCase {
         let model = ArrayHeld()
         try NFKMLXLoRA.apply(to: model) { path, _ in path == "net.0" }
         let adapter = model.net[0] as! NFKMLXLoRALinear
-        adapter.update(parameters: ModuleParameters.unflattened([("lora_b", MLXArray.ones(adapter.loraB.shape) * 0.1)]))
+        _ = adapter.update(parameters: ModuleParameters.unflattened([("lora_b", MLXArray.ones(adapter.loraB.shape) * 0.1)]))
         let adapted = model(input())
         XCTAssertEqual(try NFKMLXLoRA.merge(into: model), 1)
         XCTAssertEqual(model.net.count, 4)

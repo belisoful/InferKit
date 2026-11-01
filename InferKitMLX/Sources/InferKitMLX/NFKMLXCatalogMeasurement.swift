@@ -247,6 +247,15 @@ extension NFKMLXLoadPlan {
             plan.castDirectories = ["transformer"]
             return plan
         }(),
+        "ltx-2-full": {
+            var plan = NFKMLXLoadPlan(precision: .stored,
+                                      directories: ["text_encoder": .bfloat16, "vae": .float32, "audio_vae": .float32,
+                                                    "vocoder": .float32],
+                                      stages: [["text_encoder"], ["connectors"],
+                                               ["transformer_full", "vae", "audio_vae", "vocoder"]])
+            plan.castDirectories = ["transformer_full"]
+            return plan
+        }(),
         // umT5 widens to float32 only where the budget holds it, so the plan counts it at bfloat16. The
         // precision option converts the transformer alone.
         "wan": {

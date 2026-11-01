@@ -5635,6 +5635,36 @@
         "IK_VAL_STABLE_AUDIO_OPEN": ""
       },
       "note": "Stable Audio Open 1.0, the diffusers layout only (the stable-audio-tools single files model.ckpt, model.safetensors, and vae_model.ckpt are duplicates and are not fetched). The repository is gated, and the weights are under the Stability AI Community License (free below USD 1M annual revenue). diffusers' StableAudioPipeline (>= 0.40.0, the music oracle environment) is the oracle; model_config.json carries the release's training configuration, which the fine-tune recipe reads its optimizer settings from."
+    },
+    {
+      "key": "LTX2_5_DURATION_HEAD",
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "revision": "4791a1100e0cf97f7ed5c55c12dd71dce13f9dd3",
+      "directory": "LTX-2.5-Diffusers-duration",
+      "files": [
+        "duration_head/config.json",
+        "duration_head/diffusion_pytorch_model.safetensors"
+      ],
+      "note": "LTX-2.5's duration head (3.8 MB, gated). IK_VAL_LTX2_5_DURATION_HEAD is the duration_head/ folder; IK_PARITY_LTX2_REAL_DURATION_HEAD is `run_reference.py ltx2_real_duration_head --checkpoint <that folder>` (ltxtrain env)."
+    },
+    {
+      "key": "LTX2_5_PROMPT_ENHANCER",
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "revision": "4791a1100e0cf97f7ed5c55c12dd71dce13f9dd3",
+      "directory": "LTX-2.5-Diffusers-prompt-enhancer",
+      "files": [
+        "processor/chat_template.jinja",
+        "processor/processor_config.json",
+        "processor/tokenizer.json",
+        "processor/tokenizer_config.json",
+        "prompt_enhancer/config.json",
+        "prompt_enhancer/generation_config.json",
+        "prompt_enhancer/model.safetensors.index.json",
+        "prompt_enhancer/model-00001-of-00003.safetensors",
+        "prompt_enhancer/model-00002-of-00003.safetensors",
+        "prompt_enhancer/model-00003-of-00003.safetensors"
+      ],
+      "note": "LTX-2.5's prompt enhancer, a Gemma 4 E2B (9.5 GB bf16, gated), whose KV-shared layers carry no k/v projections. IK_VAL_LTX2_5_PROMPT_ENHANCER is the parent of processor/ and prompt_enhancer/; IK_PARITY_LTX2_REAL_PROMPT_ENHANCER is `run_reference.py ltx2_real_prompt_enhancer --checkpoint <that parent>` (ltxtrain env, about 30 GB at float32: run under LMC)."
     }
   ],
   "oracle_environments": {
@@ -6135,6 +6165,20 @@
       "modes": [
         "sf3d",
         "sf3d_twins"
+      ]
+    },
+    "ltxtrain": {
+      "interpreter": "~/.inferkit-validation/ltxtrainvenv/bin/python",
+      "why": "Lightricks' trainer (`ltx-trainer`) and its model (`ltx-core`) at Lightricks/LTX-2 e98f6d9, installed --no-deps -e from sources/refsrc/ltx2-e98f6d9 over qwenimagevenv's exact freeze (torch 2.14.0, diffusers fbf49e7 = 0.41.0.dev0, transformers 5.17.0), plus peft, optimum-quanto, pydantic, and torchaudio 2.11.0 (the newest macOS arm64 build, --no-deps). The LoRA objective runs the trainer's own strategies over `ltx_core`'s own `LTXModel` under peft; the encoders, the duration head, and the prompt enhancer run diffusers. ltx-core pins transformers < 5.15 for its Gemma 4 text encoder, which no mode here builds.",
+      "rebuild": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/ltxtrainvenv && ~/.inferkit-validation/ltxtrainvenv/bin/pip install -r <(~/.inferkit-validation/qwenimagevenv/bin/pip freeze) peft optimum-quanto pydantic einops colour-science av scipy rich typer sentencepiece pandas && ~/.inferkit-validation/ltxtrainvenv/bin/pip install --no-deps torchaudio==2.11.0 && ~/.inferkit-validation/ltxtrainvenv/bin/pip install --no-deps -e ~/.inferkit-validation/sources/refsrc/ltx2-e98f6d9/packages/ltx-core -e ~/.inferkit-validation/sources/refsrc/ltx2-e98f6d9/packages/ltx-trainer",
+      "modes": [
+        "ltx2_loss",
+        "ltx2_video_encoder",
+        "ltx2_audio_encoder",
+        "ltx2_stg_mask",
+        "ltx2_duration_head",
+        "ltx2_real_duration_head",
+        "ltx2_real_prompt_enhancer"
       ]
     }
   },
@@ -7267,6 +7311,12 @@
       "record": "reference/pplx-decider-flash-reference.safetensors",
       "environment": "pplx_decider",
       "command": "pplx_decider --checkpoint <IK_VAL_PPLX_DECIDER_FLASH> (loss.r<i>: the mean over a request's questions of torch's soft-target cross_entropy on the reference's raw logits)"
+    },
+    {
+      "key": "IK_PARITY_LTX2_LOSS",
+      "record": "reference/ltx2-loss.safetensors",
+      "environment": "ltxtrain",
+      "command": "ltx2_loss (t2v.* and flex.*: the trainer's text_to_video and flexible strategies over ltx_core's tiny LTXModel under peft LoRA; loss, per-example loss, predictions, and every adapter's gradient in lora_a/lora_b layout; sampler.* the raw sampler draws at 100 and 6000 tokens)"
     }
   ]
 }

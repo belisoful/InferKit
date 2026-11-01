@@ -3371,7 +3371,7 @@ NFKAudioAsset *soundtrack = [clip outputForKey:NFKOutputAudio];  // the soundtra
 
 The release's transformer says which release it is, and `generator(variant:repo:revision:cacheDirectoryURL:residency:)`
 downloads one by `NFKMLXLTX2Variant`: `.ltx23` reads `diffusers/LTX-2.3-Diffusers` (about 95 GB) and `.ltx25`
-the gated `Lightricks/LTX-2.5-Diffusers` (about 70 GB), whose distilled transformer samples `NFKMLXLTX2Generator.distilledSigmas` unguided by default. The stages load in turn where they do not fit together, and a stage
+the gated `Lightricks/LTX-2.5-Diffusers` (about 70 GB), whose distilled transformer samples `NFKMLXLTX2Generator.distilledSigmas` unguided by default; `.ltx25Full` reads the same repository's full transformer (`transformer_full/`) and samples it guided. LTX-2.5 picks a clip's length from its prompt when `frames` is nil, and rewrites the prompt with its enhancer where `enhancesPrompts` is set and the release directory holds `prompt_enhancer/` and `processor/`. The stages load in turn where they do not fit together, and a stage
 that does not fit alone streams its layers from the release on every pass. The 22B transformer is 38 GB at
 the released bfloat16, so LTX-2 runs streamed on a 32 GB machine and resident on a large one.
 
@@ -4454,7 +4454,7 @@ let sd3      = try NFKMLXSD3Generator.generator(directoryURL: sd3Dir, residency:
 let ltxVideo = try NFKMLXLTXVideoGenerator.generator(directoryURL: ltxDir, residency: .automatic)    // "ltx-video-0.9.0"; video(forPrompt:frames:width:height:seed:)
 let wan      = try NFKMLXWanVideoGenerator.generator(directoryURL: wanDir, residency: .automatic)    // "wan"; Wan 2.1 T2V and Wan 2.2 TI2V-5B
 let sana     = try NFKMLXSANAPipeline.pipeline(directoryURL: sanaDir)          // SANA: the linear-attention DiT chained with NFKMLXDCAutoencoderNet(.sana)
-let ltx2     = try NFKMLXLTX2Generator.generator(directoryURL: ltx2Dir, residency: .automatic)   // "ltx-2.3" / "ltx-2.5"; clip(forPrompt:frames:width:height:seed:) → frames and soundtrack
+let ltx2     = try NFKMLXLTX2Generator.generator(directoryURL: ltx2Dir, residency: .automatic)   // "ltx-2.3" / "ltx-2.5" / "ltx-2.5-full"; clip(forPrompt:frames:width:height:seed:) → frames and soundtrack
 let animate  = NFKMLXWanAnimate.makeNet(.base)                                 // Wan 2.2 Animate 14B: loadWeights(into:fromDirectory:), extractReference(…) fills an NFKMLXWanAnimateKVCache, generate(…) reads it
 let animator = try NFKMLXWanAnimateGenerator.generator(directoryURL: animateDir, residency: .automatic)  // "wan2.2-animate-14b"; video(referenceImage:drivingFrames:drivingFramesPerSecond:prompt:)
 
@@ -5657,6 +5657,37 @@ frames, and one example in ten trained without its conditioning so guidance keep
 branch. The optimizer is the release's: AdamW at 5e-5 with weight decay 1e-3 under `InverseLR`. A batch
 holds examples of the same latent length, which `trainingExample` gives by padding each clip to the
 release's 47.55-second window.
+
+### Fine-tuning LTX-2.5 on your own clips
+
+Lightricks' trainer fine-tunes the LTX-2 transformer with LoRA: rank-32 adapters on the query, key, value,
+and output projections of all six attentions in every block, everything else frozen. Each clip becomes an
+example through the release's own encoders: its frames through the video autoencoder, its soundtrack
+through the trainer's log-mel front end and the audio autoencoder, and its caption through the text
+encoder and the connectors. A 4-bit build loads and quantizes the 22B transformer one block at a time, so
+the adapters train over the packed weights (QLoRA):
+
+```swift
+let generator = try NFKMLXLTX2Generator.generator(directoryURL: release, residency: .staged)
+let examples = try myClips.map {
+    try generator.trainingExample(video: $0.frames, frameRate: 24, audio: $0.soundtrack, sampleRate: 48_000,
+                                  prompt: $0.caption)
+}
+let net = try NFKMLXLTX2Generator.network(directoryURL: release, variant: .ltx25Full, quantizationBits: 4)
+try NFKMLXLTX2Generator.fineTune(net, examples: { _ in [examples.randomElement()!] }, steps: 2_000)
+
+// The adapters are the whole run; the base stays as the release ships it.
+try NFKMLXLTX2Generator.saveAdapters(of: net, to: adaptersURL)
+let tuned = try NFKMLXLTX2Generator.generator(directoryURL: release, variant: .ltx25Full, residency: .staged)
+try tuned.applyAdapters(at: adaptersURL)  // Objective-C: applyAdaptersAtURL:error:
+```
+
+The objective is the trainer's flow matching: each modality noised at a sigma from its stretched
+shifted-logit-normal sampler, the velocity `noise − clean` held to its target by the mean squared error,
+video and audio summed. The default is the trainer's text-to-video recipe (`t2v_lora.yaml`), where video and
+audio draw their own sigmas; `NFKMLXLTX2Objective.textToVideo` shares one and conditions the first frame for
+one clip in ten. The optimizer is the trainer's: AdamW at 1e-4 with the gradient norm clipped to 1, under a
+linear decay to a tenth of the rate. A batch holds clips of the same latent grid and audio length.
 
 ### Resuming, validating, and training in half precision
 

@@ -725,7 +725,15 @@ public final class NFKMLXGemmaNet: Module {
         return NFKReferenceRounding.scaled(projected + identity, by: 1 / sqrt(Float(2)))
     }
 
-    private func forward(_ embeddings: MLXArray, tokens: MLXArray, trace: inout [MLXArray]) -> MLXArray {
+    /// The logits at the last position alone `[batch, vocabulary]`, which is what a decoding step reads:
+    /// the tied projection then runs over one row rather than the whole sequence. Introduced in InferKit 0.4.0.
+    func lastLogits(_ tokens: MLXArray) -> MLXArray {
+        var trace = [MLXArray]()
+        return forward(embed(tokens), tokens: tokens, trace: &trace, lastPositionOnly: true)[0..., 0]
+    }
+
+    private func forward(_ embeddings: MLXArray, tokens: MLXArray, trace: inout [MLXArray],
+                         lastPositionOnly: Bool = false) -> MLXArray {
         let c = configuration
         let length = tokens.shape[1]
 
@@ -758,6 +766,9 @@ public final class NFKMLXGemmaNet: Module {
         // The reference records its LAST hidden state after the final normalization, so the trace
         // matches its convention rather than ending on the raw last-layer output.
         if !trace.isEmpty { trace[trace.count - 1] = hidden }
+        if lastPositionOnly {
+            hidden = hidden[0..., (length - 1) ..< length]
+        }
 
         // Tied embeddings, then the soft cap the release applies to its logits.
         var logits = embedTokens.asLinear(hidden)
@@ -825,6 +836,26 @@ public final class NFKMLXGemmaLanguage: NSObject {
             }
         }
 
+        // Newer releases state the full-attention layers' head width per layer (`per_layer_config`) rather
+        // than as `global_head_dim`. This decoder builds one width for every full-attention layer, so the
+        // overrides must name exactly those layers, all at one width, and nothing but the head width.
+        var globalHeadDimensions = integer("global_head_dim", 512)
+        if let perLayer = text["per_layer_config"] as? [String: Any], !perLayer.isEmpty {
+            let overrides = perLayer.compactMapValues { $0 as? [String: Any] }
+            let widths = Set(overrides.values.compactMap { ($0["head_dim"] as? NSNumber)?.intValue })
+            let fullLayers = (text["layer_types"] as? [String]).map { types in
+                Set(types.indices.filter { types[$0] == NFKMLXGemmaAttentionKind.full.rawValue })
+            }
+            guard overrides.count == perLayer.count, widths.count == 1,
+                  overrides.values.allSatisfy({ Set($0.keys) == ["head_dim"] }),
+                  fullLayers.map({ Set(perLayer.keys.compactMap { Int($0) }) == $0 }) ?? true,
+                  let width = widths.first else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "this decoder reads per-layer overrides of the full-attention head width only, not \(perLayer)")
+            }
+            globalHeadDimensions = width
+        }
+
         return NFKMLXGemmaConfiguration(
             hiddenSize: integer("hidden_size", 1536),
             layerCount: integer("num_hidden_layers", 35),
@@ -836,7 +867,7 @@ public final class NFKMLXGemmaLanguage: NSObject {
             globalKeyValueHeadCount: (text["num_global_key_value_heads"] as? NSNumber)?.intValue,
             attentionKeyEqualsValue: (text["attention_k_eq_v"] as? NSNumber)?.boolValue ?? false,
             headDimensions: integer("head_dim", 256),
-            globalHeadDimensions: integer("global_head_dim", 512),
+            globalHeadDimensions: globalHeadDimensions,
             slidingWindow: integer("sliding_window", 512),
             ropeTheta: theta,
             globalRopeTheta: globalTheta,
@@ -868,10 +899,30 @@ public final class NFKMLXGemmaLanguage: NSObject {
                             precision: NFKMLXWeightPrecision = .float32,
                             skipping skipped: (String) -> Bool = { _ in false }) throws {
         let prefix = "model.language_model."
-        let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
+        var mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
             $0.hasPrefix(prefix) && !skipped($0) ? String($0.dropFirst(prefix.count)) : nil
         })
+        mapped += sharedLayerPlaceholders(for: net, provided: Set(mapped.map(\.0)),
+                                          dtype: mapped.first?.1.dtype ?? .float32)
         try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    /// Zeros for the key and value projections and key norms of the layers that share an earlier layer's
+    /// keys and values, where the release leaves them out. A shared layer attends with the earlier layer's
+    /// keys and values and never reads its own, so Google's releases store them and releases saved by
+    /// transformers 5.15 and later (LTX-2.5's prompt enhancer) drop them.
+    static func sharedLayerPlaceholders(for net: NFKMLXGemmaNet, provided: Set<String>,
+                                        dtype: DType) -> [(String, MLXArray)] {
+        let c = net.configuration
+        guard c.firstSharedLayer < c.layerCount else { return [] }
+        let parameters = Dictionary(uniqueKeysWithValues: net.parameters().flattened())
+        return (c.firstSharedLayer ..< c.layerCount).flatMap { index in
+            ["k_proj.weight", "v_proj.weight", "k_norm.weight"].compactMap { name -> (String, MLXArray)? in
+                let key = "layers.\(index).self_attn.\(name)"
+                guard !provided.contains(key), let parameter = parameters[key] else { return nil }
+                return (key, MLXArray.zeros(parameter.shape, dtype: dtype))
+            }
+        }
     }
 
     /// Loads the decoder with its routed experts held as `residency` plans them. The 26B-A4B mixture

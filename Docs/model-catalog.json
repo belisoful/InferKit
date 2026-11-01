@@ -25363,7 +25363,7 @@
         "quantizationBits" : "quantizationBits",
         "residency" : "residency",
         "stagePrecisions" : {
-          "diffusion_decoder" : "float32",
+          "diffusion_decoder" : "loaded",
           "text_encoder" : "bfloat16"
         }
       },
@@ -25496,6 +25496,14 @@
           "title" : "Temporal upsampling"
         },
         {
+          "default" : false,
+          "help" : "Rewrites the prompt as a long audio-visual caption with the release's Gemma 4 E2B enhancer before generating. Needs the release's prompt_enhancer/ and processor/ folders (about 10 GB).",
+          "key" : "NFKMLXLTX2ParameterPromptEnhancement",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Enhance the prompt"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -25503,8 +25511,8 @@
             },
             {
               "memory" : {
-                "peakBytes" : 76057273036,
-                "residentBytes" : 76057273036
+                "peakBytes" : 76061079758,
+                "residentBytes" : 76061079758
               },
               "title" : "Resident",
               "value" : "resident"
@@ -25691,7 +25699,7 @@
       "variants" : [
         {
           "displayName" : "LTX-2.5",
-          "downloadBytes" : 72182004961,
+          "downloadBytes" : 72185813678,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
@@ -25765,18 +25773,19 @@
               },
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 834268000,
-                  "checkpoint" : 834268000,
-                  "float32" : 1668536000
+                  "bfloat16" : 838074722,
+                  "checkpoint" : 838074722,
+                  "float32" : 1676149444,
+                  "loaded" : 1672342722
                 },
                 "id" : "diffusion_decoder",
-                "quantizableElements" : 416722944,
-                "title" : "diffusion_decoder"
+                "quantizableElements" : 418623744,
+                "title" : "diffusion_decoder, duration_head"
               }
             ]
           },
           "minimumMemoryBytes" : 56964457313,
-          "parameterCount" : 36074226763,
+          "parameterCount" : 36076130124,
           "peakBytes" : 44124821420,
           "precision" : "bfloat16",
           "registryName" : "ltx-2.5",
@@ -25943,6 +25952,649 @@
                 "path" : "temporal_latent_upsampler/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
                 "sha256" : "a3b86da4299e2131d2c0ee4ee218f8475b95dd199ddc26c94a62acea60f7e3c7"
+              },
+              {
+                "optional" : false,
+                "path" : "duration_head/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "duration_head/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "4791a1100e0cf97f7ed5c55c12dd71dce13f9dd3",
+            "repository" : "Lightricks/LTX-2.5-Diffusers",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "LTX-2.5 (full transformer)",
+      "engine" : "mlx",
+      "family" : "ltx-2-full",
+      "id" : "ltx-2.5-full",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : true,
+        "name" : "LTX-2.x Community License Agreement",
+        "note" : "Entities with annual revenue of US$10 million or more need a paid commercial license.",
+        "restrictsCommercialUse" : true,
+        "url" : "https://github.com/Lightricks/LTX-2/blob/main/LICENSE-2_x"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "bfloat16"
+        }
+      },
+      "options" : [
+        {
+          "default" : 121,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 768,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 512,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 24,
+          "help" : "The frame rate the clip is conditioned on and written at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 30,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 3,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 7,
+          "help" : "The soundtrack's classifier-free guidance weight.",
+          "key" : "NFKMLXLTX2ParameterAudioGuidanceScale",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Soundtrack guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "The weight of the pass whose self-attention is perturbed. 0 skips that pass.",
+          "key" : "NFKMLXLTX2ParameterSpatioTemporalGuidanceScale",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Spatio-temporal guidance"
+        },
+        {
+          "default" : 3,
+          "help" : "The weight of the pass that hears no video and sees no audio. 1 skips that pass.",
+          "key" : "NFKMLXLTX2ParameterModalityGuidanceScale",
+          "kind" : "json",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Modality guidance"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "How far the guided prediction is pulled back to the conditional one's spread. 0 turns it off.",
+          "key" : "NFKMLXLTX2ParameterGuidanceRescale",
+          "kind" : "json",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance rescale"
+        },
+        {
+          "default" : false,
+          "help" : "Decode the clip with the release's diffusion decoder instead of the autoencoder.",
+          "key" : "NFKMLXLTX2ParameterDiffusionDecode",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Diffusion decode"
+        },
+        {
+          "default" : false,
+          "help" : "Sample at half the size, upsample the latent, and refine it over three sigmas at the full size.",
+          "key" : "NFKMLXLTX2ParameterTwoStageRefinement",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Two-stage refinement"
+        },
+        {
+          "default" : false,
+          "help" : "Double the frame count and the frame rate with the release's temporal latent upsampler.",
+          "key" : "NFKMLXLTX2ParameterTemporalUpsampling",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Temporal upsampling"
+        },
+        {
+          "default" : false,
+          "help" : "Rewrites the prompt as a long audio-visual caption with the release's Gemma 4 E2B enhancer before generating. Needs the release's prompt_enhancer/ and processor/ folders (about 10 GB).",
+          "key" : "NFKMLXLTX2ParameterPromptEnhancement",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Enhance the prompt"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 73969139566,
+                "residentBytes" : 73969139566
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 43705223950,
+                "residentBytes" : 43705223950
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8131134990,
+                "residentBytes" : 8131134990
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 43705223950,
+                "residentBytes" : 43705223950
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 81680942350,
+                "residentBytes" : 81680942350
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the transformer_full loads at. As published keeps its own weights; another choice converts them as it loads. The other stages load as their parity records were measured.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 43705223950,
+                "residentBytes" : 43705223950
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 25782703390,
+                "residentBytes" : 25782703390
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 21003364574,
+                "residentBytes" : 21003364574
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 18613695166,
+                "residentBytes" : 18613695166
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16224025758,
+                "residentBytes" : 16224025758
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13834356350,
+                "residentBytes" : 13834356350
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11444686942,
+                "residentBytes" : 11444686942
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video",
+        "audio"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie whose audio track is the soundtrack.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        },
+        {
+          "help" : "The generated soundtrack alone, a stereo WAV at 48 kHz.",
+          "key" : "audio",
+          "required" : true,
+          "title" : "Soundtrack",
+          "valueType" : "audio"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 15 in place of 30: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 15
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "ltx-2.5-full",
+      "requirements" : {
+        "minimumMemoryBytes" : 56470813231,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that films a clip and its soundtrack together from a prompt.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "LTX-2.5 (full transformer)",
+          "downloadBytes" : 72185813678,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 23919460448,
+                  "checkpoint" : 23919460448,
+                  "float32" : 47838920896
+                },
+                "id" : "text_encoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 483688450,
+                  "checkpoint" : 483688450,
+                  "float32" : 967376900
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 21801427040,
+                  "checkpoint" : 21801427040,
+                  "float32" : 43602854080
+                },
+                "layerCount" : 48,
+                "quantizableElements" : 10899947520,
+                "title" : "text_encoder",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 6344455168,
+                  "checkpoint" : 6344455168,
+                  "float32" : 12688910336
+                },
+                "id" : "connectors",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 403005504,
+                  "checkpoint" : 403005504,
+                  "float32" : 806011008
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 3224044032,
+                  "checkpoint" : 3224044032,
+                  "float32" : 6448088064
+                },
+                "layerCount" : 8,
+                "quantizableElements" : 3170893824,
+                "title" : "connectors"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 43705223950,
+                  "checkpoint" : 43705223950,
+                  "float32" : 81680942350,
+                  "loaded" : 43705223950
+                },
+                "id" : "transformer_full",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 773349760,
+                  "checkpoint" : 773349760,
+                  "float32" : 1546699520
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 37120788480,
+                  "checkpoint" : 37120788480,
+                  "float32" : 74241576960
+                },
+                "layerCount" : 48,
+                "quantizableElements" : 19117355264,
+                "title" : "transformer_full, vae, audio_vae, vocoder, diffusion_decoder, duration_head, latent_upsampler, temporal_latent_upsampler"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 56470813231,
+          "parameterCount" : 36076130124,
+          "peakBytes" : 43705223950,
+          "precision" : "bfloat16",
+          "registryName" : "ltx-2.5-full",
+          "residentBytes" : 43705223950,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 971,
+                "optional" : false,
+                "path" : "model_index.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 489,
+                "optional" : false,
+                "path" : "scheduler/scheduler_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 4594,
+                "optional" : false,
+                "path" : "text_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 66306,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 32169626,
+                "optional" : false,
+                "path" : "tokenizer/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
+              },
+              {
+                "bytes" : 3735,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 817,
+                "optional" : false,
+                "path" : "connectors/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 6344489120,
+                "optional" : true,
+                "path" : "connectors/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "3100defaa2f7464acf98fc97e8712860428f2ba3a0156e7763aa9a708d41b786"
+              },
+              {
+                "bytes" : 30629,
+                "optional" : true,
+                "path" : "connectors/diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : false,
+                "path" : "transformer_full/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "transformer_full/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "transformer_full/diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 1480,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1452233194,
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "425f0dfa227dee5d0ff3d9720563370810409a439c302ca74f0f944057ce55c5"
+              },
+              {
+                "bytes" : 505,
+                "optional" : false,
+                "path" : "audio_vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 106507972,
+                "optional" : false,
+                "path" : "audio_vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "45dcb1c3cffc8c8b7710a04dd19500e481daff31f5ea8e8529f2cf697c439d12"
+              },
+              {
+                "bytes" : 1478,
+                "optional" : false,
+                "path" : "vocoder/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 258305056,
+                "optional" : false,
+                "path" : "vocoder/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "c99dde145a982974bc4c39608b3b929f232f0126a55d8326a47ad54f486ae23c"
+              },
+              {
+                "bytes" : 1089,
+                "optional" : false,
+                "path" : "diffusion_decoder/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 834313392,
+                "optional" : false,
+                "path" : "diffusion_decoder/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "bb3801cc2f991c0523fe450a4244d4711a4200346c6fec01a03be27c14b42ee1"
+              },
+              {
+                "bytes" : 301,
+                "optional" : false,
+                "path" : "latent_upsampler/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 995743320,
+                "optional" : false,
+                "path" : "latent_upsampler/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "e2753d6c35d1d8b9daec7529f07a8f6f0e318e091566bb1b2ef7dc2e1bdcb6a5"
+              },
+              {
+                "bytes" : 299,
+                "optional" : false,
+                "path" : "temporal_latent_upsampler/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 261943760,
+                "optional" : false,
+                "path" : "temporal_latent_upsampler/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "a3b86da4299e2131d2c0ee4ee218f8475b95dd199ddc26c94a62acea60f7e3c7"
+              },
+              {
+                "optional" : false,
+                "path" : "duration_head/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "duration_head/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
               }
             ],
             "kind" : "huggingface",

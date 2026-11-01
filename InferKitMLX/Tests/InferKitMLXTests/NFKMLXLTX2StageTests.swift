@@ -218,6 +218,59 @@ final class NFKMLXLTX2StageTests: XCTestCase {
 
 extension NFKMLXLTX2StageTests {
 
+    // Spatio-temporal guidance over part of a batch: the mask `[0, 1, 0]` perturbs the outer examples and leaves
+    // the middle one attended, against the all-perturbed control the middle example must differ from.
+    func testLTX2PartialSpatioTemporalGuidanceMatchesTheReference() throws {
+        let arrays = try record("IK_PARITY_LTX2_STG_MASK", oracle: "ltx2_stg_mask")
+        let net = NFKMLXLTX2TransformerNet(.tiny)
+        try NFKMLXWeights.apply(arrays.compactMap { key, value in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }, to: net)
+        func run(_ mask: MLXArray?) throws -> (video: MLXArray, audio: MLXArray) {
+            net(video: try XCTUnwrap(arrays["hidden"]), audio: try XCTUnwrap(arrays["audio_hidden"]),
+                text: try XCTUnwrap(arrays["encoder"]), audioText: try XCTUnwrap(arrays["audio_encoder"]),
+                timestep: try XCTUnwrap(arrays["timestep"]), audioTimestep: try XCTUnwrap(arrays["audio_timestep"]),
+                sigma: try XCTUnwrap(arrays["sigma"]), frames: 2, height: 2, width: 3, audioFrames: 4,
+                perturbedBlocks: [1], perturbationMask: mask)
+        }
+        let masked = try run(try XCTUnwrap(arrays["mask"]))
+        let videoSimilarity = compare("ltx2-stg-mask video", masked.video, arrays["masked.video"])
+        compare("ltx2-stg-mask audio", masked.audio, arrays["masked.audio"])
+        let all = try run(nil)
+        compare("ltx2-stg-all video", all.video, arrays["all.video"])
+        let referenceAll = try XCTUnwrap(arrays["all.video"]), referenceMasked = try XCTUnwrap(arrays["masked.video"])
+        XCTAssertLessThan(cosine(referenceAll[1], referenceMasked[1]), 0.9999, "the control differs in the attended example")
+        XCTAssertGreaterThan(cosine(masked.video[1], referenceMasked[1]), 0.99999)
+        print("VALIDATION PARITY ltx2-stg-mask: video velocity cosine \(videoSimilarity)")
+    }
+}
+
+extension NFKMLXLTX2StageTests {
+
+    // LTX-2.5's duration head: the seconds it predicts from both connector streams and from each alone, and the
+    // frame count the pipeline derives from a duration, over the reference's own sweep of windows.
+    func testLTX2DurationHeadMatchesTheReference() throws {
+        let arrays = try record("IK_PARITY_LTX2_DURATION_HEAD", oracle: "ltx2_duration_head")
+        let head = NFKMLXLTX2DurationHeadNet(.tiny)
+        try NFKMLXWeights.apply(arrays.compactMap { key, value in
+            key.hasPrefix("w::") ? (String(key.dropFirst(3)), value) : nil
+        }, to: head, verifyShapes: true)
+        let video = try XCTUnwrap(arrays["video"]), audio = try XCTUnwrap(arrays["audio"])
+        let similarity = compare("ltx2-duration both", head(video: video, audio: audio), arrays["both"])
+        compare("ltx2-duration video", head(video: video, audio: nil), arrays["video_only"])
+        compare("ltx2-duration audio", head(video: nil, audio: audio), arrays["audio_only"])
+        let table = try XCTUnwrap(arrays["frames.table"]).asArray(Float.self)
+        for row in stride(from: 0, to: table.count, by: 5) {
+            let (seconds, fps, low, high) = (table[row], table[row + 1], table[row + 2], table[row + 3])
+            // The record stores the sweep at float32; the reference computed it from the doubles these name.
+            func exact(_ value: Float) -> Double { Double(String(format: "%.4g", value))! }
+            XCTAssertEqual(NFKMLXLTX2DurationHeadNet.frames(forSeconds: exact(seconds), frameRate: exact(fps),
+                                                            minimumSeconds: exact(low), maximumSeconds: exact(high)),
+                           Int(table[row + 4]), "\(seconds) s at \(fps) fps in [\(low), \(high)]")
+        }
+        print("VALIDATION PARITY ltx2-duration-head: seconds cosine \(similarity), \(table.count / 5) frame counts")
+    }
+
     // The whole pipeline at tiny configurations of every stage, from the record's starting noise: the
     // text states from token ids, the connectors, three steps of the guided loop (the guided pair,
     // spatio-temporal guidance, modality isolation, and the rescale), both decodes, and the vocoder.
@@ -391,6 +444,9 @@ extension NFKMLXLTX2StageTests {
                    "caption_channels": 14], "transformer/config.json")
         try weights("transformer", "transformer/diffusion_pytorch_model.safetensors")
         try write(["_class_name": "AutoencoderKLLTX2Video", "latent_channels": 8,
+                   "block_out_channels": [8, 16, 32, 32], "layers_per_block": [1, 1, 1, 1, 1],
+                   "downsample_type": ["spatial", "temporal", "spatiotemporal", "spatiotemporal"],
+                   "spatio_temporal_scaling": [true, true, true, true], "encoder_causal": true,
                    "decoder_block_out_channels": [8, 16, 16, 32], "decoder_layers_per_block": [1, 2, 1, 1, 1],
                    "decoder_spatio_temporal_scaling": [true, true, true, true],
                    "upsample_type": ["spatiotemporal", "spatiotemporal", "temporal", "spatial"],
@@ -408,6 +464,154 @@ extension NFKMLXLTX2StageTests {
                   "vocoder/config.json")
         try weights("vocoder", "vocoder/diffusion_pytorch_model.safetensors")
         return root
+    }
+
+    // A release that ships a duration head: a clip without a frame count takes the length the head predicts
+    // for its prompt, which is the head's own prediction over the prompt's connector streams.
+    func testAReleaseWithADurationHeadPredictsTheClipLength() throws {
+        let arrays = try record("IK_PARITY_LTX2_PIPELINE", oracle: "ltx2_pipeline")
+        let headRecord = try record("IK_PARITY_LTX2_DURATION_HEAD", oracle: "ltx2_duration_head")
+        let release = try tinyRelease(arrays)
+        defer { try? FileManager.default.removeItem(at: release) }
+        let headDirectory = release.appendingPathComponent("duration_head")
+        try FileManager.default.createDirectory(at: headDirectory, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: [
+            "_class_name": "LTX2DurationHead", "video_cross_attention_dim": 32, "audio_cross_attention_dim": 16,
+            "pooler_hidden_dim": 16, "num_queries": 2, "num_pooler_heads": 2, "mlp_hidden_dim": 16,
+        ]).write(to: headDirectory.appendingPathComponent("config.json"))
+        try MLX.save(arrays: headRecord.reduce(into: [String: MLXArray]()) { stored, entry in
+            if entry.key.hasPrefix("w::") { stored[String(entry.key.dropFirst(3))] = entry.value }
+        }, url: headDirectory.appendingPathComponent("diffusion_pytorch_model.safetensors"))
+
+        let generator = try NFKMLXLTX2Generator.generator(directoryURL: release, residency: .resident)
+        XCTAssertTrue(generator.predictsDuration)
+        generator.frameRate = 24
+        generator.minimumSeconds = 0.3
+        generator.maximumSeconds = 2
+        let text = try generator.connectorStates(generator.tokens("a red fox"))
+        let head = NFKMLXLTX2DurationHeadNet(.tiny)
+        try NFKMLXLTX2DurationHead.loadWeights(into: head, from: headDirectory)
+        let seconds = Double(head(video: text.video, audio: text.audio).item(Float.self))
+        let expected = NFKMLXLTX2DurationHeadNet.frames(forSeconds: seconds, frameRate: 24, minimumSeconds: 0.3,
+                                                        maximumSeconds: 2)
+        XCTAssertEqual(try generator.predictedFrameCount(forPrompt: "a red fox").intValue, expected)
+        generator.steps = 1
+        XCTAssertEqual(try generator.clip(forPrompt: "a red fox", width: 96, height: 64, seed: 4).video.dim(0), expected)
+        XCTAssertEqual(try generator.clip(forPrompt: "a red fox", frames: 9, width: 96, height: 64, seed: 4).video.dim(0),
+                       9, "a given frame count wins")
+
+        let headless = try tinyRelease(arrays)
+        defer { try? FileManager.default.removeItem(at: headless) }
+        let plain = try NFKMLXLTX2Generator.generator(directoryURL: headless, residency: .staged)
+        XCTAssertFalse(plain.predictsDuration)
+        XCTAssertEqual(try plain.predictedFrameCount(forPrompt: "a red fox").intValue, 121)
+    }
+
+    // LTX-2.5's full transformer: the variant factory reads `transformer_full/`, samples it guided over the
+    // dynamically shifted schedule the distilled release's static scheduler turns off, refuses the directory
+    // under another release's name, and downloads the full folder in place of the distilled one.
+    func testTheFullTransformerVariantReadsItsOwnFolder() throws {
+        let arrays = try record("IK_PARITY_LTX2_PIPELINE25", oracle: "ltx2_pipeline25")
+        let release = try tinyRelease(arrays)
+        defer { try? FileManager.default.removeItem(at: release) }
+        let transformerConfig = release.appendingPathComponent("transformer/config.json")
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: transformerConfig)) as? [String: Any])
+        json["ff_bias"] = false
+        json["use_keyframes_abs_pos_embedding"] = true
+        try JSONSerialization.data(withJSONObject: json).write(to: transformerConfig)
+        try JSONSerialization.data(withJSONObject: [
+            "_class_name": "FlowMatchEulerDiscreteScheduler", "base_image_seq_len": 1024, "base_shift": 0.95,
+            "max_image_seq_len": 4096, "max_shift": 2.05, "shift": 1.0, "use_dynamic_shifting": false,
+        ]).write(to: release.appendingPathComponent("scheduler/scheduler_config.json"))
+        try FileManager.default.copyItem(at: release.appendingPathComponent("transformer"),
+                                         to: release.appendingPathComponent("transformer_full"))
+
+        let distilled = try NFKMLXLTX2Generator.generator(directoryURL: release, residency: .staged)
+        XCTAssertEqual(distilled.variant, .ltx25)
+        XCTAssertNotNil(distilled.sigmas)
+        XCTAssertFalse(distilled.schedule.useDynamicShifting)
+
+        let full = try NFKMLXLTX2Generator.generator(directoryURL: release, variant: .ltx25Full, residency: .staged)
+        XCTAssertEqual(full.variant, .ltx25Full)
+        XCTAssertEqual(full.modelName, "ltx-2.5-full")
+        XCTAssertNil(full.sigmas, "the full transformer samples the schedule rather than the distilled sigmas")
+        XCTAssertEqual(full.guidance, 3)
+        XCTAssertEqual(full.spatioTemporalGuidance, 1)
+        XCTAssertTrue(full.schedule.useDynamicShifting)
+        XCTAssertEqual(full.schedule.baseShift, 0.95)
+        XCTAssertEqual(full.schedule.shiftTerminal, 0.1)
+        full.steps = 1
+        XCTAssertEqual(try full.clip(forPrompt: "a red fox", frames: 9, width: 96, height: 64, seed: 4).video.shape,
+                       [9, 64, 96, 3])
+
+        XCTAssertThrowsError(try NFKMLXLTX2Generator.generator(directoryURL: release, variant: .ltx23, residency: .staged))
+        let folders = NFKMLXLTX2Generator.releaseComponents(for: .ltx25Full).flatMap(\.required)
+        XCTAssertTrue(folders.contains("transformer_full/config.json"))
+        XCTAssertFalse(folders.contains("transformer/config.json"))
+        let network = try NFKMLXLTX2Generator.network(directoryURL: release, variant: .ltx25Full)
+        XCTAssertTrue(network.config.usesKeyframeEmbedding)
+    }
+
+    // The customization path on a release written to disk: the data adapter encodes a clip, its soundtrack,
+    // and its prompt, the training builder reads the release, a short fine-tune moves only the adapters, the saved adapters reapply through the generator's own factory and
+    // give the trained transformer's velocities, and an 8-bit build trains its adapters over the packed base.
+    func testAFineTuneSavesAdaptersTheGeneratorApplies() throws {
+        let arrays = try record("IK_PARITY_LTX2_PIPELINE", oracle: "ltx2_pipeline")
+        let release = try tinyRelease(arrays)
+        defer { try? FileManager.default.removeItem(at: release) }
+        let generator = try NFKMLXLTX2Generator.generator(directoryURL: release, residency: .resident)
+        let example = try generator.trainingExample(
+            video: MLXRandom.uniform(low: 0, high: 1, [9, 64, 96, 3], key: MLXRandom.key(5)), frameRate: 24,
+            audio: MLXRandom.uniform(low: -0.5, high: 0.5, [9000, 1], key: MLXRandom.key(6)), sampleRate: 24000,
+            prompt: "a red fox")
+        XCTAssertEqual(example.video.shape, [2 * 2 * 3, 8], "two latent frames of 2×3, eight channels")
+        XCTAssertEqual(example.audio.shape, [10, 8], "a quarter of the 38 mel frames, packed two by four")
+        XCTAssertEqual(example.text.shape, [1024, 32])
+        XCTAssertEqual(example.audioText.shape, [1024, 16])
+        XCTAssertEqual([example.frames, example.height, example.width], [2, 2, 3])
+        XCTAssertThrowsError(try generator.trainingExample(
+            video: MLXArray.zeros([8, 64, 96, 3]), frameRate: 24, audio: MLXArray.zeros([100, 2]), sampleRate: 16000,
+            prompt: "x"), "eight frames is not 8k + 1")
+
+        let net = try NFKMLXLTX2Generator.network(directoryURL: release)
+        let frozen = net.projIn.weight
+        let losses = try NFKMLXLTX2Generator.fineTune(net, examples: { _ in [example] }, trainable: .lora(rank: 4, alpha: 4),
+                                                      learningRate: 1e-2, steps: 3, seed: 1)
+        XCTAssertEqual(losses.count, 3)
+        XCTAssertTrue(losses.allSatisfy(\.isFinite))
+        XCTAssertTrue(arrayEqual(net.projIn.weight, frozen).item(Bool.self), "the base stays frozen")
+        let adapters = NFKMLXLoRA.adapterArrays(of: net)
+        XCTAssertEqual(adapters.count, 2 * 2 * 6 * 4)
+        XCTAssertTrue(adapters.filter { $0.key.hasSuffix(".lora_b") }.contains { $0.value.abs().max().item(Float.self) > 0 },
+                      "the adapters moved")
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ltx2-lora-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try NFKMLXLTX2Generator.saveAdapters(of: net, to: url)
+        try generator.applyAdapters(at: url)
+        net.train(false)
+        let inputs = NFKMLXLTX2Objective.inputs(
+            video: example.video[.newAxis], audio: example.audio[.newAxis], sigma: MLXArray([Float(0.6)]),
+            audioSigma: MLXArray([Float(0.4)]), noise: MLXRandom.normal([1, 12, 8], key: MLXRandom.key(9)),
+            audioNoise: MLXRandom.normal([1, 10, 8], key: MLXRandom.key(10)), conditioned: MLXArray([Float(1)]),
+            tokensPerFrame: 6)
+        func velocities(_ transformer: NFKMLXLTX2TransformerNet) -> (video: MLXArray, audio: MLXArray) {
+            NFKMLXLTX2Objective.predictions(transformer, inputs: inputs, text: example.text[.newAxis],
+                                            audioText: example.audioText[.newAxis], frames: 2, height: 2, width: 3,
+                                            frameRate: 24)
+        }
+        let trained = velocities(net)
+        let reloaded = try generator.withTransformer { velocities($0) }
+        XCTAssertEqual(cosine(reloaded.video, trained.video), 1, accuracy: 1e-12)
+        XCTAssertEqual(cosine(reloaded.audio, trained.audio), 1, accuracy: 1e-12)
+
+        let packed = try NFKMLXLTX2Generator.network(directoryURL: release, quantizationBits: 8, quantizationGroupSize: 32)
+        XCTAssertTrue(packed.transformerBlocks[0].attn1.toQ is QuantizedLinear, "the blocks load packed")
+        XCTAssertFalse(packed.projIn is QuantizedLinear, "the layers outside the blocks keep the stored type")
+        let packedLosses = try NFKMLXLTX2Generator.fineTune(packed, examples: { _ in [example] },
+                                                            trainable: .lora(rank: 4, alpha: 4), steps: 2, seed: 1)
+        XCTAssertTrue(packedLosses.allSatisfy(\.isFinite))
+        XCTAssertTrue(packed.transformerBlocks[0].attn1.toQ is NFKMLXQuantizedLoRALinear, "QLoRA over the packed base")
     }
 
     // The public directory factory on a release written to disk: the clip and its soundtrack come back at
@@ -607,6 +811,129 @@ extension NFKMLXLTX2StageTests {
         let videoSimilarity = compare("ltx2-23-real connectors video", video, arrays["video"])
         let audioSimilarity = compare("ltx2-23-real connectors audio", audio, arrays["audio"])
         print("VALIDATION PARITY ltx2-23-real-connectors: video text cosine \(videoSimilarity), audio \(audioSimilarity)")
+    }
+
+    // LTX-2.5's released prompt enhancer against diffusers' own `enhance_prompt`. The input ids equal the
+    // chat template's (the reference left-pads to a multiple of eight under a zero attention mask, which changes
+    // nothing it computes), and the cleaning matches on every character it maps. At float32, teacher-forced
+    // along the reference's float32 reply, every step's processed scores (the repeated 5-grams at -inf) agree
+    // with the reference's top five and the choice is the reference's. The bfloat16 greedy reply departs from
+    // the float32 one no further than the reference's own bfloat16 reply does: torch's bfloat16 run departs at
+    // a float32 gap past one bfloat16 spacing, so that gap is the bar.
+    func testLTX25PromptEnhancerMatchesTheReferenceOnReleasedWeights() throws {
+        let arrays = try record("IK_PARITY_LTX2_REAL_PROMPT_ENHANCER",
+                                oracle: "ltx2_real_prompt_enhancer --checkpoint <prompt enhancer parent>")
+        guard let path = config["IK_VAL_LTX2_5_PROMPT_ENHANCER"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_VAL_LTX2_5_PROMPT_ENHANCER to the directory holding prompt_enhancer/ and processor/")
+        }
+        func text(_ key: String) throws -> String {
+            String(decoding: try XCTUnwrap(arrays[key]).asArray(UInt8.self), as: UTF8.self)
+        }
+        func ints(_ key: String) throws -> [Int] { try XCTUnwrap(arrays[key]).asArray(Int32.self).map(Int.init) }
+        for index in 0 ..< 4 {
+            XCTAssertEqual(NFKMLXLTX2PromptEnhancer.cleaned(try text("cleaning.\(index).in")),
+                           try text("cleaning.\(index).out"), "cleaning case \(index)")
+        }
+        let requests = [("fox", "a red fox walking through a snowy forest at dawn"),
+                        ("cafe", "Two friends laugh over coffee in a busy cafe; rain taps on the window.")]
+        let root = URL(fileURLWithPath: path)
+
+        // The f32 reference's first departure from itself at bf16, and the float32 gap it departs at.
+        func departure(_ generated: [Int], name: String) throws -> (step: Int, gap: Float)? {
+            let reference = try ints("\(name).f32.reply")
+            let step = zip(generated, reference).prefix { $0 == $1 }.count
+            guard step < min(generated.count, reference.count) else { return nil }
+            let ids = try XCTUnwrap(arrays["\(name).f32.step_top_ids"])[step].asArray(Int32.self).map(Int.init)
+            let scores = try XCTUnwrap(arrays["\(name).f32.step_top_scores"])[step].asArray(Float.self)
+            let index = try XCTUnwrap(ids.firstIndex(of: generated[step]),
+                                      "\(name) step \(step): \(generated[step]) is not among the reference's top five")
+            return (step, scores[0] - scores[index])
+        }
+
+        // Float32, teacher-forced: one pass over the prompt and the reference's whole float32 reply.
+        do {
+            // The prompt's ids need only the tokenizer and template; the float32 decoder is held alone.
+            let processor = root.appendingPathComponent("processor")
+            let enhancer = NFKMLXLTX2PromptEnhancer(
+                logits: { _ in MLXArray(0) }, tokenizer: try XCTUnwrap(NFKMLXGemmaTokenizer(directoryURL: processor)),
+                template: try String(contentsOf: processor.appendingPathComponent("chat_template.jinja"), encoding: .utf8))
+            // At float32 the decoder outgrows a 32 GB machine's budget, so its layers stream where they must;
+            // one teacher-forced pass reads each once.
+            let decoder = try NFKMLXGemmaLanguage.textDecoder(
+                directoryURL: root.appendingPathComponent("prompt_enhancer"), precision: .float32,
+                residency: .automatic, streams: true)
+            for (name, request) in requests {
+                let ids = try enhancer.tokens(for: request)
+                let padding = try XCTUnwrap(arrays["\(name).pad"]).item(Int.self)
+                XCTAssertEqual(ids, Array(try ints("\(name).input_ids").dropFirst(padding)), "\(name) prompt ids")
+                let reply = try ints("\(name).f32.reply")
+                let sequence = ids + reply
+                let logits = decoder.logits(MLXArray(sequence.map(Int32.init)).reshaped([1, sequence.count]))[0]
+                let topIds = try XCTUnwrap(arrays["\(name).f32.step_top_ids"])
+                let topScores = try XCTUnwrap(arrays["\(name).f32.step_top_scores"])
+                var worst: Float = 0, mismatched = 0
+                for step in 0 ..< reply.count {
+                    let banned = NFKMLXSeq2SeqDecoder.repeatedNgramCompletions(
+                        Array(sequence.prefix(ids.count + step)), size: NFKMLXLTX2PromptEnhancer.repeatedNgramSize)
+                    let row = logits[ids.count + step - 1].asType(.float32)
+                    let referenceIds = topIds[step].asArray(Int32.self).map(Int.init)
+                    let referenceScores = topScores[step].asArray(Float.self)
+                    let mine = row.take(MLXArray(referenceIds.map(Int32.init))).asArray(Float.self)
+                    for (k, id) in referenceIds.enumerated() where !banned.contains(id) && referenceScores[k].isFinite {
+                        worst = max(worst, abs(mine[k] - referenceScores[k]))
+                    }
+                    var masked = row
+                    if !banned.isEmpty {
+                        var mask = [Float](repeating: 0, count: row.dim(0))
+                        for token in banned { mask[token] = -Float.infinity }
+                        masked = row + MLXArray(mask)
+                    }
+                    if masked.argMax().item(Int.self) != reply[step] { mismatched += 1 }
+                }
+                print("VALIDATION PARITY ltx2-25-real-prompt-enhancer-f32 \(name): \(reply.count - mismatched) of "
+                      + "\(reply.count) teacher-forced choices equal, largest top-five score difference \(worst)")
+                XCTAssertEqual(mismatched, 0, "\(name) float32 choices")
+                XCTAssertLessThan(worst, 1e-2, "\(name) float32 scores")
+            }
+        }
+        NFKMLXGPU.clearCache()
+
+        // Bfloat16 greedy, against the reference's own bfloat16 departure.
+        let enhancer = try NFKMLXLTX2PromptEnhancer.enhancer(directoryURL: root)
+        for (name, request) in requests {
+            let reply = enhancer.reply(to: try enhancer.tokens(for: request))
+            let referenceBF16 = try ints("\(name).bf16.reply").filter { !NFKMLXLTX2PromptEnhancer.endTokens.contains($0) }
+            let ours = try departure(reply, name: name)
+            let torch = try departure(referenceBF16, name: name)
+            print("VALIDATION BF16 ltx2-25-real-prompt-enhancer \(name): departs from the float32 reply at step "
+                  + "\(ours.map { "\($0.step), gap \($0.gap)" } ?? "none"); torch's bfloat16 at "
+                  + "\(torch.map { "\($0.step), gap \($0.gap)" } ?? "none")")
+            if let ours {
+                XCTAssertLessThanOrEqual(ours.gap, max(torch?.gap ?? 0, Float(pow(2.0, -4))),
+                                         "\(name): the bfloat16 reply departs past the reference's own bfloat16 gap")
+            }
+        }
+    }
+
+    // LTX-2.5's released duration head at float32, over connector-shaped inputs.
+    func testLTX25DurationHeadMatchesTheReferenceOnReleasedWeights() throws {
+        let arrays = try record("IK_PARITY_LTX2_REAL_DURATION_HEAD",
+                                oracle: "ltx2_real_duration_head --checkpoint <duration_head>")
+        guard let path = config["IK_VAL_LTX2_5_DURATION_HEAD"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_VAL_LTX2_5_DURATION_HEAD to LTX-2.5's duration_head directory")
+        }
+        let directory = URL(fileURLWithPath: path)
+        let head = NFKMLXLTX2DurationHeadNet(try NFKMLXLTX2DurationHead.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXLTX2DurationHead.loadWeights(into: head, from: directory)
+        let video = try XCTUnwrap(arrays["video"]), audio = try XCTUnwrap(arrays["audio"])
+        for (name, mine, key) in [("both", head(video: video, audio: audio), "both"),
+                                  ("video", head(video: video, audio: nil), "video_only"),
+                                  ("audio", head(video: nil, audio: audio), "audio_only")] {
+            let reference = try XCTUnwrap(arrays[key]).item(Float.self), seconds = mine.item(Float.self)
+            print("VALIDATION PARITY ltx2-25-real-duration-head \(name): \(seconds) s against \(reference) s")
+            XCTAssertEqual(seconds, reference, accuracy: 1e-5 * reference)
+        }
     }
 }
 

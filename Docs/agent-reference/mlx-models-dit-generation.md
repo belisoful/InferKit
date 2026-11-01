@@ -234,9 +234,7 @@ arithmetic as before.
   float32.
 
   The generator tells the releases apart by the transformer's two switches, and the registry refuses one
-  release's directory under the other's name. Not built: `transformer_full/` (the SFT transformer, outside
-  `model_index.json`, which samples with dynamic shifting turned back on), the duration head, and the prompt
-  enhancer.
+  release's directory under the other's name.
 
 - LTX-2.5's decode-side components (`Lightricks/LTX-2.5-Diffusers` at 4791a11, `NFKMLXLTX2DecodeTests`), each
   behind an `@objc` generator switch that is off by default, with request keys in `NFKMLXLTX2ParameterKey`;
@@ -310,7 +308,90 @@ arithmetic as before.
     load plan count them so (upsamplers 2.5 GB, decoder 1.7 GB). Customization: untrainable here
     (`mlx-customization-ledger.md`).
 
-  Customization is offline-only: no size of this model fits a consumer machine.
+- **LTX-2.5's full transformer** (`NFKMLXLTX2Variant.ltx25Full`, registry `ltx-2.5-full`). `transformer_full/`
+  is the SFT transformer in the distilled one's arrangement, outside `model_index.json`. The variant
+  factories (`generatorWithDirectoryURL:variant:residency:error:`, the download peers) read that folder in
+  place of `transformer/`, turn the static scheduler's dynamic shifting back on from its `base_shift` with a
+  terminal stretch to 0.1 (the release README's override), and sample guided at the pipeline's defaults; a
+  download fetches `transformer_full/` and not `transformer/`. Its catalog family is `ltx-2-full`, whose
+  load plan stages `transformer_full`. That schedule is LTX-2.3's own arrangement, which the LTX-2.3 pipeline
+  record measures (`testTheFullTransformerVariantReadsItsOwnFolder` checks the wiring).
+
+  **Partial spatio-temporal guidance.** `NFKMLXLTX2Pass.perturbationMask` (`[B]`, 0 where the perturbed
+  blocks apply) blends each perturbed self-attention per example, `value + mask · (attended − value)`, the
+  reference's `perturbation_mask` lerp. `ltx2_stg_mask` (a batch of three, mask `[0, 1, 0]` over block 1):
+  video 0.9999999999996099, audio 0.9999999999998718, the all-perturbed control 0.9999999999996109, and the
+  control differs from the masked record in its attended example.
+
+  **The duration head** (`NFKMLXLTX2DurationHeadNet`, LTX-2.5's `duration_head/`, 3.8 MB). Both connector
+  streams are projected into 256, tagged by learned modality embeddings, pooled by one learned query, and an
+  MLP with a tanh GELU gives a log-duration. A clip without a frame count takes the predicted length,
+  clamped to `minimumSeconds`/`maximumSeconds` (1 to 20) at the frame rate and snapped to `8k + 1`
+  (`NFKMLXLTX2DurationHeadNet.frames(forSeconds:…)`, Python's half-to-even rounding);
+  `predictedFrameCountForPrompt:error:` answers it alone. Tiny (`ltx2_duration_head`, two queries): seconds
+  0.9999999999999952 from both streams, 0.9999999999999999 video alone, 0.9999999999999922 audio alone, and
+  all 60 frame counts of the reference's own `predict_num_frames` sweep equal. Released weights
+  (`ltx2_real_duration_head`, float32, connector-shaped unit-RMS inputs): 3.6821983 s against 3.682198 s,
+  video alone 3.6474862 against 3.6474857, audio alone 3.697795 against 3.6977944.
+
+  **The prompt enhancer** (`NFKMLXLTX2PromptEnhancer`, LTX-2.5's `prompt_enhancer/` with `processor/`, a
+  Gemma 4 E2B read by `NFKMLXGemmaLanguage`). Off by default (`enhancesPrompts`, the request key
+  `NFKMLXLTX2ParameterKey.promptEnhancement`), as the reference's `enable_prompt_enhancement` is. It renders
+  the reference's system prompt (`defaultSystemPrompt`, `LTX2_5_T2V_DEFAULT_SYSTEM_PROMPT` byte for byte)
+  and `user prompt: <request>` through the processor's chat template, decodes greedily for at most 600
+  tokens without repeating a 5-gram, stops at tokens 1, 106, and 50, and cleans the reply as
+  `clean_response` does. The release states its full-attention head width per layer (`per_layer_config`),
+  which the Gemma 4 reader now reads in place of `global_head_dim`, and it stores no key or value
+  projections for its 20 KV-shared layers (saved by transformers 5.15), which the loader fills with zeros
+  those layers never read. A decoding step projects the last position alone (`NFKMLXGemmaNet.lastLogits`),
+  as `generate` does; the projection over the whole sequence was 1 TFLOP a step. The download fetches
+  neither folder (about 10 GB); the generator reads them where its directory holds them. Released weights
+  against diffusers' own `enhance_prompt` (`ltx2_real_prompt_enhancer`, two requests): prompt ids exact;
+  at float32, teacher-forced along the reference's reply, 178 of 178 and 223 of 223 choices equal with
+  every top-five score within 2.8205e-4; at bfloat16 the greedy reply departs from the float32 one at the
+  step and the token torch's own bfloat16 run departs at (step 26, gap 0.0398; step 5, gap 0.1094, past one
+  bfloat16 spacing), so the bar is that measured reference floor.
+
+  **Customization** (`NFKMLXLTX2Training.swift`), against Lightricks' trainer (`ltx-trainer` and `ltx-core`
+  at Lightricks/LTX-2 e98f6d9). The trainer's model is `ltx_core`'s `LTXModel`, not diffusers'. With the
+  weights renamed (`_LTX_CORE_TO_DIFFUSERS`) the two agree to 1e-7 wherever every token of a modality reads
+  one timestep, and differ under first-frame conditioning or independent sigmas: `ltx_core` modulates each
+  cross-modal attention's scale and shift by the modality's OWN per-token timesteps and its gate by the OTHER
+  modality's sigma, which neither of diffusers' `use_cross_timestep` settings does.
+  `gatesReadCrossSigma` builds that arrangement and every training prediction runs it. The trainer's
+  text-to-video strategy passes no keyframe mask, so the LTX-2.5 keyframe embedding is unread in training.
+  - Objective (`NFKMLXLTX2Objective`): the stretched shifted-logit-normal sampler
+    (`NFKMLXLTX2SigmaSampler`), `(1 − σ)·clean + σ·noise`, the velocity target `noise − clean`, first-frame
+    conditioning (clean latent, timestep zero, out of the loss), and the per-example video MSE over the
+    remaining tokens plus the audio MSE, averaged. `.reference` is the shipped `t2v_lora.yaml` (`flexible`:
+    each modality its own sigma, nothing conditioned); `.textToVideo` shares one sigma and conditions the
+    first frame for one example in ten.
+  - Oracle `ltx2_loss`: `ltx_core`'s tiny `LTXModel` in LTX-2.5's arrangement under peft's LoRA (rank 4,
+    alpha 8, `to_q`/`to_k`/`to_v`/`to_out.0` of all six attentions, both matrices drawn so every gradient
+    discriminates) and the trainer's own strategies, its raw draws recorded. `text_to_video` (one example
+    conditioned): predictions video 0.9999999999996388 / audio 0.9999999999997439, loss 4.416752 equal,
+    worst of 96 adapter-gradient cosines 0.9999991273837229. `flexible`: predictions 0.9999999999988215 /
+    0.9999999999993477, loss 4.7023067 against 4.7023063, worst gradient 0.999999718595355. Sampler within
+    1.79e-7 at 100 and 6000 tokens. The control, diffusers' modulation, falls to 0.9999776650 /
+    0.9999950080 (`text_to_video`) and 0.9978875177 / 0.9999102389 (`flexible`).
+  - Data adapter `trainingExample(video:frameRate:audio:sampleRate:prompt:)`: the video encoder
+    (`NFKMLXLTX2VideoEncoderNet`, `ltx2_video_encoder`: moments 0.9999999999995969 and normalized latents
+    0.9999999999995784 at 9 frames of 64², 0.9999999999995006 / 0.9999999999994873 at 17 of 64×96), the
+    trainer's audio front end (`NFKMLXLTX2MelFrontEnd`: torchaudio's sinc resample within 1.79e-7 from 24 kHz
+    and 3.10e-6 from 44.1 kHz, log-mel 0.9999999999997208 / 0.9999999999983908, torchaudio 2.11.0), the
+    audio encoder (`NFKMLXLTX2AudioEncoderNet`, `ltx2_audio_encoder`: moments 0.999999999999441, packed
+    normalized latents 0.9999999999989978), and the connectors at 1024 tokens, as the trainer stores them.
+    Neither encoder is a training target: the trainer freezes both and publishes no autoencoder objective.
+  - Recipe: `network(directoryURL:variant:quantizationBits:quantizationGroupSize:)` (a quantized build loads
+    and quantizes one block at a time; the layers outside the blocks keep the stored type, as the trainer's
+    quanto exclusions do), `fineTune` through `NFKMLXFineTune.run` (rank 32, alpha 32, AdamW 1e-4 with torch's
+    defaults, gradient norm 1, `LinearLR` 1 → 0.1), `saveAdapters(of:to:)` (rank and alpha in the metadata),
+    and `applyAdapters(at:)` on a generator, which re-places them on every load of the transformer stage
+    and refuses a streamed transformer. A quantized base takes `NFKMLXQuantizedLoRALinear` (QLoRA), which
+    cannot merge. The reference quantizes with optimum-quanto (int8 by default in its low-VRAM recipe); the
+    port quantizes with MLX's affine groups, so the objective is measured over a float base. Tiny: the loss
+    falls 4.54 → 3.86 over 60 steps; a release written to disk runs data adapter → 8-bit build → fine-tune
+    → save → `applyAdapters` with the reloaded transformer's velocities equal to the trained one's.
 
 - `NFKMLXT5Encoder` (`@objc`) — the T5 v1.1 text encoder (`T5EncoderModel`), the text conditioning for the
   LTX pipeline and a reusable building block (the same family conditions Wan / PixArt / SD3 / Flux). A

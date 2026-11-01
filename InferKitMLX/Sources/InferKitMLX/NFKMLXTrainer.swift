@@ -692,7 +692,7 @@ public enum NFKMLXTrainer {
     static func heldKeys(of module: Module) -> [String] {
         let keys = module.parameters().flattened().map(\.0)
         if module is Quantized {
-            return keys
+            return module is NFKMLXLoRAAdapter ? keys.filter { $0 != "lora_a" && $0 != "lora_b" } : keys
         }
         return keys.filter { $0 == "running_mean" || $0 == "running_var" }
     }

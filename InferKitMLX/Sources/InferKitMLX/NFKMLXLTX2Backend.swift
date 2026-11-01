@@ -29,6 +29,9 @@ public final class NFKMLXLTX2ParameterKey: NSObject {
     /// The guidance rescale of both modalities, as an `NSNumber`; 0 turns it off. See
     /// ``NFKMLXLTX2Generator/guidanceRescale``. Introduced in InferKit 0.4.0.
     @objc public static let guidanceRescale = "NFKMLXLTX2ParameterGuidanceRescale"
+    /// Whether the prompt is first rewritten by LTX-2.5's prompt enhancer (an `NSNumber` Boolean), the
+    /// generator's ``NFKMLXLTX2Generator/enhancesPrompts`` by default. Introduced in InferKit 0.4.0.
+    @objc public static let promptEnhancement = "NFKMLXLTX2ParameterPromptEnhancement"
 }
 
 extension NFKMLXLTX2Generator {
@@ -41,7 +44,7 @@ extension NFKMLXLTX2Generator {
         NFKParameterFrameCount, NFKParameterWidth, NFKParameterHeight, NFKParameterFramesPerSecond,
         NFKParameterSeed, NFKParameterSteps, NFKParameterGuidanceScale, NFKMLXLTX2ParameterKey.audioGuidanceScale,
         NFKMLXLTX2ParameterKey.spatioTemporalGuidanceScale, NFKMLXLTX2ParameterKey.modalityGuidanceScale,
-        NFKMLXLTX2ParameterKey.guidanceRescale,
+        NFKMLXLTX2ParameterKey.guidanceRescale, NFKMLXLTX2ParameterKey.promptEnhancement,
     ]).union(decodePathParameterKeys)
 
     /// The generator behind the InferKit contract.
@@ -49,7 +52,8 @@ extension NFKMLXLTX2Generator {
     /// @discussion The backend reads `NFKInputPrompt` (required) and `NFKInputNegativePrompt`, and returns an
     /// `NFKVideoAsset` (a QuickTime movie in the temporary directory whose audio track is the generated
     /// soundtrack) under `NFKOutputVideo` and the soundtrack alone as an `NFKAudioAsset` (a stereo WAV at
-    /// ``audioSampleRate``) under `NFKOutputAudio`. Parameters: `NFKParameterFrameCount` (121),
+    /// ``audioSampleRate``) under `NFKOutputAudio`. Parameters: `NFKParameterFrameCount` (the duration head's
+    /// prediction where the release ships one, else 121),
     /// `NFKParameterWidth` (768), `NFKParameterHeight` (512), `NFKParameterFramesPerSecond` (the generator's
     /// ``frameRate``), `NFKParameterSeed` (0), `NFKParameterSteps` and `NFKParameterGuidanceScale` (the
     /// generator's ``steps`` and ``guidance``), and the ``NFKMLXLTX2ParameterKey`` scales. A request's values
@@ -64,11 +68,12 @@ extension NFKMLXLTX2Generator {
             let negative = NFKMLXGenerationBackend.text(request, NFKInputNegativePrompt)
             func parameter(_ key: String) -> NSNumber? { NFKMLXGenerationBackend.number(request, key) }
             let saved = (steps, guidance, audioGuidance, spatioTemporalGuidance, modalityGuidance, guidanceRescale,
-                         frameRate)
+                         frameRate, enhancesPrompts)
             defer {
                 (steps, guidance, audioGuidance, spatioTemporalGuidance, modalityGuidance, guidanceRescale,
-                 frameRate) = saved
+                 frameRate, enhancesPrompts) = saved
             }
+            enhancesPrompts = parameter(NFKMLXLTX2ParameterKey.promptEnhancement)?.boolValue ?? enhancesPrompts
             steps = parameter(NFKParameterSteps)?.intValue ?? steps
             guidance = parameter(NFKParameterGuidanceScale)?.floatValue ?? guidance
             audioGuidance = parameter(NFKMLXLTX2ParameterKey.audioGuidanceScale)?.floatValue ?? audioGuidance
@@ -82,7 +87,7 @@ extension NFKMLXLTX2Generator {
             job.reportProgress(0)
             let total = reportedSteps
             let (video, audio) = try clip(forPrompt: prompt, negativePrompt: negative,
-                                          frames: parameter(NFKParameterFrameCount)?.intValue ?? 121,
+                                          frames: parameter(NFKParameterFrameCount)?.intValue,
                                           width: parameter(NFKParameterWidth)?.intValue ?? 768,
                                           height: parameter(NFKParameterHeight)?.intValue ?? 512,
                                           seed: NFKMLXGenerationBackend.seed(request)) { step in
@@ -132,6 +137,14 @@ extension NFKMLXLTX2Generator {
         try generator(directoryURL: directoryURL, residency: residency).inferenceBackend()
     }
 
+    /// ``NFKMLXLTX2Generator/generator(directoryURL:variant:residency:)`` as a backend. Introduced in InferKit
+    /// 0.4.0.
+    @objc(backendWithDirectoryURL:variant:residency:error:)
+    public static func backend(directoryURL: URL, variant: NFKMLXLTX2Variant,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try generator(directoryURL: directoryURL, variant: variant, residency: residency).inferenceBackend()
+    }
+
     /// Downloads `variant`'s release (its ``NFKMLXLTX2Variant/releaseRepo`` when `repo` is nil) and returns
     /// the model behind the InferKit contract.
     ///
@@ -159,7 +172,7 @@ extension NFKMLXLTX2Generator {
         }
     }
 
-    /// Registers both releases under their ``NFKMLXLTX2Variant/modelName``s. The registry's URL is the
+    /// Registers every variant under its ``NFKMLXLTX2Variant/modelName``. The registry's URL is the
     /// release directory; nil is refused, and so is a directory holding the other release. The load options
     /// the factory reads are the residency, the transformer's precision, and a runtime weight quantization
     /// of the transformer. Introduced in InferKit 0.4.0.
@@ -174,12 +187,8 @@ extension NFKMLXLTX2Generator {
                         "\(variant.modelName) needs the release directory; there is no random-weights form")
                 }
                 _ = try options.cast(of: variant.modelName, offering: [:], reading: [NFKModelPrecisionFloat32, NFKModelPrecisionBFloat16])
-                let generator = try generator(directoryURL: location, residency: options.residency, options: options)
-                guard generator.variant == variant else {
-                    throw NFKMLXError.unsupportedConfiguration(
-                        "\(location.lastPathComponent) holds \(generator.variant.displayName), not \(variant.displayName)")
-                }
-                return generator.inferenceBackend()
+                return try generator(directoryURL: location, residency: options.residency, options: options,
+                                     variant: variant).inferenceBackend()
             }
         }
     }

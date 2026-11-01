@@ -570,7 +570,10 @@ extension NFKMLXLTX2DecodeTests {
         generator.decodesWithDiffusionDecoder = true
         XCTAssertThrowsError(try generator.clip(forPrompt: "a red fox", frames: 9, width: 96, height: 64),
                              "a release without diffusion_decoder/ refuses the diffusion decode")
+        // The three decode-side folders and the duration head.
         XCTAssertEqual(NFKMLXLTX2Generator.releaseComponents(for: .ltx25).count,
-                       NFKMLXLTX2Generator.releaseComponents(for: .ltx23).count + 3)
+                       NFKMLXLTX2Generator.releaseComponents(for: .ltx23).count + 4)
+        XCTAssertTrue(NFKMLXLTX2Generator.releaseComponents(for: .ltx25).flatMap(\.required)
+            .contains("duration_head/config.json"))
     }
 }

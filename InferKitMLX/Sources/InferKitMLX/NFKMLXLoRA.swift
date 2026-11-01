@@ -15,17 +15,34 @@
 //  ordinary safetensors that the model's existing factory loads. There is no adapter format to carry
 //  around and no second loading path.
 //
+//  A quantized base takes an adapter too (QLoRA): the packed weights stay frozen, the gradient reaches
+//  the detour through the quantized product, and the adapters are saved on their own, since merging
+//  into a quantized weight rounds the training away.
+//
 
 import Foundation
 import MLX
 import MLXNN
 import MLXRandom
 
+/// A layer carrying a trainable low-rank detour `scale·(x·A)·B` beside its base product: an
+/// ``NFKMLXLoRALinear`` over a float base or an ``NFKMLXQuantizedLoRALinear`` over a quantized one.
+///
+/// Introduced in InferKit 0.4.0.
+public protocol NFKMLXLoRAAdapter: Linear {
+    /// `A` `[inputs, rank]`, saved as `lora_a`.
+    var loraA: MLXArray { get }
+    /// `B` `[rank, outputs]`, saved as `lora_b`.
+    var loraB: MLXArray { get }
+    /// `alpha / rank`.
+    var scale: Float { get }
+}
+
 /// A `Linear` with a trainable low-rank detour: `y = Wx + b + scale·(x·A)·B`.
 ///
 /// `B` starts at zero, so an adapted model produces exactly what it produced before training. That
 /// matters for a fine-tune, where the starting point is a checkpoint worth preserving.
-public final class NFKMLXLoRALinear: Linear {
+public final class NFKMLXLoRALinear: Linear, NFKMLXLoRAAdapter {
 
     @ParameterInfo(key: "lora_a") public var loraA: MLXArray
     @ParameterInfo(key: "lora_b") public var loraB: MLXArray
@@ -63,6 +80,44 @@ public final class NFKMLXLoRALinear: Linear {
     }
 }
 
+/// A `QuantizedLinear` with a trainable low-rank detour (QLoRA): `y = Q(W)x + b + scale·(x·A)·B`. The
+/// packed weight, its scales, and its biases stay frozen; the detour trains in the input's type.
+///
+/// @discussion The adapter cannot be merged: folding a rank-r delta into a quantized weight and
+/// requantizing rounds it away. ``NFKMLXLoRA/adapterArrays(of:)`` saves the adapters on their own, and
+/// ``NFKMLXLoRA/loadAdapters(_:into:)`` places them over the same quantized base.
+///
+/// Introduced in InferKit 0.4.0.
+public final class NFKMLXQuantizedLoRALinear: QuantizedLinear, NFKMLXLoRAAdapter {
+
+    @ParameterInfo(key: "lora_a") public var loraA: MLXArray
+    @ParameterInfo(key: "lora_b") public var loraB: MLXArray
+
+    /// `alpha / rank`, the conventional LoRA scaling.
+    public let scale: Float
+
+    /// The dropout on the detour's input while the layer trains, as peft's `lora_dropout` applies it.
+    public var dropout: Float
+
+    /// Wraps `base`, keeping its packed weights and adding the detour.
+    public init(base: QuantizedLinear, rank: Int, alpha: Float, dropout: Float = 0) {
+        self.dropout = dropout
+        let (outputs, inputs) = base.shape
+        let deviation = sqrt(1.0 / Float(inputs))
+        self._loraA.wrappedValue = MLXRandom.uniform(-deviation ..< deviation, [inputs, rank])
+        self._loraB.wrappedValue = MLXArray.zeros([rank, outputs])
+        self.scale = alpha / Float(rank)
+        super.init(weight: base.weight, bias: base.bias, scales: base.scales, biases: base.biases,
+                   groupSize: base.groupSize, bits: base.bits, mode: base.mode, globalScale: base.globalScale)
+    }
+
+    public override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let detour = matmul(matmul(NFKDropout.apply(x, rate: dropout, active: training),
+                                   loraA.asType(x.dtype)), loraB.asType(x.dtype))
+        return super.callAsFunction(x) + detour * scale
+    }
+}
+
 /// Adds and removes LoRA adapters across a model.
 public enum NFKMLXLoRA {
 
@@ -86,36 +141,25 @@ public enum NFKMLXLoRA {
     /// - Throws: `NFKMLXError.loRANotApplicable` when a selected layer cannot be replaced because
     ///   its declaring model stores it in a plain property. MLX can only substitute a child module
     ///   through a `@ModuleInfo` wrapper, and the non-throwing path aborts the process rather than
-    ///   reporting it. Also when a selected layer is quantized — see the note below.
+    ///   reporting it.
     ///
-    /// **A quantized layer cannot be adapted here.** `QuantizedLinear` is a subclass of `Linear`, so
-    /// it satisfies the predicate's type without announcing itself, and its `weight` is packed
-    /// integers rather than the values the layer computes with. Wrapping one would build a detour
-    /// around a weight that is not a weight. Load the model at float precision to fine-tune it.
+    /// A selected `QuantizedLinear` becomes an ``NFKMLXQuantizedLoRALinear`` (QLoRA): its packed
+    /// weights stay frozen and the detour trains over them. Such a model cannot be merged; save its
+    /// adapters with ``adapterArrays(of:)``.
     @discardableResult
     public static func apply(to model: Module, rank: Int = 8, alpha: Float = 16, dropout: Float = 0,
                              where predicate: (String, Linear) -> Bool = { _, _ in true }) throws -> Int {
-        var quantized: [String] = []
         let replacements = model.leafModules().flattened().compactMap { path, layer -> (String, Module)? in
-            guard let linear = layer as? Linear, !(linear is NFKMLXLoRALinear),
+            guard let linear = layer as? Linear, !(linear is NFKMLXLoRAAdapter),
                   predicate(path, linear) else {
                 return nil
             }
-            if linear is QuantizedLinear {
-                quantized.append(path)
-                return nil
-            }
+            let adapted: Linear = (linear as? QuantizedLinear).map {
+                NFKMLXQuantizedLoRALinear(base: $0, rank: rank, alpha: alpha, dropout: dropout)
+            } ?? NFKMLXLoRALinear(base: linear, rank: rank, alpha: alpha, dropout: dropout)
             // A new module starts in training mode; the adapter takes the mode of the layer it wraps.
-            let adapted = NFKMLXLoRALinear(base: linear, rank: rank, alpha: alpha, dropout: dropout)
             adapted.train(linear.training)
             return (path, adapted)
-        }
-        guard quantized.isEmpty else {
-            throw NFKMLXError.loRANotApplicable(
-                "\(quantized.count) selected layer(s) are quantized (\(quantized.prefix(3).joined(separator: ", "))"
-                + "\(quantized.count > 3 ? ", …" : "")). A quantized layer stores packed integers "
-                + "where a Linear stores its weights, so an adapter built around one adapts nothing. "
-                + "Load the model at float precision, or exclude these layers in the predicate.")
         }
         do {
             try NFKMLXModuleReplacement.place(replacements, in: model)
@@ -175,6 +219,51 @@ public enum NFKMLXLoRA {
         model.unfreeze()
         NFKMLXTrainer.freezeHeldState(of: model)
         return replacements.count
+    }
+
+    /// Every adapter's `A` and `B`, keyed `<layer path>.lora_a` / `.lora_b`: the whole of a run over a
+    /// quantized base, which cannot be merged. `MLX.save(arrays:url:)` writes them.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func adapterArrays(of model: Module) -> [String: MLXArray] {
+        var arrays: [String: MLXArray] = [:]
+        for (path, layer) in model.leafModules().flattened() {
+            guard let adapter = layer as? NFKMLXLoRAAdapter else { continue }
+            arrays["\(path).lora_a"] = adapter.loraA
+            arrays["\(path).lora_b"] = adapter.loraB
+        }
+        return arrays
+    }
+
+    /// Places saved adapters over a model that ``apply(to:rank:alpha:dropout:where:)`` adapted the same
+    /// way, so a run's adapters reload over a freshly loaded base.
+    ///
+    /// - Returns: how many adapters were placed.
+    /// - Throws: `NFKMLXError.loRANotApplicable` when an array names no adapter of the model, an
+    ///   adapter has no saved array, or a shape differs.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @discardableResult
+    public static func loadAdapters(_ arrays: [String: MLXArray], into model: Module) throws -> Int {
+        let adapters = Dictionary(uniqueKeysWithValues: model.leafModules().flattened().compactMap { path, layer in
+            (layer as? NFKMLXLoRAAdapter).map { (path, $0) }
+        })
+        let named = Set(arrays.keys.map { key in String(key.split(separator: ".").dropLast().joined(separator: ".")) })
+        if let stray = named.first(where: { adapters[$0] == nil }) {
+            throw NFKMLXError.loRANotApplicable("the saved adapter \(stray) names no adapted layer of the model")
+        }
+        for (path, adapter) in adapters {
+            guard let a = arrays["\(path).lora_a"], let b = arrays["\(path).lora_b"] else {
+                throw NFKMLXError.loRANotApplicable("no saved adapter for \(path)")
+            }
+            guard a.shape == adapter.loraA.shape, b.shape == adapter.loraB.shape else {
+                throw NFKMLXError.loRANotApplicable(
+                    "the saved adapter \(path) is \(a.shape)·\(b.shape); the layer's is "
+                    + "\(adapter.loraA.shape)·\(adapter.loraB.shape)")
+            }
+            _ = adapter.update(parameters: ModuleParameters.unflattened(["lora_a": a, "lora_b": b]))
+        }
+        return adapters.count
     }
 
     /// How many parameters a run would train, so a caller can size it before starting. Running

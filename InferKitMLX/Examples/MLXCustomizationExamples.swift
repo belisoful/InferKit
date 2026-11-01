@@ -491,6 +491,31 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(try NFKMLXStableAudio.network(directoryURL: tuned).transformer.configuration, small)
     }
 
+    // Docs/examples.md: Fine-tuning LTX-2.5 on your own clips
+    func testExampleFineTuningLTX2OnOwnClips() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let adapters = FileManager.default.temporaryDirectory.appendingPathComponent("ltx2-lora-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: adapters) }
+        // A real run builds from the release with NFKMLXLTX2Generator.network(directoryURL:variant:quantizationBits:)
+        // and makes each example with generator.trainingExample(video:frameRate:audio:sampleRate:prompt:); the tiny
+        // geometry keeps this free of downloads.
+        var small = NFKMLXLTX2Configuration.tiny
+        small.audioInChannels = 8
+        small.audioOutChannels = 8
+        let net = NFKMLXLTX2TransformerNet(small)
+        let myClips = [NFKMLXLTX2TrainingExample(video: MLXRandom.normal([12, 8]), audio: MLXRandom.normal([5, 8]),
+                                                 text: MLXRandom.normal([4, 32]), audioText: MLXRandom.normal([4, 16]),
+                                                 frames: 2, height: 2, width: 3, frameRate: 24)]
+        let history = try NFKMLXLTX2Generator.fineTune(net, examples: { _ in myClips }, trainable: .lora(rank: 4, alpha: 4),
+                                                       steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXLTX2Generator.saveAdapters(of: net, to: adapters)
+        XCTAssertEqual(NFKMLXLoRA.adapterArrays(of: net).count, 2 * 2 * 6 * 4)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: adapters.path))
+    }
+
     // Docs/examples.md: Adapting a decision model to your own decisions
     func testExampleAdaptingLayaOnOwnDecisions() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

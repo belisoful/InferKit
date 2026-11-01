@@ -551,6 +551,15 @@ The figures have three limits:
 - ``NFKMLXLTX2LatentUpsamplerNet``
 - ``NFKMLXLTX2LatentUpsamplerConfiguration``
 - ``NFKMLXLTX2LatentUpsamplers``
+- ``NFKMLXLTX2VideoEncoderNet``
+- ``NFKMLXLTX2AudioEncoderNet``
+- ``NFKMLXLTX2MelFrontEnd``
+- ``NFKMLXLTX2DurationHeadNet``
+- ``NFKMLXLTX2PromptEnhancer``
+- ``NFKMLXLTX2Objective``
+- ``NFKMLXLTX2SigmaSampler``
+- ``NFKMLXLTX2TrainingExample``
+- ``NFKMLXLTX2Trainable``
 - ``NFKMLXWanPipeline``
 - ``NFKMLXWanTransformerNet``
 - ``NFKMLXWanVideoVAENet``
@@ -626,6 +635,8 @@ The figures have three limits:
 - ``NFKMLXGradientSafeConvolution``
 - ``NFKMLXLoRA``
 - ``NFKMLXLoRALinear``
+- ``NFKMLXQuantizedLoRALinear``
+- ``NFKMLXLoRAAdapter``
 - ``NFKMLXZeroDCENet``
 - ``NFKMLXZeroDCEObjective``
 - ``NFKMLXZeroDCELoss``

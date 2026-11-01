@@ -212,9 +212,11 @@ residual or the velocity objective is known, and the working set is what rules i
 | --- | --- | --- | --- | --- |
 | `NFKMLXSANATransformerNet` | trainable | LoRA | partial | The measured `Sana_600M` release holds with the backbone frozen. NVlabs' own script is unread, which item 5 of the minimum set needs. |
 | `NFKMLXLTXTransformer` | offline | — | internal | 2B at ~7.7 GB sharded, before a video-length activation stack. |
-| `NFKMLXLTX2TransformerNet` | offline | — | public | No size of this 22B model fits a consumer machine. |
-| `NFKMLXLTX2ConnectorsNet` | offline | — | public | 3.2B, trained only through the 22B transformer it conditions. |
-| `NFKMLXLTX2VideoDecoderNet`, `NFKMLXLTX2AudioDecoderNet` | offline | — | public | Decoder-only ports: generation never encodes, so neither autoencoder's reconstruction objective can be formed without its encoder. |
+| `NFKMLXLTX2TransformerNet` | ships | LoRA | public | Lightricks' `ltx-trainer` recipe: LoRA on `to_q`/`to_k`/`to_v`/`to_out.0` of all six attentions, over a float or 4/8-bit base (QLoRA, `NFKMLXQuantizedLoRALinear`), the trainer's own sampler, objective, and AdamW. The objective is held to `ltx_core`'s model under peft (`ltx2_loss`). The released 22B step is unmeasured on a device: neither `transformer/` nor `transformer_full/` is in the store. |
+| `NFKMLXLTX2ConnectorsNet` | offline | — | public | 3.2B; the trainer holds it frozen and trains only through the transformer it conditions. |
+| `NFKMLXLTX2VideoDecoderNet`, `NFKMLXLTX2AudioDecoderNet`, `NFKMLXLTX2VideoEncoderNet`, `NFKMLXLTX2AudioEncoderNet` | untrainable | — | public | Lightricks publishes no autoencoder training code; `ltx-trainer` freezes both autoencoders and encodes its data through them, which the encoders do here (`trainingExample`). |
+| `NFKMLXLTX2DurationHeadNet` | untrainable | — | public | Neither diffusers nor Lightricks/LTX-2 publishes the head's training code; diffusers notes it was trained in JAX. |
+| `NFKMLXLTX2PromptEnhancer` | offline | — | public | The enhancer is a Gemma 4 E2B, whose row (`NFKMLXGemmaLanguage`) rules it out on the per-layer embedding. |
 | `NFKMLXLTX2VocoderNet` | offline | — | public | The objective is adversarial, and the release ships the two generators and the STFT bases (1227 tensors) with no discriminator. |
 | `NFKMLXLTX2DiffusionDecoderNet`, `NFKMLXLTX2LatentUpsamplerNet` | untrainable | — | public | Lightricks/LTX-2's `ltx-trainer` trains transformer LoRAs only and diffusers defines no objective for either; neither names a loss, a noise schedule for the decoder's stage 5, or the upsamplers' pairing of low- and high-resolution latents. |
 | `NFKMLXT5Encoder` | offline | — | internal | T5-XXL is ~19 GB at float32, the memory crux of the LTX pipeline. |
@@ -360,6 +362,8 @@ the recipe detail.
 | `NFKMLXMarigold`, `NFKMLXSDUpscaler` | trainable, LoRA | prs-eth/Marigold at 2bfbdea; the upscaler's `ddpm.py` from a mirror of the deleted Stability-AI/stablediffusion, unpinned. |
 | `NFKMLXTAESD` | untrainable | madebyollin/taesd at 401ce45, the whole tree. |
 | `NFKMLXLTXVideoVAE` | untrainable | Lightricks/LTX-Video at 4b2d053 and LTX-Video-Trainer at e055182. |
+| `NFKMLXLTX2TransformerNet` | ships, LoRA | Lightricks/LTX-2 at e98f6d9, `packages/ltx-trainer` (`trainer.py`, `timestep_samplers.py`, `training_strategies/`, `configs/t2v_lora.yaml`) and `packages/ltx-core` (`model/transformer/`). |
+| The LTX-2 autoencoders and the duration head | untrainable | Lightricks/LTX-2 at e98f6d9, the whole tree; diffusers `pipelines/ltx2/duration_head.py` at fbf49e7. |
 | `NFKMLXQwenImageVAE` and the Wan, DC-AE, and FLUX.2 latent autoencoders | untrainable | QwenLM/Qwen-Image at 6b5e1f5; Wan2.1 at 9737cba and Wan2.2 at 1ea34ff; efficientvit at de7d773 and DC-Gen at 5e03d60; black-forest-labs/flux2 at 50fe516. |
 
 Two readings are the weakest. The upscaler's source is a mirror whose commit could not be pinned,
