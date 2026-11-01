@@ -3390,6 +3390,43 @@ let clip = pipeline.decodeVideo(videoLatents, frames: 16, height: 16, width: 24)
 let waveform = pipeline.decodeAudio(audioLatents)                                   // [1, samples, 2]
 ```
 
+LTX-2.5's release adds three decode-side components, each behind a switch that is off by default. The
+diffusion decoder (`diffusion_decoder/`, the default decode of LTX-2.5's modular pipeline) decodes the
+same latents as the autoencoder, itself a one-step diffusion over pixels in the reference's overlapping
+tiles. The two-stage distilled recipe samples at half the width and height, doubles the latent with the
+spatial upsampler (`latent_upsampler/`), and refines it over three sigmas at the full size. The temporal
+upsampler (`temporal_latent_upsampler/`) doubles the frame count, and the clip plays at twice the frame
+rate. A download of `.ltx25` fetches all three.
+
+```swift
+ltx25.refinesUpsampled = true              // stage 1 at 384×256, refined at 768×512
+ltx25.decodesWithDiffusionDecoder = true
+ltx25.upsamplesTemporally = true           // 121 frames become 241, at ltx25.outputFrameRate (48)
+let (refined, refinedSoundtrack) = try ltx25.clip(forPrompt: "a drummer playing in the rain", frames: 121,
+                                                  width: 768, height: 512, seed: 0)
+```
+
+<!-- objc-check: given id<NFKInferenceBackend> ltx25; -->
+```objc
+NFKInferenceRequest *twoStage = [[NFKInferenceRequest alloc]
+    initWithInputs:@{ NFKInputPrompt: @"a drummer playing in the rain" }
+        parameters:@{ NFKMLXLTX2ParameterKey.twoStageRefinement: @YES,
+                      NFKMLXLTX2ParameterKey.diffusionDecode: @YES,
+                      NFKMLXLTX2ParameterKey.temporalUpsampling: @NO }];
+NFKInferenceResult *refinedClip = [ltx25 runInferenceForRequest:twoStage error:&error];
+```
+
+The pieces stand on their own: `NFKMLXLTX2DiffusionDecoders.load(from:)` and
+`NFKMLXLTX2LatentUpsamplers.load(from:)` read the release's folders, and `NFKMLXLTX2Pipeline.refine` runs the
+second stage from a caller's own noise.
+
+```swift
+let decoder = try NFKMLXLTX2DiffusionDecoders.load(from: ltx25Release.appendingPathComponent("diffusion_decoder"))
+let upsampler = try NFKMLXLTX2LatentUpsamplers.load(from: ltx25Release.appendingPathComponent("latent_upsampler"))
+let doubled = NFKMLXLTX2Pipeline.upsampled(latent, by: upsampler)           // [1, F, 2 H, 2 W, 128]
+let decoded = decoder.decodeLatent(doubled) { shape in MLXRandom.normal(shape) }  // [1, 8 (F − 1) + 1, …, 3]
+```
+
 ### Wan 2.2 Animate (`NFKMLXWanAnimateGenerator`, `NFKMLXWanAnimateNet`)
 
 Wan 2.2 Animate 2 animates the character in a reference image with the motion of a driving video. The

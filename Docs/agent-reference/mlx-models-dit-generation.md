@@ -235,9 +235,80 @@ arithmetic as before.
 
   The generator tells the releases apart by the transformer's two switches, and the registry refuses one
   release's directory under the other's name. Not built: `transformer_full/` (the SFT transformer, outside
-  `model_index.json`, which samples with dynamic shifting turned back on), the diffusion decoder LTX-2.5's
-  modular pipeline decodes with by default (`LTX2Pipeline`, which this port follows, decodes with the
-  autoencoder), the duration head, the prompt enhancer, and the latent upsamplers.
+  `model_index.json`, which samples with dynamic shifting turned back on), the duration head, and the prompt
+  enhancer.
+
+- LTX-2.5's decode-side components (`Lightricks/LTX-2.5-Diffusers` at 4791a11, `NFKMLXLTX2DecodeTests`), each
+  behind an `@objc` generator switch that is off by default, with request keys in `NFKMLXLTX2ParameterKey`;
+  a download of `.ltx25` fetches all three folders (2.1 GB):
+  - `NFKMLXLTX2DiffusionDecoderNet` (`LTX2VideoDiffusionDecoderModel`, `diffusion_decoder/`, 408 tensors),
+    the default decode of LTX-2.5's modular pipeline, `decodesWithDiffusionDecoder`. It reads the
+    autoencoder's latent space and is itself a diffusion model. Four deterministic stages of 3-D
+    neighborhood-attention blocks, each a linear expansion and a channels-last depth-to-space shuffle after
+    it, build a context volume (2048 → 1024 → 512 → 512 → 256 channels); stage 5 denoises 4×4-patchified
+    pixels against it, modulated by one shared adaptive norm of the timestep (seven chunks, of which the
+    two scale/shift pairs are read; the residuals are ungated because the release folds its static gates
+    into the following weights) plus each block's table. The release predicts x0 in ONE step from pure
+    noise, so the decode is a single stage-5 pass. Traps: the neighborhood window is NATTEN's, centered and
+    shifted INWARD at the border so it always holds `kernel` positions (a truncated window is wrong at
+    every edge); the last latent frame is replicated `2 ⌊kT / 2⌋` times before stage 1 and the
+    `16` frames those become are cropped before stage 5; the rotary is absolute over the tensor's own
+    indices, interleaved pairs, split `(headDim / 4) / 2 · 2` to time and the rest halved (16 / 24 / 24 at
+    64); the query is RMS-normed per head, THEN scaled, then rotated; the patch packs `(channel, width
+    offset, height offset)`. The attention runs a block of 8 queries per axis against the box their
+    windows span, the width blocks of a row batched under one boolean mask. The reference's own tiled
+    decode is built (768 × 768 pixels and 80 frames, strides 704 and 56, a remnant shorter than both
+    remaining windows merged into the tile before it), and it blends IN PLACE: a tile's blended form is
+    what the next tile blends from. One-step x0 tiles each draw their own noise; a multi-step decode
+    slices one canvas. Tiling is on by default (`tilesDiffusionDecode`). Measured at a tiny random
+    configuration with windows unequal per axis (`run_reference.py ltx2_diffusion_decoder`,
+    `IK_PARITY_LTX2_DIFFUSION_DECODER`): every seam of the deterministic stages and the stage-5 blocks,
+    from `conv_in` (1.0), at or above 0.99999999999767, the embedded timestep 0.9999999995635336 and the
+    shared modulation 0.9999999998607301, the one-step decode 0.9999999999977981, three x0 steps 0.999999999998976, two
+    velocity steps 0.9999999999998208, the tiled one-step decode 0.9999999999976376 and the tiled three-step decode
+    0.9999999999988882, every draw in the reference's order. On the released weights at float32 over the stored
+    bfloat16 (`ltx2_real_diffusion_decoder`, `IK_PARITY_LTX2_REAL_DIFFUSION_DECODER`, `IK_VAL_LTX2_5_DECODE`;
+    a 3 × 7 × 7 latent in the decoder's own statistics, 17 frames at 224 × 224): context 0.9999999999988719,
+    decode 0.9999999999995941. The reference's FlexAttention path is uncompiled on the CPU and materializes
+    the full score matrix, so that oracle runs the reference's projections through a row-blocked dense-mask
+    processor, whose agreement with the reference's own processor the tiny record holds (cosine 1.0). The
+    release's `decoder.type_emb` is the one unread tensor: Lightricks' `ltx-core` adds it to KEYFRAME
+    latents before `conv_in` in its keyframe-aware decode (the IC-LoRA path), which text-to-video never
+    runs, and diffusers' module does not declare it. The latent statistics it carries equal the
+    autoencoder's.
+  - `NFKMLXLTX2LatentUpsamplerNet` (`LTX2LatentUpsamplerModel`): `latent_upsampler/` (spatial ×2, 1024
+    wide, 72 tensors, `.ltx25Spatial`) and `temporal_latent_upsampler/` (temporal ×2, 512 wide, 72 tensors,
+    `.ltx25Temporal`). An input convolution, group norm and SiLU, four residual blocks, the upsampler, four
+    more, and an output convolution, all on DENORMALIZED latents. The spatial upsampler convolves each frame
+    to four times its width and shuffles `(channel, row, column)`; the temporal one convolves in 3-D to
+    twice its width, shuffles into time, and drops the first frame (`F` → `2 F − 1`). The rational
+    resampler (×0.75, 1.5, 2, 4: a `num²` convolution, a `num × num` shuffle, the normalized 5 × 5
+    binomial blur at stride `den`) and the spatiotemporal ×2 are built and measured though no release
+    ships them; the per-frame 2-D arrangement (`dims` 2) is refused by name. Tiny random configurations
+    (`ltx2_latent_upsampler`, `IK_PARITY_LTX2_LATENT_UPSAMPLER`): spatial 0.9999999999992167, temporal
+    0.9999999999992316, rational 0.9999999999990391, spatiotemporal 0.9999999999990113. The blur kernel is a fixed
+    buffer, so the oracle restores it after drawing the weights. Released weights: spatial
+    0.9999999999958689, temporal 0.9999999999915022.
+  - The two-stage distilled recipe, `refinesUpsampled` (the release README's): stage 1 at half the width
+    and height over the distilled sigmas, the spatial upsampler on its denormalized latent, then stage 2
+    renoises the upsampled video latent AND stage 1's audio latent at `noise_scale` (the first stage-2
+    sigma) and samples `STAGE_2_DISTILLED_SIGMA_VALUES` (`NFKMLXLTX2Pipeline.refinementSigmas`, 0.909375 /
+    0.725 / 0.421875) with stage 1's prompt streams and guidance (`NFKMLXLTX2Pipeline.refine`). The
+    temporal upsampler runs on the final latent where `upsamplesTemporally` is set, and the clip plays at
+    twice the frame rate (`outputFrameRate`); the reference's own temporal round
+    (`LTX2DFRTemporalRefinePipeline`: keyframe-seamed tiles, an ancestral sampler, a carried keyframe bag)
+    is not built, so the doubled latent decodes as `LTX2LatentUpsamplePipeline` decodes it. Measured whole
+    at tiny configurations of every stage in LTX-2.5's arrangement with the reference's noise
+    (`ltx2_two_stage`, `IK_PARITY_LTX2_TWO_STAGE`): stage 1's video latent 0.9999999999999916, the upsampled
+    latent 0.9999999999996345, stage 2's video latent 0.9999999999999934 and audio latent 0.9999999999999963,
+    the autoencoder's clip 0.9999999999992796, waveform 0.9999999999990412, the diffusion decode of the
+    stage-2 latent 0.9999999999995791, the temporal latent 0.9999999999992552 and its clip
+    0.9999999999982218. A tiny release written to disk runs every path through the directory factory and
+    the backend's request keys (`testATinyLTX25ReleaseRunsEveryDecodePath`).
+  - The generator loads the upsamplers at float32 inside the transformer stage and the diffusion decoder
+    at float32 as a fourth stage, after the transformer is released; the residency plan and the catalog's
+    load plan count them so (upsamplers 2.5 GB, decoder 1.7 GB). Customization: untrainable here
+    (`mlx-customization-ledger.md`).
 
   Customization is offline-only: no size of this model fits a consumer machine.
 

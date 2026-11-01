@@ -6032,6 +6032,10 @@
         "ltx2_pipeline25",
         "ltx2_real_decoders",
         "ltx2_real_connectors",
+        "ltx2_diffusion_decoder",
+        "ltx2_latent_upsampler",
+        "ltx2_two_stage",
+        "ltx2_real_diffusion_decoder",
         "flux2_vae",
         "flux2_text",
         "flux2_scheduler",
@@ -6366,6 +6370,24 @@
       "subfolder": "connectors",
       "directory": "ltx2-25-connectors",
       "note": "LTX-2.5's text connectors (262 tensors, 6.3 GB bf16): LTX-2.3's configuration with retrained weights. The autoencoders and the vocoder are LTX-2.3's files byte for byte, so they carry no LTX-2.5 entry."
+    },
+    {
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "subfolder": "diffusion_decoder",
+      "directory": "ltx2-25-diffusion_decoder",
+      "note": "LTX-2.5's diffusion video decoder (`LTX2VideoDiffusionDecoderModel`, 408 tensors, 0.83 GB bf16). NFKMLXLTX2DecodeTests.testLTX25DecodeComponentsMatchTheReleasedShapes holds `NFKMLXLTX2DiffusionDecoderConfiguration.ltx25` to it; `decoder.type_emb`, read only by Lightricks' keyframe-aware decode, is the one unread tensor. The weights, with both upsamplers, are IK_VAL_LTX2_5_DECODE (rev 4791a1100e0cf97f7ed5c55c12dd71dce13f9dd3), which `run_reference.py ltx2_real_diffusion_decoder --checkpoint` reads."
+    },
+    {
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "subfolder": "latent_upsampler",
+      "directory": "ltx2-25-latent_upsampler",
+      "note": "LTX-2.5's spatial x2 latent upsampler (`LTX2LatentUpsamplerModel`, 72 tensors, 1.0 GB bf16), the two-stage distilled recipe's; `.ltx25Spatial`."
+    },
+    {
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "subfolder": "temporal_latent_upsampler",
+      "directory": "ltx2-25-temporal_latent_upsampler",
+      "note": "LTX-2.5's temporal x2 latent upsampler (`LTX2LatentUpsamplerModel`, 72 tensors, 0.26 GB bf16); `.ltx25Temporal`."
     },
     {
       "repo": "black-forest-labs/FLUX.2-klein-base-9B",

@@ -1866,7 +1866,9 @@ alternatives.
     shape check runs against LTX-2.3, the same class. The video and audio decoders, the text
     connectors, the vocoder with bandwidth extension, and the pipeline with its three guidance passes
     ship at parity too (tiny pipeline clip 0.9999999999993114, waveform 0.9999999999988513), each
-    released LTX-2.3 stage held to its headers by shape.
+    released LTX-2.3 stage held to its headers by shape. LTX-2.5's diffusion decoder, both latent
+    upsamplers, and the two-stage distilled recipe ship behind opt-in switches (released decoder
+    0.9999999999995941, spatial upsampler 0.9999999999958689, temporal 0.9999999999915022).
   - `Qwen-Image 2.1` (7.1B, Qwen Research License) — **SHIPPED end to end.** A single-stream DiT whose
     attention is BLOCK-CAUSAL (`q >= kv or same image block`), so the caption reads causally while each
     image block stays bidirectional within itself, and whose text half modulates from timestep zero so

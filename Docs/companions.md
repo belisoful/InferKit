@@ -701,7 +701,10 @@ models.
   diffusers, the whole pipeline too (clip 0.9999999999993114, waveform 0.9999999999988513 at tiny
   configurations), and each released LTX-2.3 stage held to its headers by shape. The movie the backend
   writes carries the soundtrack as its audio track. The stages load in turn and stream where one does
-  not fit; LTX-2.5's distilled transformer samples its own eight sigmas unguided.
+  not fit; LTX-2.5's distilled transformer samples its own eight sigmas unguided. LTX-2.5's diffusion
+  decoder (`NFKMLXLTX2DiffusionDecoderNet`), the two-stage distilled recipe through the spatial latent
+  upsampler, and the temporal latent upsampler (`NFKMLXLTX2LatentUpsamplerNet`) run behind opt-in switches,
+  each at parity against diffusers on the released weights.
 - **`NFKMLXQwenImagePipeline`** — Qwen-Image 2.1 text-to-image: a 7.1B block-causal DiT, a
   vision-language text encoder, and a single-frame autoencoder. The caption and the image latents share
   one sequence, read causally, while each image block stays bidirectional within itself, and the text

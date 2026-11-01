@@ -543,6 +543,14 @@ The figures have three limits:
 - ``NFKMLXLTX2VideoDecoderNet``
 - ``NFKMLXLTX2AudioDecoderNet``
 - ``NFKMLXLTX2VocoderNet``
+- ``NFKMLXLTX2DiffusionDecoder``
+- ``NFKMLXLTX2DiffusionDecoderNet``
+- ``NFKMLXLTX2DiffusionDecoderConfiguration``
+- ``NFKMLXLTX2DiffusionDecoders``
+- ``NFKMLXLTX2DecodeTiling``
+- ``NFKMLXLTX2LatentUpsamplerNet``
+- ``NFKMLXLTX2LatentUpsamplerConfiguration``
+- ``NFKMLXLTX2LatentUpsamplers``
 - ``NFKMLXWanPipeline``
 - ``NFKMLXWanTransformerNet``
 - ``NFKMLXWanVideoVAENet``

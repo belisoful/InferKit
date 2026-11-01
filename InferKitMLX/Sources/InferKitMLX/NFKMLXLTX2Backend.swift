@@ -37,12 +37,12 @@ extension NFKMLXLTX2Generator {
     static let backendInputKeys: Set<String> = [NFKInputPrompt, NFKInputNegativePrompt]
 
     /// The request parameters the backend reads.
-    static let backendParameterKeys: Set<String> = [
+    static let backendParameterKeys: Set<String> = Set([
         NFKParameterFrameCount, NFKParameterWidth, NFKParameterHeight, NFKParameterFramesPerSecond,
         NFKParameterSeed, NFKParameterSteps, NFKParameterGuidanceScale, NFKMLXLTX2ParameterKey.audioGuidanceScale,
         NFKMLXLTX2ParameterKey.spatioTemporalGuidanceScale, NFKMLXLTX2ParameterKey.modalityGuidanceScale,
         NFKMLXLTX2ParameterKey.guidanceRescale,
-    ]
+    ]).union(decodePathParameterKeys)
 
     /// The generator behind the InferKit contract.
     ///
@@ -77,8 +77,10 @@ extension NFKMLXLTX2Generator {
             modalityGuidance = parameter(NFKMLXLTX2ParameterKey.modalityGuidanceScale)?.floatValue ?? modalityGuidance
             guidanceRescale = parameter(NFKMLXLTX2ParameterKey.guidanceRescale)?.floatValue ?? guidanceRescale
             frameRate = parameter(NFKParameterFramesPerSecond)?.floatValue ?? frameRate
+            let restoreDecodePaths = applyingDecodePathParameters(parameter)
+            defer { restoreDecodePaths() }
             job.reportProgress(0)
-            let total = steps
+            let total = reportedSteps
             let (video, audio) = try clip(forPrompt: prompt, negativePrompt: negative,
                                           frames: parameter(NFKParameterFrameCount)?.intValue ?? 121,
                                           width: parameter(NFKParameterWidth)?.intValue ?? 768,
@@ -87,7 +89,7 @@ extension NFKMLXLTX2Generator {
                 job.reportProgress(Double(step + 1) / Double(total + 1))
             }
             if job.status == .cancelled { return nil }
-            let result = try Self.result(video: video, audio: audio, framesPerSecond: Double(frameRate),
+            let result = try Self.result(video: video, audio: audio, framesPerSecond: Double(outputFrameRate),
                                          sampleRate: audioSampleRate, identifier: modelName)
             job.reportProgress(1)
             return result

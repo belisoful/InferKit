@@ -1834,6 +1834,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### LTX-2.5 decodes through its diffusion decoder and refines in two stages
+
+- `NFKMLXLTX2DiffusionDecoderNet` runs LTX-2.5's diffusion video decoder (`diffusion_decoder/`): four
+  stages of 3-D neighborhood attention build a context volume from the latent, and a one-step diffusion
+  over patchified pixels decodes it, untiled or in the reference's blended tiles.
+- `NFKMLXLTX2LatentUpsamplerNet` runs the spatial ×2 (`latent_upsampler/`) and temporal ×2
+  (`temporal_latent_upsampler/`) latent upsamplers; `NFKMLXLTX2Pipeline.refine` runs the two-stage distilled
+  recipe's second stage.
+- `NFKMLXLTX2Generator` gains `decodesWithDiffusionDecoder`, `refinesUpsampled`, and `upsamplesTemporally`,
+  each off by default, and the backend reads `NFKMLXLTX2ParameterKey.diffusionDecode`, `.twoStageRefinement`,
+  and `.temporalUpsampling`. A download of LTX-2.5 fetches the three folders (2.1 GB).
+
 #### A long prompt prefills within memory
 
 - The language decoder (`NFKMLXLanguageNet`) prefills a prompt in passes of at most 2048 tokens

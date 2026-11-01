@@ -232,14 +232,18 @@ extension NFKMLXLoadPlan {
         "ltx-video": staged(["text_encoder": .float32], denoiser: ["transformer": .float32], controlNet: nil,
                             vae: .stored),
         // The text encoder loads at bfloat16 and widens to float32 only where the budget holds it; the
-        // connectors load as stored; the decoders and the vocoder at float32. The precision option
-        // converts the transformer alone.
+        // connectors load as stored; the decoders, the vocoder, and LTX-2.5's latent upsamplers at float32
+        // beside the transformer; LTX-2.5's diffusion decoder at float32 as a stage of its own. The
+        // precision option converts the transformer alone.
         "ltx-2": {
             var plan = NFKMLXLoadPlan(precision: .stored,
                                       directories: ["text_encoder": .bfloat16, "vae": .float32, "audio_vae": .float32,
-                                                    "vocoder": .float32],
+                                                    "vocoder": .float32, "latent_upsampler": .float32,
+                                                    "temporal_latent_upsampler": .float32,
+                                                    "diffusion_decoder": .float32],
                                       stages: [["text_encoder"], ["connectors"],
-                                               ["transformer", "vae", "audio_vae", "vocoder"]])
+                                               ["transformer", "vae", "audio_vae", "vocoder", "latent_upsampler",
+                                                "temporal_latent_upsampler"], ["diffusion_decoder"]])
             plan.castDirectories = ["transformer"]
             return plan
         }(),
@@ -558,10 +562,14 @@ extension NFKMLXLoadPlan {
         guard !stages.isEmpty else {
             return [NFKMLXStageSplit(identifier: identifier, title: nil, directories: directories.sorted())]
         }
+        // A stage none of whose directories the release holds (LTX-2.5's diffusion decoder in LTX-2.3) is
+        // not one of its stages.
+        let present = stages.filter { !directories.isDisjoint(with: $0) }
         let named = Set(stages.joined())
         let leftOver = directories.subtracting(named).sorted()
-        return stages.enumerated().map { index, stage in
-            let held = stage + (index == stages.count - 1 ? leftOver : [])
+        return present.enumerated().map { index, stage in
+            let held = stage.filter(directories.contains)
+                + (index == present.count - 1 ? leftOver : [])
             let first = stage.first ?? ""
             return NFKMLXStageSplit(identifier: first.isEmpty ? "model" : first,
                                     title: held.map { $0.isEmpty ? "root" : $0 }.joined(separator: ", "),

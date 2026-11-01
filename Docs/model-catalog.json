@@ -25363,6 +25363,7 @@
         "quantizationBits" : "quantizationBits",
         "residency" : "residency",
         "stagePrecisions" : {
+          "diffusion_decoder" : "float32",
           "text_encoder" : "bfloat16"
         }
       },
@@ -25471,6 +25472,30 @@
           "title" : "Guidance rescale"
         },
         {
+          "default" : false,
+          "help" : "Decode the clip with the release's diffusion decoder instead of the autoencoder.",
+          "key" : "NFKMLXLTX2ParameterDiffusionDecode",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Diffusion decode"
+        },
+        {
+          "default" : false,
+          "help" : "Sample at half the size, upsample the latent, and refine it over three sigmas at the full size.",
+          "key" : "NFKMLXLTX2ParameterTwoStageRefinement",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Two-stage refinement"
+        },
+        {
+          "default" : false,
+          "help" : "Double the frame count and the frame rate with the release's temporal latent upsampler.",
+          "key" : "NFKMLXLTX2ParameterTemporalUpsampling",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Temporal upsampling"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -25478,24 +25503,24 @@
             },
             {
               "memory" : {
-                "peakBytes" : 71873392652,
-                "residentBytes" : 71873392652
+                "peakBytes" : 76057273036,
+                "residentBytes" : 76057273036
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 41609477036,
-                "residentBytes" : 41609477036
+                "peakBytes" : 44124821420,
+                "residentBytes" : 44124821420
               },
               "title" : "Staged",
               "value" : "staged"
             },
             {
               "memory" : {
-                "peakBytes" : 6035388076,
-                "residentBytes" : 6035388076
+                "peakBytes" : 8550732460,
+                "residentBytes" : 8550732460
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -25513,16 +25538,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 41609477036,
-                "residentBytes" : 41609477036
+                "peakBytes" : 44124821420,
+                "residentBytes" : 44124821420
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 79585195436,
-                "residentBytes" : 79585195436
+                "peakBytes" : 82100539820,
+                "residentBytes" : 82100539820
               },
               "title" : "Float32",
               "value" : "float32"
@@ -25540,56 +25565,56 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 41609477036,
-                "residentBytes" : 41609477036
+                "peakBytes" : 44124821420,
+                "residentBytes" : 44124821420
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 24079416236,
-                "residentBytes" : 24079416236
+                "peakBytes" : 26594760620,
+                "residentBytes" : 26594760620
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 19404733356,
-                "residentBytes" : 19404733356
+                "peakBytes" : 21920077740,
+                "residentBytes" : 21920077740
               },
               "title" : "6-bit",
               "value" : 6
             },
             {
               "memory" : {
-                "peakBytes" : 17067391916,
-                "residentBytes" : 17067391916
+                "peakBytes" : 19582736300,
+                "residentBytes" : 19582736300
               },
               "title" : "5-bit",
               "value" : 5
             },
             {
               "memory" : {
-                "peakBytes" : 14730050476,
-                "residentBytes" : 14730050476
+                "peakBytes" : 17245394860,
+                "residentBytes" : 17245394860
               },
               "title" : "4-bit",
               "value" : 4
             },
             {
               "memory" : {
-                "peakBytes" : 12392709036,
-                "residentBytes" : 12392709036
+                "peakBytes" : 14908053420,
+                "residentBytes" : 14908053420
               },
               "title" : "3-bit",
               "value" : 3
             },
             {
               "memory" : {
-                "peakBytes" : 10055367596,
-                "residentBytes" : 10055367596
+                "peakBytes" : 12570711980,
+                "residentBytes" : 12570711980
               },
               "title" : "2-bit",
               "value" : 2
@@ -25646,7 +25671,7 @@
       ],
       "registryName" : "ltx-2.5",
       "requirements" : {
-        "minimumMemoryBytes" : 54005228626,
+        "minimumMemoryBytes" : 56964457313,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -25666,7 +25691,7 @@
       "variants" : [
         {
           "displayName" : "LTX-2.5",
-          "downloadBytes" : 70090002800,
+          "downloadBytes" : 72182004961,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
@@ -25718,10 +25743,10 @@
               },
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 41609477036,
-                  "checkpoint" : 41609477036,
-                  "float32" : 79585195436,
-                  "loaded" : 41609477036
+                  "bfloat16" : 44124821420,
+                  "checkpoint" : 44124821420,
+                  "float32" : 82100539820,
+                  "loaded" : 44124821420
                 },
                 "id" : "transformer",
                 "largestLayerBytesByPrecision" : {
@@ -25736,16 +25761,26 @@
                 },
                 "layerCount" : 48,
                 "quantizableElements" : 18698731520,
-                "title" : "transformer, vae, audio_vae, vocoder"
+                "title" : "transformer, vae, audio_vae, vocoder, latent_upsampler, temporal_latent_upsampler"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 834268000,
+                  "checkpoint" : 834268000,
+                  "float32" : 1668536000
+                },
+                "id" : "diffusion_decoder",
+                "quantizableElements" : 416722944,
+                "title" : "diffusion_decoder"
               }
             ]
           },
-          "minimumMemoryBytes" : 54005228626,
-          "parameterCount" : 35028256667,
-          "peakBytes" : 41609477036,
+          "minimumMemoryBytes" : 56964457313,
+          "parameterCount" : 36074226763,
+          "peakBytes" : 44124821420,
           "precision" : "bfloat16",
           "registryName" : "ltx-2.5",
-          "residentBytes" : 41609477036,
+          "residentBytes" : 44124821420,
           "source" : {
             "files" : [
               {
@@ -25869,6 +25904,45 @@
                 "path" : "vocoder/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
                 "sha256" : "c99dde145a982974bc4c39608b3b929f232f0126a55d8326a47ad54f486ae23c"
+              },
+              {
+                "bytes" : 1089,
+                "optional" : false,
+                "path" : "diffusion_decoder/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 834313392,
+                "optional" : false,
+                "path" : "diffusion_decoder/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "bb3801cc2f991c0523fe450a4244d4711a4200346c6fec01a03be27c14b42ee1"
+              },
+              {
+                "bytes" : 301,
+                "optional" : false,
+                "path" : "latent_upsampler/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 995743320,
+                "optional" : false,
+                "path" : "latent_upsampler/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "e2753d6c35d1d8b9daec7529f07a8f6f0e318e091566bb1b2ef7dc2e1bdcb6a5"
+              },
+              {
+                "bytes" : 299,
+                "optional" : false,
+                "path" : "temporal_latent_upsampler/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 261943760,
+                "optional" : false,
+                "path" : "temporal_latent_upsampler/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "a3b86da4299e2131d2c0ee4ee218f8475b95dd199ddc26c94a62acea60f7e3c7"
               }
             ],
             "kind" : "huggingface",

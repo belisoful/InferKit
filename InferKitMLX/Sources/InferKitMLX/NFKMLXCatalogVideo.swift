@@ -253,6 +253,20 @@ enum NFKMLXCatalogVideo {
                  defaultValue: 0.7, minimum: 0, maximum: 1)]
     }
 
+    /// The LTX-2.5 decode-side switches: the diffusion decoder, the two-stage distilled recipe, and the
+    /// temporal latent upsampler, each off by default.
+    static var ltx25DecodePathOptions: [NFKModelOption] {
+        [.option(NFKMLXLTX2ParameterKey.diffusionDecode, kind: NFKModelOptionKindBoolean, title: "Diffusion decode",
+                 help: "Decode the clip with the release's diffusion decoder instead of the autoencoder.",
+                 defaultValue: false),
+         .option(NFKMLXLTX2ParameterKey.twoStageRefinement, kind: NFKModelOptionKindBoolean, title: "Two-stage refinement",
+                 help: "Sample at half the size, upsample the latent, and refine it over three sigmas at the full size.",
+                 defaultValue: false),
+         .option(NFKMLXLTX2ParameterKey.temporalUpsampling, kind: NFKModelOptionKindBoolean, title: "Temporal upsampling",
+                 help: "Double the frame count and the frame rate with the release's temporal latent upsampler.",
+                 defaultValue: false)]
+    }
+
     /// The LTX-2 releases: one transformer that films a clip and its soundtrack together.
     static var ltx2Entries: [NFKMLXCatalogEntry] {
         NFKMLXLTX2Variant.allCases.map { variant in
@@ -279,10 +293,11 @@ enum NFKMLXCatalogVideo {
                                   help: "The generated soundtrack alone, a stereo WAV at 48 kHz.")],
                 parameters: videoOptions(frames: 121, width: 768, height: 512, framesPerSecond: 24,
                                          frameRateHelp: "The frame rate the clip is conditioned on and written at.",
-                                         steps: 30, guidance: 3) + ltx2GuidanceOptions,
+                                         steps: 30, guidance: 3) + ltx2GuidanceOptions
+                    + (variant == .ltx25 ? ltx25DecodePathOptions : []),
                 license: license,
                 source: NFKMLXCatalogImage.hubRelease(variant.releaseRepo,
-                                                      components: NFKMLXLTX2Generator.releaseComponents),
+                                                      components: NFKMLXLTX2Generator.releaseComponents(for: variant)),
                 residencies: NFKMLXCatalogImage.streamedStageResidencies)
         }
     }

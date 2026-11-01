@@ -156,6 +156,26 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertEqual(waveform.shape, [1, 990, 2], "a stereo soundtrack")
     }
 
+    // Docs/examples.md: LTX-2.5's decode-side paths. The switches are the generator's; tiny random pieces
+    // stand in for the release's diffusion_decoder/ and latent_upsampler/, which the loaders read.
+    func testExampleLTX25DecodePaths() throws {
+        try requireMLXRuntime()
+        XCTAssertTrue(NFKMLXLTX2Generator.instancesRespond(to: NSSelectorFromString("setRefinesUpsampled:")))
+        XCTAssertTrue(NFKMLXLTX2Generator.instancesRespond(to: NSSelectorFromString("setDecodesWithDiffusionDecoder:")))
+        XCTAssertTrue(NFKMLXLTX2Generator.instancesRespond(to: NSSelectorFromString("setUpsamplesTemporally:")))
+        XCTAssertTrue(NFKMLXLTX2Generator.instancesRespond(to: NSSelectorFromString("outputFrameRate")))
+        NFKMLXRandom.seed(19)
+        let decoder = NFKMLXLTX2DiffusionDecoder(
+            decoder: NFKMLXLTX2DiffusionDecoderNet(.tiny), statistics: (MLXArray.zeros([8]), MLXArray.ones([8])))
+        let upsampler = NFKMLXLTX2LatentUpsamplerNet(
+            NFKMLXLTX2LatentUpsamplerConfiguration(inChannels: 8, midChannels: 32, blocksPerStage: 1))
+        let latent = MLXRandom.normal([1, 2, 2, 3, 8])
+        let doubled = NFKMLXLTX2Pipeline.upsampled(latent, by: upsampler)
+        XCTAssertEqual(doubled.shape, [1, 2, 4, 6, 8])
+        let decoded = decoder.decodeLatent(doubled) { shape in MLXRandom.normal(shape) }
+        XCTAssertEqual(decoded.shape, [1, 9, 128, 192, 3])
+    }
+
     // Docs/examples.md: Wan 2.2 Animate. The generator needs the release directory; the tiny
     // configuration stands in for the 14B transformer, whose release
     // NFKMLXWanAnimate.loadWeights(into:fromDirectory:precision:) reads (NFKMLXWanAnimateTests).

@@ -24446,14 +24446,14 @@ def _ltx2_pipeline_record(transformer=None, scheduler=None, call=None):
             prompt_embeds=embeds[1:], prompt_attention_mask=mask[1:],
             negative_prompt_embeds=embeds[:1], negative_prompt_attention_mask=mask[:1],
             height=height, width=width, num_frames=frames, frame_rate=frame_rate,
-            latents=latents, audio_latents=audio_latents, output_type="pt", return_dict=False, **arguments)
+            latents=latents, audio_latents=audio_latents, return_dict=False, **{"output_type": "pt", **arguments})
 
     extra = {"ids": ids.to(torch.int32).contiguous(), "mask": mask.to(torch.int32).contiguous(),
              "embeds": embeds.contiguous(), "latents": latents.contiguous(),
              "audio_latents": audio_latents.contiguous(), "video": video.float().contiguous(),
              "audio": audio.float().contiguous(),
-             "seam.video_latent": seams["video_latent"].contiguous(),
-             "seam.audio_latent": seams["audio_latent"].contiguous(), "seam.mel": seams["mel"].contiguous(),
+             **{f"seam.{key}": seams[key].contiguous() for key in ("video_latent", "audio_latent", "mel")
+                if key in seams},
              "seam.connector_video": seams["connectors"][0].contiguous(),
              "seam.connector_audio": seams["connectors"][1].contiguous(),
              "sigmas": scheduler.sigmas.float().contiguous()}
@@ -27833,6 +27833,439 @@ def run_sf3d_twins(image, checkpoint):
 
 
 CHECKPOINT_MODELS["sf3d_twins"] = run_sf3d_twins
+
+
+def _ltx2_diffusion_decoder_tiny(**over):
+    from diffusers import LTX2VideoDiffusionDecoderModel
+
+    # The release's four deterministic stages and stage 5 at a sixteenth of its width, with windows
+    # small enough for tiny grids and unequal per axis, so the border shift runs on every axis. A
+    # 16-wide head splits its rotary 4 / 6 / 6, as the release's 64 splits 16 / 24 / 24.
+    settings = dict(
+        out_channels=3, latent_channels=8, patch_size=4, scaling_factor=1.0, decoder_head_dim=16,
+        decoder_stage_channels=(128, 64, 32, 32, 32), decoder_stage_depths=(1, 2, 1, 1, 2),
+        decoder_stage_kernels=((3, 3, 3), (3, 5, 5), (3, 3, 3), (3, 5, 5)),
+        decoder_upsample_strides=((1, 2, 2), (2, 1, 1), (2, 2, 2), (2, 2, 2)),
+        decoder_upsample_channel_reductions=(2, 2, 1, 1), decoder_stage5_kernel=(5, 7, 7),
+        decoder_t_emb_dim=16, decoder_timestep_scale_multiplier=1000.0, decoder_model_output_type="x0",
+        decoder_num_inference_steps=1, spatial_compression_ratio=32, temporal_compression_ratio=8)
+    settings.update(over)
+    return LTX2VideoDiffusionDecoderModel(**settings)
+
+
+class _NeighborhoodByRows:
+    """The diffusion decoder's neighborhood attention evaluated a block of queries at a time with a dense
+    mask, for grids whose full score matrix the reference's uncompiled FlexAttention path cannot hold. The
+    window is NATTEN's: centered on the query and shifted inward at the borders to hold exactly
+    `kernel` positions, as the reference's `_neighborhood_block_mask` writes it. The tiny oracle records
+    its agreement with the reference's own processor."""
+
+    def __init__(self, rows=1024):
+        self.rows = rows
+
+    def __call__(self, attn, hidden_states, block_mask=None):
+        batch, frames, height, width, _ = hidden_states.shape
+        query, key, value = attn.project_qkv(hidden_states)
+        kt, kh, kw = (min(k, n) for k, n in zip(attn.kernel_size, (frames, height, width)))
+        tokens = frames * height * width
+        q = query.reshape(batch, tokens, attn.heads, attn.head_dim).transpose(1, 2)
+        k = key.reshape(batch, tokens, attn.heads, attn.head_dim).transpose(1, 2)
+        v = value.reshape(batch, tokens, attn.heads, attn.head_dim).transpose(1, 2)
+        index = torch.arange(tokens)
+        t, h, w = index // (height * width), (index // width) % height, index % width
+
+        def window(position, kernel, length):
+            return torch.clamp(position - kernel // 2, 0, length - kernel)
+
+        outputs = []
+        for start in range(0, tokens, self.rows):
+            rows = index[start:start + self.rows]
+            st, sh, sw = (window(p[rows], kk, n)[:, None] for p, kk, n in
+                          ((t, kt, frames), (h, kh, height), (w, kw, width)))
+            # Only keys inside the box spanning these queries' windows can be read.
+            near = ((t >= st.min()) & (t < st.max() + kt) & (h >= sh.min()) & (h < sh.max() + kh)
+                    & (w >= sw.min()) & (w < sw.max() + kw))
+            keys = index[near]
+            kt_, kh_, kw_ = t[keys][None], h[keys][None], w[keys][None]
+            mask = ((kt_ >= st) & (kt_ < st + kt) & (kh_ >= sh) & (kh_ < sh + kh) & (kw_ >= sw) & (kw_ < sw + kw))
+            outputs.append(torch.nn.functional.scaled_dot_product_attention(
+                q[:, :, start:start + self.rows], k[:, :, keys], v[:, :, keys], attn_mask=mask, scale=1.0))
+        out = torch.cat(outputs, dim=2).transpose(1, 2).reshape(batch, frames, height, width, -1)
+        return attn.to_out[0](out)
+
+
+def _diffusion_decoder_seams(model, latent, steps, generator):
+    """The decode of `latent` by the decoder's own pieces with every seam, the starting noise drawn
+    from `generator`; the caller checks it against `model.decode` from the same seed."""
+    decoder = model.decoder
+    seams = {}
+    with torch.no_grad():
+        num_pad = decoder.trailing_pad_latent_frames
+        hidden = torch.cat([latent, latent[:, :, -1:].expand(-1, -1, num_pad, -1, -1)], dim=2)
+        hidden = decoder.conv_in(hidden.permute(0, 2, 3, 4, 1))
+        seams["conv_in"] = hidden.clone()
+        for stage, (blocks, upsample) in enumerate(zip(decoder.det_stages[:-1], decoder.upsamples[:-1])):
+            for block in blocks:
+                hidden = block(hidden)
+            seams[f"stage{stage}"] = hidden.clone()
+            hidden = upsample(hidden)
+            seams[f"up{stage}"] = hidden.clone()
+        seams["features"] = hidden.clone()
+        context = decoder.forward_stage_4(hidden)
+        seams["context"] = context.clone()
+        shape = (latent.shape[0], decoder.out_channels, context.shape[1],
+                 context.shape[2] * decoder.patch_size, context.shape[3] * decoder.patch_size)
+        from diffusers.utils.torch_utils import randn_tensor
+        noise = randn_tensor(shape, generator=generator, dtype=latent.dtype)
+        seams["noise"] = noise.clone()
+        timestep = torch.ones(latent.shape[0])
+        t_emb = decoder.t_embedder(decoder.timestep_scale_multiplier * timestep, resolution=None,
+                                   aspect_ratio=None, batch_size=1, hidden_dtype=context.dtype)
+        seams["t_emb"] = t_emb.clone()
+        modulation = decoder.shared_adaln(t_emb)
+        seams["modulation"] = torch.stack([m.flatten(1) for m in modulation], dim=1).clone()
+        from diffusers.models.autoencoders.ltx2_diffusion_decoder import _patchify
+        h = decoder.conv_in_x_t(_patchify(noise, decoder.patch_size).permute(0, 2, 3, 4, 1))
+        for index, block in enumerate(decoder.diff_blocks):
+            h = block(h, context, modulation)
+            seams[f"diff{index}"] = h.clone()
+        seams["prediction"] = decoder.forward_diffusion_step(context, noise, timestep).clone()
+        seams["decoded"] = decoder.denoise(context, noise, steps).clone()
+    return seams
+
+
+def run_ltx2_diffusion_decoder(image):
+    """The LTX-2.5 diffusion video decoder (`LTX2VideoDiffusionDecoderModel`, Lightricks) at a tiny random
+    configuration: four deterministic stages of 3-D neighborhood attention (NATTEN's window, shifted
+    inward at the borders) each followed by a linear expansion and a depth-to-space shuffle, then a
+    stage-5 diffusion over patchified pixels modulated by a shared adaptive norm of the timestep.
+
+    Arrangements, by prefix: `x0` the release's one-step x0 decode; `x0s3` three x0 steps (reverse Euler
+    through `(x − x0) / t`); `v2` two velocity steps. Each records every seam from `conv_in` through the
+    stage-5 blocks, the starting noise, and the decode, checked against `model.decode` from the same
+    seed. `tiled` is the release's arrangement decoded in overlapping tiles small enough to cut every
+    axis, each tile's noise recorded in draw order (a one-step x0 tile draws its own), and `tiled3` the
+    three-step tiled decode, which slices one noise canvas. `byrows` is the row-blocked dense-mask
+    attention the released-weight oracle uses, against the reference's own processor. Runs under the
+    `qwenimage` oracle env. `image` unused.
+    """
+    from diffusers.utils import torch_utils
+    import diffusers.models.autoencoders.ltx2_diffusion_decoder as module
+
+    generator = torch.Generator().manual_seed(71)
+    latent = torch.randn(1, 8, 2, 3, 4, generator=generator)
+    extra = {"latent": latent.contiguous()}
+    output = None
+    for prefix, settings, steps in (("x0", {}, 1), ("x0s3", {}, 3),
+                                    ("v2", dict(decoder_model_output_type="v"), 2)):
+        model = _randomized(_ltx2_diffusion_decoder_tiny(**settings), seed=73, scale=0.2)
+        with torch.no_grad():
+            model.latents_mean.copy_(torch.randn(8) * 0.1)
+            model.latents_std.copy_(torch.rand(8) * 0.5 + 0.75)
+        seams = _diffusion_decoder_seams(model, latent, steps, torch.Generator().manual_seed(75))
+        with torch.no_grad():
+            decoded = model.decode(latent, generator=torch.Generator().manual_seed(75),
+                                   num_inference_steps=steps, return_dict=False)[0]
+        assert torch.equal(decoded, seams["decoded"]), prefix
+        for key, value in seams.items():
+            extra[f"{prefix}.seam.{key}"] = value.contiguous()
+        extra[f"{prefix}.decoded"] = decoded.contiguous()
+        for key, value in model.state_dict().items():
+            extra[f"w::{prefix}.{key}"] = value.float().contiguous()
+        if prefix == "x0":
+            output = decoded
+            processor_check = model
+    with torch.no_grad():
+        attention = processor_check.decoder.diff_blocks[0].attn
+        probe = torch.randn(1, 9, 11, 13, attention.heads * attention.head_dim, generator=generator)
+        reference = attention(probe)
+        attention.set_processor(_NeighborhoodByRows(rows=37))
+        extra["byrows.cosine"] = torch.nn.functional.cosine_similarity(
+            reference.flatten().double(), attention(probe).flatten().double(), dim=0).reshape(1)
+        attention.set_processor(module.LTX2VideoVaeNeighborhoodAttnProcessor())
+
+    draws = []
+    original = module.randn_tensor
+
+    def recording(shape, generator=None, device=None, dtype=None):
+        sample = original(shape, generator=generator, device=device, dtype=dtype)
+        draws.append(sample.clone())
+        return sample
+
+    module.randn_tensor = recording
+    try:
+        for prefix, steps in (("tiled", 1), ("tiled3", 3)):
+            model = _randomized(_ltx2_diffusion_decoder_tiny(), seed=73, scale=0.2)
+            model.enable_tiling(tile_sample_min_height=64, tile_sample_min_width=64, tile_sample_min_num_frames=16,
+                                tile_sample_stride_height=48, tile_sample_stride_width=48,
+                                tile_sample_stride_num_frames=8)
+            big = torch.randn(1, 8, 3, 4, 5, generator=generator)
+            draws.clear()
+            with torch.no_grad():
+                decoded = model.decode(big, generator=torch.Generator().manual_seed(77), num_inference_steps=steps,
+                                       return_dict=False)[0]
+            extra[f"{prefix}.latent"] = big.contiguous()
+            extra[f"{prefix}.decoded"] = decoded.contiguous()
+            extra[f"{prefix}.draws"] = torch.tensor([len(draws)], dtype=torch.int32)
+            for index, draw in enumerate(draws):
+                extra[f"{prefix}.noise{index}"] = draw.contiguous()
+    finally:
+        module.randn_tensor = original
+    globals()["_extra"] = extra
+    return output.clone().contiguous()
+
+
+MODELS["ltx2_diffusion_decoder"] = run_ltx2_diffusion_decoder
+
+
+def _ltx2_latent_upsampler_tiny(**over):
+    from diffusers.pipelines.ltx2.latent_upsampler import LTX2LatentUpsamplerModel
+
+    settings = dict(in_channels=8, mid_channels=32, num_blocks_per_stage=2, dims=3, spatial_upsample=True,
+                    temporal_upsample=False, rational_spatial_scale=2.0, use_rational_resampler=False)
+    settings.update(over)
+    return LTX2LatentUpsamplerModel(**settings)
+
+
+def run_ltx2_latent_upsampler(image):
+    """The LTX-2 latent upsamplers (`LTX2LatentUpsamplerModel`) at tiny random configurations, in each
+    arrangement the class builds, by prefix: `spatial` LTX-2.5's `latent_upsampler/` (a per-frame
+    convolution to four times the width and a 2x2 shuffle), `temporal` its `temporal_latent_upsampler/`
+    (a 3-D convolution to twice the width, a shuffle into time, the first frame dropped), `rational` the
+    rational resampler at 1.5 (a 3x3 shuffle and the binomial blur at stride 2), and `both` the
+    spatiotemporal x2. Seams: after the first residual blocks and after the upsampler. Runs under the
+    `qwenimage` oracle env. `image` unused.
+    """
+    generator = torch.Generator().manual_seed(81)
+    latent = torch.randn(1, 8, 3, 4, 5, generator=generator)
+    extra = {"latent": latent.contiguous()}
+    output = None
+    for prefix, settings in (("spatial", {}),
+                             ("temporal", dict(spatial_upsample=False, temporal_upsample=True,
+                                               use_rational_resampler=True)),
+                             ("rational", dict(use_rational_resampler=True, rational_spatial_scale=1.5)),
+                             ("both", dict(temporal_upsample=True))):
+        model = _randomized(_ltx2_latent_upsampler_tiny(**settings), seed=83, scale=0.1)
+        blur = getattr(model.upsampler, "blur_down", None)
+        if blur is not None:
+            # The binomial kernel is a fixed buffer, which `_randomized` draws over with the weights.
+            from diffusers.pipelines.ltx2.latent_upsampler import BlurDownsample
+            with torch.no_grad():
+                blur.kernel.copy_(BlurDownsample(dims=2, stride=blur.stride).kernel)
+        seams = {}
+        model.res_blocks[-1].register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("head", o.detach().clone()))
+        model.upsampler.register_forward_hook(
+            lambda m, i, o, s=seams: s.__setitem__("upsampler", o.detach().clone()))
+        with torch.no_grad():
+            upsampled = model(latent)
+        extra[f"{prefix}.upsampled"] = upsampled.contiguous()
+        for key, value in seams.items():
+            extra[f"{prefix}.seam.{key}"] = value.contiguous()
+        for key, value in model.state_dict().items():
+            extra[f"w::{prefix}.{key}"] = value.float().contiguous()
+        output = output if output is not None else upsampled
+    globals()["_extra"] = extra
+    return output.clone().contiguous()
+
+
+MODELS["ltx2_latent_upsampler"] = run_ltx2_latent_upsampler
+
+
+def run_ltx2_two_stage(image):
+    """LTX-2.5's two-stage distilled recipe and its diffusion decode at tiny random configurations of
+    every stage, in LTX-2.5's arrangement (`run_ltx2_pipeline25`): stage 1 samples the distilled sigmas
+    unguided at the half size and returns denormalized latents; `LTX2LatentUpsamplePipeline` runs the
+    spatial upsampler on them; stage 2 renoises the upsampled video latent and stage 1's audio latent at
+    `noise_scale = STAGE_2_DISTILLED_SIGMA_VALUES[0]` and samples `STAGE_2_DISTILLED_SIGMA_VALUES`; the
+    stage-2 latent decodes through the convolutional autoencoder (`pipe` with `output_type="pt"`) and
+    through `LTX2VideoDiffusionDecodePipeline` with `denormalize=False`. The temporal upsampler then runs
+    on the stage-2 latent the same way. Every noise the reference draws is recorded. Runs under the
+    `qwenimage` oracle env. `image` unused.
+    """
+    from diffusers.pipelines.ltx2 import pipeline_ltx2 as module
+    from diffusers.pipelines.ltx2.pipeline_ltx2_diffusion_decode import LTX2VideoDiffusionDecodePipeline
+    from diffusers.pipelines.ltx2.pipeline_ltx2_latent_upsample import LTX2LatentUpsamplePipeline
+    from diffusers.pipelines.ltx2.utils import STAGE_2_DISTILLED_SIGMA_VALUES
+
+    calls = {}
+
+    def capture(transformer, scheduler, call):
+        calls.update(transformer=transformer, scheduler=scheduler, call=call)
+        return _ltx2_pipeline_record(transformer=transformer, scheduler=scheduler, call=call)
+
+    stage_one = dict(num_inference_steps=None, sigmas=[1.0, 0.909375, 0.421875], guidance_scale=1.0,
+                     audio_guidance_scale=1.0, stg_scale=0.0, audio_stg_scale=0.0, modality_scale=1.0,
+                     audio_modality_scale=1.0)
+    capture(dict(ff_bias=False, use_keyframes_abs_pos_embedding=True),
+            dict(use_dynamic_shifting=False, shift_terminal=None), dict(stage_one, output_type="latent"))
+    first = dict(globals()["_extra"])
+    # `_ltx2_pipeline_record` ran stage 1 with `output_type="latent"`, so its `video` and `audio` are the
+    # denormalized latents; rebuild the same pipeline to continue from them.
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    from diffusers.pipelines.ltx2.pipeline_ltx2 import LTX2Pipeline
+    pipe = _ltx2_two_stage_pipeline(first)
+    stage1_video = first["video"]
+    stage1_audio = first["audio"]
+
+    upsampler = _randomized(_ltx2_latent_upsampler_tiny(), seed=85, scale=0.1)
+    temporal = _randomized(_ltx2_latent_upsampler_tiny(spatial_upsample=False, temporal_upsample=True,
+                                                       use_rational_resampler=True), seed=87, scale=0.1)
+    decoder = _randomized(_ltx2_diffusion_decoder_tiny(), seed=89, scale=0.2)
+    with torch.no_grad():
+        decoder.latents_mean.copy_(pipe.vae.latents_mean)
+        decoder.latents_std.copy_(pipe.vae.latents_std)
+    upsample = LTX2LatentUpsamplePipeline(vae=pipe.vae, latent_upsampler=upsampler)
+    upsample.set_progress_bar_config(disable=True)
+    with torch.no_grad():
+        upsampled = upsample(latents=stage1_video, output_type="latent", return_dict=False)[0]
+
+    draws = []
+    original = module.randn_tensor
+
+    def recording(shape, generator=None, device=None, dtype=None):
+        sample = original(shape, generator=generator, device=device, dtype=dtype)
+        draws.append(sample.clone())
+        return sample
+
+    extra = {"stage1.video": stage1_video.contiguous(), "stage1.audio": stage1_audio.contiguous(),
+             "upsampled": upsampled.contiguous()}
+    module.randn_tensor = recording
+    try:
+        generator = torch.Generator().manual_seed(91)
+        arguments = dict(prompt_embeds=first["embeds"][1:], prompt_attention_mask=first["mask"][1:].long(),
+                         negative_prompt_embeds=first["embeds"][:1],
+                         negative_prompt_attention_mask=first["mask"][:1].long(),
+                         num_frames=9, frame_rate=24.0, latents=upsampled, audio_latents=stage1_audio,
+                         noise_scale=STAGE_2_DISTILLED_SIGMA_VALUES[0], sigmas=STAGE_2_DISTILLED_SIGMA_VALUES,
+                         num_inference_steps=None, guidance_scale=1.0, audio_guidance_scale=1.0, stg_scale=0.0,
+                         audio_stg_scale=0.0, modality_scale=1.0, audio_modality_scale=1.0,
+                         generator=generator, return_dict=False)
+        with torch.no_grad():
+            stage2_video, stage2_audio = pipe(output_type="latent", **arguments)
+        extra["stage2.video_noise"] = draws[0].contiguous()
+        extra["stage2.audio_noise"] = draws[1].contiguous()
+        draws.clear()
+        with torch.no_grad():
+            video, audio = pipe(output_type="pt", **{**arguments, "generator": torch.Generator().manual_seed(91)})
+    finally:
+        module.randn_tensor = original
+    extra.update({"stage2.video": stage2_video.contiguous(), "stage2.audio": stage2_audio.contiguous(),
+                  "video": video.float().contiguous(), "waveform": audio.float().contiguous()})
+    decode = LTX2VideoDiffusionDecodePipeline(diffusion_decoder=decoder, scheduler=pipe.scheduler)
+    decode.set_progress_bar_config(disable=True)
+    import diffusers.models.autoencoders.ltx2_diffusion_decoder as decoder_module
+    noises = []
+    decoder_original = decoder_module.randn_tensor
+
+    def decoder_recording(shape, generator=None, device=None, dtype=None):
+        sample = decoder_original(shape, generator=generator, device=device, dtype=dtype)
+        noises.append(sample.clone())
+        return sample
+
+    decoder_module.randn_tensor = decoder_recording
+    try:
+        with torch.no_grad():
+            diffusion_video = decode(stage2_video, generator=torch.Generator().manual_seed(93), output_type="pt",
+                                     denormalize=False, return_dict=False)[0]
+    finally:
+        decoder_module.randn_tensor = decoder_original
+    extra["diffusion.noise"] = noises[0].contiguous()
+    extra["diffusion.video"] = diffusion_video.float().contiguous()
+    temporal_pipe = LTX2LatentUpsamplePipeline(vae=pipe.vae, latent_upsampler=temporal)
+    temporal_pipe.set_progress_bar_config(disable=True)
+    with torch.no_grad():
+        extra["temporal.upsampled"] = temporal_pipe(latents=stage2_video, output_type="latent",
+                                                    return_dict=False)[0].contiguous()
+        extra["temporal.video"] = temporal_pipe(latents=stage2_video, output_type="pt",
+                                                return_dict=False)[0].float().contiguous()
+    for owner, model in (("upsampler", upsampler), ("temporal", temporal), ("decoder", decoder)):
+        for key, value in model.state_dict().items():
+            extra[f"w::{owner}.{key}"] = value.float().contiguous()
+    for key, value in first.items():
+        if key.startswith("w::") or key in ("ids", "mask", "embeds", "latents", "audio_latents", "sigmas"):
+            extra[key] = value
+    globals()["_extra"] = extra
+    return extra["video"].clone()
+
+
+def _ltx2_two_stage_pipeline(first):
+    """The LTX-2.5 tiny pipeline `_ltx2_pipeline_record` built, rebuilt from its recorded weights."""
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    from diffusers.pipelines.ltx2.pipeline_ltx2 import LTX2Pipeline
+
+    connectors = _ltx2_connectors_tiny(video_connector_attention_head_dim=16, video_hidden_dim=32,
+                                       audio_connector_attention_head_dim=8, audio_hidden_dim=16)
+    transformer = _ltx2_tiny(audio_in_channels=8, audio_out_channels=8, ff_bias=False,
+                             use_keyframes_abs_pos_embedding=True)
+    vae = _ltx2_video_vae_tiny()
+    audio_vae = _ltx2_audio_vae_tiny()
+    vocoder = _ltx2_vocoder_tiny(in_channels=32)
+    for owner, model in (("connectors", connectors), ("transformer", transformer), ("vae", vae),
+                         ("audio_vae", audio_vae), ("vocoder", vocoder)):
+        state = {key[len(owner) + 4:]: value for key, value in first.items() if key.startswith(f"w::{owner}.")}
+        model.load_state_dict(state)
+        model.eval().float()
+    scheduler = FlowMatchEulerDiscreteScheduler(
+        base_image_seq_len=1024, base_shift=0.95, invert_sigmas=False, max_image_seq_len=4096,
+        max_shift=2.05, num_train_timesteps=1000, shift=1.0, shift_terminal=None,
+        stochastic_sampling=False, time_shift_type="exponential", use_beta_sigmas=False,
+        use_dynamic_shifting=False, use_exponential_sigmas=False, use_karras_sigmas=False)
+    pipe = LTX2Pipeline(scheduler=scheduler, vae=vae, audio_vae=audio_vae, text_encoder=None, tokenizer=None,
+                        connectors=connectors, transformer=transformer, vocoder=vocoder)
+    pipe.set_progress_bar_config(disable=True)
+    return pipe
+
+
+MODELS["ltx2_two_stage"] = run_ltx2_two_stage
+
+
+def run_ltx2_real_diffusion_decoder(image, checkpoint):
+    """LTX-2.5's diffusion decoder and both latent upsamplers on the RELEASED weights, at float32 from the
+    stored bfloat16.
+
+    `--checkpoint` is a directory holding the release's `diffusion_decoder/`, `latent_upsampler/`, and
+    `temporal_latent_upsampler/`. The latent is a standard normal scaled by the decoder's per-channel
+    statistics and shifted by its mean, at the smallest grid the release's 7x7 first window admits (3
+    latent frames of 7x7, 17 frames at 224x224). The reference's FlexAttention path materializes the full
+    score matrix on the CPU, so the decoder runs with `_NeighborhoodByRows`, whose agreement with that
+    path the tiny oracle records. The upsamplers upsample the same latent. Runs under the `qwenimage`
+    oracle env. `image` unused.
+    """
+    from diffusers import LTX2VideoDiffusionDecoderModel
+    from diffusers.pipelines.ltx2.latent_upsampler import LTX2LatentUpsamplerModel
+    from diffusers.utils.torch_utils import randn_tensor
+
+    generator = torch.Generator().manual_seed(95)
+    extra = {}
+    with torch.no_grad():
+        decoder = LTX2VideoDiffusionDecoderModel.from_pretrained(
+            os.path.join(checkpoint, "diffusion_decoder"), torch_dtype=torch.float32).eval()
+        decoder.set_attn_processor(_NeighborhoodByRows(rows=56))
+        latent = torch.randn(1, 128, 3, 7, 7, generator=generator)
+        latent = latent * decoder.latents_std.view(1, -1, 1, 1, 1) + decoder.latents_mean.view(1, -1, 1, 1, 1)
+        extra["latent"] = latent.contiguous()
+        context = decoder.decoder.forward_stage_4(decoder.decoder.forward_stages_1_to_3(latent))
+        extra["context"] = context.contiguous()
+        noise = randn_tensor((1, 3, context.shape[1], context.shape[2] * 4, context.shape[3] * 4),
+                             generator=generator)
+        extra["noise"] = noise.contiguous()
+        extra["video"] = decoder.decoder.denoise(context, noise, 1).contiguous()
+        extra["latents_mean"] = decoder.latents_mean.contiguous()
+        extra["latents_std"] = decoder.latents_std.contiguous()
+        del decoder
+        small = torch.randn(1, 128, 3, 4, 6, generator=generator)
+        extra["upsampler_latent"] = small.contiguous()
+        for name in ("latent_upsampler", "temporal_latent_upsampler"):
+            model = LTX2LatentUpsamplerModel.from_pretrained(os.path.join(checkpoint, name),
+                                                             torch_dtype=torch.float32).eval()
+            extra[name] = model(small).contiguous()
+            del model
+    globals()["_extra"] = extra
+    return extra["video"].clone()
+
+
+CHECKPOINT_MODELS["ltx2_real_diffusion_decoder"] = run_ltx2_real_diffusion_decoder
 
 
 def main():

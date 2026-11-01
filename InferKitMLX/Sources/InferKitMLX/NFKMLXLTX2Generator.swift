@@ -206,13 +206,13 @@ public final class NFKMLXLTX2Generator: NSObject {
     @objc(releaseRepoForVariant:)
     public static func releaseRepo(for variant: NFKMLXLTX2Variant) -> String { variant.releaseRepo }
 
-    private let staging: NFKMLXStagedModel
+    let staging: NFKMLXStagedModel
     private let textStage: NFKMLXStage<NFKLTX2TextStage>
     private let connectorStage: NFKMLXStage<NFKMLXLTX2ConnectorsNet>
     private let pipelineStage: NFKMLXStage<NFKLTX2PipelineStage>
     private let tokenizer: NFKMLXGemmaTokenizer
-    private let video: NFKMLXLTX2VideoVAEConfiguration
-    private let audio: NFKMLXLTX2AudioVAEConfiguration
+    let video: NFKMLXLTX2VideoVAEConfiguration
+    let audio: NFKMLXLTX2AudioVAEConfiguration
     private let layerCount: Int
 
     /// The denoising steps, 30 by the reference's default. Unread where ``sigmas`` is set.
@@ -249,6 +249,9 @@ public final class NFKMLXLTX2Generator: NSObject {
 
     /// The text encoder layers a streamed load reads from the release on every pass.
     @objc public private(set) var streamedTextLayerCount = 0
+
+    /// The release's decode-side components and their switches (`NFKMLXLTX2GeneratorDecodePaths.swift`).
+    var decodePaths = NFKLTX2DecodePaths(directory: nil)
 
     init(variant: NFKMLXLTX2Variant, resident: Bool, tokenizer: NFKMLXGemmaTokenizer,
          video: NFKMLXLTX2VideoVAEConfiguration, audio: NFKMLXLTX2AudioVAEConfiguration, layerCount: Int,
@@ -340,10 +343,12 @@ public final class NFKMLXLTX2Generator: NSObject {
         }
         let textFootprint = NFKMLXStageFootprint(bytes: textNarrow.bytes, widenedBytes: textWide?.bytes,
                                                  layerBytes: textNarrow.layerBytes)
-        let pipelineFootprint = NFKMLXStageFootprint(bytes: transformer.bytes + decoderBytes,
+        let decodePathBytes = try NFKLTX2DecodePaths.footprint(directory: directoryURL)
+        let pipelineFootprint = NFKMLXStageFootprint(bytes: transformer.bytes + decoderBytes + decodePathBytes.upsamplers,
                                                      layerBytes: transformer.layerBytes)
         let plan = try NFKMLXResidencyBudget.plan(
-            [textFootprint, NFKMLXStageFootprint(bytes: connectorBytes), pipelineFootprint],
+            [textFootprint, NFKMLXStageFootprint(bytes: connectorBytes), pipelineFootprint]
+                + (decodePathBytes.decoder > 0 ? [NFKMLXStageFootprint(bytes: decodePathBytes.decoder)] : []),
             residency: residency, budget: budget)
         let textStreamed = plan.streams(0)
             ? Set(plan.heldLayers(0, of: textFootprint).upperBound ..< textNarrow.layerBytes.count) : []
@@ -385,6 +390,7 @@ public final class NFKMLXLTX2Generator: NSObject {
                 return NFKMLXLTX2Pipeline(transformer: net, videoDecoder: videoDecoder, videoStatistics: videoStatistics,
                                           audioDecoder: audioDecoder, audioStatistics: audioStatistics, vocoder: vocoder)
             })
+        generator.decodePaths = NFKLTX2DecodePaths(directory: directoryURL)
         generator.streamedBlockCount = streamed.count
         generator.streamedTextLayerCount = textStreamed.count
         options.reportResidency(plan.holdsStagesResident ? .resident
@@ -444,7 +450,7 @@ public final class NFKMLXLTX2Generator: NSObject {
         try NFKMLXBuildHolds.keeping {
             let directory = try NFKMLXReleaseDownload.directory(repo: repo ?? variant.releaseRepo, revision: revision,
                                                                 cacheDirectoryURL: cacheDirectoryURL,
-                                                                components: releaseComponents)
+                                                                components: releaseComponents(for: variant))
             let generator = try generator(directoryURL: directory, residency: residency)
             guard generator.variant == variant else {
                 throw NFKMLXError.unsupportedConfiguration(
@@ -491,16 +497,12 @@ public final class NFKMLXLTX2Generator: NSObject {
     public func clip(forPrompt prompt: String, negativePrompt: String? = nil, frames: Int = 121, width: Int = 768,
                      height: Int = 512, seed: UInt64 = 0,
                      onStep: ((Int) -> Void)? = nil) throws -> (video: MLXArray, audio: MLXArray) {
-        let grid = NFKMLXLTX2Pipeline.grid(frames: frames, width: width, height: height, frameRate: frameRate,
-                                           video: video, audio: audio)
-        guard frames >= 1, grid.height > 0, grid.width > 0 else {
-            throw NFKMLXError.unsupportedConfiguration("a clip is at least one frame of 32×32 pixels")
-        }
         let videoGuidance = guidance(textScale: guidance)
         let audioGuidanceScales = guidance(textScale: audioGuidance)
         let guides = guidance > 1 || audioGuidance > 1
         let prompts = (guides ? [tokens(negativePrompt ?? "")] : []) + [tokens(prompt)]
         return try staging.exclusively {
+            try decodePaths.verifyAvailable()
             let states = try staging.with(textStage) { stage -> [MLXArray] in
                 let states = prompts.map { stage.states($0) }
                 eval(states)
@@ -513,25 +515,17 @@ public final class NFKMLXLTX2Generator: NSObject {
             }
             let result = try staging.with(pipelineStage) { stage -> [MLXArray] in
                 let pipeline = stage.pipeline
-                let key = MLXRandom.key(seed)
-                let (videoKey, audioKey) = MLXRandom.split(key: key)
-                let videoNoise = MLXRandom.normal(
-                    [1, grid.frames * grid.height * grid.width, pipeline.transformer.config.inChannels], key: videoKey)
-                let audioNoise = MLXRandom.normal(
-                    [1, grid.audioFrames, pipeline.transformer.config.audioInChannels], key: audioKey)
-                let dtype = pipeline.transformer.projIn.weight.dtype
-                let (videoLatents, audioLatents) = try pipeline.denoise(
-                    video: videoNoise, audio: audioNoise, text: streams[0].asType(dtype),
-                    audioText: streams[1].asType(dtype), frames: grid.frames, height: grid.height, width: grid.width,
-                    audioFrames: grid.audioFrames, frameRate: frameRate, steps: steps, videoGuidance: videoGuidance,
-                    audioGuidance: audioGuidanceScales, perturbedBlocks: perturbedBlocks, schedule: schedule,
-                    sigmas: sigmas?.map(\.floatValue), onStep: onStep)
-                let clip = MLX.clip(pipeline.decodeVideo(videoLatents, frames: grid.frames, height: grid.height,
-                                                         width: grid.width)[0] / 2 + 0.5, min: 0, max: 1)
+                let (latent, audioLatents) = try sampleLatents(
+                    pipeline, streams: streams, frames: frames, width: width, height: height, seed: seed,
+                    videoGuidance: videoGuidance, audioGuidance: audioGuidanceScales, onStep: onStep)
+                let waveform = pipeline.decodeAudio(audioLatents)[0]
+                if decodesWithDiffusionDecoder { return [latent, waveform] }
+                let clip = MLX.clip(pipeline.decodeLatent(latent)[0] / 2 + 0.5, min: 0, max: 1)
                 eval(clip)
-                return [clip, pipeline.decodeAudio(audioLatents)[0]]
+                return [clip, waveform]
             }
-            return (result[0], result[1])
+            let clip = decodesWithDiffusionDecoder ? try diffusionDecodedClip(result[0], seed: seed) : result[0]
+            return (clip, result[1])
         }
     }
 

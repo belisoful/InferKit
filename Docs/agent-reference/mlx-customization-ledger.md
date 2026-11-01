@@ -216,6 +216,7 @@ residual or the velocity objective is known, and the working set is what rules i
 | `NFKMLXLTX2ConnectorsNet` | offline | — | public | 3.2B, trained only through the 22B transformer it conditions. |
 | `NFKMLXLTX2VideoDecoderNet`, `NFKMLXLTX2AudioDecoderNet` | offline | — | public | Decoder-only ports: generation never encodes, so neither autoencoder's reconstruction objective can be formed without its encoder. |
 | `NFKMLXLTX2VocoderNet` | offline | — | public | The objective is adversarial, and the release ships the two generators and the STFT bases (1227 tensors) with no discriminator. |
+| `NFKMLXLTX2DiffusionDecoderNet`, `NFKMLXLTX2LatentUpsamplerNet` | untrainable | — | public | Lightricks/LTX-2's `ltx-trainer` trains transformer LoRAs only and diffusers defines no objective for either; neither names a loss, a noise schedule for the decoder's stage 5, or the upsamplers' pairing of low- and high-resolution latents. |
 | `NFKMLXT5Encoder` | offline | — | internal | T5-XXL is ~19 GB at float32, the memory crux of the LTX pipeline. |
 | `NFKMLXZImageTransformerNet` | offline | — | partial | 6B, past the working set at the released precision. |
 | `NFKMLXWanTransformerNet` | offline | — | partial | The `.base` geometry is the 14B release. Wan 2.1 at 1.3B would hold, but its activation stack is unmeasured. |

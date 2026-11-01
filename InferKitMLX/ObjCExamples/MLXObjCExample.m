@@ -1836,6 +1836,20 @@
 	XCTAssertNotNil(NFKMLXLTX2ParameterKey.spatioTemporalGuidanceScale);
 }
 
+// LTX-2.5's decode-side paths: the generator's switches and the request keys that set them per request.
+- (void)testLTX25DecodePathsAreReachable
+{
+	for (NSString *selector in @[ @"setDecodesWithDiffusionDecoder:", @"setRefinesUpsampled:", @"setUpsamplesTemporally:",
+	                              @"setRefinementSigmas:", @"setRefinementNoiseScale:", @"setTilesDiffusionDecode:",
+	                              @"hasDiffusionDecoder", @"hasSpatialUpsampler", @"hasTemporalUpsampler",
+	                              @"outputFrameRate" ]) {
+		XCTAssertTrue([NFKMLXLTX2Generator instancesRespondToSelector:NSSelectorFromString(selector)], @"%@", selector);
+	}
+	XCTAssertEqualObjects(NFKMLXLTX2ParameterKey.diffusionDecode, @"NFKMLXLTX2ParameterDiffusionDecode");
+	XCTAssertEqualObjects(NFKMLXLTX2ParameterKey.twoStageRefinement, @"NFKMLXLTX2ParameterTwoStageRefinement");
+	XCTAssertEqualObjects(NFKMLXLTX2ParameterKey.temporalUpsampling, @"NFKMLXLTX2ParameterTemporalUpsampling");
+}
+
 // Every shipped model runs from Objective-C as a backend: each model class answers its backend factories,
 // the generators and model objects wrap themselves as backends, and every name is registered.
 - (void)testEveryModelReachesObjectiveCAsABackend
