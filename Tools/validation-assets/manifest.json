@@ -5645,6 +5645,10 @@
         "duration_head/config.json",
         "duration_head/diffusion_pytorch_model.safetensors"
       ],
+      "config": {
+        "IK_VAL_LTX2_5_DURATION_HEAD": "duration_head",
+        "IK_PARITY_LTX2_REAL_DURATION_HEAD": "reference/ltx2-real-duration-head.safetensors"
+      },
       "note": "LTX-2.5's duration head (3.8 MB, gated). IK_VAL_LTX2_5_DURATION_HEAD is the duration_head/ folder; IK_PARITY_LTX2_REAL_DURATION_HEAD is `run_reference.py ltx2_real_duration_head --checkpoint <that folder>` (ltxtrain env)."
     },
     {
@@ -5664,6 +5668,10 @@
         "prompt_enhancer/model-00002-of-00003.safetensors",
         "prompt_enhancer/model-00003-of-00003.safetensors"
       ],
+      "config": {
+        "IK_VAL_LTX2_5_PROMPT_ENHANCER": "",
+        "IK_PARITY_LTX2_REAL_PROMPT_ENHANCER": "reference/ltx2-real-prompt-enhancer.safetensors"
+      },
       "note": "LTX-2.5's prompt enhancer, a Gemma 4 E2B (9.5 GB bf16, gated), whose KV-shared layers carry no k/v projections. IK_VAL_LTX2_5_PROMPT_ENHANCER is the parent of processor/ and prompt_enhancer/; IK_PARITY_LTX2_REAL_PROMPT_ENHANCER is `run_reference.py ltx2_real_prompt_enhancer --checkpoint <that parent>` (ltxtrain env, about 30 GB at float32: run under LMC)."
     }
   ],
