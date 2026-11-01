@@ -35,15 +35,23 @@ final class NFKMLXRVMClipBackendTests: XCTestCase {
 
     func testTheStateCarriesFromFrameToFrame() throws {
         try requireMLXRuntime()
+        // Random weights can clamp alpha to zero everywhere, so the recurrence is read on the
+        // foreground, whose residual onto the frame keeps it off the clamp. Seeded so the weights do
+        // not depend on suite order; this seed's alpha is off the clamp, so the first-frame check on it
+        // discriminates.
+        NFKMLXRandom.seed(15)
         let net = NFKMLXRVMNet(.tiny)
         let still = NFKMLXRVMTests.frame(height: 16, width: 16, seed: 3)
-        let clip = NFKMLXRVM.matteClip([still, still], net: net, output: .alpha)
-        XCTAssertEqual(clip.count, 2)
-        XCTAssertEqual(clip[0].shape, [16, 16, 3])
-        XCTAssertNotEqual(clip[0].asArray(Float.self), clip[1].asArray(Float.self),
+        let alpha = NFKMLXRVM.matteClip([still, still], net: net, output: .alpha)
+        let foreground = NFKMLXRVM.matteClip([still, still], net: net, output: .foreground)
+        XCTAssertEqual(alpha.count, 2)
+        XCTAssertEqual(alpha[0].shape, [16, 16, 3])
+        XCTAssertNotEqual(foreground[0].asArray(Float.self), foreground[1].asArray(Float.self),
                           "the second frame reads the state the first left")
-        let first = net.matte(still)[0..., 0..., 3]
-        XCTAssertEqual(clip[0][0..., 0..., 0].asArray(Float.self), first.asArray(Float.self),
+        let first = net.matte(still)
+        XCTAssertEqual(alpha[0][0..., 0..., 0].asArray(Float.self), first[0..., 0..., 3].asArray(Float.self),
+                       "the first frame starts from the empty state, as a single image does")
+        XCTAssertEqual(foreground[0].asArray(Float.self), first[0..., 0..., 0 ..< 3].asArray(Float.self),
                        "the first frame starts from the empty state, as a single image does")
     }
 
