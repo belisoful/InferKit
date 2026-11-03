@@ -31,7 +31,7 @@ enum NFKMLXCatalogVideo {
                 try NFKMLXSAM2.videoBackend(variant: release.variant, release: release.release, weightsURL: weightsURL)
             }
         }
-        for release in wanAdditionalReleases {
+        for release in wanAdditionalReleases + wanExpertReleases {
             NFKMLXGenerationBackend.registerDirectoryModel(release.name) {
                 try NFKMLXWanVideoGenerator.backend(directoryURL: $0)
             }
@@ -199,7 +199,7 @@ enum NFKMLXCatalogVideo {
     // MARK: - Video generation
 
     static var generators: [NFKMLXCatalogEntry] {
-        [ltxVideo] + ltx2Entries + wanEntries + wanAnimateEntries
+        [ltxVideo] + ltx2Entries + wanEntries + wanExpertEntries + wanAnimateEntries
     }
 
     /// The options a text-to-video generator reads.
@@ -363,6 +363,43 @@ enum NFKMLXCatalogVideo {
                                                 precisionStage: "transformer")
             }
             return entry
+        }
+    }
+
+    /// The Wan 2.2 A14B releases, each two 14B experts that split the schedule at the release's boundary.
+    static let wanExpertReleases: [NFKMLXCatalogImage.GeneratorRelease] = [
+        NFKMLXCatalogImage.GeneratorRelease(name: "wan2.2-t2v-a14b", repository: NFKMLXWanVideoGenerator.textToVideoExpertsRepo,
+                                            displayName: "Wan 2.2 T2V A14B", license: .apache2()),
+        NFKMLXCatalogImage.GeneratorRelease(name: "wan2.2-i2v-a14b", repository: NFKMLXWanVideoGenerator.imageToVideoExpertsRepo,
+                                            displayName: "Wan 2.2 I2V A14B", license: .apache2()),
+    ]
+
+    static var wanExpertEntries: [NFKMLXCatalogEntry] {
+        wanExpertReleases.map { release in
+            let imageToVideo = release.name == "wan2.2-i2v-a14b"
+            let inputs = imageToVideo
+                ? [NFKMLXCatalogImage.imageInput("The clip's first frame, resized to the clip's size.", title: "First frame"),
+                   .input(NFKMLXVideoInputKey.lastImage, title: "Last frame",
+                          help: "The clip's last frame, resized to the clip's size.")]
+                    + promptInputs
+                : promptInputs
+            return NFKMLXCatalogImage.model(
+                release.name, release.displayName, family: "wan-a14b",
+                summary: imageToVideo
+                    ? "Two diffusion transformers that film a clip from a first frame and a prompt, one for the noisy steps and one for the rest."
+                    : "Two diffusion transformers that film a clip from a prompt, one for the noisy steps and one for the rest.",
+                tasks: [NFKModelTaskVideoGeneration],
+                inputs: inputs,
+                outputs: [clipOutput("The generated clip as a QuickTime movie.")],
+                parameters: videoOptions(frames: 81, width: 832, height: 480, framesPerSecond: 16,
+                                         frameRateHelp: "The frame rate the clip is written at.", steps: 50, guidance: 5)
+                    + [.option(NFKMLXGenerationParameterKey.lowNoiseGuidanceScale, title: "Low-noise guidance",
+                               help: "The guidance weight of the expert that runs the later steps; the guidance weight when absent.",
+                               defaultValue: nil, minimum: 0)],
+                license: release.license,
+                source: NFKMLXCatalogImage.hubRelease(release.repository,
+                                                      components: NFKMLXWanVideoGenerator.expertReleaseComponents),
+                residencies: NFKMLXCatalogImage.streamedStageResidencies)
         }
     }
 

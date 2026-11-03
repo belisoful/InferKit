@@ -221,6 +221,10 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
             assertPorts(name, inputs: NFKMLXWanVideoGenerator.backendInputKeys,
                         parameters: NFKMLXWanVideoGenerator.backendParameterKeys, outputs: [NFKOutputVideo])
         }
+        assertPorts("wan2.2-t2v-a14b", inputs: NFKMLXWanVideoGenerator.backendInputKeys,
+                    parameters: NFKMLXWanVideoGenerator.expertParameterKeys, outputs: [NFKOutputVideo])
+        assertPorts("wan2.2-i2v-a14b", inputs: NFKMLXWanVideoGenerator.imageToVideoInputKeys,
+                    parameters: NFKMLXWanVideoGenerator.expertParameterKeys, outputs: [NFKOutputVideo])
         let sam2VideoNames = [NFKMLXSAM2.videoModelName]
             + NFKMLXCatalogImage.sam2AdditionalReleases.map(NFKMLXCatalogVideo.sam2VideoName)
         for name in sam2VideoNames {
