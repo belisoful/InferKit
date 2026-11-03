@@ -197,6 +197,21 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertEqual(decoded.shape, [1, 9, 128, 192, 3])
     }
 
+    // Docs/examples.md: Wan 2.2 T2V-A14B and I2V-A14B. The generator needs a release directory; the
+    // test-dev releases measure the two experts end to end (NFKMLXWanExpertsTests).
+    func testExampleWan22Experts() throws {
+        try requireMLXRuntime()
+        XCTAssertThrowsError(try NFKMLXWanVideoGenerator.generator(
+            directoryURL: URL(fileURLWithPath: "/nonexistent-wan-a14b"), residency: .automatic, precision: .checkpoint,
+            quantizationBits: 4))
+        for selector in ["framesForPrompt:image:lastImage:negativePrompt:frames:width:height:seed:error:",
+                         "addAdapterAtURL:scale:expert:error:", "setLowNoiseGuidance:", "hasExperts", "isImageToVideo"] {
+            XCTAssertTrue(NFKMLXWanVideoGenerator.instancesRespond(to: NSSelectorFromString(selector)), selector)
+        }
+        XCTAssertEqual(NFKMLXWanVideoGenerator.imageToVideoExpertsRepo, "Wan-AI/Wan2.2-I2V-A14B-Diffusers")
+        XCTAssertEqual(NFKMLXWanExpert.lowNoise.rawValue, 1)
+    }
+
     // Docs/examples.md: Wan 2.2 Animate. The generator needs the release directory; the tiny
     // configuration stands in for the 14B transformer, whose release
     // NFKMLXWanAnimate.loadWeights(into:fromDirectory:precision:) reads (NFKMLXWanAnimateTests).

@@ -1810,6 +1810,33 @@
 	CGImageRelease(plate);
 }
 
+// Docs/examples.md: Wan 2.2 T2V-A14B and I2V-A14B. One generator reads both releases; the image-to-video
+// release starts the clip from NFKInputImage, and a Wan 2.2 LoRA merges into one expert:
+//   NFKMLXWanVideoGenerator *i2v = [NFKMLXWanVideoGenerator generatorWithDirectoryURL:dir
+//                                      residency:NFKMLXResidencyAutomatic precision:NFKMLXWeightPrecisionCheckpoint
+//                                      quantizationBits:4 error:&error];
+//   NSArray *frames = [i2v framesForPrompt:@"..." image:first lastImage:NULL negativePrompt:nil
+//                                   frames:81 width:832 height:480 seed:0 error:&error];
+- (void)testObjectiveCReachesWan22Experts
+{
+	XCTAssertTrue([NFKMLXWanVideoGenerator respondsToSelector:NSSelectorFromString(
+		@"generatorWithDirectoryURL:residency:precision:quantizationBits:error:")]);
+	XCTAssertTrue([NFKMLXWanVideoGenerator respondsToSelector:NSSelectorFromString(
+		@"backendWithDirectoryURL:residency:precision:quantizationBits:error:")]);
+	for (NSString *selector in @[ @"framesForPrompt:image:lastImage:negativePrompt:frames:width:height:seed:error:",
+								  @"addAdapterAtURL:scale:expert:error:", @"lowNoiseGuidance", @"setLowNoiseGuidance:",
+								  @"hasExperts", @"isImageToVideo", @"quantizationBits", @"streamedLayerCount" ]) {
+		XCTAssertTrue([NFKMLXWanVideoGenerator instancesRespondToSelector:NSSelectorFromString(selector)], @"-%@", selector);
+	}
+	XCTAssertEqualObjects(NFKMLXWanVideoGenerator.textToVideoExpertsRepo, @"Wan-AI/Wan2.2-T2V-A14B-Diffusers");
+	XCTAssertEqualObjects(NFKMLXGenerationParameterKey.lowNoiseGuidanceScale, @"NFKMLXParameterLowNoiseGuidanceScale");
+	XCTAssertEqualObjects(NFKMLXVideoInputKey.lastImage, @"NFKMLXInputLastImage");
+	XCTAssertNotEqual(NFKMLXWanExpertHighNoise, NFKMLXWanExpertLowNoise);
+	[NFKMLXReferenceModels registerAll];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"wan2.2-t2v-a14b"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"wan2.2-i2v-a14b"]);
+}
+
 // Docs/examples.md: Wan 2.2 Animate. The generator assembles a diffusers release directory and animates a
 // reference image with a driving clip; its backend reads NFKInputImage and NFKInputVideo:
 //   NFKMLXWanAnimateGenerator *animator = [NFKMLXWanAnimateGenerator generatorWithDirectoryURL:dir

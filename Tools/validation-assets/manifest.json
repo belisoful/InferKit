@@ -3313,6 +3313,58 @@
       "note": "VGG-16 with torchvision's ImageNet weights (timm/vgg16.tv_in1k, BSD-3-Clause), ~553 MB float32. The perceptual loss network of the Cosmos Tokenizer post-training objective: only `features.*` (the 13 convolutions, ~58 MB) is read. The objective oracle loads this same file into torchvision's vgg16."
     },
     {
+      "key": "WAN22_T2V_A14B",
+      "repo": "Wan-AI/Wan2.2-T2V-A14B-Diffusers",
+      "revision": "5be7df9619b54f4e2667b2755bc6a756675b5cd7",
+      "directory": "wan22-t2v-a14b-diffusers",
+      "files": [
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "transformer/config.json",
+        "transformer/diffusion_pytorch_model.safetensors.index.json",
+        "transformer_2/config.json",
+        "transformer_2/diffusion_pytorch_model.safetensors.index.json",
+        "text_encoder/config.json",
+        "text_encoder/model.safetensors.index.json",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.safetensors",
+        "tokenizer/spiece.model",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_WAN22_T2V_A14B": ""
+      },
+      "note": "Wan 2.2 T2V-A14B in the diffusers layout (about 126 GB whole, Apache-2.0): two 14B experts at float32 (57 GB each) that split the schedule at boundary_ratio 0.875, umT5-XXL, and the Wan 2.1 VAE. Only the small files and the VAE (0.5 GB) are fetched; the experts are held by shape under shapes/wan22-t2v-a14b-transformer and -transformer-2. The end-to-end parity runs on a test-dev release, the release's own layout, keys and stored types at a small geometry with seeded random weights: Tools/wan22-a14b-testdev/make_testdev.py --release <this directory> --out <dir> -> IK_VAL_WAN22_T2V_A14B_TESTDEV. Record: run_reference.py wan22_a14b_pipeline --checkpoint <test-dev dir> -> IK_PARITY_WAN22_T2V_A14B_PIPELINE, under the wananimate oracle env."
+    },
+    {
+      "key": "WAN22_I2V_A14B",
+      "repo": "Wan-AI/Wan2.2-I2V-A14B-Diffusers",
+      "revision": "596658fd9ca6b7b71d5057529bbf319ecbc61d74",
+      "directory": "wan22-i2v-a14b-diffusers",
+      "files": [
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "transformer/config.json",
+        "transformer/diffusion_pytorch_model.safetensors.index.json",
+        "transformer_2/config.json",
+        "transformer_2/diffusion_pytorch_model.safetensors.index.json",
+        "text_encoder/config.json",
+        "text_encoder/model.safetensors.index.json",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.safetensors",
+        "tokenizer/spiece.model",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_WAN22_I2V_A14B": ""
+      },
+      "note": "Wan 2.2 I2V-A14B in the diffusers layout (about 126 GB whole, Apache-2.0): two 14B experts at float32 reading 36 channels (noise, a mask, and the first frame's latents) that split the schedule at boundary_ratio 0.9, umT5-XXL, and the Wan 2.1 VAE; no image encoder. Only the small files and the VAE (0.5 GB) are fetched; the experts are held by shape under shapes/wan22-i2v-a14b-transformer and -transformer-2. Test-dev: Tools/wan22-a14b-testdev/make_testdev.py --release <this directory> --out <dir> -> IK_VAL_WAN22_I2V_A14B_TESTDEV. Record: run_reference.py wan22_a14b_pipeline --checkpoint <test-dev dir> -> IK_PARITY_WAN22_I2V_A14B_PIPELINE, under the wananimate oracle env."
+    },
+    {
       "key": "WAN_ANIMATE",
       "repo": "Wan-AI/Wan2.2-Animate-2-14B-Diffusers",
       "directory": "wan-animate-2-14b-diffusers",

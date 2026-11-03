@@ -683,6 +683,39 @@ arithmetic as before.
   still at parity. The Wan text-to-video path is complete.
   Customization of the Wan VAE: untrainable here. Wan-Video/Wan2.1 (`wan/modules/vae.py`) and Wan2.2
   (`wan/modules/vae2_2.py`) define the network with no objective and no training script.
+- Wan 2.2 T2V-A14B and I2V-A14B (`NFKMLXWanVideoGenerator`, `wan2.2-t2v-a14b` / `wan2.2-i2v-a14b`,
+  `Wan-AI/Wan2.2-T2V-A14B-Diffusers` @5be7df9 and `Wan-AI/Wan2.2-I2V-A14B-Diffusers` @596658f, Apache-2.0)
+  — two `WanTransformer3DModel` experts at the 14B geometry (40 × 128 heads, 40 blocks), each 57 GB at
+  float32, with umT5-XXL and the Wan 2.1 autoencoder. Reference: diffusers 0.40 `WanPipeline` and
+  `WanImageToVideoPipeline` with `transformer_2` and `boundary_ratio`.
+  - A step whose timestep is at least `boundary_ratio · 1000` (875 for T2V, 900 for I2V) runs on
+    `transformer/` at `guidance_scale`, a later one on `transformer_2/` at `guidance_scale_2`
+    (`lowNoiseGuidance`, defaulting to the first). Guidance applies on both only where `guidance_scale`
+    is above 1. `NFKWanDenoiser` holds the latent and the UniPC history between steps, so the generator
+    loads the low-noise expert when the schedule reaches it.
+  - I2V-A14B reads 36 channels (noise, a 4-channel mask, 16 latent channels) and predicts 16
+    (`NFKMLXWanConfiguration.outChannels`); it has no image encoder (`image_dim` null). The condition is
+    the autoencoder's mean of `[image, zeros…]` (or `[image, zeros…, last image]`), standardized; the mask
+    repeats pixel frame 0 four times and is `[4, F', H', W']`. The image is resized to the clip's size by
+    PIL's 8-bit Lanczos (`VaeImageProcessor`'s `resample="lanczos"`), added to `NFKMLXPILResample`.
+  - Each expert is a stage of its own after the autoencoder's (`[text, vae, high, low]`); packed
+    (`quantizationBits` 2 to 8, block by block from the float32 store, `NFKMLXWanBlockedLoad`, shared with
+    Animate) or streamed per block where the plan cannot hold it. A packed or streamed expert merges a LoRA
+    only as it loads, so `addAdapter(at:scale:expert:)` releases a loaded one.
+  - Measured on test-dev releases (`Tools/wan22-a14b-testdev/make_testdev.py`: the release's configs with
+    2 heads × 24, 2 blocks, ffn 96, text 32, umT5 2 layers at the 256,384 vocabulary, VAE base 8; the two
+    experts on different seeds), `run_reference.py wan22_a14b_pipeline` (wananimate env), 9 frames of
+    32 × 48, six steps, guidance 4 and 3: the reference runs steps 0 to 1 on the high-noise expert in both
+    releases. T2V final latents 1.0000000, clip 1.0000000; I2V Lanczos resize byte-exact, condition
+    0.99999992, final latents 0.99999998 (1.0000000 with a last frame), clip 1.0000000. A streamed block
+    and a staged expert compute exactly as held ones; an 8-bit pack holds the latents above 0.999.
+  - The first measurement read 0.99994. Per-step records (`step.<i>`, `call.<k>`) put it on the
+    low-noise expert's first step (one forward at 0.999), and the expert matched at a timestep one unit
+    higher: diffusers 0.40 builds UniPC's flow sigmas differently from 0.36 (see
+    `NFKMLXUniPCScheduler`), which the port now follows. The Wan 2.1 pipeline and UniPC records were
+    regenerated under diffusers 0.40.
+  - Released experts held by shape: `wan22-{t2v,i2v}-a14b-transformer{,-2}` (`IK_SHAPES_ROOT`). No
+    released-weight run: a release is 126 GB.
 - `NFKMLXWanLoRA` — released Wan adapters merged into `NFKMLXWanTransformerNet` or `NFKMLXWanAnimateNet`,
   measured against diffusers' `WanLoraLoaderMixin.lora_state_dict` → `load_lora_into_transformer` →
   `fuse_lora` (`run_reference.py wan_lora`, the `ltxtrain` env, which carries PEFT). Three layouts:

@@ -529,6 +529,8 @@ The figures have three limits:
 
 - ``NFKMLXLTXVideoGenerator``
 - ``NFKMLXWanVideoGenerator``
+- ``NFKMLXWanExpert``
+- ``NFKMLXVideoInputKey``
 - ``NFKMLXLTXPipeline``
 - ``NFKMLXLTXVideoVAE``
 - ``NFKMLXLTXVideoVAENet``

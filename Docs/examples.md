@@ -3358,7 +3358,8 @@ stages built that way.
 A frame count rounds down to one more than a multiple of the autoencoder's temporal compression (8 for
 LTX-Video, 4 for Wan), and a side to a multiple of its spatial compression. Both negative prompts
 default to empty, and guidance above 1 guides against it. The Wan 2.1 14B transformer is 28 GB on its
-own, beyond a 32 GB machine in any placement.
+own; `generator(directoryURL:residency:precision:quantizationBits:)` packs a 14B transformer's blocks as
+they load, or streams the blocks a machine cannot hold.
 
 Released Wan LoRAs (`NFKMLXWanLoRA`) merge into the transformer: the PEFT layout diffusers writes, the
 original Wan layout most releases publish (`diffusion_model.…`, with `.alpha` and `.diff_b` bias deltas),
@@ -3376,6 +3377,37 @@ wan.removeAdapters()
 <!-- objc-check: given NFKMLXWanVideoGenerator *wan; NSURL *styleLoRA; -->
 ```objc
 BOOL merged = [wan addAdapterAtURL:styleLoRA scale:0.8f error:&error];
+```
+
+Wan 2.2 T2V-A14B and I2V-A14B split the schedule between two 14B transformers: the high-noise expert
+(`transformer/`) runs the steps at or above the release's boundary (timestep 875 for T2V, 900 for I2V) and
+the low-noise expert (`transformer_2/`) the rest, each at its own guidance scale. The same generator reads
+both releases. Each expert is a stage of its own, so a machine that cannot hold both loads the low-noise
+expert when the schedule reaches it. Both releases store their experts at float32 (57 GB each), so a
+packed load is the practical one. I2V-A14B starts the clip from an image, resized to the clip's size with
+PIL's Lanczos filter as diffusers resizes it, and ends it at a second image where one is given. A Wan 2.2
+LoRA ships as a pair of files, one per expert.
+
+```swift
+let i2v = try NFKMLXWanVideoGenerator.generator(directoryURL: i2vRelease, residency: .automatic,
+                                                precision: .checkpoint, quantizationBits: 4)
+i2v.guidance = 3.5
+i2v.lowNoiseGuidance = 3.5                       // the reference's guidance_scale_2
+try i2v.addAdapter(at: highNoiseLoRA, scale: 1, expert: .highNoise)
+try i2v.addAdapter(at: lowNoiseLoRA, scale: 1, expert: .lowNoise)
+let clip = try i2v.video(forPrompt: "the fox turns and runs into the trees", image: firstFrame,
+                         frames: 81, width: 832, height: 480)    // [81, 480, 832, 3] in 0…1
+```
+
+<!-- objc-check: given NSURL *i2vRelease; -->
+```objc
+NFKMLXWanVideoGenerator *i2v = [NFKMLXWanVideoGenerator generatorWithDirectoryURL:i2vRelease
+                                                                        residency:NFKMLXResidencyAutomatic
+                                                                        precision:NFKMLXWeightPrecisionCheckpoint
+                                                                 quantizationBits:4 error:&error];
+i2v.lowNoiseGuidance = @3.5;
+NSArray *frames = [i2v framesForPrompt:@"the fox turns and runs into the trees" image:firstFrame lastImage:NULL
+                        negativePrompt:nil frames:81 width:832 height:480 seed:0 error:&error];
 ```
 
 ### LTX-2 audio and video (`NFKMLXLTX2Generator`)
