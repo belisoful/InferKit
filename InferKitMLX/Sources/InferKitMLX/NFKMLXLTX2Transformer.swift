@@ -643,6 +643,20 @@ public final class NFKMLXLTX2TransformerNet: Module {
     /// nil where every block is held.
     var layerStream: NFKMLXLayerStream?
 
+    /// Whether a block's activations are recomputed from its inputs in the backward pass rather than held
+    /// from the forward one (gradient checkpointing, MLX's `checkpoint`), the trainer's
+    /// `enable_gradient_checkpointing`. A training step then holds one block's activations at a time, at the
+    /// cost of a second forward pass. The forward's values are unchanged. Off by default.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var recomputesBlocksInBackward = false
+
+    /// The type the transformer computes in: its input projection's, which a quantized build keeps at the
+    /// stored type.
+    var computeType: DType {
+        (projIn as? QuantizedLinear)?.scales.dtype ?? projIn.weight.dtype
+    }
+
     public init(_ config: NFKMLXLTX2Configuration) {
         self.config = config
         let dim = config.innerDim, audioDim = config.audioInnerDim
@@ -732,17 +746,21 @@ public final class NFKMLXLTX2TransformerNet: Module {
             prepare($0, crossTimestep: crossTimestep, gatesReadCrossSigma: gatesReadCrossSigma)
         }
         for (index, block) in transformerBlocks.enumerated() {
+            func run(_ p: Prepared, _ streams: NFKLTX2Block.Streams) -> NFKLTX2Block.Streams {
+                block(streams, text: p.text, audioText: p.audioText, temb: p.temb,
+                      audioTemb: p.audioTemb, crossScaleShift: p.crossScaleShift,
+                      audioCrossScaleShift: p.audioCrossScaleShift, crossGate: p.crossGate,
+                      audioCrossGate: p.audioCrossGate, promptModulation: p.promptModulation,
+                      audioPromptModulation: p.audioPromptModulation, videoRotary: videoRotary,
+                      audioRotary: audioRotary, crossVideoRotary: crossVideoRotary,
+                      crossAudioRotary: crossAudioRotary, textMask: p.textMask,
+                      audioTextMask: p.textMask, perturbed: p.perturbedBlocks.contains(index),
+                      keep: p.perturbationMask, crossModal: p.crossModal)
+            }
             guard let outputs = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
                 prepared.map { p in
-                    block(p.streams, text: p.text, audioText: p.audioText, temb: p.temb,
-                          audioTemb: p.audioTemb, crossScaleShift: p.crossScaleShift,
-                          audioCrossScaleShift: p.audioCrossScaleShift, crossGate: p.crossGate,
-                          audioCrossGate: p.audioCrossGate, promptModulation: p.promptModulation,
-                          audioPromptModulation: p.audioPromptModulation, videoRotary: videoRotary,
-                          audioRotary: audioRotary, crossVideoRotary: crossVideoRotary,
-                          crossAudioRotary: crossAudioRotary, textMask: p.textMask,
-                          audioTextMask: p.textMask, perturbed: p.perturbedBlocks.contains(index),
-                          keep: p.perturbationMask, crossModal: p.crossModal)
+                    recomputesBlocksInBackward && layerStream == nil
+                        ? Self.recomputed(block) { run(p, $0) }(p.streams) : run(p, p.streams)
                 }
             }, keeping: { outputs in outputs.flatMap { [$0.video, $0.audio] } }) else {
                 continue
@@ -762,6 +780,31 @@ public final class NFKMLXLTX2TransformerNet: Module {
         return prepared.map { p in
             (finish(p.streams.video, table: scaleShiftTable, embedded: p.embedded, projection: projOut),
              finish(p.streams.audio, table: audioScaleShiftTable, embedded: p.audioEmbedded, projection: audioProjOut))
+        }
+    }
+
+    /// `body` over `block` as MLX's `checkpoint` builds it (`nn.utils.checkpoint`): the block's trainable
+    /// arrays and both streams are the inputs of a custom function whose backward runs `body` again over the
+    /// same inputs, so none of the block's activations outlive its forward pass. The other inputs the block
+    /// reads (the modulation, the text, the rotary tables) depend on nothing trainable and enter as constants.
+    static func recomputed(_ block: NFKLTX2Block, _ body: @escaping (NFKLTX2Block.Streams) -> NFKLTX2Block.Streams)
+        -> (NFKLTX2Block.Streams) -> NFKLTX2Block.Streams {
+        let trainable = block.trainableParameters().flattened()
+        let keys = trainable.map(\.0)
+        let forward: ([MLXArray]) -> [MLXArray] = { arrays in
+            let held = block.trainableParameters()
+            block.update(parameters: ModuleParameters.unflattened(Array(zip(keys, arrays.prefix(keys.count)))))
+            let output = body(NFKLTX2Block.Streams(video: arrays[keys.count], audio: arrays[keys.count + 1]))
+            block.update(parameters: held)
+            return [output.video, output.audio]
+        }
+        let checkpointed = CustomFunction {
+            Forward(forward)
+            VJP { primals, cotangents in vjp(forward, primals: primals, cotangents: cotangents).1 }
+        }
+        return { streams in
+            let outputs = checkpointed(trainable.map(\.1) + [streams.video, streams.audio])
+            return NFKLTX2Block.Streams(video: outputs[0], audio: outputs[1])
         }
     }
 

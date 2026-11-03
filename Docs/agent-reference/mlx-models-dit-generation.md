@@ -389,7 +389,15 @@ arithmetic as before.
     and `applyAdapters(at:)` on a generator, which re-places them on every load of the transformer stage
     and refuses a streamed transformer. A quantized base takes `NFKMLXQuantizedLoRALinear` (QLoRA), which
     cannot merge. The reference quantizes with optimum-quanto (int8 by default in its low-VRAM recipe); the
-    port quantizes with MLX's affine groups, so the objective is measured over a float base. Tiny: the loss
+    port quantizes with MLX's affine groups, so the objective is measured over a float base. A step recomputes
+    each block's activations in the backward pass (`recomputesBlocksInBackward`, MLX's `checkpoint` built from
+    a custom function whose backward re-runs the block over its LoRA arrays and its two streams), as the
+    trainer's `enable_gradient_checkpointing` does, and runs the transformer in its weights' type, as the
+    trainer's bfloat16 autocast does; recomputation leaves every gradient bit-identical (float and 8-bit).
+    Released (`testLTX25QLoRAStepOnReleasedWeights`, `transformer_full/` at 4 bits, rank 32, 49 frames at
+    512×320 with 1024 text tokens): build 13.8 s to 11.31 GB, step peak 24.48 GB, 78.6–98.7 s a step, 214M
+    trainable parameters. Without recomputation the step peaked at 84.89 GB and swapped (428 s a step);
+    with it but the latents at float32, which promotes the whole stack, 42.92 GB. Tiny: the loss
     falls 4.54 → 3.86 over 60 steps; a release written to disk runs data adapter → 8-bit build → fine-tune
     → save → `applyAdapters` with the reloaded transformer's velocities equal to the trained one's.
 

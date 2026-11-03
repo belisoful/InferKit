@@ -286,4 +286,89 @@ final class NFKMLXLTX2TrainingTests: XCTestCase {
         XCTAssertGreaterThan(momentSimilarity, 0.99999)
         XCTAssertGreaterThan(latentSimilarity, 0.99999)
     }
+
+    // Recomputing each block in the backward pass changes no number: the loss and every adapter's gradient
+    // equal the plain backward's, over a float base and an 8-bit one.
+    func testRecomputingBlocksInBackwardKeepsTheGradients() throws {
+        for bits in [nil, 8] as [Int?] {
+            NFKMLXRandom.seed(5)
+            let net = NFKMLXLTX2TransformerNet(Self.tinyConfiguration)
+            if let bits { try NFKMLXQuantization.quantize(module: net, bits: bits, groupSize: 32) }
+            try NFKMLXLoRA.apply(to: net, rank: 4, alpha: 4) { path, _ in NFKMLXLTX2Trainable.targets(path) }
+            for (path, layer) in net.leafModules().flattened() {
+                guard let adapter = layer as? NFKMLXLoRAAdapter else { continue }
+                _ = adapter.update(parameters: ModuleParameters.unflattened(
+                    ["lora_b": MLXRandom.normal(adapter.loraB.shape, key: MLXRandom.key(UInt64(path.count))) * 0.1]))
+            }
+            let video = MLXRandom.normal([2, 18, 8]), audio = MLXRandom.normal([2, 5, 8])
+            let text = MLXRandom.normal([2, 4, 32]), audioText = MLXRandom.normal([2, 4, 16])
+            let draws = [MLXArray([Float(0.3), 0.8]), MLXArray([Float(0.6), 0.2]), MLXRandom.normal([2, 18, 8]),
+                         MLXRandom.normal([2, 5, 8]), MLXArray([Float(1), 0])]
+            func gradients() -> (Float, [String: MLXArray]) {
+                let step = valueAndGrad(model: net) { (net: NFKMLXLTX2TransformerNet, _: [MLXArray]) in
+                    [NFKMLXLTX2Objective.score(net, video: video, audio: audio, text: text, audioText: audioText,
+                                               sigma: draws[0], audioSigma: draws[1], noise: draws[2],
+                                               audioNoise: draws[3], conditioned: draws[4], frames: 3, height: 2,
+                                               width: 3, frameRate: 24)]
+                }
+                let (values, grads) = step(net, [])
+                return (values[0].item(Float.self), Dictionary(uniqueKeysWithValues: grads.flattened()))
+            }
+            net.recomputesBlocksInBackward = false
+            let (plainLoss, plain) = gradients()
+            net.recomputesBlocksInBackward = true
+            let (recomputedLoss, recomputed) = gradients()
+            XCTAssertEqual(recomputedLoss, plainLoss, "\(bits.map { "\($0)-bit" } ?? "float") loss")
+            XCTAssertEqual(Set(recomputed.keys), Set(plain.keys))
+            var worst: Float = 0
+            for (key, value) in plain {
+                worst = max(worst, maxDifference(try XCTUnwrap(recomputed[key]), value)
+                    / max(value.abs().max().item(Float.self), 1e-12))
+            }
+            print("ltx2 recomputed backward (\(bits.map { "\($0)-bit" } ?? "float")): largest relative gradient "
+                  + "difference \(worst) over \(plain.count) arrays")
+            XCTAssertLessThan(worst, 1e-5)
+        }
+    }
+
+    // One QLoRA run on LTX-2.5's released full transformer (22B) at 4 bits on this machine: the block-wise
+    // quantized build, then three steps of the reference recipe (rank 32 on every attention projection) over a
+    // 49-frame 512×320 clip's latent grid, its audio, and 1024 text tokens, with the build's memory, the peak,
+    // and each step's time printed.
+    func testLTX25QLoRAStepOnReleasedWeights() throws {
+        guard let path = config["IK_VAL_LTX2_5_TRANSFORMER_FULL"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_VAL_LTX2_5_TRANSFORMER_FULL to the directory holding LTX-2.5's transformer_full/")
+        }
+        func gigabytes(_ bytes: Int) -> String { String(format: "%.2f", Double(bytes) / 1e9) }
+        NFKMLXGPU.resetPeakMemory()
+        let buildStart = Date()
+        let net = try NFKMLXLTX2Generator.network(directoryURL: URL(fileURLWithPath: path), variant: .ltx25Full,
+                                                  quantizationBits: 4)
+        let buildSeconds = Date().timeIntervalSince(buildStart)
+        XCTAssertTrue(net.transformerBlocks[0].attn1.toQ is QuantizedLinear)
+        print("MEMORY ltx2.5-qlora build: \(String(format: "%.1f", buildSeconds)) s, active "
+              + "\(gigabytes(NFKMLXGPU.activeMemory)) GB, peak \(gigabytes(NFKMLXGPU.peakMemory)) GB")
+
+        let (frames, height, width) = (7, 10, 16)
+        let example = NFKMLXLTX2TrainingExample(
+            video: MLXRandom.normal([frames * height * width, 128], key: MLXRandom.key(1)),
+            audio: MLXRandom.normal([51, 128], key: MLXRandom.key(2)),
+            text: MLXRandom.normal([1024, 4096], key: MLXRandom.key(3)).asType(.bfloat16),
+            audioText: MLXRandom.normal([1024, 2048], key: MLXRandom.key(4)).asType(.bfloat16),
+            frames: frames, height: height, width: width, frameRate: 24)
+        NFKMLXGPU.resetPeakMemory()
+        var stepStart = Date()
+        var stepSeconds = [Double]()
+        let losses = try NFKMLXLTX2Generator.fineTune(net, examples: { _ in [example] }, steps: 3, seed: 1) { _ in
+            stepSeconds.append(Date().timeIntervalSince(stepStart))
+            stepStart = Date()
+            return true
+        }
+        print("MEMORY ltx2.5-qlora steps: losses \(losses), seconds \(stepSeconds.map { String(format: "%.1f", $0) }), "
+              + "peak \(gigabytes(NFKMLXGPU.peakMemory)) GB, trainable "
+              + "\(NFKMLXLoRA.trainableParameterCount(of: net)) parameters")
+        XCTAssertEqual(losses.count, 3)
+        XCTAssertTrue(losses.allSatisfy(\.isFinite))
+        XCTAssertTrue(net.transformerBlocks[0].attn1.toQ is NFKMLXQuantizedLoRALinear)
+    }
 }

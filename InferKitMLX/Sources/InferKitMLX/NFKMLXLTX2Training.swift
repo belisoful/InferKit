@@ -175,16 +175,21 @@ public struct NFKMLXLTX2Objective: Sendable {
     }
 
     /// The velocity predictions of `net` for `inputs`, with the trainer's cross-modal modulation and no
-    /// text mask (the connectors fill every padded position with a register).
+    /// text mask (the connectors fill every padded position with a register). The latents and the text enter
+    /// in the type of the transformer's weights, as the trainer's bfloat16 autocast runs them, so a bfloat16
+    /// base computes in bfloat16; the predictions return at float32 for the loss.
     public static func predictions(_ net: NFKMLXLTX2TransformerNet, inputs: Inputs, text: MLXArray, audioText: MLXArray,
                                    frames: Int, height: Int, width: Int, frameRate: Float)
         -> (video: MLXArray, audio: MLXArray) {
         let scale = net.config.timestepScaleMultiplier
-        return net(video: inputs.video, audio: inputs.audio, text: text, audioText: audioText,
-                   timestep: inputs.timesteps * scale, audioTimestep: inputs.audioTimesteps * scale,
-                   sigma: inputs.sigma * scale, frames: frames, height: height, width: width,
-                   audioFrames: inputs.audio.dim(1), fps: frameRate, audioSigma: inputs.audioSigma * scale,
-                   gatesReadCrossSigma: true)
+        let dtype = net.computeType
+        let (video, audio) = net(video: inputs.video.asType(dtype), audio: inputs.audio.asType(dtype),
+                                 text: text.asType(dtype), audioText: audioText.asType(dtype),
+                                 timestep: inputs.timesteps * scale, audioTimestep: inputs.audioTimesteps * scale,
+                                 sigma: inputs.sigma * scale, frames: frames, height: height, width: width,
+                                 audioFrames: inputs.audio.dim(1), fps: frameRate, audioSigma: inputs.audioSigma * scale,
+                                 gatesReadCrossSigma: true)
+        return (video.asType(.float32), audio.asType(.float32))
     }
 
     /// Scores `net` on a batch from its draws: noises it as ``inputs(video:audio:sigma:audioSigma:noise:audioNoise:conditioned:tokensPerFrame:)``
@@ -284,6 +289,9 @@ extension NFKMLXLTX2Generator {
     ///   - steps: how many updates to run; the reference's linear decay spans them.
     ///   - seed: seeds the sigmas, the noise, and the conditioning.
     ///   - clipGradientNorm: the reference clips the global norm to 1.
+    ///   - recomputesBlocksInBackward: recomputes each block's activations in the backward pass (gradient
+    ///     checkpointing), as the trainer's recipes do; on by default. A step then holds one block's
+    ///     activations at a time.
     ///   - accumulationSteps: how many batches each update averages.
     ///   - learningRateSchedule: nil uses the reference's `LinearLR` (1 to 0.1) with the reference optimizer.
     ///   - checkpoint: writes the network periodically.
@@ -305,6 +313,7 @@ extension NFKMLXLTX2Generator {
         steps: Int,
         seed: UInt64 = 0,
         clipGradientNorm: Float? = referenceGradientNorm,
+        recomputesBlocksInBackward: Bool = true,
         accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
@@ -312,6 +321,9 @@ extension NFKMLXLTX2Generator {
     ) throws -> [Float] {
         var key = MLXRandom.key(seed)
         var grid = (frames: 0, height: 0, width: 0, frameRate: Float(24))
+        let recomputed = net.recomputesBlocksInBackward
+        net.recomputesBlocksInBackward = recomputesBlocksInBackward
+        defer { net.recomputesBlocksInBackward = recomputed }
         return try NFKMLXFineTune.run(
             net,
             freezing: {

@@ -5673,6 +5673,24 @@
         "IK_PARITY_LTX2_REAL_PROMPT_ENHANCER": "reference/ltx2-real-prompt-enhancer.safetensors"
       },
       "note": "LTX-2.5's prompt enhancer, a Gemma 4 E2B (9.5 GB bf16, gated), whose KV-shared layers carry no k/v projections. IK_VAL_LTX2_5_PROMPT_ENHANCER is the parent of processor/ and prompt_enhancer/; IK_PARITY_LTX2_REAL_PROMPT_ENHANCER is `run_reference.py ltx2_real_prompt_enhancer --checkpoint <that parent>` (ltxtrain env, about 30 GB at float32: run under LMC)."
+    },
+    {
+      "key": "LTX2_5_TRANSFORMER_FULL",
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "revision": "4791a1100e0cf97f7ed5c55c12dd71dce13f9dd3",
+      "directory": "LTX-2.5-Diffusers-transformer-full",
+      "files": [
+        "transformer_full/config.json",
+        "transformer_full/diffusion_pytorch_model.safetensors.index.json",
+        "transformer_full/diffusion_pytorch_model-00001-of-00004.safetensors",
+        "transformer_full/diffusion_pytorch_model-00002-of-00004.safetensors",
+        "transformer_full/diffusion_pytorch_model-00003-of-00004.safetensors",
+        "transformer_full/diffusion_pytorch_model-00004-of-00004.safetensors"
+      ],
+      "config": {
+        "IK_VAL_LTX2_5_TRANSFORMER_FULL": ""
+      },
+      "note": "LTX-2.5's full (SFT) transformer (37.98 GB bf16, gated), the one Lightricks' trainer fine-tunes. IK_VAL_LTX2_5_TRANSFORMER_FULL is the parent of transformer_full/; NFKMLXLTX2TrainingTests.testLTX25QLoRAStepOnReleasedWeights builds it at 4 bits and runs three QLoRA steps (about 5 min, peak 24.5 GB: run under LMC)."
     }
   ],
   "oracle_environments": {

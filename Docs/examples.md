@@ -5705,7 +5705,9 @@ shifted-logit-normal sampler, the velocity `noise − clean` held to its target 
 video and audio summed. The default is the trainer's text-to-video recipe (`t2v_lora.yaml`), where video and
 audio draw their own sigmas; `NFKMLXLTX2Objective.textToVideo` shares one and conditions the first frame for
 one clip in ten. The optimizer is the trainer's: AdamW at 1e-4 with the gradient norm clipped to 1, under a
-linear decay to a tenth of the rate. A batch holds clips of the same latent grid and audio length.
+linear decay to a tenth of the rate. A batch holds clips of the same latent grid and audio length. Each
+block's activations are recomputed in the backward pass, as the trainer's recipes do, so a 4-bit step on the
+22B transformer fits a 32 GB Mac: about 24.5 GB at its peak and 80 seconds for a 49-frame 512×320 clip.
 
 ### Resuming, validating, and training in half precision
 
