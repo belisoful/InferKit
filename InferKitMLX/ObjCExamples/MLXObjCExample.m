@@ -1811,7 +1811,8 @@
 	}
 	for (NSString *selector in @[ @"inferenceBackend", @"framesForReferenceImage:drivingFrames:drivingFramesPerSecond:prompt:negativePrompt:seed:error:",
 								  @"setSegmentLength:", @"setCarriedFrames:", @"setSteps:", @"setGuidance:", @"streamedLayerCount",
-								  @"quantizationBits", @"holdsStagesResident" ]) {
+								  @"quantizationBits", @"holdsStagesResident", @"addAdapterAtURL:scale:error:",
+								  @"removeAdapters", @"adapterCount" ]) {
 		XCTAssertTrue([NFKMLXWanAnimateGenerator instancesRespondToSelector:NSSelectorFromString(selector)], @"-%@", selector);
 	}
 	XCTAssertEqualObjects(NFKMLXGenerationParameterKey.segmentLength, @"NFKMLXParameterSegmentLength");

@@ -18,11 +18,13 @@ import MLXNN
 ///
 /// @discussion Three layouts are read:
 /// - **diffusers (PEFT):** keys `transformer.<module path>.lora_A.weight` / `.lora_B.weight`, an optional
-///   `.lora_B.bias`, and the adapter's `r` and `lora_alpha` in the file's `lora_adapter_metadata`. A file
+///   `.lora_B.bias`, and the adapter's `transformer.r` and `transformer.lora_alpha` in the file's
+///   `lora_adapter_metadata`. A file
 ///   without that metadata scales each layer by 1, the PEFT convention for `alpha == rank`.
 /// - **original Wan:** keys `diffusion_model.<original name>` with `.lora_down.weight` / `.lora_up.weight`
 ///   and a scalar `.alpha`, or `.lora_A.weight` / `.lora_B.weight` without one, a `.diff_b` bias delta, and
-///   a `.diff` full-weight delta on the head. The reference drops the normalizations' `.diff` keys, which
+///   a `.diff` full-weight delta on the head. The reference reads an `.alpha` on the blocks' layers alone and
+///   refuses a file with one elsewhere, and so does the merge. The reference drops the normalizations' `.diff` keys, which
 ///   the releases store as zeros, and every other `.diff`, and drops a time-projection bias delta that comes
 ///   without its weights; the merge drops the same keys and counts them.
 /// - **musubi-tuner:** keys `lora_unet_blocks_<n>_<layer>` with `.lora_down.weight`, `.lora_up.weight`, and
@@ -156,6 +158,10 @@ public enum NFKMLXWanLoRA {
                 throw NFKMLXError.loRANotApplicable("the adapter's \(key) is not a LoRA tensor this reader knows")
             }
             if layout == .original {
+                if part == "alpha" && !layer.hasPrefix("blocks.") {
+                    throw NFKMLXError.loRANotApplicable(
+                        "the adapter states an alpha for \(layer), which the reference reads on the blocks' layers alone")
+                }
                 let normDiff = (part == "diff" || part == "diff_b") && layer.contains("norm")
                 let orphanTimeProjection = layer.hasPrefix("time_projection") && !hasTimeProjectionWeight
                 if normDiff || orphanTimeProjection || (part == "diff" && layer != "head.head") {
@@ -289,9 +295,13 @@ public enum NFKMLXWanLoRA {
 
     private static func peftConfiguration(_ metadata: [String: String]) throws -> PEFTConfiguration {
         guard let text = metadata["lora_adapter_metadata"] else { return PEFTConfiguration() }
-        guard let json = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+        guard let saved = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
             throw NFKMLXError.loRANotApplicable("the adapter's lora_adapter_metadata is not an object")
         }
+        // diffusers saves the configuration under the component's prefix and reads back those keys alone.
+        let json = Dictionary(uniqueKeysWithValues: saved.compactMap { key, value in
+            key.hasPrefix("transformer.") ? (String(key.dropFirst("transformer.".count)), value) : nil
+        })
         if (json["use_dora"] as? NSNumber)?.boolValue == true {
             throw NFKMLXError.loRANotApplicable("the adapter is a DoRA, which merges differently from a LoRA")
         }

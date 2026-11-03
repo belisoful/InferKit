@@ -611,6 +611,33 @@ arithmetic as before.
   still at parity. The Wan text-to-video path is complete.
   Customization of the Wan VAE: untrainable here. Wan-Video/Wan2.1 (`wan/modules/vae.py`) and Wan2.2
   (`wan/modules/vae2_2.py`) define the network with no objective and no training script.
+- `NFKMLXWanLoRA` — released Wan adapters merged into `NFKMLXWanTransformerNet` or `NFKMLXWanAnimateNet`,
+  measured against diffusers' `WanLoraLoaderMixin.lora_state_dict` → `load_lora_into_transformer` →
+  `fuse_lora` (`run_reference.py wan_lora`, the `ltxtrain` env, which carries PEFT). Three layouts:
+  - PEFT (`transformer.<path>.lora_A` / `.lora_B`, optional `.lora_B.bias`). Without the file's
+    `lora_adapter_metadata` the scaling is 1 (`alpha == rank`); with it (keys under `transformer.`, the
+    prefix diffusers saves them under and the only ones it reads back), `lora_alpha / r`, the
+    `rank_pattern` / `alpha_pattern` keys matched against the path's end, `alpha / √r` under rsLoRA.
+  - Original Wan (`diffusion_model.<name>`, `lora_down` / `lora_up` + `.alpha`, or `lora_A` / `lora_B`
+    without one; `.diff_b` bias deltas). The reference folds `alpha / rank` into the down and up weights
+    in the FILE's precision, the factor split so the up weight takes a power of two, before the fuse;
+    the merge rounds the same way, which matters for the bfloat16 files most releases publish. The
+    head's `.diff` is a full weight delta (the reference spells it as `lora_A` against an identity
+    `lora_B`). The reference drops the normalizations' `.diff` (stored as zeros), every other block
+    `.diff`, and a `time_projection` bias delta that arrives without its weights (AccVideo); the merge
+    drops the same keys and reports them. The reference reads an `.alpha` on the blocks' layers alone and
+    refuses a file that states one on the head, the embedders, or the time projection; so does the merge.
+  - musubi-tuner (`lora_unet_blocks_<n>_<layer>`, alpha required), attention and feed-forward only.
+  PEFT merges a delta as `up · down · scaling` formed in float32 and rounded to the ADAPTER's type
+  before it is added to the weight, and a bias delta likewise; two adapters fuse one after the other.
+  A DoRA file is refused: the reference silently drops `dora_scale` and loads the rest as a plain LoRA.
+  diffusers maps the original and musubi layouts onto the text-to-video names only (`attn1`,
+  `ffn.net.0.proj`), so it cannot load them into its Animate transformer, whose modules keep the
+  original names; the port reads them onto Animate's modules directly, and the measured case holds that
+  merge to the fuse of the same adapter in PEFT form. Every target is checked before any weight changes.
+  The generators take adapters through `addAdapter(at:scale:)` (`addAdapterAtURL:scale:error:`),
+  merged on every load of the transformer, into a packed Animate transformer before each block packs. A
+  streamed Animate transformer takes none. Measured: ⟨LORA⟩.
 - `NFKMLXQwenImageNet` / `NFKMLXQwenImage` (`@objc`) — the Qwen-Image 2.1 DiT
   (`QwenImage21Transformer2DModel`, Qwen), the denoising transformer of a 7.1B text-to-image model.
   Single-stream like Z-Image: one sequence carries the caption and the image latents. Two things

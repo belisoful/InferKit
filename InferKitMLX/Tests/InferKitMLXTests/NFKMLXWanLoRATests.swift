@@ -63,6 +63,12 @@ final class NFKMLXWanLoRATests: XCTestCase {
         XCTAssertThrowsError(try NFKMLXWanLoRA.deltas(arrays: missingAlpha, metadata: [:],
                                                       naming: NFKMLXWanLoRA.textToVideoPath(original:), scale: 1),
                              "a musubi layer carries its alpha")
+        let headAlpha: [String: MLXArray] = ["diffusion_model.head.head.lora_down.weight": MLXArray.zeros([2, 4]),
+                                             "diffusion_model.head.head.lora_up.weight": MLXArray.zeros([4, 2]),
+                                             "diffusion_model.head.head.alpha": MLXArray(Float(2))]
+        XCTAssertThrowsError(try NFKMLXWanLoRA.deltas(arrays: headAlpha, metadata: [:],
+                                                      naming: NFKMLXWanLoRA.textToVideoPath(original:), scale: 1),
+                             "the reference reads an alpha on the blocks' layers alone")
     }
 
     func testAnAdapterForAnotherGeometryChangesNoWeight() throws {
@@ -165,8 +171,9 @@ final class NFKMLXWanLoRATests: XCTestCase {
             try NFKMLXWanLoRA.merge(adapterURL: try adapterFile(arrays, file), into: net, scale: scale)
             report.append("\(file) \(assertMatchesTheFuse(net, base: animateBase, arrays: arrays, case: name, layout: convLayout))")
         }
-        XCTAssertEqual(try XCTUnwrap(arrays["animate_original_refused"]).item(Int32.self), 1,
-                       "diffusers does not load the original layout into Animate, so its PEFT twin is the reference")
+        XCTAssertEqual(try XCTUnwrap(arrays["animate_original_refused"]).item(Int32.self), 2,
+                       "diffusers converts the original layout to the text-to-video names, which Animate does not have, "
+                       + "so the adapter's PEFT twin is the reference")
         print("VALIDATION PARITY wan-lora (largest weight gap per case): " + report.joined(separator: ", "))
     }
 }

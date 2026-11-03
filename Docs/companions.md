@@ -734,7 +734,9 @@ models.
   random release in the released layout, and every released stage is held to its loader by shape.
 - **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
   3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
-  a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`).
+  a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`). Released Wan LoRAs merge into
+  it and into the Animate transformer through `NFKMLXWanLoRA` (the diffusers, original Wan, and
+  musubi-tuner layouts), as diffusers fuses them.
 - **`NFKMLXSD3Pipeline`** — Stable Diffusion 3 / 3.5 text-to-image: the MMDiT dual-stream
   joint-attention transformer (`NFKMLXSD3TransformerNet`, at reference parity against diffusers; the
   SD3.5 RMS q/k norm and MMDiT-X dual attention exercised), the SD3 autoencoder

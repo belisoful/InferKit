@@ -3337,6 +3337,24 @@ LTX-Video, 4 for Wan), and a side to a multiple of its spatial compression. Both
 default to empty, and guidance above 1 guides against it. The Wan 2.1 14B transformer is 28 GB on its
 own, beyond a 32 GB machine in any placement.
 
+Released Wan LoRAs (`NFKMLXWanLoRA`) merge into the transformer: the PEFT layout diffusers writes, the
+original Wan layout most releases publish (`diffusion_model.…`, with `.alpha` and `.diff_b` bias deltas),
+and musubi-tuner's. `addAdapter(at:scale:)` merges one now where the transformer is loaded and again on
+every later load; adapters merge in the order they are added, and `removeAdapters()` returns to the base
+weights. `NFKMLXWanAnimateGenerator` takes them the same way, in a packed transformer before each block
+packs. Each merge matches diffusers' `fuse_lora` of the same file.
+
+```swift
+try wan.addAdapter(at: distillLoRAURL, scale: 1)      // e.g. a step-distillation LoRA, original Wan layout
+try wan.addAdapter(at: styleLoRAURL, scale: 0.8)      // a second adapter merges after the first
+wan.removeAdapters()
+```
+
+<!-- objc-check: given NFKMLXWanVideoGenerator *wan; NSURL *styleLoRA; -->
+```objc
+BOOL merged = [wan addAdapterAtURL:styleLoRA scale:0.8f error:&error];
+```
+
 ### LTX-2 audio and video (`NFKMLXLTX2Generator`)
 
 LTX-2 generates a clip and its soundtrack together. One transformer denoises a video latent and an audio

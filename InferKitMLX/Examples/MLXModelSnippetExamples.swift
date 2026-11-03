@@ -186,6 +186,11 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertTrue(NFKMLXWanAnimateGenerator.instancesRespond(to: NSSelectorFromString(
             "framesForReferenceImage:drivingFrames:drivingFramesPerSecond:prompt:negativePrompt:seed:error:")))
         XCTAssertTrue(NFKMLXWanAnimateGenerator.instancesRespond(to: NSSelectorFromString("inferenceBackend")))
+        // Docs/examples.md: released Wan LoRAs merge through either generator.
+        for generator in [NFKMLXWanVideoGenerator.self, NFKMLXWanAnimateGenerator.self] as [NSObject.Type] {
+            XCTAssertTrue(generator.instancesRespond(to: NSSelectorFromString("addAdapterAtURL:scale:error:")))
+            XCTAssertTrue(generator.instancesRespond(to: NSSelectorFromString("removeAdapters")))
+        }
         NFKMLXRandom.seed(18)
         let animate = NFKMLXWanAnimate.makeNet(.tiny)
         let cache = NFKMLXWanAnimate.makeCache(layerCount: 2)

@@ -28819,11 +28819,13 @@ def run_wan_lora(image):
                   "time_embedding.2": (32, 32)}
 
     def original(layers, dtype, alpha, down="lora_down", up="lora_up", prefix="diffusion_model."):
+        # The reference's conversion reads an alpha on the blocks' layers alone and refuses a file with one
+        # on the embedders, the time projection, or the head.
         file = {}
         for name, (fan_in, fan_out) in layers.items():
             file[f"{prefix}{name}.{down}.weight"] = tensor(rank, fan_in, dtype=dtype)
             file[f"{prefix}{name}.{up}.weight"] = tensor(fan_out, rank, dtype=dtype)
-            if alpha is not None:
+            if alpha is not None and name.startswith("blocks."):
                 file[f"{prefix}{name}.alpha"] = torch.tensor(alpha, dtype=dtype)
         return file
 
@@ -28873,6 +28875,7 @@ def run_wan_lora(image):
 
     animate_layers = {"blocks.0.self_attn.q": ("blocks.0.self_attn.to_q", 32, 32),
                       "blocks.1.cross_attn.k_img": ("blocks.1.cross_attn.add_k_proj", 32, 32),
+                      "blocks.1.cross_attn.v_img": ("blocks.1.cross_attn.add_v_proj", 32, 32),
                       "blocks.0.ffn.0": ("blocks.0.ffn.0", 32, 48), "img_emb.proj.1": ("img_emb.proj.1", 1280, 1280),
                       "head.head": ("head.head", 32, 16), "text_embedding.0": ("text_embedding.0", 10, 32)}
     twin, original_animate = {}, {}
@@ -28880,10 +28883,14 @@ def run_wan_lora(image):
         down, up = tensor(rank, fan_in), tensor(fan_out, rank)
         twin[f"transformer.{path}.lora_A.weight"] = down
         twin[f"transformer.{path}.lora_B.weight"] = up
-        original_animate[f"diffusion_model.{name}.lora_down.weight"] = down.clone()
         original_animate[f"diffusion_model.{name}.lora_up.weight"] = up.clone()
-        # alpha / rank = 2 folds into the down weight exactly, so the twin's metadata scaling is the same.
-        original_animate[f"diffusion_model.{name}.alpha"] = torch.tensor(8.0)
+        # alpha / rank = 2 folds into the down weight exactly, so the twin's metadata scaling is the same. The
+        # original layout states an alpha on the blocks' layers alone, so the others carry the factor already.
+        if name.startswith("blocks."):
+            original_animate[f"diffusion_model.{name}.lora_down.weight"] = down.clone()
+            original_animate[f"diffusion_model.{name}.alpha"] = torch.tensor(8.0)
+        else:
+            original_animate[f"diffusion_model.{name}.lora_down.weight"] = down * 2
     cases["animate"] = (animate, [(twin, {"r": rank, "lora_alpha": 8,
                                           "target_modules": [v[0] for v in animate_layers.values()]}, None)], 0.6)
 
@@ -28895,15 +28902,17 @@ def run_wan_lora(image):
         for index, (file, meta, name) in enumerate(adapters):
             name = name or case
             path = os.path.join(directory, f"{case}-{index}.safetensors")
-            save_adapter(file, path, metadata={"lora_adapter_metadata": json_module.dumps(meta)} if meta else None)
+            # diffusers saves an adapter's configuration under its component's prefix and reads it back that way.
+            saved = {f"transformer.{key}": value for key, value in meta.items()}
+            save_adapter(file, path, metadata={"lora_adapter_metadata": json_module.dumps(saved)} if meta else None)
             state, md = WanLoraLoaderMixin.lora_state_dict(path, return_lora_metadata=True)
             WanLoraLoaderMixin.load_lora_into_transformer(state, transformer=model, adapter_name=name, metadata=md)
             names.append(name)
             suffix = "" if len(adapters) == 1 else f"#{index}"
             for key, value in file.items():
-                extra[f"lora::{case}{suffix}::{key}"] = value.contiguous()
+                extra[f"lora::{case}{suffix}::{key}"] = value.clone().contiguous()
             if meta:
-                extra[f"meta::{case}{suffix}"] = torch.tensor(list(json_module.dumps(meta).encode()), dtype=torch.uint8)
+                extra[f"meta::{case}{suffix}"] = torch.tensor(list(json_module.dumps(saved).encode()), dtype=torch.uint8)
         model.fuse_lora(lora_scale=scale, adapter_names=names)
         extra[f"scale::{case}"] = torch.tensor([scale])
         base_state = base.state_dict()
@@ -28915,16 +28924,21 @@ def run_wan_lora(image):
                 extra[f"fused::{case}::{plain}"] = value.float().contiguous()
 
     for key, value in original_animate.items():
-        extra[f"lora::animate_original::{key}"] = value.contiguous()
+        extra[f"lora::animate_original::{key}"] = value.clone().contiguous()
     path = os.path.join(directory, "animate-original.safetensors")
     save_adapter(original_animate, path)
+    # 0: loaded; 1: the conversion refused the file; 2: it converted to the text-to-video names, and loading
+    # those into Animate failed.
     refused = 0
+    state = None
     try:
         state = WanLoraLoaderMixin.lora_state_dict(path)
+        print("converted to:", sorted({k.split(".lora_")[0] for k in state}))
         WanLoraLoaderMixin.load_lora_into_transformer(state, transformer=copy.deepcopy(animate), adapter_name="o")
     except Exception as error:                                           # noqa: BLE001 — recorded, not raised
-        print(f"diffusers refuses the original-layout adapter for Animate: {type(error).__name__}: {error}")
-        refused = 1
+        refused = 2 if state is not None else 1
+        print(f"diffusers refuses the original-layout adapter for Animate at stage {refused}: "
+              f"{type(error).__name__}: {error}")
     extra["animate_original_refused"] = torch.tensor([refused], dtype=torch.int32)
 
     for prefix, model in (("w::t2v::", t2v), ("w::animate::", animate)):

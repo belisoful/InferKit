@@ -3337,7 +3337,7 @@
       "config": {
         "IK_VAL_WAN_ANIMATE": ""
       },
-      "note": "Wan 2.2 Animate 2 in the diffusers layout (about 50 GB whole, Apache-2.0); the distilled release Wan-AI/Wan2.2-Animate-2-14B-Distilled-Diffusers shares every shape and samples with Euler instead of DPM-Solver++. Only the small files, the image encoder (1.26 GB bf16) and the Wan 2.1 VAE (0.5 GB float32) are fetched; the transformer (32.8 GB) and umT5-XXL (11.4 GB) are held by shape under shapes/wan-animate-2-14b-diffusers-{transformer,text-encoder,image-encoder,vae}. The end-to-end parity runs on two test-dev releases, the release's own layout, keys and stored types at a small geometry with seeded random weights: Tools/wan-animate-testdev/make_testdev.py --release <this directory, or the distilled one's small files> --out <dir> -> IK_VAL_WAN_ANIMATE_TESTDEV / IK_VAL_WAN_ANIMATE_DISTILLED_TESTDEV. Records: run_reference.py wan_animate_pipeline --checkpoint <test-dev dir> -> IK_PARITY_WAN_ANIMATE_PIPELINE / IK_PARITY_WAN_ANIMATE_DISTILLED_PIPELINE, under the wananimate oracle env."
+      "note": "Wan 2.2 Animate 2 in the diffusers layout (about 50 GB whole, Apache-2.0); the distilled release Wan-AI/Wan2.2-Animate-2-14B-Distilled-Diffusers shares every shape and samples with Euler instead of DPM-Solver++. Only the small files, the image encoder (1.26 GB bf16) and the Wan 2.1 VAE (0.5 GB float32) are fetched; the transformer (32.8 GB) and umT5-XXL (11.4 GB) are held by shape under shapes/wan-animate-2-14b-diffusers-{transformer,text-encoder,image-encoder,vae}. The end-to-end parity runs on two test-dev releases, the release's own layout, keys and stored types at a small geometry with seeded random weights: Tools/wan-animate-testdev/make_testdev.py --release <this directory, or the distilled one's small files> --out <dir> -> IK_VAL_WAN_ANIMATE_TESTDEV / IK_VAL_WAN_ANIMATE_DISTILLED_TESTDEV. Records: run_reference.py wan_animate_pipeline --checkpoint <test-dev dir> -> IK_PARITY_WAN_ANIMATE_PIPELINE / IK_PARITY_WAN_ANIMATE_DISTILLED_PIPELINE, under the wananimate oracle env. Released Wan LoRAs (NFKMLXWanLoRA, both Wan transformers): run_reference.py wan_lora, no checkpoint, under the ltxtrain env, which carries PEFT -> IK_PARITY_WAN_LORA."
     },
     {
       "key": "QWEN_IMAGE",
@@ -6186,7 +6186,8 @@
         "ltx2_stg_mask",
         "ltx2_duration_head",
         "ltx2_real_duration_head",
-        "ltx2_real_prompt_enhancer"
+        "ltx2_real_prompt_enhancer",
+        "wan_lora"
       ]
     }
   },
