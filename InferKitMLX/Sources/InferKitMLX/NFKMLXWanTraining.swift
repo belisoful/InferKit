@@ -21,14 +21,14 @@ import MLXOptimizers
 import MLXRandom
 
 /// torch's float32 `linspace` on the CPU: the first half counts up from `start` and the second half down
-/// from `end`, each by the same float32 step, so the two halves round differently from one formula.
+/// from `end` by the same float32 step, each entry one fused multiply-add.
 enum NFKTorchLinspace {
     static func float32(from start: Float, to end: Float, count: Int) -> [Float] {
         guard count > 1 else { return [start] }
         let step = (end - start) / Float(count - 1)
         let halfway = count / 2
         return (0 ..< count).map { index in
-            index < halfway ? start + step * Float(index) : end - step * Float(count - index - 1)
+            index < halfway ? start.addingProduct(step, Float(index)) : end.addingProduct(-step, Float(count - index - 1))
         }
     }
 }
@@ -104,11 +104,13 @@ public enum NFKMLXWanSigmaSampler: Sendable, Equatable {
         let s = Array(NFKTorchLinspace.float32(from: 1, to: 0, count: 1001).dropLast())
         let sigmas = s.map { shift * $0 / (1 + (shift - 1) * $0) }
         let timesteps = sigmas.map { $0 * 1000 }
-        // `exp(−2·((x − 500)/1000)²)`, shifted to a minimum of 0 and scaled to a mean of 1, in float32.
-        let y = timesteps.map { exp(-2 * (($0 - 500) / 1000) * (($0 - 500) / 1000)) }
+        // `exp(−2·((x − 500)/1000)²)`, shifted to a minimum of 0 and scaled to a mean of 1, with torch's float32
+        // exponential and sum.
+        let centered = timesteps.map { ($0 - 500) / 1000 }
+        let y = NFKReferenceRounding.torchExp(MLXArray(centered.map { -2 * ($0 * $0) })).asArray(Float.self)
         let floor = y.min() ?? 0
         let shifted = y.map { $0 - floor }
-        let total = MLXArray(shifted).sum().item(Float.self)
+        let total = NFKReferenceRounding.torchLastAxisSum(MLXArray(shifted)).item(Float.self)
         return (sigmas, timesteps, shifted.map { $0 * (1000 / total) })
     }
 

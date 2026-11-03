@@ -29344,9 +29344,10 @@ MODELS["wan_lora"] = run_wan_lora
 
 
 # --- Wan LoRA trainers -------------------------------------------------------------------------------------
-# One tiny Wan text-to-video geometry for all three trainers' oracles: width 32 over 2 heads, 2 blocks, a
-# 48-wide feed-forward, 32-wide text, 4 latent channels; a [4, 3, 4, 4] latent and 16 text tokens.
-_WAN_TRAIN_GEOMETRY = dict(dim=32, heads=2, layers=2, ffn=48, text_dim=32, channels=4, freq=256)
+# One tiny Wan text-to-video geometry for all three trainers' oracles: width 48 over 2 heads (a head width
+# whose rotary split DiffSynth reads as diffusers does), 2 blocks, a 48-wide feed-forward, 32-wide text,
+# 4 latent channels; a [4, 3, 4, 4] latent and 16 text tokens.
+_WAN_TRAIN_GEOMETRY = dict(dim=48, heads=2, layers=2, ffn=48, text_dim=32, channels=4, freq=256)
 _WAN_TRAIN_LATENT = (4, 3, 4, 4)
 _WAN_TRAIN_TOKENS = 16
 
@@ -29414,7 +29415,13 @@ def run_wan_lora_finetrainers(image):
     draws. `image` unused.
     """
     import json as json_module
+    from unittest import mock
 
+    # finetrainers imports and configures its video reader at package import; the objective reads no video.
+    sys.modules.setdefault("decord", mock.MagicMock())
+    # finetrainers pins a torchao older than peft's torchao dispatch accepts; no layer here is a torchao one.
+    import peft.tuners.lora.torchao
+    peft.tuners.lora.torchao.is_torchao_available = lambda: False
     from diffusers import FlowMatchEulerDiscreteScheduler, WanTransformer3DModel
     from finetrainers.models.wan.base_specification import WanModelSpecification
     from finetrainers.utils.diffusion import (compute_density_for_timestep_sampling, prepare_loss_weights,
@@ -29498,7 +29505,7 @@ def run_wan_lora_finetrainers(image):
         adapted = model(hidden_states=captured["noisy"], encoder_hidden_states=text.unsqueeze(0),
                         timestep=captured["timestep"], return_dict=False)[0]
     extra["adapted"] = adapted[0].float().contiguous()
-    globals()["_extra"] = extra
+    globals()["_extra"] = {key: value.clone() for key, value in extra.items()}
     return extra["prediction"].clone()
 
 
@@ -29598,7 +29605,7 @@ def run_wan_lora_diffsynth(image):
         name = _wan_original_to_diffusers(key)
         if name is not None and not torch.equal(value, extra[f"w::{name}"]):
             extra[f"fused::{name}"] = value.float().contiguous()
-    globals()["_extra"] = extra
+    globals()["_extra"] = {key: value.clone() for key, value in extra.items()}
     return extra["prediction"].clone()
 
 
@@ -29611,16 +29618,19 @@ def run_wan_lora_musubi(image):
     `lora_wan.create_arch_network` (rank 4, alpha 8, every linear layer of the blocks), its `shift` sampler at
     3.0 (`sample_timesteps` through `get_noisy_model_input_and_timesteps`: `t = shift(sigmoid(n))`, the noised
     input, the timestep `1000t + 1`), its forward, and its loss (an MSE over every element in float32), with
-    each adapter's gradient. A `sigma`-mode section (`table.*`) holds its default sampler's draws. The adapter
+    each adapter's gradient. The forward attends in float32; `as_run.*` holds musubi's own, whose attention
+    rounds its inputs to bfloat16. `sampler.*` holds 64 `shift` draws and `table.*` 64 draws of its default `sigma`
+    mode (an index uniform over the unshifted table), with the noise level the noised input carries. The adapter
     is saved by the network's own `save_weights` (`lora_unet_` keys and alphas) and merged into a fresh model
     by its own `merge_to` (`fused::`). `image` unused.
     """
     import argparse
     import copy
 
+    # musubi's text-encoder module evaluates `torch.cuda.current_device()` as a default argument at import.
+    torch.cuda.current_device = lambda: "cpu"
     from musubi_tuner.modules.scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
     from musubi_tuner.networks import lora_wan
-    from musubi_tuner.training.timesteps import compute_density_for_timestep_sampling
     from musubi_tuner.training.trainer_base import NetworkTrainer
     from musubi_tuner.wan.modules.model import WanModel
 
@@ -29662,26 +29672,48 @@ def run_wan_lora_musubi(image):
     noisy, timesteps = trainer.get_noisy_model_input_and_timesteps(args, noise.unsqueeze(0), latent.unsqueeze(0),
                                                                   None, scheduler, "cpu", torch.float32)
     tokens = latent.shape[1] * latent.shape[2] * latent.shape[3] // 4
-    prediction = torch.stack(model([noisy[0]], t=timesteps, context=[text], seq_len=tokens))
     target = noise.unsqueeze(0) - latent.unsqueeze(0)
-    loss = torch.nn.functional.mse_loss(prediction.float(), target, reduction="none").mean()
+
+    def objective():
+        prediction = torch.stack(model([noisy[0]], t=timesteps, context=[text], seq_len=tokens))
+        return prediction, torch.nn.functional.mse_loss(prediction.float(), target, reduction="none").mean()
+
+    # musubi's `flash_attention` rounds a float32 query, key, and value to bfloat16 before torch's attention. The
+    # run as musubi makes it is recorded under `as_run.`; the record proper attends in float32, the attention
+    # of a network that trains in float32.
+    with torch.no_grad():
+        as_run_prediction, as_run_loss = objective()
+    extra.update({"as_run.prediction": as_run_prediction[0].float().contiguous(), "as_run.loss": as_run_loss.reshape(1)})
+    import musubi_tuner.wan.modules.model as musubi_model
+
+    def float32_attention(qkv, q_lens=None, k_lens=None, attn_mode="torch", split_attn=False, **kwargs):
+        q, k, v = (tensor.transpose(1, 2) for tensor in qkv)
+        return torch.nn.functional.scaled_dot_product_attention(q, k, v).transpose(1, 2).contiguous()
+
+    musubi_model.flash_attention = float32_attention
+    prediction, loss = objective()
     loss.backward()
-    extra.update({"z": z.contiguous(), "timestep": timesteps.float().reshape(1),
+    extra.update({"z": z.contiguous(), "timestep": timesteps.float().reshape(1), "noisy": noisy[0].detach().contiguous(),
                   "sigma": ((timesteps - 1) / 1000).float().reshape(1), "latent": latent.contiguous(),
                   "noise": noise.contiguous(), "text": text.contiguous(), "prediction": prediction[0].detach().float(),
                   "adapted": prediction[0].detach().float().contiguous(), "loss": loss.detach().reshape(1)})
 
-    table_args = argparse.Namespace(**{**vars(args), "timestep_sampling": "sigma"})
+    batch_noise, batch_latent = noise.expand(64, *noise.shape), latent.expand(64, *latent.shape)
     torch.manual_seed(104)
-    u = compute_density_for_timestep_sampling("none", 64)
-    draws = []
-    for index in range(64):
-        torch.manual_seed(104)
-        compute_density_for_timestep_sampling("none", index)
-        _, t = trainer.get_noisy_model_input_and_timesteps(table_args, noise.unsqueeze(0), latent.unsqueeze(0), None,
-                                                           scheduler, "cpu", torch.float32)
-        draws.append(t.float().reshape(()))
-    extra.update({"table.u": u.contiguous(), "table.timestep": torch.stack(draws).contiguous()})
+    z_batch = torch.randn((64,))
+    torch.manual_seed(104)
+    _, shifted = trainer.get_noisy_model_input_and_timesteps(args, batch_noise, batch_latent, None, scheduler, "cpu",
+                                                            torch.float32)
+    table_args = argparse.Namespace(**{**vars(args), "timestep_sampling": "sigma"})
+    torch.manual_seed(105)
+    u = torch.rand((64,))
+    torch.manual_seed(105)
+    table_noisy, table = trainer.get_noisy_model_input_and_timesteps(table_args, batch_noise, batch_latent, None,
+                                                                    scheduler, "cpu", torch.float32)
+    table_sigma = (table_noisy - batch_latent)[:, 0, 0, 0, 0] / (batch_noise - batch_latent)[:, 0, 0, 0, 0]
+    extra.update({"sampler.z": z_batch.contiguous(), "sampler.timestep": shifted.float().contiguous(),
+                  "table.u": u.contiguous(), "table.timestep": table.float().contiguous(),
+                  "table.sigma": table_sigma.float().contiguous()})
 
     adapters = {}
     for lora in network.unet_loras:
@@ -29706,7 +29738,7 @@ def run_wan_lora_musubi(image):
         name = _wan_original_to_diffusers(key)
         if name is not None and not torch.equal(value.float(), extra[f"w::{name}"]):
             extra[f"fused::{name}"] = value.float().contiguous()
-    globals()["_extra"] = extra
+    globals()["_extra"] = {key: value.clone() for key, value in extra.items()}
     return extra["prediction"].clone()
 
 
