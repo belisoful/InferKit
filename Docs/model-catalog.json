@@ -25417,7 +25417,8 @@
       "family" : "ltx-2",
       "id" : "ltx-2.5",
       "inputModalities" : [
-        "text"
+        "text",
+        "image"
       ],
       "inputs" : [
         {
@@ -25433,6 +25434,13 @@
           "required" : false,
           "title" : "Negative prompt",
           "valueType" : "text"
+        },
+        {
+          "help" : "A still the DFR recipe opens on, encoded at each stage's size.",
+          "key" : "image",
+          "required" : false,
+          "title" : "First frame",
+          "valueType" : "image"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -25587,6 +25595,33 @@
           "kind" : "boolean",
           "stage" : "request",
           "title" : "Enhance the prompt"
+        },
+        {
+          "default" : false,
+          "help" : "Render by the DFR recipe: keyframe slots at half size, a full-size pass with the detailing IC-LoRA where it is loaded, temporal refine rounds, and an optional third spatial stage.",
+          "key" : "NFKMLXLTX2ParameterDFR",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Diffusion Fidelity Rendering"
+        },
+        {
+          "default" : 1,
+          "help" : "Each round doubles the frame count and the frame rate.",
+          "key" : "NFKMLXLTX2ParameterDFRTemporalRounds",
+          "kind" : "integer",
+          "maximum" : 2,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "DFR temporal rounds"
+        },
+        {
+          "default" : false,
+          "help" : "Refine the result again at twice the width and height.",
+          "key" : "NFKMLXLTX2ParameterDFREpilogue",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "DFR epilogue"
         },
         {
           "choices" : [

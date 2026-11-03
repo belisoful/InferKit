@@ -1856,6 +1856,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### LTX-2.5 renders by Diffusion Fidelity Rendering
+
+- `NFKMLXLTX2Generator.rendersWithDFR` runs LTX-2.5's DFR recipe: stage 1 at half size with a generated keyframe
+  slot at each segment end, the spatial upsampler, stage 2 at the full size with the detailing IC-LoRA
+  (`loadDetailingLoRA(repo:revision:cacheDirectoryURL:)`) at weight 0.5, `dfrTemporalRounds` refine rounds that
+  each double the frame count and the frame rate, and an optional tiled third spatial stage (`dfrEpilogue`).
+  The backend reads `NFKMLXLTX2ParameterKey.dfr`, `.dfrTemporalRounds`, `.dfrEpilogue`, and a first frame under
+  `NFKInputImage`.
+- The pieces are public: `NFKMLXLTX2Pipeline.dfrPass`, `.temporalRound`, and `.rebuiltKeyframes`,
+  `NFKMLXLTX2DFRLayout`, `NFKMLXLTX2AncestralScheduler`, `NFKMLXLTX2ImageCondition`, and `NFKMLXLTX2LoRA`, which
+  loads LTX-2 LoRAs in Lightricks' key format. The transformer takes explicit token coordinates
+  (`videoCoordinates`), and a LoRA adapter takes a `strength`.
 #### LaMa and SD inpainting download from the catalog
 
 - `lama-inpaint` downloads `big-lama/models/best.ckpt` from `camenduru/big-lama`, the checkpoint inside the

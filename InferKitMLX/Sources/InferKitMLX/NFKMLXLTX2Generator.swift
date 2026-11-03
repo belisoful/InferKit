@@ -694,7 +694,7 @@ public final class NFKMLXLTX2Generator: NSObject {
                 let (latent, audioLatents) = try sampleLatents(
                     pipeline, streams: streams, frames: frames, width: width, height: height, seed: seed,
                     videoGuidance: videoGuidance, audioGuidance: audioGuidanceScales, onStep: onStep)
-                let waveform = pipeline.decodeAudio(audioLatents)[0]
+                let waveform = trimmedSoundtrack(pipeline.decodeAudio(audioLatents)[0], frames: frames)
                 if decodesWithDiffusionDecoder { return [latent, waveform] }
                 let clip = MLX.clip(pipeline.decodeLatent(latent)[0] / 2 + 0.5, min: 0, max: 1)
                 eval(clip)

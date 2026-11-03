@@ -28875,6 +28875,238 @@ def run_ltx2_real_diffusion_decoder(image, checkpoint):
 CHECKPOINT_MODELS["ltx2_real_diffusion_decoder"] = run_ltx2_real_diffusion_decoder
 
 
+def _ltx2_dfr_lora(transformer, rank=4, seed=97):
+    """A tiny LoRA over `transformer` in Lightricks' own key format (`diffusion_model.…lora_A.weight`), on every
+    block's video self-attention, video text attention, and feed-forward, as an IC-LoRA stand-in."""
+    generator = torch.Generator().manual_seed(seed)
+    state = {}
+    for index, block in enumerate(transformer.transformer_blocks):
+        targets = {"attn1.to_q": block.attn1.to_q, "attn1.to_k": block.attn1.to_k, "attn1.to_v": block.attn1.to_v,
+                   "attn1.to_out.0": block.attn1.to_out[0], "attn2.to_q": block.attn2.to_q,
+                   "ff.net.0.proj": block.ff.net[0].proj, "ff.net.2": block.ff.net[2]}
+        for name, module in targets.items():
+            key = f"diffusion_model.transformer_blocks.{index}.{name}"
+            state[f"{key}.lora_A.weight"] = torch.randn(rank, module.in_features, generator=generator) * 0.3
+            state[f"{key}.lora_B.weight"] = torch.randn(module.out_features, rank, generator=generator) * 0.3
+    return state
+
+
+def run_ltx2_dfr(image):
+    """LTX-2.5's Diffusion Fidelity Rendering recipe end to end at tiny random configurations of every stage, as
+    the diffusers LTX-2 docs compose it, every noise the reference draws recorded in order:
+
+    stage 1, `LTX2DFRPipeline` at 64x96 over a 73-frame canvas (segments of 24 frames, three generated slots),
+    the release's flow-match schedule over three distilled sigmas, unguided; `LTX2LatentUpsamplePipeline` over its
+    video and its slots; stage 2 at 128x192 seeded from both, with a tiny LoRA in Lightricks' key format at adapter
+    weight 0.5 and the stage-1 video as the reference; one `LTX2DFRTemporalRefinePipeline` round (the temporal
+    upsampler, two seam tiles, the ancestral sampler at eta 0.5, the frozen stage-1 audio windowed per tile); and
+    the third spatial stage: the round's video upsampled, its keyframes rebuilt through RGB (decode, Pillow's
+    Lanczos x2, encode) and pinned clean, the LoRA on, the stage-2 schedule over 2x2x2 epilogue tiles.
+
+    Each stage's first transformer call is recorded too (its video tokens, per-token timesteps, keyframe marks,
+    coordinates, and prediction). The chain runs twice: text-to-video, and under the prefix `i2v.` with two image
+    conditions at CRF 0 (no H.264 re-compression), a 50x70 still at latent 0 at strength 1 and a 41x29 still at
+    latent -1 at strength 0.8, given to every stage as the recipe gives them. Runs under the `ltxtrain` oracle env
+    (diffusers 0.41.0.dev0 with peft). `image` unused.
+    """
+    extra = {}
+    _ltx2_dfr_chain(extra, "", None)
+    generator = torch.Generator().manual_seed(103)
+    images = [torch.randint(0, 256, (50, 70, 3), generator=generator, dtype=torch.uint8),
+              torch.randint(0, 256, (41, 29, 3), generator=generator, dtype=torch.uint8)]
+    for index, picture in enumerate(images):
+        extra[f"i2v.image{index}"] = picture.float().contiguous()
+    _ltx2_dfr_chain(extra, "i2v.", images)
+    globals()["_extra"] = extra
+    return extra["epilogue.video"].clone()
+
+
+def _ltx2_dfr_chain(extra, prefix, images):
+    """One run of the DFR chain `run_ltx2_dfr` describes, recorded into `extra` under `prefix`, conditioned on
+    `images` (uint8 `(H, W, 3)` tensors) where given."""
+    from diffusers import FlowMatchEulerDiscreteScheduler, LTX2DFRPipeline, LTX2DFRTemporalRefinePipeline
+    from diffusers import LTXEulerAncestralRFScheduler
+    import diffusers.pipelines.ltx2.pipeline_ltx2_dfr as dfr_module
+    import diffusers.pipelines.ltx2.pipeline_ltx2_dfr_temporal_refine as refine_module
+    import diffusers.schedulers.scheduling_ltx_euler_ancestral_rf as ancestral_module
+    from diffusers.pipelines.ltx2.dfr_layout import epilogue_tiles, pixel_to_latent_index
+    from diffusers.pipelines.ltx2.pipeline_ltx2_condition import LTX2VideoCondition
+    from diffusers.pipelines.ltx2.pipeline_ltx2_latent_upsample import LTX2LatentUpsamplePipeline
+    from diffusers.pipelines.ltx2.utils import STAGE_2_DISTILLED_SIGMA_VALUES
+
+    def put(key, value):
+        extra[prefix + key] = value.contiguous() if isinstance(value, torch.Tensor) else value
+
+    first = dict(_ltx2_pipeline_record_weights())
+    base = _ltx2_two_stage_pipeline(first)
+    spatial = _randomized(_ltx2_latent_upsampler_tiny(), seed=85, scale=0.1)
+    temporal = _randomized(_ltx2_latent_upsampler_tiny(spatial_upsample=False, temporal_upsample=True,
+                                                       use_rational_resampler=True), seed=87, scale=0.1)
+    scheduler = FlowMatchEulerDiscreteScheduler(
+        base_image_seq_len=1024, base_shift=0.95, invert_sigmas=False, max_image_seq_len=4096, max_shift=2.05,
+        num_train_timesteps=1000, shift=1.0, shift_terminal=None, stochastic_sampling=False,
+        time_shift_type="exponential", use_beta_sigmas=False, use_dynamic_shifting=False,
+        use_exponential_sigmas=False, use_karras_sigmas=False)
+    pipe = LTX2DFRPipeline(scheduler=scheduler, vae=base.vae, audio_vae=base.audio_vae, text_encoder=None,
+                           tokenizer=None, connectors=base.connectors, transformer=base.transformer, vocoder=base.vocoder)
+    pipe.set_progress_bar_config(disable=True)
+    temporal_pipe = LTX2DFRTemporalRefinePipeline(
+        scheduler=LTXEulerAncestralRFScheduler(eta=0.5), vae=base.vae, audio_vae=base.audio_vae, text_encoder=None,
+        tokenizer=None, connectors=base.connectors, transformer=base.transformer, vocoder=base.vocoder,
+        temporal_latent_upsampler=temporal)
+    temporal_pipe.set_progress_bar_config(disable=True)
+    upsample = LTX2LatentUpsamplePipeline(vae=base.vae, latent_upsampler=spatial)
+    upsample.set_progress_bar_config(disable=True)
+
+    draws = []
+    modules = (("dfr", dfr_module), ("refine", refine_module), ("ancestral", ancestral_module))
+    originals = {tag: module.randn_tensor for tag, module in modules}
+    for tag, module in modules:
+        def recording(shape, generator=None, device=None, dtype=None, _tag=tag, _original=originals[tag]):
+            sample = _original(shape, generator=generator, device=device, dtype=dtype)
+            draws.append((_tag, sample.clone()))
+            return sample
+
+        module.randn_tensor = recording
+
+    calls = []
+    hook = base.transformer.register_forward_hook(
+        lambda m, args, kwargs, out: calls.append((kwargs, out)), with_kwargs=True)
+
+    def first_call(stage):
+        kwargs, out = calls[0]
+        put(f"{stage}.call0.video", kwargs["hidden_states"].float())
+        put(f"{stage}.call0.timestep", kwargs["timestep"].float())
+        put(f"{stage}.call0.keyframes", kwargs["video_keyframes_mask"].float())
+        put(f"{stage}.call0.coords", kwargs["video_coords"].float())
+        put(f"{stage}.call0.prediction", out[0].float())
+        calls.clear()
+
+    conditions = None if images is None else [
+        LTX2VideoCondition(frames=images[0].numpy(), index=0, strength=1.0, crf=0),
+        LTX2VideoCondition(frames=images[1].numpy(), index=-1, strength=0.8, crf=0)]
+    common = dict(prompt_embeds=first["embeds"][1:], prompt_attention_mask=first["mask"][1:].long(),
+                  output_type="latent", conditions=conditions)
+    frames, frame_rate = 73, 24.0
+    lora = _ltx2_dfr_lora(base.transformer)
+    try:
+        with torch.no_grad():
+            generator = torch.Generator().manual_seed(101)
+            out = pipe(height=64, width=96, num_frames=frames, frame_rate=frame_rate,
+                       sigmas=[1.0, 0.909375, 0.421875], generator=generator, **common)
+            first_call("stage1")
+            put("stage1.video", out.frames)
+            put("stage1.keyframes", out.keyframes)
+            put("stage1.audio", out.audio)
+            put("stage1.positions", torch.tensor(out.keyframe_positions, dtype=torch.int32))
+
+            up_video = upsample(latents=out.frames, output_type="latent", return_dict=False)[0]
+            up_keyframes = upsample(latents=out.keyframes, output_type="latent", return_dict=False)[0]
+            put("up.video", up_video)
+            put("up.keyframes", up_keyframes)
+
+            pipe.load_lora_weights(lora, adapter_name="detailing")
+            pipe.set_adapters(["detailing"], adapter_weights=[0.5])
+            out2 = pipe(height=128, width=192, num_frames=frames, frame_rate=frame_rate, latents=up_video,
+                        audio_latents=out.audio, keyframes_latents=up_keyframes,
+                        keyframe_positions=out.keyframe_positions, reference_latents=out.frames,
+                        noise_scale=STAGE_2_DISTILLED_SIGMA_VALUES[0], sigmas=STAGE_2_DISTILLED_SIGMA_VALUES,
+                        generator=generator, **common)
+            pipe.transformer.disable_adapters()
+            first_call("stage2")
+            put("stage2.video", out2.frames)
+            put("stage2.keyframes", out2.keyframes)
+            put("stage2.audio", out2.audio)
+
+            ratio = pipe.vae.temporal_compression_ratio
+            canvas_frames = (out2.frames.shape[2] - 1) * ratio + 1
+            out3 = temporal_pipe(latents=out2.frames, keyframes_latents=out2.keyframes,
+                                 keyframe_positions=out2.keyframe_positions, audio_latents=out.audio,
+                                 height=128, width=192, num_frames=canvas_frames, frame_rate=frame_rate,
+                                 source_seconds=canvas_frames / frame_rate, condition_num_frames=frames,
+                                 generator=generator, **common)
+            first_call("round")
+            put("round.video", out3.frames)
+            put("round.keyframes", out3.keyframes)
+            put("round.positions", torch.tensor(out3.keyframe_positions, dtype=torch.int32))
+            put("round.audio", out3.audio)
+
+            playback = frame_rate * 2
+            refined_frames = (out3.frames.shape[2] - 1) * ratio + 1
+            up_round = upsample(latents=out3.frames, output_type="latent", return_dict=False)[0]
+            rebuilt = pipe.rebuild_epilogue_keyframes(out3.keyframes, decode_timestep=0.0, decode_noise_scale=0.0,
+                                                      seed=0, device=up_round.device, dtype=torch.float32)
+            tiles = epilogue_tiles(
+                latent_shape=((refined_frames - 1) // ratio + 1, 256 // 32, 384 // 32), frame_tiles=2,
+                frame_seams=[pixel_to_latent_index(2 * p, ratio) for p in out2.keyframe_positions])
+            pipe.transformer.enable_adapters()
+            out4 = pipe(height=256, width=384, num_frames=refined_frames, frame_rate=playback, latents=up_round,
+                        audio_latents=out.audio, generate_slots=False, guidance_keyframe_latents=rebuilt,
+                        guidance_keyframe_positions=out3.keyframe_positions, reference_latents=out3.frames,
+                        noise_scale=STAGE_2_DISTILLED_SIGMA_VALUES[0], sigmas=STAGE_2_DISTILLED_SIGMA_VALUES,
+                        freeze_audio=True, video_tiles=tiles, generator=generator, **common)
+            pipe.transformer.disable_adapters()
+            calls.clear()
+            put("epilogue.upsampled", up_round)
+            put("epilogue.rebuilt", rebuilt)
+            if not prefix:
+                # The rebuild's 8-bit seam, plane by plane as `rebuild_epilogue_keyframes` forms it: the decoded
+                # frame rounded to bytes, and Pillow's Lanczos stretch of those bytes.
+                import numpy as np
+                import PIL.Image
+                normalized = pipe._maybe_normalize_video_latents(out3.keyframes, False)
+                for index in range(normalized.shape[2]):
+                    plane = pipe._denormalize_latents(normalized[:, :, index:index + 1], pipe.vae.latents_mean,
+                                                      pipe.vae.latents_std, pipe.vae.config.scaling_factor)
+                    frame = pipe.vae.decode(plane, None, return_dict=False)[0][0]
+                    rgb = ((frame[:, 0].float().clamp(-1, 1) + 1.0) * 127.5).round().to(torch.uint8)
+                    picture = PIL.Image.fromarray(rgb.permute(1, 2, 0).numpy(), mode="RGB")
+                    picture = picture.resize((picture.width * 2, picture.height * 2),
+                                             resample=PIL.Image.Resampling.LANCZOS)
+                    put(f"epilogue.rgb{index}", rgb.permute(1, 2, 0).to(torch.int32))
+                    put(f"epilogue.stretched{index}", torch.from_numpy(np.asarray(picture).astype(np.int32)))
+            put("epilogue.video", out4.frames)
+            put("epilogue.audio", out4.audio)
+            for index, tile in enumerate(tiles):
+                put(f"epilogue.tile{index}.weight", tile.blend_weight)
+                put(f"epilogue.tile{index}.extent", torch.tensor(
+                    [tile.frames.start, tile.frames.stop, tile.heights.start, tile.heights.stop,
+                     tile.widths.start, tile.widths.stop], dtype=torch.int32))
+    finally:
+        hook.remove()
+        for tag, module in modules:
+            module.randn_tensor = originals[tag]
+
+    for index, (tag, sample) in enumerate(draws):
+        put(f"draw{index:03d}.{tag}", sample.float())
+    put("draws", torch.tensor([len(draws)], dtype=torch.int32))
+    if prefix:
+        return
+    for key, value in lora.items():
+        extra[f"lora::{key}"] = value.contiguous()
+    for owner, model in (("upsampler", spatial), ("temporal", temporal)):
+        for key, value in model.state_dict().items():
+            extra[f"w::{owner}.{key}"] = value.float().contiguous()
+    for key, value in first.items():
+        if key.startswith("w::") or key in ("ids", "mask", "embeds"):
+            extra[key] = value
+
+
+def _ltx2_pipeline_record_weights():
+    """The tiny LTX-2.5 stages `run_ltx2_pipeline25` builds, their weights and prompt record, without its
+    sampling."""
+    _ltx2_pipeline_record(
+        transformer=dict(ff_bias=False, use_keyframes_abs_pos_embedding=True),
+        scheduler=dict(use_dynamic_shifting=False, shift_terminal=None),
+        call=dict(num_inference_steps=None, sigmas=[1.0], guidance_scale=1.0, audio_guidance_scale=1.0,
+                  stg_scale=0.0, audio_stg_scale=0.0, modality_scale=1.0, audio_modality_scale=1.0,
+                  output_type="latent"))
+    return globals()["_extra"]
+
+
+MODELS["ltx2_dfr"] = run_ltx2_dfr
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", choices=sorted(MODELS) + sorted(CHECKPOINT_MODELS), help="which reference to run")

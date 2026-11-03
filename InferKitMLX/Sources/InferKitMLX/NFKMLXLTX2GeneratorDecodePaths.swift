@@ -22,6 +22,12 @@ final class NFKLTX2DecodePaths {
     var refinementSigmas = NFKMLXLTX2Pipeline.refinementSigmas
     var refinementNoiseScale: Float?
     var tiling: NFKMLXLTX2DecodeTiling? = NFKMLXLTX2DecodeTiling()
+    var rendersWithDFR = false
+    var dfrTemporalRounds = 1
+    var dfrEpilogue = false
+    var detailingLoRA: [String: MLXArray]?
+    var detailingStrength: Float = 0.5
+    var imageConditions: [NFKMLXLTX2ImageCondition] = []
 
     let spatialUpsampler: NFKMLXStage<NFKMLXLTX2LatentUpsamplerNet>?
     let temporalUpsampler: NFKMLXStage<NFKMLXLTX2LatentUpsamplerNet>?
@@ -45,7 +51,18 @@ final class NFKLTX2DecodePaths {
         diffusionDecoder = present("diffusion_decoder").map { url in
             NFKMLXStage { try NFKMLXLTX2DiffusionDecoders.load(from: url) }
         }
+        videoEncoder = present("vae").map { url in
+            NFKMLXStage {
+                let encoder = try NFKMLXLTX2VideoEncoderNet(
+                    try NFKMLXLTX2VideoVAE.encoderConfiguration(fromHuggingFace: url.appendingPathComponent("config.json")))
+                try NFKMLXLTX2VideoVAE.loadEncoderWeights(into: encoder, from: url)
+                return encoder
+            }
+        }
     }
+
+    /// The autoencoder's encoder, which the DFR epilogue rebuilds its keyframes through.
+    let videoEncoder: NFKMLXStage<NFKMLXLTX2VideoEncoderNet>?
 
     /// The bytes the upsamplers and the diffusion decoder hold at float32, for the residency plan.
     static func footprint(directory: URL) throws -> (upsamplers: Int, decoder: Int) {
@@ -67,6 +84,23 @@ final class NFKLTX2DecodePaths {
         if upsamplesTemporally, temporalUpsampler == nil {
             throw refuse("the temporal upsampling", "temporal_latent_upsampler")
         }
+        guard rendersWithDFR else {
+            if !imageConditions.isEmpty {
+                throw NFKMLXError.unsupportedConfiguration("an image condition conditions the DFR recipe; turn rendersWithDFR on")
+            }
+            return
+        }
+        if refinesUpsampled || upsamplesTemporally {
+            throw NFKMLXError.unsupportedConfiguration(
+                "DFR runs its own spatial and temporal stages; turn off the two-stage refinement and the temporal upsampling")
+        }
+        guard (0 ... 2).contains(dfrTemporalRounds) else {
+            throw NFKMLXError.unsupportedConfiguration("DFR takes 0, 1, or 2 temporal rounds, not \(dfrTemporalRounds)")
+        }
+        if spatialUpsampler == nil { throw refuse("DFR", "latent_upsampler") }
+        if dfrTemporalRounds > 0, temporalUpsampler == nil { throw refuse("a DFR temporal round", "temporal_latent_upsampler") }
+        if dfrEpilogue, videoEncoder == nil { throw refuse("the DFR epilogue", "vae") }
+        if !imageConditions.isEmpty, videoEncoder == nil { throw refuse("an image condition", "vae") }
     }
 }
 
@@ -145,7 +179,10 @@ extension NFKMLXLTX2Generator {
 
     /// The frame rate the clip plays at: ``frameRate``, doubled where ``upsamplesTemporally``. Introduced in
     /// InferKit 0.4.0.
-    @objc public var outputFrameRate: Float { upsamplesTemporally ? 2 * frameRate : frameRate }
+    @objc public var outputFrameRate: Float {
+        if rendersWithDFR { return frameRate * Float(1 << decodePaths.dfrTemporalRounds) }
+        return upsamplesTemporally ? 2 * frameRate : frameRate
+    }
 
     /// The parameters ``inferenceBackend()`` reads for the decode-side paths.
     static let decodePathParameterKeys: Set<String> = [
@@ -185,6 +222,10 @@ extension NFKMLXLTX2Generator {
                        seed: UInt64, videoGuidance: NFKMLXLTX2Guidance, audioGuidance: NFKMLXLTX2Guidance,
                        onStep: ((Int) -> Void)?) throws -> (video: MLXArray, audio: MLXArray) {
         try decodePaths.verifyAvailable()
+        if decodePaths.rendersWithDFR {
+            return try dfrLatents(pipeline, streams: streams, frames: frames, width: width, height: height, seed: seed,
+                                  onStep: onStep)
+        }
         let refines = decodePaths.refinesUpsampled
         let grid = NFKMLXLTX2Pipeline.grid(frames: frames, width: refines ? width / 2 : width,
                                            height: refines ? height / 2 : height, frameRate: frameRate,
@@ -238,9 +279,14 @@ extension NFKMLXLTX2Generator {
     }
 
     /// The denoising steps a clip reports progress over: stage 1's and, where the two-stage recipe runs,
-    /// the refinement's.
+    /// the refinement's; under DFR every stage's, a temporal round counted at one tile per doubling.
     var reportedSteps: Int {
-        (sigmas?.count ?? steps) + (refinesUpsampled ? decodePaths.refinementSigmas.count : 0)
+        let first = sigmas?.count ?? steps
+        guard rendersWithDFR else { return first + (refinesUpsampled ? decodePaths.refinementSigmas.count : 0) }
+        let rounds = decodePaths.dfrTemporalRounds
+        let roundSteps = (1 ... max(rounds, 1)).reduce(0) { $0 + (1 << $1) } * NFKMLXLTX2DFR.temporalSigmas.count
+        return first + NFKMLXLTX2Pipeline.refinementSigmas.count + (rounds > 0 ? roundSteps : 0)
+            + (decodePaths.dfrEpilogue ? NFKMLXLTX2Pipeline.refinementSigmas.count : 0)
     }
 
     /// The denormalized latent decoded by the diffusion decoder to the clip `[frames, height, width, 3]` in

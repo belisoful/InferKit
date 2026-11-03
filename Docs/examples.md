@@ -3468,6 +3468,36 @@ let doubled = NFKMLXLTX2Pipeline.upsampled(latent, by: upsampler)           // [
 let decoded = decoder.decodeLatent(doubled) { shape in MLXRandom.normal(shape) }  // [1, 8 (F − 1) + 1, …, 3]
 ```
 
+LTX-2.5's Diffusion Fidelity Rendering (DFR) recipe trades time for detail. Stage 1 samples at half the
+width and height and generates a keyframe slot at the end of every 24- or 32-frame segment; stage 2 refines
+the upsampled video and slots at the full size, attending to stage 1 through the spatial detailing IC-LoRA
+(`Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler`, gated) at weight 0.5; each temporal round doubles
+the frame count and the frame rate; the epilogue refines again at twice the size in tiles. Each side is a
+multiple of 64. A still conditions the clip without the reference's optional H.264 re-compression.
+
+```swift
+try ltx25.loadDetailingLoRA(repo: nil, revision: nil, cacheDirectoryURL: nil)
+ltx25.rendersWithDFR = true
+ltx25.dfrTemporalRounds = 1                // 121 frames become 241, at ltx25.outputFrameRate (48)
+ltx25.imageConditions = [NFKMLXLTX2ImageCondition(image: firstFrame)]
+let (rendered, renderedSoundtrack) = try ltx25.clip(forPrompt: "a drummer playing in the rain", frames: 121,
+                                                    width: 1920, height: 1088, seed: 0)
+```
+
+<!-- objc-check: given NFKMLXLTX2Generator *ltx25Generator; -->
+```objc
+[ltx25Generator loadDetailingLoRAFromRepo:nil revision:nil cacheDirectoryURL:nil error:&error];
+ltx25Generator.rendersWithDFR = YES;
+ltx25Generator.dfrTemporalRounds = 1;
+ltx25Generator.dfrEpilogue = NO;
+ltx25Generator.firstFrameImage = firstFrame;
+NFKInferenceResult *fidelity = [[ltx25Generator inferenceBackend]
+    runInferenceForRequest:[[NFKInferenceRequest alloc]
+                               initWithInputs:@{ NFKInputPrompt: @"a drummer playing in the rain" }
+                                   parameters:@{ NFKParameterWidth: @1920, NFKParameterHeight: @1088 }]
+                     error:&error];
+```
+
 ### Wan 2.2 Animate (`NFKMLXWanAnimateGenerator`, `NFKMLXWanAnimateNet`)
 
 Wan 2.2 Animate 2 animates the character in a reference image with the motion of a driving video. The

@@ -1152,7 +1152,7 @@ kinds). Consumed keys:
 | deepseek-v4 | residency, paging, expertCacheBytes, speculates, quantizesActivations, computesInFloat32 | key-value coding onto `NFKMLXDeepSeekLoadOptions` |
 | stable-diffusion (the five text-to-image releases) | precision | `NFKMLXTextToImage.backend(configuration:directoryURL:precision:)` |
 | stable-diffusion (the two released adapters) | precision | `NFKMLXTextToImage.backend(configuration:directoryURL:adapterURL:adapterScale:precision:)` |
-| ltx-2 | residency, precision (the transformer), quantizationBits, quantizationGroupSize (the transformer, held whole); LTX-2.5's decode-side components load at float32 when a request turns their path on | `NFKMLXLTX2Generator.generator(directoryURL:residency:options:)` |
+| ltx-2 | residency, precision (the transformer), quantizationBits, quantizationGroupSize (the transformer, held whole); LTX-2.5's decode-side components load at float32 when a request turns their path on, and DFR's detailing IC-LoRA loads as adapters through `loadDetailingLoRA` | `NFKMLXLTX2Generator.generator(directoryURL:residency:options:)` |
 | flux, flux2, stable-diffusion-3, sana, z-image, qwen-image, wan, ltx-video, minimax-music | residency | each generator's `generator(directoryURL:residency:)`; `flux.1-dev` takes the `.flux` schedule |
 | wan-animate | residency (streamed included), precision, quantizationBits, quantizationGroupSize | `NFKMLXWanAnimateGenerator.generator(directoryURL:residency:precision:quantizationBits:)` |
 | whisper | precision | `NFKMLXWhisper.backend(variant:…precision:identifier:)` by `whisperVariants` |

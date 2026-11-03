@@ -1868,7 +1868,9 @@ alternatives.
     ship at parity too (tiny pipeline clip 0.9999999999993114, waveform 0.9999999999988513), each
     released LTX-2.3 stage held to its headers by shape. LTX-2.5's diffusion decoder, both latent
     upsamplers, and the two-stage distilled recipe ship behind opt-in switches (released decoder
-    0.9999999999995941, spatial upsampler 0.9999999999958689, temporal 0.9999999999915022). LTX-2.5's full
+    0.9999999999995941, spatial upsampler 0.9999999999958689, temporal 0.9999999999915022). Its Diffusion
+    Fidelity Rendering recipe ships end to end too (keyframe slots, the detailing IC-LoRA, temporal refine
+    rounds, the tiled third spatial stage, image conditions), each stage at parity against diffusers. LTX-2.5's full
     transformer (`ltx-2.5-full`), duration head (released weights 3.6821983 s against 3.682198 s), and prompt enhancer ship too, with
     LoRA and QLoRA fine-tuning measured against Lightricks' own trainer (loss 4.416752 equal, worst of 96
     adapter gradients 0.99999913).

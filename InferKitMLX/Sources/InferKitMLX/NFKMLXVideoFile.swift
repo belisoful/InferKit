@@ -136,8 +136,11 @@ public enum NFKMLXVideoFile {
             // The writer accepts frames only while it has room, and this path is deliberately
             // synchronous: the backend contract is a blocking call the caller already runs off the
             // render thread.
-            while !input.isReadyForMoreMediaData {
-                Thread.sleep(forTimeInterval: 0.002)
+            do {
+                try waitUntilReady(input, "frame \(index)")
+            } catch {
+                writer.cancelWriting()
+                throw error
             }
             let time = CMTime(value: CMTimeValue(Double(index) * Double(scale) / framesPerSecond),
                               timescale: scale)
@@ -150,10 +153,30 @@ public enum NFKMLXVideoFile {
 
         let finished = DispatchSemaphore(value: 0)
         writer.finishWriting { finished.signal() }
-        finished.wait()
+        guard finished.wait(timeout: .now() + writerDeadline) == .success else {
+            writer.cancelWriting()
+            throw NFKMLXError.unsupportedConfiguration(
+                "writing \(url.lastPathComponent) did not finish within \(Int(writerDeadline)) seconds")
+        }
         if writer.status == .failed {
             throw NFKMLXError.unsupportedConfiguration(
                 "writing \(url.lastPathComponent) failed: \(writer.error?.localizedDescription ?? "unknown")")
+        }
+    }
+
+    /// The longest a writer may leave an input unready or a finish unanswered before the write fails.
+    static let writerDeadline: TimeInterval = 60
+
+    /// Waits until `input` takes more media, throwing once ``writerDeadline`` passes: an interleaving writer
+    /// that waits on another track it will never get leaves the input unready for good.
+    static func waitUntilReady(_ input: AVAssetWriterInput, _ what: String) throws {
+        let deadline = Date().addingTimeInterval(writerDeadline)
+        while !input.isReadyForMoreMediaData {
+            guard Date() < deadline else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the movie writer took no \(what) within \(Int(writerDeadline)) seconds")
+            }
+            Thread.sleep(forTimeInterval: 0.002)
         }
     }
 
@@ -164,6 +187,8 @@ public enum NFKMLXVideoFile {
         let format: CMAudioFormatDescription
         /// The sample frames appended so far.
         var written = 0
+        /// Whether the track is closed.
+        var closed = false
 
         init(_ soundtrack: Soundtrack, writer: AVAssetWriter) throws {
             self.soundtrack = soundtrack
@@ -200,10 +225,11 @@ public enum NFKMLXVideoFile {
         /// Appends the soundtrack up to `seconds`.
         func append(through seconds: Double) throws {
             let end = min(totalFrames, Int((seconds * Double(soundtrack.sampleRate)).rounded(.up)))
-            guard end > written else { return }
-            while !input.isReadyForMoreMediaData {
-                Thread.sleep(forTimeInterval: 0.002)
+            guard end > written else {
+                if written == totalFrames { close() }
+                return
             }
+            try NFKMLXVideoFile.waitUntilReady(input, "soundtrack")
             let channels = soundtrack.channels
             var pcm = soundtrack.samples[(written * channels) ..< (end * channels)].map {
                 Int16((max(-1, min(1, $0)) * 32767).rounded())
@@ -229,11 +255,20 @@ public enum NFKMLXVideoFile {
                 throw NFKMLXError.unsupportedConfiguration("the soundtrack could not be written")
             }
             written = end
+            // A soundtrack shorter than the clip closes as soon as it runs out: the writer interleaves its
+            // tracks and would otherwise hold the frames back waiting for audio that never comes.
+            if written == totalFrames { close() }
         }
 
         /// Appends the rest of the soundtrack and closes its track.
         func finish() throws {
             try append(through: Double(totalFrames) / Double(soundtrack.sampleRate))
+            close()
+        }
+
+        func close() {
+            guard !closed else { return }
+            closed = true
             input.markAsFinished()
         }
     }

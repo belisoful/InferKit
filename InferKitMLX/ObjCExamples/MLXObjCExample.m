@@ -1874,6 +1874,20 @@
 	XCTAssertEqualObjects(NFKMLXLTX2ParameterKey.promptEnhancement, @"NFKMLXLTX2ParameterPromptEnhancement");
 }
 
+// LTX-2.5's DFR recipe: the generator's switches, the detailing IC-LoRA's loaders, and the request keys.
+- (void)testLTX25DFRIsReachable
+{
+	for (NSString *selector in @[ @"setRendersWithDFR:", @"setDfrTemporalRounds:", @"setDfrEpilogue:",
+	                              @"setDetailingStrength:", @"setFirstFrameImage:", @"hasDetailingLoRA",
+	                              @"loadDetailingLoRAAtURL:error:", @"loadDetailingLoRAFromRepo:revision:cacheDirectoryURL:error:" ]) {
+		XCTAssertTrue([NFKMLXLTX2Generator instancesRespondToSelector:NSSelectorFromString(selector)], @"%@", selector);
+	}
+	XCTAssertEqualObjects(NFKMLXLTX2Generator.detailingLoRARepo, @"Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler");
+	XCTAssertEqualObjects(NFKMLXLTX2ParameterKey.dfr, @"NFKMLXLTX2ParameterDFR");
+	XCTAssertEqualObjects(NFKMLXLTX2ParameterKey.dfrTemporalRounds, @"NFKMLXLTX2ParameterDFRTemporalRounds");
+	XCTAssertEqualObjects(NFKMLXLTX2ParameterKey.dfrEpilogue, @"NFKMLXLTX2ParameterDFREpilogue");
+}
+
 // LTX-2.5's decode-side paths: the generator's switches and the request keys that set them per request.
 - (void)testLTX25DecodePathsAreReachable
 {

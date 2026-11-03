@@ -723,9 +723,12 @@ public final class NFKMLXLTX2TransformerNet: Module {
 
     /// The velocity of each of `passes`, each the value the single-pass call gives it alone. Every block
     /// runs every pass in turn, so a streamed block is read once for all of them.
+    ///
+    /// `videoCoordinates`, where given, places the video tokens in place of the `frames × height × width` grid:
+    /// a DFR pass appends keyframe, slot, and reference tokens after the grid, each with its own interval.
     public func predictions(_ passes: [NFKMLXLTX2Pass], frames: Int, height: Int, width: Int, audioFrames: Int,
-                            fps: Float = 24, crossTimestep: Bool = false,
-                            gatesReadCrossSigma: Bool = false) -> [(video: MLXArray, audio: MLXArray)] {
+                            fps: Float = 24, crossTimestep: Bool = false, gatesReadCrossSigma: Bool = false,
+                            videoCoordinates: NFKMLXLTX2VideoCoordinates? = nil) -> [(video: MLXArray, audio: MLXArray)] {
         let videoRope = NFKLTX2Rope(dim: config.innerDim, heads: config.numAttentionHeads,
                                     theta: config.ropeTheta)
         let audioRope = NFKLTX2Rope(dim: config.audioInnerDim, heads: config.audioNumAttentionHeads,
@@ -734,7 +737,7 @@ public final class NFKMLXLTX2TransformerNet: Module {
         // table per modality from that modality's own time positions.
         let crossRope = NFKLTX2Rope(dim: config.audioCrossAttentionDim,
                                     heads: config.audioNumAttentionHeads, theta: config.ropeTheta)
-        let videoPositions = NFKLTX2Rope.videoPositions(
+        let videoPositions = videoCoordinates?.positions(config) ?? NFKLTX2Rope.videoPositions(
             frames: frames, height: height, width: width, configuration: config, fps: fps)
         let audioPositions = NFKLTX2Rope.audioPositions(frames: audioFrames, configuration: config)
         let videoRotary = videoRope.table(positions: videoPositions)

@@ -276,6 +276,19 @@ enum NFKMLXCatalogVideo {
                  defaultValue: false)]
     }
 
+    /// LTX-2.5's Diffusion Fidelity Rendering switches, off by default.
+    static var ltx25DFROptions: [NFKModelOption] {
+        [.option(NFKMLXLTX2ParameterKey.dfr, kind: NFKModelOptionKindBoolean, title: "Diffusion Fidelity Rendering",
+                 help: "Render by the DFR recipe: keyframe slots at half size, a full-size pass with the detailing "
+                     + "IC-LoRA where it is loaded, temporal refine rounds, and an optional third spatial stage.",
+                 defaultValue: false),
+         .option(NFKMLXLTX2ParameterKey.dfrTemporalRounds, kind: NFKModelOptionKindInteger, title: "DFR temporal rounds",
+                 help: "Each round doubles the frame count and the frame rate.", defaultValue: 1, minimum: 0, maximum: 2,
+                 step: 1),
+         .option(NFKMLXLTX2ParameterKey.dfrEpilogue, kind: NFKModelOptionKindBoolean, title: "DFR epilogue",
+                 help: "Refine the result again at twice the width and height.", defaultValue: false)]
+    }
+
     /// The LTX-2 releases: one transformer that films a clip and its soundtrack together.
     static var ltx2Entries: [NFKMLXCatalogEntry] {
         NFKMLXLTX2Variant.allCases.map { variant in
@@ -296,14 +309,17 @@ enum NFKMLXCatalogVideo {
                 variant.modelName, variant.displayName, family: variant == .ltx25Full ? "ltx-2-full" : "ltx-2",
                 summary: "A diffusion transformer that films a clip and its soundtrack together from a prompt.",
                 tasks: [NFKModelTaskVideoGeneration],
-                inputs: promptInputs,
+                inputs: promptInputs + (variant == .ltx25
+                    ? [.input(NFKInputImage, title: "First frame",
+                              help: "A still the DFR recipe opens on, encoded at each stage's size.")] : []),
                 outputs: [clipOutput("The generated clip as a QuickTime movie whose audio track is the soundtrack."),
                           .output(NFKOutputAudio, required: true, title: "Soundtrack",
                                   help: "The generated soundtrack alone, a stereo WAV at 48 kHz.")],
                 parameters: videoOptions(frames: 121, width: 768, height: 512, framesPerSecond: 24,
                                          frameRateHelp: "The frame rate the clip is conditioned on and written at.",
                                          steps: 30, guidance: 3) + ltx2GuidanceOptions
-                    + (variant == .ltx23 ? [] : ltx25DecodePathOptions + [ltx2PromptEnhancementOption]),
+                    + (variant == .ltx23 ? [] : ltx25DecodePathOptions + [ltx2PromptEnhancementOption])
+                    + (variant == .ltx25 ? ltx25DFROptions : []),
                 license: license,
                 source: NFKMLXCatalogImage.hubRelease(variant.releaseRepo,
                                                       components: NFKMLXLTX2Generator.releaseComponents(for: variant)),

@@ -551,6 +551,15 @@ The figures have three limits:
 - ``NFKMLXLTX2LatentUpsamplerNet``
 - ``NFKMLXLTX2LatentUpsamplerConfiguration``
 - ``NFKMLXLTX2LatentUpsamplers``
+- ``NFKMLXLTX2DFR``
+- ``NFKMLXLTX2DFRLayout``
+- ``NFKMLXLTX2DFRSequence``
+- ``NFKMLXLTX2DFRCondition``
+- ``NFKMLXLTX2DFRResult``
+- ``NFKMLXLTX2ImageCondition``
+- ``NFKMLXLTX2AncestralScheduler``
+- ``NFKMLXLTX2VideoCoordinates``
+- ``NFKMLXLTX2LoRA``
 - ``NFKMLXLTX2VideoEncoderNet``
 - ``NFKMLXLTX2AudioEncoderNet``
 - ``NFKMLXLTX2MelFrontEnd``

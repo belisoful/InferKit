@@ -228,7 +228,7 @@ residual or the velocity objective is known, and the working set is what rules i
 | `NFKMLXFlux2TransformerNet` | offline | — | public | The smallest release is 3.88B and `[dev]` is 32B. |
 | `NFKMLXSD3ControlNetNet` | offline | — | public | Its zero-initialized residuals take their gradient through the frozen 2B to 8B base. |
 | `NFKMLXFluxControlNetNet` | offline | — | public | The same residual gradient through the frozen 12B FLUX.1 transformer. |
-| `NFKMLXLTXPipeline`, `NFKMLXLTX2Pipeline`, `NFKMLXSD3Pipeline`, `NFKMLXFluxPipeline`, `NFKMLXQwenImagePipeline`, `NFKMLXFlux` | offline | — | mixed | The glue holds no weights of its own and inherits its transformer's working set. |
+| `NFKMLXLTXPipeline`, `NFKMLXLTX2Pipeline`, `NFKMLXLTX2DFR`, `NFKMLXSD3Pipeline`, `NFKMLXFluxPipeline`, `NFKMLXQwenImagePipeline`, `NFKMLXFlux` | offline | — | mixed | The glue holds no weights of its own and inherits its transformer's working set. |
 | `NFKMLXQwenImageVAE` | untrainable | — | public | No autoencoder training code in QwenLM/Qwen-Image or either release. The same holds for `NFKMLXWanVideoVAENet` (Wan 2.1 and 2.2 define no objective) and `NFKMLXDCAutoencoderNet` (DC-Gen's trainer leaves `forward_train` unimplemented; a DC-Gen commit that implements it reopens this); `NFKMLXFlux2LatentCodec` holds no learnable parameter. |
 | `NFKMLXLTXVideoVAE` | untrainable | — | internal | Lightricks/LTX-Video publishes no autoencoder training code; its only backward pass through the autoencoder is a smoke test on random input, and LTX-Video-Trainer freezes the autoencoder. |
 | `NFKMLXFlowMatchScheduler`, `NFKMLXDPMSolverScheduler`, `NFKMLXUniPCScheduler` | untrainable | — | n/a | Value types with no parameters. |

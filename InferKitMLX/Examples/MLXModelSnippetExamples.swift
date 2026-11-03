@@ -156,6 +156,27 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertEqual(waveform.shape, [1, 990, 2], "a stereo soundtrack")
     }
 
+    // Docs/examples.md: LTX-2.5's DFR recipe. The generator's switches and loaders are reachable; the canvas, the
+    // round's seam tiles, and the ancestral sampler run here on their own.
+    func testExampleLTX25DFR() throws {
+        try requireMLXRuntime()
+        for selector in ["setRendersWithDFR:", "setDfrTemporalRounds:", "setDfrEpilogue:", "setFirstFrameImage:",
+                         "loadDetailingLoRAFromRepo:revision:cacheDirectoryURL:error:", "loadDetailingLoRAAtURL:error:"] {
+            XCTAssertTrue(NFKMLXLTX2Generator.instancesRespond(to: NSSelectorFromString(selector)), selector)
+        }
+        let canvas = try NFKMLXLTX2DFRLayout.canvas(frames: 121)
+        XCTAssertEqual(canvas.positions, [24, 48, 72, 96, 120])
+        let tiles = try NFKMLXLTX2DFRLayout.temporalTiles(seamPositions: canvas.positions.map { 2 * $0 }, frames: 241,
+                                                          tiles: 2)
+        XCTAssertEqual(tiles.count, 2)
+        let sampler = NFKMLXLTX2AncestralScheduler(sigmas: NFKMLXLTX2DFR.temporalSigmas)
+        XCTAssertEqual(sampler.steps, 4)
+        let stepped = sampler.step(velocity: MLXArray.zeros([1, 4, 8]), sample: MLXArray.ones([1, 4, 8]), index: 0) {
+            MLXArray.zeros($0)
+        }
+        XCTAssertEqual(stepped.shape, [1, 4, 8])
+    }
+
     // Docs/examples.md: LTX-2.5's decode-side paths. The switches are the generator's; tiny random pieces
     // stand in for the release's diffusion_decoder/ and latent_upsampler/, which the loaders read.
     func testExampleLTX25DecodePaths() throws {

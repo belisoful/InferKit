@@ -308,6 +308,70 @@ arithmetic as before.
     load plan count them so (upsamplers 2.5 GB, decoder 1.7 GB). Customization: untrainable here
     (`mlx-customization-ledger.md`).
 
+- LTX-2.5's Diffusion Fidelity Rendering (DFR), the 1080p recipe of the diffusers LTX-2 docs
+  (`LTX2DFRPipeline`, `LTX2DFRTemporalRefinePipeline`, `dfr_layout`, `LTXEulerAncestralRFScheduler`), opt-in through
+  `NFKMLXLTX2Generator.rendersWithDFR` with `dfrTemporalRounds` (0–2) and `dfrEpilogue`, and the request keys
+  `NFKMLXLTX2ParameterKey.dfr`, `.dfrTemporalRounds`, `.dfrEpilogue` (`NFKMLXLTX2DFRTests`):
+  - A DFR pass (`NFKMLXLTX2Pipeline.dfrPass`) denoises a packed sequence `[grid | keyframes | slots | reference]`.
+    The request pads to whole keyframe segments of 24 or 32 frames, whichever pads least (the longer on a tie,
+    `NFKMLXLTX2DFRLayout.canvas`), and a slot, one latent frame of tokens positioned at ONE pixel frame and
+    marked with the release's keyframe embedding, is generated at each segment end. A token held at strength `s`
+    sees the noise level `(1 − s) t`; each step forms x0 with each token's own sigma, blends the held tokens back
+    to their clean content, and steps the shared schedule unguided. Appended tokens carry explicit intervals
+    (`NFKMLXLTX2VideoCoordinates`, the transformer's `videoCoordinates`): a keyframe's frame axis starts at its
+    pixel frame without the causal shift and lasts one pixel frame, the reference keeps the grid's coordinates
+    with its spatial axes scaled by 2. The grid's first latent frame is marked as a slot is. Every pass runs the
+    audio stream for the cross-modal attention; stage 2 renoises stage 1's audio and samples it, and the
+    shipped soundtrack is stage 1's, cut to the clip.
+  - The recipe: stage 1 at half size over the distilled sigmas; the spatial upsampler over its video and its
+    slots; stage 2 at the full size over the stage-2 sigmas, seeded from both, with the detailing IC-LoRA at
+    weight 0.5 and stage 1's video as the reference; one temporal round per frame-rate doubling; and the third
+    spatial stage. Above 30 fps the rotary is conditioned at 60 and the frames play at the doubled rate.
+  - A temporal round (`NFKMLXLTX2Pipeline.temporalRound`) doubles the canvas `N → 2 (N − 1) + 1` with the
+    temporal upsampler (on latents normalized and denormalized again around it, as the reference round-trips
+    them), cuts `2^round` tiles on the keyframe seams with a run-up of one segment plus the seam
+    (`temporalTiles`), pins each tile's carried seams at 0.95, invents a slot mid-segment seeded from the
+    nearest latent frame (Python's half-to-even rounding), and denoises the tile over the distilled schedule's
+    tail (0.975 … 0.421875) with the Euler-ancestral rectified-flow sampler at eta 0.5
+    (`NFKMLXLTX2AncestralScheduler`), whose renoise re-applies the blend. The frozen stage-1 audio is cut to each
+    tile's playback window and linearly resampled to its token count (`audioWindow`). The tiles stitch by
+    dropping each later tile's run-up; the carried keyframes merge with the new slots, the first tile's slot
+    winning a position two tiles share.
+  - The epilogue rebuilds the carried keyframes through RGB, each plane decoded alone, rounded to bytes,
+    stretched x2 by Pillow's Lanczos, and encoded to the posterior's mean (`rebuiltKeyframes`;
+    `NFKMLXPillowLanczos` is Pillow's `ImagingResample` to the integer: double-precision taps quantized to
+    22-bit fixed point, a byte rounding after each axis, width first), pins them clean, and steps a single canvas
+    in 2 x 2 x `2^rounds` tiles (`epilogueTiles`, `tokenPlan`): height and width split with a 12-cell trapezoidal
+    overlap, frames cut on the last round's seams, each appended token kept by every tile its interval overlaps
+    at weight `1 / n`, each tile's coordinates rebased on its first grid token. The epilogue's audio is frozen.
+  - The detailing IC-LoRA (`Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler`, gated, 960 tensors at rank
+    32 on every block's video self-attention, text attention, and feed-forward, no `alpha`) loads through
+    `NFKMLXLTX2LoRA`, which renames Lightricks' keys as diffusers' `_convert_non_diffusers_ltx2_lora_to_diffusers`
+    does and places `NFKMLXLoRALinear` adapters whose `strength` the recipe sets per pass (peft's adapter weight,
+    0 skips the detour). Without the IC-LoRA loaded, stage 2 and the epilogue run without it and without the
+    reference.
+  - Image conditions (`NFKMLXLTX2ImageCondition`, `imageConditions`, `firstFrameImage`, `NFKInputImage`): each
+    still resized to cover a pass with torch's bilinear interpolation (`align_corners=False`, no antialiasing,
+    the column pass inside the row pass), center-cropped, and encoded at that pass's size; latent 0 replaces the
+    first frames in place, any other latent appends at `8 (i − 1) + 1`, and a round places it at `2^round` times
+    that, rebased per tile. The reference's optional H.264 re-compression of a still (libx264 at CRF 18, PyAV)
+    is not built: a still conditions as the reference's `crf=0` conditions it.
+  - Measured against the reference's own pipelines at tiny random configurations of every stage with every draw
+    the reference makes (`run_reference.py ltx2_dfr`, the `ltxtrain` env for peft, `IK_PARITY_LTX2_DFR`), each
+    stage from the reference's inputs: text-to-video stage 1 video latent 0.9999999999999913 (its first
+    transformer call's sequence, keyframe marks, timesteps, and coordinates exact, prediction
+    0.9999999999994067), the upsampled video 0.9999999999992104, stage 2 with the LoRA 0.9999999999999909, the
+    round 0.9999999999999807, the epilogue 0.9999999999999828; conditioned on two stills, stage 1 0.9999999999993815, stage 2
+    0.9999999999994055, the round 0.9999999999995662, the epilogue 0.9999999999994383; the whole recipe chained on its own outputs 0.9999999999998965. The epilogue's
+    rebuilt keyframes hold at 0.9999999800196505, their floor: the Lanczos matches Pillow to the byte on the
+    reference's own bytes, 39 of 442368 of the decoded bytes land one level apart where the decode's last ulp crosses
+    a half, and encoding the reference's stretched bytes gives its keyframes at 0.99999999999844 or better.
+    The released IC-LoRA is held to `.ltx25`'s layers by its header inventory (all 960 tensors on 480 layers)
+    and loads through the public loader; its effect is not measured on released weights, because the 38 GB
+    transformer is not on this machine.
+  - DFR runs on the distilled `ltx-2.5` only (`ltx-2.5-full` samples a different schedule). Customization: the
+    recipe is glue over stages listed in `mlx-customization-ledger.md`.
+
 - **LTX-2.5's full transformer** (`NFKMLXLTX2Variant.ltx25Full`, registry `ltx-2.5-full`). `transformer_full/`
   is the SFT transformer in the distilled one's arrangement, outside `model_index.json`. The variant
   factories (`generatorWithDirectoryURL:variant:residency:error:`, the download peers) read that folder in

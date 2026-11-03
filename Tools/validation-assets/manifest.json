@@ -6205,7 +6205,8 @@
         "ltx2_duration_head",
         "ltx2_real_duration_head",
         "ltx2_real_prompt_enhancer",
-        "wan_lora"
+        "wan_lora",
+        "ltx2_dfr"
       ]
     }
   },
@@ -6459,6 +6460,11 @@
       "subfolder": "temporal_latent_upsampler",
       "directory": "ltx2-25-temporal_latent_upsampler",
       "note": "LTX-2.5's temporal x2 latent upsampler (`LTX2LatentUpsamplerModel`, 72 tensors, 0.26 GB bf16); `.ltx25Temporal`."
+    },
+    {
+      "repo": "Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler",
+      "directory": "ltx2-25-ic-lora",
+      "note": "LTX-2.5's spatial detailing IC-LoRA (960 bf16 tensors, rank 32, no alpha, 327 MB, gated), which the DFR recipe's full-size passes attend with at weight 0.5. A LoRA repository holds no config.json, so its header inventory was read with two range requests rather than shapes.py. NFKMLXLTX2DFRTests holds the inventory to `.ltx25`'s layers and loads the file (IK_VAL_LTX2_5_IC_LORA, rev 59f26f1e0c11af42f1affa924b4ef231e9e98b2a) through `NFKMLXLTX2LoRA`. The tiny recipe record is IK_PARITY_LTX2_DFR (`run_reference.py ltx2_dfr`, ltxtrain env)."
     },
     {
       "repo": "black-forest-labs/FLUX.2-klein-base-9B",

@@ -7,6 +7,7 @@
 //  what establish that the output key carries a real, re-readable asset.
 //
 
+import AVFoundation
 import XCTest
 import CoreGraphics
 import InferKit
@@ -53,6 +54,20 @@ final class NFKMLXVideoBackendTests: XCTestCase {
         XCTAssertEqual(clip.frames.count, 6, "every frame comes back")
         XCTAssertEqual(clip.framesPerSecond, 30, accuracy: 0.5)
         XCTAssertEqual(clip.size, CGSize(width: 32, height: 32))
+    }
+
+    // A soundtrack that ends before the clip closes its track as it runs out, so the interleaving writer does
+    // not hold the frames back for audio that never comes: three seconds of frames over a tenth of a second
+    // of sound finish with every frame and the audio track.
+    func testAShortSoundtrackDoesNotHoldTheFramesBack() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).mov")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let soundtrack = NFKMLXVideoFile.Soundtrack(samples: [Float](repeating: 0.1, count: 2 * 4800),
+                                                    sampleRate: 48000, channels: 2)
+        try NFKMLXVideoFile.write((0 ..< 72).map { frame($0) }, framesPerSecond: 24, soundtrack: soundtrack, to: url)
+        XCTAssertEqual(try NFKMLXVideoFile.read(url).frames.count, 72)
+        let tracks = try NFKMLXVideoFile.blocking { try await AVURLAsset(url: url).loadTracks(withMediaType: .audio).count }
+        XCTAssertEqual(tracks, 1)
     }
 
     // H.264 dimensions must be even, and a caller who hands over an odd frame should be told rather

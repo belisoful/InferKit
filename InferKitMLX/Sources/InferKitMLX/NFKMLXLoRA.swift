@@ -36,6 +36,8 @@ public protocol NFKMLXLoRAAdapter: Linear {
     var loraB: MLXArray { get }
     /// `alpha / rank`.
     var scale: Float { get }
+    /// The adapter's weight on ``scale``; 0 turns the detour off.
+    var strength: Float { get set }
 }
 
 /// A `Linear` with a trainable low-rank detour: `y = Wx + b + scale·(x·A)·B`.
@@ -49,6 +51,12 @@ public final class NFKMLXLoRALinear: Linear, NFKMLXLoRAAdapter {
 
     /// `alpha / rank`, the conventional LoRA scaling.
     public let scale: Float
+
+    /// The adapter's weight, multiplying ``scale`` as peft's `set_adapters(adapter_weights:)` does; 0 turns
+    /// the detour off without computing it. 1 by default.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var strength: Float = 1
 
     /// The dropout on the detour's input while the layer trains, as peft's `lora_dropout` applies it
     /// (`lora_B(lora_A(dropout(x)))`); the base path never drops. 0 by default.
@@ -74,8 +82,9 @@ public final class NFKMLXLoRALinear: Linear, NFKMLXLoRAAdapter {
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        guard strength != 0 else { return super.callAsFunction(x) }
         let sum = super.callAsFunction(x)
-            + matmul(matmul(NFKDropout.apply(x, rate: dropout, active: training), loraA), loraB) * scale
+            + matmul(matmul(NFKDropout.apply(x, rate: dropout, active: training), loraA), loraB) * (scale * strength)
         return resultType.map { sum.asType($0) } ?? sum
     }
 
@@ -103,6 +112,11 @@ public final class NFKMLXQuantizedLoRALinear: QuantizedLinear, NFKMLXLoRAAdapter
     /// `alpha / rank`, the conventional LoRA scaling.
     public let scale: Float
 
+    /// The adapter's weight, multiplying ``scale``; 0 turns the detour off. 1 by default.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var strength: Float = 1
+
     /// The dropout on the detour's input while the layer trains, as peft's `lora_dropout` applies it.
     public var dropout: Float
 
@@ -119,9 +133,10 @@ public final class NFKMLXQuantizedLoRALinear: QuantizedLinear, NFKMLXLoRAAdapter
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        guard strength != 0 else { return super.callAsFunction(x) }
         let detour = matmul(matmul(NFKDropout.apply(x, rate: dropout, active: training),
                                    loraA.asType(x.dtype)), loraB.asType(x.dtype))
-        return super.callAsFunction(x) + detour * scale
+        return super.callAsFunction(x) + detour * (scale * strength)
     }
 }
 

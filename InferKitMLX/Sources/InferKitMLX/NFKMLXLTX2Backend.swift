@@ -37,7 +37,7 @@ public final class NFKMLXLTX2ParameterKey: NSObject {
 extension NFKMLXLTX2Generator {
 
     /// The request inputs the backend reads.
-    static let backendInputKeys: Set<String> = [NFKInputPrompt, NFKInputNegativePrompt]
+    static let backendInputKeys: Set<String> = [NFKInputPrompt, NFKInputNegativePrompt, NFKInputImage]
 
     /// The request parameters the backend reads.
     static let backendParameterKeys: Set<String> = Set([
@@ -45,7 +45,7 @@ extension NFKMLXLTX2Generator {
         NFKParameterSeed, NFKParameterSteps, NFKParameterGuidanceScale, NFKMLXLTX2ParameterKey.audioGuidanceScale,
         NFKMLXLTX2ParameterKey.spatioTemporalGuidanceScale, NFKMLXLTX2ParameterKey.modalityGuidanceScale,
         NFKMLXLTX2ParameterKey.guidanceRescale, NFKMLXLTX2ParameterKey.promptEnhancement,
-    ]).union(decodePathParameterKeys)
+    ]).union(decodePathParameterKeys).union(dfrParameterKeys)
 
     /// The generator behind the InferKit contract.
     ///
@@ -84,6 +84,10 @@ extension NFKMLXLTX2Generator {
             frameRate = parameter(NFKParameterFramesPerSecond)?.floatValue ?? frameRate
             let restoreDecodePaths = applyingDecodePathParameters(parameter)
             defer { restoreDecodePaths() }
+            let restoreDFR = applyingDFRParameters(parameter)
+            defer { restoreDFR() }
+            let restoreImage = try applyingDFRImage(request)
+            defer { restoreImage() }
             job.reportProgress(0)
             let total = reportedSteps
             let (video, audio) = try clip(forPrompt: prompt, negativePrompt: negative,

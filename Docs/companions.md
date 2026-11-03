@@ -706,7 +706,10 @@ models.
   not fit; LTX-2.5's distilled transformer samples its own eight sigmas unguided. LTX-2.5's diffusion
   decoder (`NFKMLXLTX2DiffusionDecoderNet`), the two-stage distilled recipe through the spatial latent
   upsampler, and the temporal latent upsampler (`NFKMLXLTX2LatentUpsamplerNet`) run behind opt-in switches,
-  each at parity against diffusers on the released weights.
+  each at parity against diffusers on the released weights. LTX-2.5's Diffusion Fidelity Rendering recipe
+  (`rendersWithDFR`) runs end to end: keyframe slots at half size, a full-size pass with the detailing
+  IC-LoRA, temporal refine rounds that double the frame rate, an optional third spatial stage, and image
+  conditions, every stage at parity against diffusers.
   Its full transformer (`ltx-2.5-full`) samples guided over the dynamically shifted schedule, its duration
   head sets a clip's length from its prompt when no frame count is given, and its Gemma 4 E2B prompt enhancer
   rewrites a short request into the caption style the model was trained on where a request asks for it.
