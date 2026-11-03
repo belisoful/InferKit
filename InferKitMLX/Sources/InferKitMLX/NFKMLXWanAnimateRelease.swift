@@ -108,9 +108,17 @@ enum NFKMLXWanAnimateRelease {
     ///   - streamed: the blocks left in the release and read in their turn on every pass.
     ///   - bits: packs every block's linear layers to this many bits as each block loads, so the stored
     ///     form is never held whole; nil keeps them at `precision`. A packed transformer streams nothing.
+    ///   - adapters: released LoRA deltas (``NFKMLXWanLoRA``) merged in order, each block's before it packs.
+    ///     A streamed transformer takes none: its blocks are read from the release on every pass.
     static func loadTransformer(into net: NFKMLXWanAnimateNet, fromDirectory directory: URL,
                                 precision: NFKMLXWeightPrecision, streamed: Set<Int> = [], bits: Int? = nil,
-                                groupSize: Int = NFKMLXLoadOptions.defaultQuantizationGroupSize) throws {
+                                groupSize: Int = NFKMLXLoadOptions.defaultQuantizationGroupSize,
+                                adapters: [[String: NFKMLXWanLoRA.Delta]] = []) throws {
+        guard adapters.isEmpty || streamed.isEmpty else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a streamed transformer reads \(streamed.count) blocks from the release on every pass and takes no "
+                + "adapter; load it with a residency that holds the transformer")
+        }
         guard let bits else {
             let vacated = try NFKMLXLayerStream.vacating(streamed, of: net.blocks, prefix: "blocks.",
                                                          directory: directory, precision: precision,
@@ -120,6 +128,9 @@ enum NFKMLXWanAnimateRelease {
                 remap: { key in block(ofKey: key).map { streamed.contains($0.layer) } == true ? nil : key },
                 transform: adapted)
             try NFKMLXWeights.apply(arrays + (vacated?.placeholders ?? []), to: net, verifyShapes: true)
+            for deltas in adapters {
+                try NFKMLXWanLoRA.apply(deltas, to: net)
+            }
             net.layerStream = vacated?.stream
             vacated?.stream.prime()
             return
@@ -151,6 +162,9 @@ enum NFKMLXWanAnimateRelease {
                 module.update(parameters: ModuleParameters.unflattened(arrays))
                 let complete = !unread.contains { block(ofKey: $0)?.layer == layer }
                 if complete {
+                    for deltas in adapters {
+                        try NFKMLXWanLoRA.apply(deltas, to: module, pathPrefix: "blocks.\(layer).")
+                    }
                     try NFKMLXQuantization.quantize(module: module, bits: bits, groupSize: groupSize)
                     eval(module)
                     NFKMLXGPU.clearCache()
@@ -165,6 +179,9 @@ enum NFKMLXWanAnimateRelease {
         // The packed blocks name their parameters apart from the stored ones, so the rest applies on its
         // own after the coverage check above.
         try NFKMLXWeights.apply(outside, to: net, strict: false, verifyShapes: true)
+        for deltas in adapters {
+            try NFKMLXWanLoRA.apply(deltas.filter { !$0.key.hasPrefix("blocks.") }, to: net)
+        }
         eval(net)
         NFKMLXGPU.clearCache()
     }

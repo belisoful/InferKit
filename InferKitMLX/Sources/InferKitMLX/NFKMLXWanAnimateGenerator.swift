@@ -86,6 +86,7 @@ public final class NFKMLXWanAnimateGenerator: NSObject {
     private let pipelineStage: NFKMLXStage<NFKMLXWanAnimatePipeline>
     private let segmenter: NFKMLXSentencePieceSegmenter
     private let sequenceLength: Int
+    private let adapters: NFKWanAdapterList
 
     /// The release the generator reads.
     @objc public let variant: NFKMLXWanAnimateVariant
@@ -128,6 +129,7 @@ public final class NFKMLXWanAnimateGenerator: NSObject {
 
     init(variant: NFKMLXWanAnimateVariant, resident: Bool, segmenter: NFKMLXSentencePieceSegmenter,
          sequenceLength: Int = NFKMLXWanAnimateGenerator.maximumSequenceLength,
+         adapters: NFKWanAdapterList = NFKWanAdapterList(),
          loadEncoders: @escaping () throws -> NFKWanAnimateEncoderStage,
          loadPipeline: @escaping () throws -> NFKMLXWanAnimatePipeline) {
         self.variant = variant
@@ -138,6 +140,7 @@ public final class NFKMLXWanAnimateGenerator: NSObject {
         pipelineStage = NFKMLXStage(loadPipeline)
         self.segmenter = segmenter
         self.sequenceLength = sequenceLength
+        self.adapters = adapters
         super.init()
     }
 
@@ -228,8 +231,9 @@ public final class NFKMLXWanAnimateGenerator: NSObject {
         let streamed = streamedBlocks ?? (plan.streams(1)
             ? Set(plan.heldLayers(1, of: pipelineFootprint).upperBound ..< transformer.layerBytes.count) : [])
 
+        let adapters = NFKWanAdapterList()
         let generator = NFKMLXWanAnimateGenerator(
-            variant: variant, resident: plan.holdsStagesResident, segmenter: segmenter,
+            variant: variant, resident: plan.holdsStagesResident, segmenter: segmenter, adapters: adapters,
             loadEncoders: {
                 let text = NFKMLXT5Encoder.makeNet(textConfiguration)
                 try NFKMLXT5Encoder.loadWeights(into: text, from: directory("text_encoder"), precision: precision)
@@ -242,7 +246,8 @@ public final class NFKMLXWanAnimateGenerator: NSObject {
                 let net = NFKMLXWanAnimateNet(transformerConfiguration)
                 try NFKMLXWanAnimateRelease.loadTransformer(into: net, fromDirectory: directory("transformer"),
                                                             precision: precision, streamed: streamed, bits: bits,
-                                                            groupSize: groupSize)
+                                                            groupSize: groupSize,
+                                                            adapters: try adapters.deltas(naming: NFKMLXWanLoRA.animatePath(original:)))
                 let autoencoder = NFKMLXWanVideoVAENet(vae.configuration)
                 try NFKMLXWanRelease.loadVAE(into: autoencoder, fromDirectory: directory("vae"), precision: precision)
                 return NFKMLXWanAnimatePipeline(transformer: net, vae: autoencoder, latentsMean: vae.mean,
@@ -306,6 +311,52 @@ public final class NFKMLXWanAnimateGenerator: NSObject {
                           residency: residency)
         }
     }
+
+    // MARK: Adapters
+
+    /// Merges a released LoRA (``NFKMLXWanLoRA``) into the transformer at `scale`, now where the transformer
+    /// is loaded and on every later load. Adapters merge in the order they are added; a packed transformer
+    /// takes each block's deltas before the block packs, so adding one to a loaded packed transformer
+    /// releases it to load again.
+    ///
+    /// @discussion The file is read and its layers named now; a layer this transformer does not have, or a
+    /// shape it does not match, throws now where an unpacked transformer is loaded and at the next load
+    /// otherwise. A streamed transformer reads its blocks from the release on every pass and takes no
+    /// adapter. Introduced in InferKit 0.4.0.
+    @objc(addAdapterAtURL:scale:error:)
+    public func addAdapter(at url: URL, scale: Float) throws {
+        guard streamedLayerCount == 0 else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the transformer streams \(streamedLayerCount) blocks from the release, which carries no adapter; "
+                + "load it with a residency that holds the transformer")
+        }
+        try staging.exclusively {
+            let deltas = try NFKMLXWanLoRA.deltas(adapterURL: url, naming: NFKMLXWanLoRA.animatePath(original:),
+                                                  scale: scale).deltas
+            if pipelineStage.isHeld {
+                if quantizationBits == 0 {
+                    _ = try staging.use(pipelineStage) { try NFKMLXWanLoRA.apply(deltas, to: $0.transformer) }
+                } else {
+                    pipelineStage.release()
+                    NFKMLXGPU.clearCache()
+                }
+            }
+            adapters.add(url, scale: scale)
+        }
+    }
+
+    /// Removes every adapter. A loaded transformer is released and loads again without them. Introduced in
+    /// InferKit 0.4.0.
+    @objc public func removeAdapters() {
+        staging.exclusively {
+            adapters.removeAll()
+            pipelineStage.release()
+            NFKMLXGPU.clearCache()
+        }
+    }
+
+    /// The adapters ``addAdapter(at:scale:)`` added. Introduced in InferKit 0.4.0.
+    @objc public var adapterCount: Int { staging.exclusively { adapters.entries.count } }
 
     // MARK: Generation
 

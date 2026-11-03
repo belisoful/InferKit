@@ -33,6 +33,8 @@ public final class NFKMLXWanPipeline {
 
     private let holder: NFKWanPipelineHolder
     private let inChannels: Int
+
+    var transformer: NFKMLXWanTransformerNet { holder.transformer }
     private let latentsMean: MLXArray?
     private let latentsStd: MLXArray?
     private let schedule: NFKMLXUniPCConfiguration

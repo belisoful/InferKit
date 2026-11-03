@@ -45,8 +45,8 @@ and a row answers the first. The `Reach` column answers the second.
 | Outcome | Rows |
 | --- | --- |
 | `ships` | 62 |
-| `trainable`, no recipe yet | 42 |
-| `offline` | 42 |
+| `trainable`, no recipe yet | 44 |
+| `offline` | 40 |
 | `uncertain` | 0 |
 | `untrainable` | 18 |
 | Shared infrastructure, no objective of its own | 1 |
@@ -135,7 +135,7 @@ Demucs, and HT Demucs ship.
 | `NFKMLXRIFE` | trainable | full | internal | The reference distills through the `block_tea` teacher the entry records as dropped at load. |
 | `NFKMLXRAFT` | trainable | full | internal | 5.3M parameters. The sequence loss needs ground-truth flow, and the correlation volume bounds the crop size. |
 | `NFKMLXVideoSR` | trainable | full | internal | BasicVSR's mmediting configuration supplies the loss and the reduced SPyNet rate. Memory scales with clip length. |
-| `NFKMLXWanAnimate` | offline | — | public | The smallest released form is 32.8 GB in bfloat16 against 32 GiB of unified memory, and its pipeline about 50 GB. A 4-bit load runs inference in about 9.6 GB, but the packed weights take no gradient, so a training step still needs the bfloat16 transformer and its optimizer state. The pipeline (`NFKMLXWanAnimateGenerator`) is inference only for the same reason. |
+| `NFKMLXWanAnimate` | trainable | LoRA | public | A LoRA trains adapters over frozen base weights, which may be packed: the transformer is 9.6 GB at 4 bits, and `NFKMLXQuantizedLoRALinear` carries the gradient through the packed weights, as the LTX-2 recipe does at 22B. The activation memory of a training step over one video segment is unmeasured. Neither Wan-Video nor the Animate 2 release publishes training code, so the recipe takes a community trainer as its reference. Released LoRAs load through `NFKMLXWanLoRA`. |
 | `NFKMLXRIFEv4` | ships | full | public | The v4.15 training code Practical-RIFE links: VGG-19 perceptual minus 0.1 SSIM, the encoder-feature and L1 terms, a teacher blended from the blocks' own flows, AdamW. Every gradient at its float32 floor; the update within float32 rounding with Adam's first-step sign ties pinned. |
 | `NFKMLXVideoBackend` | untrainable | — | n/a | The AVFoundation decode and encode layer holds no parameters. |
 
@@ -221,7 +221,7 @@ residual or the velocity objective is known, and the working set is what rules i
 | `NFKMLXLTX2DiffusionDecoderNet`, `NFKMLXLTX2LatentUpsamplerNet` | untrainable | — | public | Lightricks/LTX-2's `ltx-trainer` trains transformer LoRAs only and diffusers defines no objective for either; neither names a loss, a noise schedule for the decoder's stage 5, or the upsamplers' pairing of low- and high-resolution latents. |
 | `NFKMLXT5Encoder` | offline | — | internal | T5-XXL is ~19 GB at float32, the memory crux of the LTX pipeline. |
 | `NFKMLXZImageTransformerNet` | offline | — | partial | 6B, past the working set at the released precision. |
-| `NFKMLXWanTransformerNet` | offline | — | partial | The `.base` geometry is the 14B release. Wan 2.1 at 1.3B would hold, but its activation stack is unmeasured. |
+| `NFKMLXWanTransformerNet` | trainable | LoRA | partial | Wan 2.1 T2V 1.3B holds unpacked; the 14B releases take the packed-base LoRA the Animate row describes. The activation memory of a training step is unmeasured. Wan-Video publishes no training code, so the recipe takes a community trainer as its reference. Released LoRAs load through `NFKMLXWanLoRA`. |
 | `NFKMLXQwenImageNet` | offline | — | public | 7.1B is 14 GB at bfloat16 before activations, and the backward pass holds thirty-two blocks of them. |
 | `NFKMLXSD3TransformerNet` | offline | — | public | The presets are 2B, 2.5B, and 8B. |
 | `NFKMLXFluxTransformerNet` | offline | — | public | ~24 GB resident for the 12B transformer. |

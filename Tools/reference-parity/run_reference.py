@@ -28768,5 +28768,175 @@ def main():
           f"reference output {tuple(result.shape)}")
 
 
+
+def run_wan_lora(image):
+    """Released Wan LoRAs as diffusers loads and fuses them (`WanLoraLoaderMixin.lora_state_dict`,
+    `load_lora_into_transformer`, `fuse_lora`), over a tiny random `WanTransformer3DModel` and a tiny
+    random `WanAnimate2Transformer3DModel`. Needs PEFT, so it runs under the `ltxtrain` oracle env.
+
+    Each case writes an adapter file in one released layout, loads and fuses it at its own scale into a
+    fresh copy of the base transformer, and records the file's tensors (`lora::<case>::<key>`), its
+    `lora_adapter_metadata` as UTF-8 bytes (`meta::<case>`), its scale (`scale::<case>`), and every
+    parameter the fuse changed (`fused::<case>::<name>`), named as the base model names it. The text-to-video
+    cases cover the original layout with alphas at bfloat16 (bias deltas, a dropped normalization `.diff`,
+    a dropped block `.diff`, an orphan time-projection bias, the embedders and the head), the original
+    layout without alphas carrying the head's full `.diff` (the lightx2v distillation form), the musubi
+    layout, PEFT without metadata (with a `lora_B.bias`), PEFT with `r`/`lora_alpha` metadata, and two
+    adapters fused together. The Animate case is a PEFT file in Animate's own names with metadata;
+    `animate_original` is the same adapter in the original layout, which diffusers translates to the
+    text-to-video names and cannot load into Animate (`animate_original_refused` records that), so the
+    port is held to the PEFT twin's fuse. The base weights are recorded under `w::t2v::` and
+    `w::animate::`. `image` unused.
+    """
+    import copy
+    import json as json_module
+    import tempfile
+
+    from diffusers import WanTransformer3DModel
+    from diffusers.loaders.lora_pipeline import WanLoraLoaderMixin
+    from diffusers.models.transformers.transformer_wan_animate_2 import WanAnimate2Transformer3DModel
+    from safetensors.torch import save_file as save_adapter
+
+    t2v = _randomized(WanTransformer3DModel(
+        patch_size=(1, 2, 2), num_attention_heads=2, attention_head_dim=16, in_channels=4, out_channels=4,
+        text_dim=32, freq_dim=256, ffn_dim=48, num_layers=2, cross_attn_norm=True,
+        qk_norm="rms_norm_across_heads", eps=1e-6, rope_max_seq_len=1024), seed=61, scale=0.1)
+    animate = _randomized(WanAnimate2Transformer3DModel(
+        patch_size=(1, 2, 2), text_len=16, in_dim=8, dim=32, ffn_dim=48, freq_dim=256, text_dim=10, out_dim=4,
+        num_heads=2, num_layers=2, cross_attn_norm=True, eps=1e-6, use_img_emb=True, refer_offset_t=1,
+        refer_offset_h=0, refer_offset_w=-1, refer_stride=1), seed=62, scale=0.1)
+
+    generator = torch.Generator().manual_seed(63)
+
+    def tensor(*shape, dtype=torch.float32):
+        return (torch.randn(*shape, generator=generator) * 0.1).to(dtype)
+
+    rank = 4
+    # Original Wan layer name → (in, out) on the text-to-video tiny model (dim 32, ffn 48, text 32, freq 256).
+    t2v_layers = {"blocks.0.self_attn.q": (32, 32), "blocks.0.self_attn.o": (32, 32),
+                  "blocks.1.cross_attn.v": (32, 32), "blocks.0.ffn.0": (32, 48), "blocks.1.ffn.2": (48, 32),
+                  "time_projection.1": (32, 192), "head.head": (32, 16), "text_embedding.0": (32, 32),
+                  "time_embedding.2": (32, 32)}
+
+    def original(layers, dtype, alpha, down="lora_down", up="lora_up", prefix="diffusion_model."):
+        file = {}
+        for name, (fan_in, fan_out) in layers.items():
+            file[f"{prefix}{name}.{down}.weight"] = tensor(rank, fan_in, dtype=dtype)
+            file[f"{prefix}{name}.{up}.weight"] = tensor(fan_out, rank, dtype=dtype)
+            if alpha is not None:
+                file[f"{prefix}{name}.alpha"] = torch.tensor(alpha, dtype=dtype)
+        return file
+
+    cases = {}
+    a = original(t2v_layers, torch.bfloat16, 3.0)
+    a["diffusion_model.blocks.0.self_attn.q.diff_b"] = tensor(32, dtype=torch.bfloat16)
+    a["diffusion_model.blocks.1.ffn.2.diff_b"] = tensor(32, dtype=torch.bfloat16)
+    a["diffusion_model.blocks.0.norm3.diff"] = torch.zeros(32, dtype=torch.bfloat16)
+    a["diffusion_model.blocks.1.self_attn.k.diff"] = tensor(32, 32, dtype=torch.bfloat16)
+    cases["original_alpha"] = (t2v, [(a, {}, None)], 0.75)
+
+    b = original({k: v for k, v in t2v_layers.items() if k != "head.head" and not k.startswith("time_projection")},
+                 torch.bfloat16, None, down="lora_A", up="lora_B")
+    b["diffusion_model.head.head.diff"] = tensor(16, 32, dtype=torch.bfloat16)
+    b["diffusion_model.head.head.diff_b"] = tensor(16, dtype=torch.bfloat16)
+    b["diffusion_model.time_projection.1.diff_b"] = tensor(192, dtype=torch.bfloat16)
+    cases["original_head_diff"] = (t2v, [(b, {}, None)], 1.0)
+
+    musubi = {}
+    for i in range(2):
+        for site in ("self_attn", "cross_attn"):
+            for o in ("q", "k", "v", "o"):
+                musubi[f"lora_unet_blocks_{i}_{site}_{o}.lora_down.weight"] = tensor(rank, 32)
+                musubi[f"lora_unet_blocks_{i}_{site}_{o}.lora_up.weight"] = tensor(32, rank)
+                musubi[f"lora_unet_blocks_{i}_{site}_{o}.alpha"] = torch.tensor(1.0)
+        musubi[f"lora_unet_blocks_{i}_ffn_0.lora_down.weight"] = tensor(rank, 32)
+        musubi[f"lora_unet_blocks_{i}_ffn_0.lora_up.weight"] = tensor(48, rank)
+        musubi[f"lora_unet_blocks_{i}_ffn_0.alpha"] = torch.tensor(6.0)
+        musubi[f"lora_unet_blocks_{i}_ffn_2.lora_down.weight"] = tensor(rank, 48)
+        musubi[f"lora_unet_blocks_{i}_ffn_2.lora_up.weight"] = tensor(32, rank)
+        musubi[f"lora_unet_blocks_{i}_ffn_2.alpha"] = torch.tensor(4.0)
+    cases["musubi"] = (t2v, [(musubi, {}, None)], 0.5)
+
+    peft = {}
+    for path, (fan_in, fan_out) in {"blocks.0.attn1.to_q": (32, 32), "blocks.1.attn2.to_out.0": (32, 32),
+                                    "blocks.0.ffn.net.0.proj": (32, 48), "proj_out": (32, 16),
+                                    "condition_embedder.time_proj": (32, 192)}.items():
+        peft[f"transformer.{path}.lora_A.weight"] = tensor(rank, fan_in)
+        peft[f"transformer.{path}.lora_B.weight"] = tensor(fan_out, rank)
+    peft["transformer.proj_out.lora_B.bias"] = tensor(16)
+    cases["peft"] = (t2v, [(peft, {}, None)], 1.25)
+    peft_meta = {k: v.clone() for k, v in peft.items() if not k.endswith(".bias")}
+    metadata = {"r": rank, "lora_alpha": 2, "target_modules": sorted({k.split(".lora_")[0].removeprefix("transformer.")
+                                                                      for k in peft_meta})}
+    cases["peft_metadata"] = (t2v, [(peft_meta, metadata, None)], 1.0)
+    cases["stacked"] = (t2v, [(peft_meta, metadata, "first"), (a, {}, "second")], 0.8)
+
+    animate_layers = {"blocks.0.self_attn.q": ("blocks.0.self_attn.to_q", 32, 32),
+                      "blocks.1.cross_attn.k_img": ("blocks.1.cross_attn.add_k_proj", 32, 32),
+                      "blocks.0.ffn.0": ("blocks.0.ffn.0", 32, 48), "img_emb.proj.1": ("img_emb.proj.1", 1280, 1280),
+                      "head.head": ("head.head", 32, 16), "text_embedding.0": ("text_embedding.0", 10, 32)}
+    twin, original_animate = {}, {}
+    for name, (path, fan_in, fan_out) in animate_layers.items():
+        down, up = tensor(rank, fan_in), tensor(fan_out, rank)
+        twin[f"transformer.{path}.lora_A.weight"] = down
+        twin[f"transformer.{path}.lora_B.weight"] = up
+        original_animate[f"diffusion_model.{name}.lora_down.weight"] = down.clone()
+        original_animate[f"diffusion_model.{name}.lora_up.weight"] = up.clone()
+        # alpha / rank = 2 folds into the down weight exactly, so the twin's metadata scaling is the same.
+        original_animate[f"diffusion_model.{name}.alpha"] = torch.tensor(8.0)
+    cases["animate"] = (animate, [(twin, {"r": rank, "lora_alpha": 8,
+                                          "target_modules": [v[0] for v in animate_layers.values()]}, None)], 0.6)
+
+    extra = {}
+    directory = tempfile.mkdtemp()
+    for case, (base, adapters, scale) in cases.items():
+        model = copy.deepcopy(base)
+        names = []
+        for index, (file, meta, name) in enumerate(adapters):
+            name = name or case
+            path = os.path.join(directory, f"{case}-{index}.safetensors")
+            save_adapter(file, path, metadata={"lora_adapter_metadata": json_module.dumps(meta)} if meta else None)
+            state, md = WanLoraLoaderMixin.lora_state_dict(path, return_lora_metadata=True)
+            WanLoraLoaderMixin.load_lora_into_transformer(state, transformer=model, adapter_name=name, metadata=md)
+            names.append(name)
+            suffix = "" if len(adapters) == 1 else f"#{index}"
+            for key, value in file.items():
+                extra[f"lora::{case}{suffix}::{key}"] = value.contiguous()
+            if meta:
+                extra[f"meta::{case}{suffix}"] = torch.tensor(list(json_module.dumps(meta).encode()), dtype=torch.uint8)
+        model.fuse_lora(lora_scale=scale, adapter_names=names)
+        extra[f"scale::{case}"] = torch.tensor([scale])
+        base_state = base.state_dict()
+        for key, value in model.state_dict().items():
+            if ".lora_" in key:
+                continue
+            plain = key.replace(".base_layer", "")
+            if plain in base_state and not torch.equal(value, base_state[plain]):
+                extra[f"fused::{case}::{plain}"] = value.float().contiguous()
+
+    for key, value in original_animate.items():
+        extra[f"lora::animate_original::{key}"] = value.contiguous()
+    path = os.path.join(directory, "animate-original.safetensors")
+    save_adapter(original_animate, path)
+    refused = 0
+    try:
+        state = WanLoraLoaderMixin.lora_state_dict(path)
+        WanLoraLoaderMixin.load_lora_into_transformer(state, transformer=copy.deepcopy(animate), adapter_name="o")
+    except Exception as error:                                           # noqa: BLE001 — recorded, not raised
+        print(f"diffusers refuses the original-layout adapter for Animate: {type(error).__name__}: {error}")
+        refused = 1
+    extra["animate_original_refused"] = torch.tensor([refused], dtype=torch.int32)
+
+    for prefix, model in (("w::t2v::", t2v), ("w::animate::", animate)):
+        for key, value in model.state_dict().items():
+            extra[prefix + key] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return extra["fused::peft::proj_out.weight"].clone()
+
+
+MODELS["wan_lora"] = run_wan_lora
+
+
 if __name__ == "__main__":
     sys.exit(main())
+

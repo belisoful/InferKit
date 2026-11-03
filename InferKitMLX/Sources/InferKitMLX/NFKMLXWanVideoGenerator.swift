@@ -176,6 +176,7 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     private let segmenter: NFKMLXSentencePieceSegmenter
     private let compression: (spatial: Int, temporal: Int)
     private let sequenceLength: Int
+    private let adapters: NFKWanAdapterList
 
     /// The denoising steps, 50 by the reference's default.
     @objc public var steps: Int = 50
@@ -217,9 +218,11 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     init(resident: Bool, segmenter: NFKMLXSentencePieceSegmenter, compression: (spatial: Int, temporal: Int),
          framesPerSecond: Double = 16,
          sequenceLength: Int = NFKMLXWanVideoGenerator.maximumSequenceLength,
+         adapters: NFKWanAdapterList = NFKWanAdapterList(),
          loadTextEncoder: @escaping () throws -> NFKMLXT5EncoderNet,
          loadPipeline: @escaping () throws -> NFKMLXWanPipeline) {
         staging = NFKMLXStagedModel(resident: resident)
+        self.adapters = adapters
         textStage = NFKMLXStage { NFKWanTextStage(try loadTextEncoder()) }
         pipelineStage = NFKMLXStage(loadPipeline)
         self.segmenter = segmenter
@@ -301,10 +304,11 @@ public final class NFKMLXWanVideoGenerator: NSObject {
                                      + NFKMLXStageWeights.bytes(inDirectory: vaeDirectory, precision: .float32))],
             residency: residency, budget: NFKMLXResidencyBudget.current())
         let textInFloat32 = plan.widens(0)
+        let adapters = NFKWanAdapterList()
         let generator = NFKMLXWanVideoGenerator(
             resident: plan.holdsStagesResident, segmenter: segmenter,
             compression: compression(of: vae.configuration),
-            framesPerSecond: framesPerSecond(of: vae.configuration),
+            framesPerSecond: framesPerSecond(of: vae.configuration), adapters: adapters,
             loadTextEncoder: {
                 let encoder = NFKMLXT5Encoder.makeNet(textConfiguration)
                 try NFKMLXT5Encoder.loadWeights(into: encoder, from: textDirectory,
@@ -319,6 +323,9 @@ public final class NFKMLXWanVideoGenerator: NSObject {
                 } else {
                     try NFKMLXWanRelease.loadTransformer(into: transformer, fromDirectory: transformerDirectory,
                                                          precision: .checkpoint)
+                }
+                for deltas in try adapters.deltas(naming: NFKMLXWanLoRA.textToVideoPath(original:)) {
+                    try NFKMLXWanLoRA.apply(deltas, to: transformer)
                 }
                 let autoencoder = NFKMLXWanVideoVAENet(vae.configuration)
                 try NFKMLXWanRelease.loadVAE(into: autoencoder, fromDirectory: vaeDirectory)
@@ -380,6 +387,39 @@ public final class NFKMLXWanVideoGenerator: NSObject {
                           residency: residency)
         }
     }
+
+    // MARK: Adapters
+
+    /// Merges a released LoRA (``NFKMLXWanLoRA``) into the transformer at `scale`, now where the transformer
+    /// is loaded and on every later load. Adapters merge in the order they are added.
+    ///
+    /// @discussion The file is read and its layers named now; a layer this transformer does not have, or a
+    /// shape it does not match, throws now where the transformer is loaded and at its next load otherwise.
+    /// Introduced in InferKit 0.4.0.
+    @objc(addAdapterAtURL:scale:error:)
+    public func addAdapter(at url: URL, scale: Float) throws {
+        try staging.exclusively {
+            let deltas = try NFKMLXWanLoRA.deltas(adapterURL: url, naming: NFKMLXWanLoRA.textToVideoPath(original:),
+                                                  scale: scale).deltas
+            if pipelineStage.isHeld {
+                _ = try staging.use(pipelineStage) { try NFKMLXWanLoRA.apply(deltas, to: $0.transformer) }
+            }
+            adapters.add(url, scale: scale)
+        }
+    }
+
+    /// Removes every adapter. A loaded transformer is released and loads again without them. Introduced in
+    /// InferKit 0.4.0.
+    @objc public func removeAdapters() {
+        staging.exclusively {
+            adapters.removeAll()
+            pipelineStage.release()
+            NFKMLXGPU.clearCache()
+        }
+    }
+
+    /// The adapters ``addAdapter(at:scale:)`` added. Introduced in InferKit 0.4.0.
+    @objc public var adapterCount: Int { staging.exclusively { adapters.entries.count } }
 
     // MARK: Generation
 
