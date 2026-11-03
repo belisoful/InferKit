@@ -286,6 +286,10 @@ struct NFKMLXLoadProfile {
         "wan-animate": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                           defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true,
                                           streamedStage: "transformer", halvesSteps: true)],
+        // Wan 2.2 A14B stores both experts at float32, streams the blocks of an expert it cannot hold, or packs
+        // the blocks' linear layers to 2 to 8 bits.
+        "wan-a14b": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint], defaultPrecision: NFKModelPrecisionCheckpoint,
+                                       quantizes: true, streamedStage: "transformer", halvesSteps: true)],
         "minimax-music": [.diffusionPipeline()],
         "stable-audio": [.diffusionPipeline()],
     ]

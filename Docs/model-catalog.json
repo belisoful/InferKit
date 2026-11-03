@@ -74122,6 +74122,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
       "options" : [
@@ -74237,6 +74238,73 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 126180600268,
+                "residentBytes" : 126180600268
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 26942445004,
+                "residentBytes" : 26942445004
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 18496644556,
+                "residentBytes" : 18496644556
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14273744332,
+                "residentBytes" : 14273744332
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10050844108,
+                "residentBytes" : 10050844108
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5827943884,
+                "residentBytes" : 5827943884
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1605043660,
+                "residentBytes" : 1605043660
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
         }
       ],
       "outputModalities" : [
@@ -74249,6 +74317,17 @@
           "required" : true,
           "title" : "Clip",
           "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
         }
       ],
       "registryName" : "wan2.2-i2v-a14b",
@@ -74287,6 +74366,7 @@
                   "float32" : 137542420940
                 },
                 "id" : "model",
+                "quantizableElements" : 33783201792,
                 "title" : "model"
               }
             ]
@@ -74437,6 +74517,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
       "options" : [
@@ -74552,6 +74633,73 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 126177323468,
+                "residentBytes" : 126177323468
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 26939168204,
+                "residentBytes" : 26939168204
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 18493367756,
+                "residentBytes" : 18493367756
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14270467532,
+                "residentBytes" : 14270467532
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10047567308,
+                "residentBytes" : 10047567308
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5824667084,
+                "residentBytes" : 5824667084
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1601766860,
+                "residentBytes" : 1601766860
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
         }
       ],
       "outputModalities" : [
@@ -74564,6 +74712,17 @@
           "required" : true,
           "title" : "Clip",
           "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
         }
       ],
       "registryName" : "wan2.2-t2v-a14b",
@@ -74602,6 +74761,7 @@
                   "float32" : 137539144140
                 },
                 "id" : "model",
+                "quantizableElements" : 33783201792,
                 "title" : "model"
               }
             ]

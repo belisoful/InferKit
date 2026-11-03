@@ -255,6 +255,19 @@ final class NFKMLXGeneratorStagingTests: XCTestCase {
                         released: text.shapes)
     }
 
+    func testWan22ExpertReleasesMatchTheirLoaders() throws {
+        try requireMLXRuntime()
+        for name in ["wan22-t2v-a14b-transformer", "wan22-t2v-a14b-transformer-2",
+                     "wan22-i2v-a14b-transformer", "wan22-i2v-a14b-transformer-2"] {
+            let release = try shapes(name)
+            let configuration = try NFKMLXWanRelease.transformerConfiguration(fromHuggingFace: release.config)
+            XCTAssertEqual(configuration.outChannels, 16, name)
+            XCTAssertEqual(configuration.inChannels, name.contains("i2v") ? 36 : 16, name)
+            assertStructure(name, module: NFKMLXWanTransformerNet(configuration),
+                            released: release.shapes.mapValues { $0.count == 5 ? channelsLast($0) : $0 })
+        }
+    }
+
     func testLTXVideoReleaseMatchesItsLoaders() throws {
         try requireMLXRuntime()
         let transformer = try shapes("ltx-video-transformer")

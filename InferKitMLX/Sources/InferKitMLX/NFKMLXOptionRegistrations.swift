@@ -29,6 +29,7 @@ import MLX
 ///   property, set by key-value coding;
 /// - the staged generators (FLUX.1 and its ControlNet, FLUX.2, SD3 and its ControlNet, SANA, Z-Image,
 ///   Qwen-Image, Wan, LTX-Video, MiniMax Music 3, Stable Audio Open): residency.
+/// - Wan 2.2 A14B: residency, precision, and a runtime weight quantization of both experts' blocks.
 /// - Wan 2.2 Animate: residency, precision, and a runtime weight quantization of the transformer's blocks.
 ///
 /// A generator reports whether it holds its stages, so a backend's `modelInfo` names the residency an
@@ -349,7 +350,7 @@ enum NFKMLXOptionRegistrations {
         }
     }
 
-    /// Wan, Wan Animate, LTX-Video, and MiniMax Music 3.
+    /// Wan, Wan 2.2 A14B, Wan Animate, LTX-Video, and MiniMax Music 3.
     private static func registerVideoAndMusicGenerators() {
         let residency: Set<String> = [NFKModelLoadOptionResidency]
         // The precision option converts Wan 2.1's float32 transformer to bfloat16 as it loads.
@@ -368,6 +369,17 @@ enum NFKMLXOptionRegistrations {
             let generator = try NFKMLXWanAnimateGenerator.generator(
                 directoryURL: url, residency: options.residency, precision: options.precision ?? .checkpoint,
                 quantizationBits: options.quantizationBits ?? 0, budget: NFKMLXResidencyBudget.current(),
+                groupSize: options.quantizationGroupSize)
+            report(generator.holdsStagesResident, to: options)
+            return generator.inferenceBackend()
+        }
+        registerDirectoryModels(registryNames(families: ["wan-a14b"]),
+                                consumes: residency.union([NFKModelLoadOptionPrecision]).union(quantizationKeys)) {
+            url, _, options in
+            let generator = try NFKMLXWanVideoGenerator.generator(
+                directoryURL: url, residency: options.residency, transformerType: nil,
+                precision: options.precision ?? .checkpoint,
+                bits: (options.quantizationBits ?? 0) == 0 ? nil : options.quantizationBits,
                 groupSize: options.quantizationGroupSize)
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
