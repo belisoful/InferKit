@@ -255,8 +255,8 @@ counts below are the ledger's, over its 165 rows.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 62 |
-| `trainable`, no recipe yet | 44 |
+| `ships` | 63 |
+| `trainable`, no recipe yet | 43 |
 | `offline` | 40 |
 | `uncertain`, a reference is unread | 0 |
 | `untrainable` | 18 |

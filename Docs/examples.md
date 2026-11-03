@@ -5762,6 +5762,31 @@ linear decay to a tenth of the rate. A batch holds clips of the same latent grid
 block's activations are recomputed in the backward pass, as the trainer's recipes do, so a 4-bit step on the
 22B transformer fits a 32 GB Mac: about 24.5 GB at its peak and 80 seconds for a 49-frame 512×320 clip.
 
+### Fine-tuning Wan on your own clips
+
+Wan-Video publishes no training code, so the Wan text-to-video transformer fine-tunes as a community
+trainer does, chosen by a preset: `.finetrainers`, `.diffSynth`, or `.musubi`. Each preset carries its
+trainer's noise-level draw, loss weight, adapted layers, rank and alpha, and optimizer, and saves the
+adapters in the layout that trainer writes. A clip becomes an example through the release's autoencoder and
+umT5, prepared as the preset's trainer prepares it:
+
+```swift
+let generator = try NFKMLXWanVideoGenerator.generator(directoryURL: release)
+let examples = try myClips.map { try generator.trainingExample(video: $0.frames, prompt: $0.caption, preset: .diffSynth) }
+let net = try NFKMLXWanVideoGenerator.network(directoryURL: release)
+try NFKMLXWanVideoGenerator.fineTune(net, examples: { _ in [examples.randomElement()!] }, preset: .diffSynth,
+                                     steps: 2_000)
+
+try NFKMLXWanVideoGenerator.saveAdapters(of: net, to: adaptersURL, preset: .diffSynth)
+try generator.addAdapter(at: adaptersURL, scale: 1)  // Objective-C: addAdapterAtURL:scale:error:
+```
+
+Every preset noises the clean latent to `(1 − σ)·clean + σ·noise` and holds the prediction to
+`noise − clean` by the mean squared error. finetrainers draws σ from a logit-normal over the unshifted
+table and samples the encoder's posterior; DiffSynth-Studio draws a uniform index over its shift-5 table
+and weights the loss by a Gaussian over the timestep; musubi-tuner shifts a sigmoid-normal draw by 3. A
+preset is a value, so a run can change its rank, targets, or sampler before training.
+
 ### Resuming, validating, and training in half precision
 
 A checkpoint that names an optimizer-state file lets a suspended run continue where it stopped. A

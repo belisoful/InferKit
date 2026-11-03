@@ -718,6 +718,11 @@ models.
   (`NFKMLXLTX2VideoEncoderNet`, `NFKMLXLTX2AudioEncoderNet`) and the trainer's log-mel front end
   (`trainingExample`), the trainer's flow-matching objective measured against its own code over its own
   model (`ltx_core`), and the adapters saved alone and applied to a generator (`applyAdaptersAtURL:error:`).
+- **Wan fine-tuning** — LoRA on the Wan text-to-video transformer as three community trainers train it
+  (`NFKMLXWanTrainingPreset`: finetrainers, DiffSynth-Studio, musubi-tuner), each clip encoded by the
+  release's autoencoder and umT5 (`trainingExample`), each trainer's draws, objective, and adapter
+  gradients measured against its own code, and the adapters saved in its layout, which a generator applies
+  with `addAdapter(at:scale:)`.
 - **`NFKMLXQwenImagePipeline`** — Qwen-Image 2.1 text-to-image: a 7.1B block-causal DiT, a
   vision-language text encoder, and a single-frame autoencoder. The caption and the image latents share
   one sequence, read causally, while each image block stays bidirectional within itself, and the text

@@ -516,6 +516,28 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: adapters.path))
     }
 
+    // Docs/examples.md: Fine-tuning Wan on your own clips
+    func testExampleFineTuningWanOnOwnClips() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let adapters = FileManager.default.temporaryDirectory.appendingPathComponent("wan-lora-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: adapters) }
+        // A real run builds from the release with NFKMLXWanVideoGenerator.network(directoryURL:) and makes each
+        // example with generator.trainingExample(video:prompt:preset:); the tiny geometry keeps this free of
+        // downloads.
+        let net = NFKMLXWanTransformerNet(.tiny)
+        let myClips = [NFKMLXWanTrainingExample(latent: MLXRandom.normal([4, 3, 4, 4]),
+                                                text: MLXRandom.normal([8, NFKMLXWanConfiguration.tiny.textDim]))]
+        var preset = NFKMLXWanTrainingPreset.diffSynth
+        preset.rank = 4
+        let history = try NFKMLXWanVideoGenerator.fineTune(net, examples: { _ in myClips }, preset: preset, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWanVideoGenerator.saveAdapters(of: net, to: adapters, preset: preset)
+        let base = NFKMLXWanTransformerNet(.tiny)
+        XCTAssertEqual(try NFKMLXWanLoRA.merge(adapterURL: adapters, into: base).mergedLayers, 2 * 10)
+    }
+
     // Docs/examples.md: Adapting a decision model to your own decisions
     func testExampleAdaptingLayaOnOwnDecisions() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 62 |
-| `trainable`, no recipe yet | 44 |
+| `ships` | 63 |
+| `trainable`, no recipe yet | 43 |
 | `offline` | 40 |
 | `uncertain` | 0 |
 | `untrainable` | 18 |
@@ -221,7 +221,7 @@ residual or the velocity objective is known, and the working set is what rules i
 | `NFKMLXLTX2DiffusionDecoderNet`, `NFKMLXLTX2LatentUpsamplerNet` | untrainable | — | public | Lightricks/LTX-2's `ltx-trainer` trains transformer LoRAs only and diffusers defines no objective for either; neither names a loss, a noise schedule for the decoder's stage 5, or the upsamplers' pairing of low- and high-resolution latents. |
 | `NFKMLXT5Encoder` | offline | — | internal | T5-XXL is ~19 GB at float32, the memory crux of the LTX pipeline. |
 | `NFKMLXZImageTransformerNet` | offline | — | partial | 6B, past the working set at the released precision. |
-| `NFKMLXWanTransformerNet` | trainable | LoRA | partial | Wan 2.1 T2V 1.3B holds unpacked; the 14B releases take the packed-base LoRA the Animate row describes. The activation memory of a training step is unmeasured. Wan-Video publishes no training code, so the recipe takes a community trainer as its reference. Released LoRAs load through `NFKMLXWanLoRA`. |
+| `NFKMLXWanTransformerNet` | ships | LoRA | public | Three community trainers' recipes, chosen by `NFKMLXWanTrainingPreset`: finetrainers (the attention projections, a logit-normal draw over the unshifted table, the posterior sampled), DiffSynth-Studio (the attention and feed-forward projections, a uniform index over the shift-5 table with its Gaussian loss weight), and musubi-tuner (every block linear layer, `shift` sampling at 3). Each trainer's draws, objective, adapter gradients, and saved file are held to its own code (`wan_lora_finetrainers`, `wan_lora_diffsynth`, `wan_lora_musubi`), and the adapters save in its layout. Wan-Video publishes no training code. Wan 2.1 T2V 1.3B holds unpacked; the 14B releases take the packed-base LoRA the Animate row describes, and a training step's activation memory is unmeasured on a device. |
 | `NFKMLXQwenImageNet` | offline | — | public | 7.1B is 14 GB at bfloat16 before activations, and the backward pass holds thirty-two blocks of them. |
 | `NFKMLXSD3TransformerNet` | offline | — | public | The presets are 2B, 2.5B, and 8B. |
 | `NFKMLXFluxTransformerNet` | offline | — | public | ~24 GB resident for the 12B transformer. |
@@ -363,6 +363,7 @@ the recipe detail.
 | `NFKMLXTAESD` | untrainable | madebyollin/taesd at 401ce45, the whole tree. |
 | `NFKMLXLTXVideoVAE` | untrainable | Lightricks/LTX-Video at 4b2d053 and LTX-Video-Trainer at e055182. |
 | `NFKMLXLTX2TransformerNet` | ships, LoRA | Lightricks/LTX-2 at e98f6d9, `packages/ltx-trainer` (`trainer.py`, `timestep_samplers.py`, `training_strategies/`, `configs/t2v_lora.yaml`) and `packages/ltx-core` (`model/transformer/`). |
+| `NFKMLXWanTransformerNet` | ships, LoRA | huggingface/finetrainers at 684c0db (`finetrainers/models/wan/`, `utils/diffusion.py`, `trainer/sft_trainer/`); modelscope/DiffSynth-Studio at 1e8ae1d (`diffsynth/diffusion/`, `models/wan_video_dit.py`, `utils/lora/`); kohya-ss/musubi-tuner at f8a1b03 (`training/trainer_base.py`, `networks/lora_wan.py`, `wan/modules/`). |
 | The LTX-2 autoencoders and the duration head | untrainable | Lightricks/LTX-2 at e98f6d9, the whole tree; diffusers `pipelines/ltx2/duration_head.py` at fbf49e7. |
 | `NFKMLXQwenImageVAE` and the Wan, DC-AE, and FLUX.2 latent autoencoders | untrainable | QwenLM/Qwen-Image at 6b5e1f5; Wan2.1 at 9737cba and Wan2.2 at 1ea34ff; efficientvit at de7d773 and DC-Gen at 5e03d60; black-forest-labs/flux2 at 50fe516. |
 

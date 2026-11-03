@@ -6208,6 +6208,30 @@
         "wan_lora",
         "ltx2_dfr"
       ]
+    },
+    "wantrain_finetrainers": {
+      "interpreter": "~/.inferkit-validation/wantrain-finetrainersvenv/bin/python",
+      "why": "huggingface/finetrainers at 684c0db, run from its checkout with PYTHONPATH=$IK_FINETRAINERS_SRC. torch is pinned to 2.9.1 (torchvision 0.24.1, torchao 0.14.1) because finetrainers' attention_dispatch imports torch.distributed.tensor.experimental._attention._AttentionOp, which torch 2.10 removed; diffusers 0.42.1, transformers 5.22.1, peft 0.21.2, accelerate 1.15.0, torchdata 0.11.0, kornia 0.9.0, datasets 5.1.0. decord has no macOS arm64 wheel and finetrainers imports it at package import, so the oracle stubs it; peft 0.21 refuses torchao below 0.16, so the oracle turns peft's torchao dispatch off (no layer here is a torchao one).",
+      "rebuild": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wantrain-finetrainersvenv && ~/.inferkit-validation/wantrain-finetrainersvenv/bin/pip install torch==2.9.1 torchvision==0.24.1 torchao==0.14.1 diffusers==0.42.1 transformers==5.22.1 peft==0.21.2 accelerate==1.15.0 torchdata==0.11.0 kornia==0.9.0 datasets==5.1.0 safetensors sentencepiece; git clone https://github.com/huggingface/finetrainers $IK_FINETRAINERS_SRC && git -C $IK_FINETRAINERS_SRC checkout 684c0db",
+      "modes": [
+        "wan_lora_finetrainers"
+      ]
+    },
+    "wantrain_diffsynth": {
+      "interpreter": "~/.inferkit-validation/wantrain-diffsynthvenv/bin/python",
+      "why": "modelscope/DiffSynth-Studio at 1e8ae1d, run from its checkout with PYTHONPATH=$IK_DIFFSYNTH_SRC: torch 2.15.0, transformers 5.22.1, peft 0.21.2, accelerate 1.15.0, its own requirements otherwise. diffusers is not installed; DiffSynth carries its own Wan model.",
+      "rebuild": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wantrain-diffsynthvenv && ~/.inferkit-validation/wantrain-diffsynthvenv/bin/pip install torch==2.15.0 transformers==5.22.1 peft==0.21.2 accelerate==1.15.0 safetensors einops; git clone https://github.com/modelscope/DiffSynth-Studio $IK_DIFFSYNTH_SRC && git -C $IK_DIFFSYNTH_SRC checkout 1e8ae1d",
+      "modes": [
+        "wan_lora_diffsynth"
+      ]
+    },
+    "wantrain_musubi": {
+      "interpreter": "~/.inferkit-validation/wantrain-musubivenv/bin/python",
+      "why": "kohya-ss/musubi-tuner at f8a1b03, run from its checkout with PYTHONPATH=$IK_MUSUBI_SRC/src: torch 2.15.0, torchvision 0.29.2, diffusers 0.40.0, transformers 5.17.0, accelerate 1.15.0, its pyproject pins exact. musubi's T5 module evaluates torch.cuda.current_device() as a default argument at import, so the oracle replaces it on a CPU build, and its attention rounds a float32 query, key, and value to bfloat16, so the record proper attends in float32 and keeps musubi's own run under as_run.*.",
+      "rebuild": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wantrain-musubivenv && git clone https://github.com/kohya-ss/musubi-tuner $IK_MUSUBI_SRC && git -C $IK_MUSUBI_SRC checkout f8a1b03 && ~/.inferkit-validation/wantrain-musubivenv/bin/pip install torch==2.15.0 torchvision==0.29.2 diffusers==0.40.0 transformers==5.17.0 accelerate==1.15.0 && ~/.inferkit-validation/wantrain-musubivenv/bin/pip install --no-deps -e $IK_MUSUBI_SRC",
+      "modes": [
+        "wan_lora_musubi"
+      ]
     }
   },
   "shapes_comment": "Releases held to the module STRUCTURALLY (every parameter's shape against the safetensors headers, no weights downloaded): `python3 shapes.py <repo> <validation root>/shapes/<directory>`; `IK_SHAPES_ROOT` names the parent, and NFKMLXReleasedSizesTests reads each entry by directory name.",
@@ -7350,6 +7374,24 @@
       "record": "reference/ltx2-loss.safetensors",
       "environment": "ltxtrain",
       "command": "ltx2_loss (t2v.* and flex.*: the trainer's text_to_video and flexible strategies over ltx_core's tiny LTXModel under peft LoRA; loss, per-example loss, predictions, and every adapter's gradient in lora_a/lora_b layout; sampler.* the raw sampler draws at 100 and 6000 tokens)"
+    },
+    {
+      "key": "IK_PARITY_WAN_LORA_FINETRAINERS",
+      "record": "reference/wan-lora-finetrainers.safetensors",
+      "environment": "wantrain_finetrainers",
+      "command": "wan_lora_finetrainers (finetrainers' logit-normal draw, WanModelSpecification.forward, and loss over a tiny diffusers WanTransformer3DModel under peft LoRA; draws, noised input, prediction, loss, every adapter's gradient in lora_a/lora_b layout, the saved file under file::, and sampler.* 64 draws)"
+    },
+    {
+      "key": "IK_PARITY_WAN_LORA_DIFFSYNTH",
+      "record": "reference/wan-lora-diffsynth.safetensors",
+      "environment": "wantrain_diffsynth",
+      "command": "wan_lora_diffsynth (DiffSynth-Studio's FlowMatchSFTLoss over its own tiny WanModel under its add_lora_to_model; the drawn index, prediction, loss, adapter gradients, the saved file, its GeneralLoRALoader fuse under fused::, and sampler.* the whole training table)"
+    },
+    {
+      "key": "IK_PARITY_WAN_LORA_MUSUBI",
+      "record": "reference/wan-lora-musubi.safetensors",
+      "environment": "wantrain_musubi",
+      "command": "wan_lora_musubi (musubi-tuner's shift sampling, forward, and loss over its own tiny WanModel under its lora_wan network, attending in float32 with musubi's bfloat16-attention run under as_run.*; adapter gradients, the saved file, its merge_to under fused::, sampler.* 64 shift draws and table.* 64 sigma-mode draws)"
     }
   ]
 }

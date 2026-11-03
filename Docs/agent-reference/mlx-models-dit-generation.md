@@ -718,6 +718,39 @@ arithmetic as before.
   fuse exactly (largest gap 0.0) in all eight cases: the original layout with alphas at bfloat16, the
   original layout with the head's `.diff`, musubi, PEFT without and with metadata, two stacked adapters,
   Animate in PEFT form, and Animate in the original layout held to its PEFT twin.
+- Wan LoRA fine-tuning (`NFKMLXWanVideoGenerator.fineTune`, `NFKMLXWanTraining.swift`) — Wan-Video and
+  diffusers publish no Wan training code, so three community trainers are the references, each a preset
+  (`NFKMLXWanTrainingPreset`). All three noise `(1 − σ)·clean + σ·noise`, hold the prediction to
+  `noise − clean`, and average the squared error in float32. They differ in:
+  - finetrainers (684c0db): `u` logit-normal (0, 1), the index `⌊1000u⌋` into diffusers' unshifted table
+    `(1000 − i)/1000`, the timestep `⌊1000σ⌋` (so 0.999 reads 998); the clean latent a posterior sample
+    of the normalized moments; the prompt encoded padded with no mask, padded outputs kept; LoRA on the
+    attention projections; AdamW 5e-5, betas (0.9, 0.99), weight decay 1e-4, warm-up from 0, clip 1.
+  - DiffSynth-Studio (1e8ae1d): an index uniform over the shift-5 table `5s/(1 + 4s)` on torch's
+    `linspace(1, 0, 1001)[:-1]`, the timestep cast to the pipeline's type and σ and the loss weight read at
+    the nearest table entry; the weight a Gaussian over the timestep, shifted to a minimum of 0 and scaled
+    to a mean of 1; the posterior mean; LoRA on the attention and feed-forward projections; AdamW 1e-4,
+    weight decay 0.01, warm-up `(step + 1)/5`, no clip. Its saved file carries the original names with
+    PEFT's `.default` level and no alpha; its loader fuses at 1, so the save folds the scaling into the up
+    weight. Its trainer exposes no alpha option (alpha equals rank).
+  - musubi-tuner (f8a1b03): `shift` sampling at 3.0, `t = shift(sigmoid(n))` and the timestep `1000t + 1`;
+    the posterior mean; LoRA on every block linear layer at alpha 1; AdamW 2e-4, clip 1. Its default
+    `sigma` mode (an index into the unshifted table) is `musubiTable`.
+  Two torch details the samplers hold: torch's CPU float32 `linspace` fills the first half from `start` and
+  the second from `end`, each entry one fused multiply-add (an unfused product and sum miss 82 of the
+  1001 entries); DiffSynth's loss-weight table needs torch's `exp` (Sleef) and its float32 sum order to
+  come out exact. musubi's `flash_attention` rounds a float32 query, key, and value to bfloat16 before
+  torch's attention, so its record proper attends in float32 and keeps musubi's own run beside it.
+  Measured (`run_reference.py wan_lora_finetrainers` / `wan_lora_diffsynth` / `wan_lora_musubi`, one tiny
+  random transformer per trainer under the trainer's own LoRA code, rank 4, alpha 8): every recorded draw
+  equal (musubi's shift timesteps within 6.1e-5, one float32 unit near 1000; DiffSynth's whole table and
+  its weights exact); predictions 0.99999998 / 0.99999990 / 0.99999993 (0.99999978 against musubi's own
+  bfloat16 attention); losses 3.1826549 against 3.1826553, 0.14676003 against 0.14675987, 2.4950247
+  against 2.495024; lowest adapter gradient cosine 0.99999984 / 0.99999983 / 0.99999982; each trainer's
+  saved file written by `saveAdapters` key for key, and merged back through `NFKMLXWanLoRA` equal to the
+  trainer's own fuse (gap 0.0) or its adapted model (cosine 1.0). Not yet covered: DiffSynth's Wan 2.2
+  expert ranges (the sampler takes `lower` / `upper`), the Animate transformer (DiffSynth trains Animate 2
+  in one pass with the reference latent noised in the sequence), and a measured training step at 1.3B.
 - `NFKMLXQwenImageNet` / `NFKMLXQwenImage` (`@objc`) — the Qwen-Image 2.1 DiT
   (`QwenImage21Transformer2DModel`, Qwen), the denoising transformer of a 7.1B text-to-image model.
   Single-stream like Z-Image: one sequence carries the caption and the image latents. Two things

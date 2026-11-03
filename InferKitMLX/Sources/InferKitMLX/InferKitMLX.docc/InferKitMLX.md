@@ -577,6 +577,15 @@ The figures have three limits:
 - ``NFKMLXWanAnimateKVCache``
 - ``NFKMLXWanAnimateGenerator``
 - ``NFKMLXWanLoRA``
+- ``NFKMLXWanTrainingPreset``
+- ``NFKMLXWanObjective``
+- ``NFKMLXWanSigmaSampler``
+- ``NFKMLXWanSigmaDensity``
+- ``NFKMLXWanTrainingDraw``
+- ``NFKMLXWanLossWeighting``
+- ``NFKMLXWanTrainingExample``
+- ``NFKMLXWanLoRATargets``
+- ``NFKMLXWanLoRAFormat``
 - ``NFKMLXWanAnimateVariant``
 - ``NFKMLXWanAnimatePipeline``
 - ``NFKMLXWanAnimateSchedule``
