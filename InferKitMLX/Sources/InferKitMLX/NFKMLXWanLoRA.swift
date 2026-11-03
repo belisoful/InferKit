@@ -29,6 +29,11 @@ import MLXNN
 ///   without its weights; the merge drops the same keys and counts them.
 /// - **musubi-tuner:** keys `lora_unet_blocks_<n>_<layer>` with `.lora_down.weight`, `.lora_up.weight`, and
 ///   `.alpha`, over the blocks' attention and feed-forward layers.
+/// - **DiffSynth-Studio:** the original names with no prefix and PEFT's adapter level,
+///   `blocks.<n>.self_attn.q.lora_A.default.weight`, no alpha: DiffSynth fuses `scale · up · down`.
+/// - **finetrainers:** the diffusers PEFT keys, its training configuration (`r`, `lora_alpha`) under the
+///   metadata key `lora_config`. diffusers reads neither that key nor DiffSynth's spelling; the merge reads
+///   both as the trainer that wrote them does.
 ///
 /// Where a file states an alpha, the reference folds `alpha / rank` into the down and up weights at the
 /// file's own precision before the merge, split into a power of two on the up weight; the merge forms the
@@ -145,7 +150,8 @@ public enum NFKMLXWanLoRA {
         if arrays.keys.contains(where: { $0.contains("dora_scale") }) {
             throw NFKMLXError.loRANotApplicable("the adapter is a DoRA, which merges differently from a LoRA")
         }
-        let layout: Layout = arrays.keys.contains { $0.hasPrefix("diffusion_model.") } ? .original
+        // DiffSynth-Studio saves the original names with no prefix, under PEFT's `.default` adapter level.
+        let layout: Layout = arrays.keys.contains { $0.hasPrefix("diffusion_model.") || $0.contains(".default.") } ? .original
             : arrays.keys.contains { $0.hasPrefix("lora_unet_") } ? .musubi : .peft
         var layers = [String: Stored]()
         var dropped = [String]()
@@ -202,7 +208,8 @@ public enum NFKMLXWanLoRA {
 
     /// A key's layer and its part: `down`, `up`, `alpha`, `bias` (a PEFT `lora_B.bias`), `diff_b`, or `diff`.
     private static func split(_ key: String, layout: Layout) -> (String, String)? {
-        var name = key
+        var name = key.replacingOccurrences(of: ".lora_A.default.", with: ".lora_A.")
+            .replacingOccurrences(of: ".lora_B.default.", with: ".lora_B.")
         for prefix in ["diffusion_model.", "lora_unet_", "transformer."] where name.hasPrefix(prefix) {
             name = String(name.dropFirst(prefix.count))
             break
@@ -292,14 +299,24 @@ public enum NFKMLXWanLoRA {
     }
 
     private static func peftConfiguration(_ metadata: [String: String]) throws -> PEFTConfiguration {
-        guard let text = metadata["lora_adapter_metadata"] else { return PEFTConfiguration() }
-        guard let saved = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
-            throw NFKMLXError.loRANotApplicable("the adapter's lora_adapter_metadata is not an object")
+        let json: [String: Any]
+        if let text = metadata["lora_adapter_metadata"] {
+            guard let saved = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+                throw NFKMLXError.loRANotApplicable("the adapter's lora_adapter_metadata is not an object")
+            }
+            // diffusers saves the configuration under the component's prefix and reads back those keys alone.
+            json = Dictionary(uniqueKeysWithValues: saved.compactMap { key, value in
+                key.hasPrefix("transformer.") ? (String(key.dropFirst("transformer.".count)), value) : nil
+            })
+        } else if let text = metadata["lora_config"] {
+            // finetrainers writes the PEFT configuration it trained with, unprefixed, under its own key.
+            guard let saved = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
+                throw NFKMLXError.loRANotApplicable("the adapter's lora_config is not an object")
+            }
+            json = saved
+        } else {
+            return PEFTConfiguration()
         }
-        // diffusers saves the configuration under the component's prefix and reads back those keys alone.
-        let json = Dictionary(uniqueKeysWithValues: saved.compactMap { key, value in
-            key.hasPrefix("transformer.") ? (String(key.dropFirst("transformer.".count)), value) : nil
-        })
         if (json["use_dora"] as? NSNumber)?.boolValue == true {
             throw NFKMLXError.loRANotApplicable("the adapter is a DoRA, which merges differently from a LoRA")
         }

@@ -11,6 +11,7 @@ import XCTest
 import InferKit
 import MLX
 import MLXNN
+import MLXRandom
 @testable import InferKitMLX
 
 final class NFKMLXWanLoRATests: XCTestCase {
@@ -69,6 +70,45 @@ final class NFKMLXWanLoRATests: XCTestCase {
         XCTAssertThrowsError(try NFKMLXWanLoRA.deltas(arrays: headAlpha, metadata: [:],
                                                       naming: NFKMLXWanLoRA.textToVideoPath(original:), scale: 1),
                              "the reference reads an alpha on the blocks' layers alone")
+    }
+
+    private func weights(_ deltas: [String: NFKMLXWanLoRA.Delta]) -> [String: [Float]] {
+        deltas.mapValues { $0.weight!.asArray(Float.self) }
+    }
+
+    func testDiffSynthFilesReadAsTheOriginalLayout() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(71)
+        let down = MLXRandom.normal([4, 32]), up = MLXRandom.normal([32, 4])
+        let diffSynth: [String: MLXArray] = ["blocks.0.self_attn.q.lora_A.default.weight": down,
+                                             "blocks.0.self_attn.q.lora_B.default.weight": up]
+        let original: [String: MLXArray] = ["diffusion_model.blocks.0.self_attn.q.lora_A.weight": down,
+                                            "diffusion_model.blocks.0.self_attn.q.lora_B.weight": up]
+        let naming = NFKMLXWanLoRA.textToVideoPath(original:)
+        let read = try NFKMLXWanLoRA.deltas(arrays: diffSynth, metadata: [:], naming: naming, scale: 0.5).deltas
+        XCTAssertEqual(Array(read.keys), ["blocks.0.attn1.to_q"])
+        XCTAssertEqual(weights(read),
+                       weights(try NFKMLXWanLoRA.deltas(arrays: original, metadata: [:], naming: naming, scale: 0.5).deltas))
+        XCTAssertEqual(read["blocks.0.attn1.to_q"]!.weight!.asArray(Float.self),
+                       (matmul(up, down) * 0.5).asArray(Float.self), "DiffSynth fuses scale · up · down")
+    }
+
+    func testFinetrainersConfigurationScalesAsDiffusersMetadataDoes() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(72)
+        let arrays: [String: MLXArray] = ["transformer.proj_out.lora_A.weight": MLXRandom.normal([4, 32]),
+                                          "transformer.proj_out.lora_B.weight": MLXRandom.normal([16, 4])]
+        let naming = NFKMLXWanLoRA.textToVideoPath(original:)
+        let finetrainers = try NFKMLXWanLoRA.deltas(
+            arrays: arrays, metadata: ["lora_config": #"{"r": 4, "lora_alpha": 8, "init_lora_weights": true}"#,
+                                       "format": "pt"], naming: naming, scale: 1).deltas
+        let diffusers = try NFKMLXWanLoRA.deltas(
+            arrays: arrays, metadata: ["lora_adapter_metadata": #"{"transformer.r": 4, "transformer.lora_alpha": 8}"#],
+            naming: naming, scale: 1).deltas
+        let plain = try NFKMLXWanLoRA.deltas(arrays: arrays, metadata: [:], naming: naming, scale: 1).deltas
+        XCTAssertEqual(weights(finetrainers), weights(diffusers))
+        let ratio = finetrainers["proj_out"]!.weight! / plain["proj_out"]!.weight!
+        XCTAssertEqual(ratio.mean().item(Float.self), 2, accuracy: 1e-6, "alpha 8 over rank 4")
     }
 
     func testAnAdapterForAnotherGeometryChangesNoWeight() throws {
