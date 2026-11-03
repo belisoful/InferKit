@@ -388,6 +388,38 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         }
     }
 
+    // MARK: Training
+
+    /// Encodes one clip as `preset`'s trainer prepares it: the frames through the autoencoder to the
+    /// posterior's normalized mean and log-variance, and the prompt through umT5 at 512 tokens — zeros past
+    /// the prompt, or the encoder's outputs at the padded positions where the trainer keeps them
+    /// (finetrainers encodes the padded prompt with no mask).
+    ///
+    /// - Parameters:
+    ///   - video: the frames `[4k + 1, H, W, 3]` in `[0, 1]`, already cut and sized as the trainer's bucketing
+    ///     leaves them; the sides are multiples of 16.
+    ///   - prompt: the clip's caption, read as written.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public func trainingExample(video: MLXArray, prompt text: String,
+                                preset: NFKMLXWanTrainingPreset = .finetrainers) throws -> NFKMLXWanTrainingExample {
+        guard video.ndim == 4, (video.dim(0) - 1) % compression.temporal == 0 else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a training clip is \(compression.temporal)k + 1 frames of [H, W, 3], not \(video.shape)")
+        }
+        let tokens = NFKMLXT5Prompt(text, segmenter: segmenter, length: sequenceLength)
+        return try staging.exclusively {
+            let features = try staging.with(textStage) { stage -> MLXArray in
+                preset.keepsPaddedText ? stage.encoder(tokens.tokens)[0] : stage.features(tokens)
+            }
+            let moments = try staging.with(pipelineStage) { pipeline -> [MLXArray] in
+                let encoded = pipeline.normalizedMoments(video * 2 - 1)
+                return [encoded.mean, encoded.logVariance]
+            }
+            return NFKMLXWanTrainingExample(latent: moments[0], logVariance: moments[1], text: features)
+        }
+    }
+
     // MARK: Adapters
 
     /// Merges a released LoRA (``NFKMLXWanLoRA``) into the transformer at `scale`, now where the transformer

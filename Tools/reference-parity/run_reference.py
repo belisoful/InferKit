@@ -29342,5 +29342,375 @@ def run_wan_lora(image):
 MODELS["wan_lora"] = run_wan_lora
 
 
+
+# --- Wan LoRA trainers -------------------------------------------------------------------------------------
+# One tiny Wan text-to-video geometry for all three trainers' oracles: width 32 over 2 heads, 2 blocks, a
+# 48-wide feed-forward, 32-wide text, 4 latent channels; a [4, 3, 4, 4] latent and 16 text tokens.
+_WAN_TRAIN_GEOMETRY = dict(dim=32, heads=2, layers=2, ffn=48, text_dim=32, channels=4, freq=256)
+_WAN_TRAIN_LATENT = (4, 3, 4, 4)
+_WAN_TRAIN_TOKENS = 16
+
+
+def _wan_original_to_diffusers(name):
+    """The diffusers `WanTransformer3DModel` name of an original Wan parameter name, or None for a buffer."""
+    import re as _re
+    plain = {"text_embedding.0": "condition_embedder.text_embedder.linear_1",
+             "text_embedding.2": "condition_embedder.text_embedder.linear_2",
+             "time_embedding.0": "condition_embedder.time_embedder.linear_1",
+             "time_embedding.2": "condition_embedder.time_embedder.linear_2",
+             "time_projection.1": "condition_embedder.time_proj", "head.head": "proj_out"}
+    if name == "head.modulation":
+        return "scale_shift_table"
+    if name.startswith("patch_embedding."):
+        return name
+    for original, converted in plain.items():
+        if name.startswith(original + "."):
+            return converted + name[len(original):]
+    match = _re.match(r"blocks\.(\d+)\.(.*)$", name)
+    if not match:
+        return None
+    block, rest = match.groups()
+    renames = [("modulation", "scale_shift_table"), ("norm3.", "norm2."), ("ffn.0.", "ffn.net.0.proj."),
+               ("ffn.2.", "ffn.net.2.")]
+    for site, attention in (("self_attn.", "attn1."), ("cross_attn.", "attn2.")):
+        for o, c in (("q.", "to_q."), ("k.", "to_k."), ("v.", "to_v."), ("o.", "to_out.0."),
+                     ("norm_q.", "norm_q."), ("norm_k.", "norm_k.")):
+            renames.append((site + o, attention + c))
+    for old, new in renames:
+        if rest.startswith(old) or rest == old.rstrip("."):
+            return f"blocks.{block}." + new + rest[len(old):] if rest != old.rstrip(".") else f"blocks.{block}.{new}"
+    return None
+
+
+def _wan_train_inputs(generator):
+    latent = torch.randn(*_WAN_TRAIN_LATENT, generator=generator)
+    log_variance = torch.randn(*_WAN_TRAIN_LATENT, generator=generator) * 0.5 - 2
+    text = torch.randn(_WAN_TRAIN_TOKENS, _WAN_TRAIN_GEOMETRY["text_dim"], generator=generator)
+    return latent, log_variance, text
+
+
+def _wan_lora_record(extra, adapters, scale):
+    """Records adapters `{diffusers path: (A [rank, in], B [out, rank], A grad, B grad)}` in InferKit's layout."""
+    extra["lora_scale"] = torch.tensor([scale])
+    for path, (a, b, grad_a, grad_b) in adapters.items():
+        extra[f"lora::{path}.lora_a"] = a.detach().t().contiguous().float()
+        extra[f"lora::{path}.lora_b"] = b.detach().t().contiguous().float()
+        if grad_a is not None:
+            extra[f"grad::{path}.lora_a"] = grad_a.detach().t().contiguous().float()
+            extra[f"grad::{path}.lora_b"] = grad_b.detach().t().contiguous().float()
+
+
+def run_wan_lora_finetrainers(image):
+    """finetrainers' Wan LoRA objective (huggingface/finetrainers at 684c0db, `IK_FINETRAINERS_SRC` on
+    PYTHONPATH), under the `wantrain-finetrainers` env: diffusers' `WanTransformer3DModel` at a tiny random
+    geometry adapted by peft as finetrainers' trainer adapts it (`LoraConfig(r=4, lora_alpha=8,
+    init_lora_weights=True, target_modules="blocks.*(to_q|to_k|to_v|to_out.0)")`), the `logit_normal` sigma
+    draw (`prepare_sigmas` over the unshifted `FlowMatchEulerDiscreteScheduler`), `WanModelSpecification.forward`
+    (the posterior sample of the normalized moments, the noise, the noised input, the integer timestep, the
+    prediction, the target), the trainer's loss (`prepare_loss_weights`, a weighted MSE averaged per example and
+    over the batch), and each adapter's gradient. The adapter is saved as finetrainers saves it
+    (`get_peft_model_state_dict` under `transformer.`, `lora_config` metadata), and `adapted` is the adapted
+    model's prediction at a fixed input, which a merge of that file reproduces. A `sampler.*` section holds 64
+    draws. `image` unused.
+    """
+    import json as json_module
+
+    from diffusers import FlowMatchEulerDiscreteScheduler, WanTransformer3DModel
+    from finetrainers.models.wan.base_specification import WanModelSpecification
+    from finetrainers.utils.diffusion import (compute_density_for_timestep_sampling, prepare_loss_weights,
+                                              prepare_sigmas)
+    from peft import LoraConfig
+    from peft.utils import get_peft_model_state_dict
+
+    g = _WAN_TRAIN_GEOMETRY
+    model = _randomized(WanTransformer3DModel(
+        patch_size=(1, 2, 2), num_attention_heads=g["heads"], attention_head_dim=g["dim"] // g["heads"],
+        in_channels=g["channels"], out_channels=g["channels"], text_dim=g["text_dim"], freq_dim=g["freq"],
+        ffn_dim=g["ffn"], num_layers=g["layers"], cross_attn_norm=True, qk_norm="rms_norm_across_heads", eps=1e-6),
+        seed=81, scale=0.1)
+    extra = {f"w::{k}": v.float().contiguous() for k, v in model.state_dict().items()}
+    model.add_adapter(LoraConfig(r=4, lora_alpha=8, init_lora_weights=True,
+                                 target_modules="blocks.*(to_q|to_k|to_v|to_out.0)"))
+    generator = torch.Generator().manual_seed(82)
+    for name, parameter in model.named_parameters():
+        if "lora_B" in name:
+            parameter.data = torch.randn(parameter.shape, generator=generator) * 0.1
+
+    scheduler = FlowMatchEulerDiscreteScheduler()
+    table = scheduler.sigmas.clone().float()
+    sampler = torch.Generator().manual_seed(83)
+    u = compute_density_for_timestep_sampling("logit_normal", 64, 0.0, 1.0, generator=sampler)
+    sampler = torch.Generator().manual_seed(83)
+    sigmas = prepare_sigmas(scheduler, table, 64, 1000, "logit_normal", 0.0, 1.0, generator=sampler)
+    extra.update({"sampler.u": u.contiguous(), "sampler.sigma": sigmas.contiguous(),
+                  "sampler.timestep": (sigmas * 1000.0).long().float().contiguous()})
+
+    latent, log_variance, text = _wan_train_inputs(generator)
+    latents_mean = torch.randn(g["channels"], generator=generator) * 0.1
+    latents_std = torch.rand(g["channels"], generator=generator) + 0.5
+    stub = type("Specification", (), {"transformer_config": {}})()
+    stub._normalize_latents = WanModelSpecification._normalize_latents
+    draw = torch.Generator().manual_seed(84)
+    sigma = prepare_sigmas(scheduler, table, 1, 1000, "logit_normal", 0.0, 1.0, generator=draw)
+    draw = torch.Generator().manual_seed(84)
+    u0 = compute_density_for_timestep_sampling("logit_normal", 1, 0.0, 1.0, generator=draw)
+    captured = {}
+    model.register_forward_pre_hook(
+        lambda m, args, kwargs: captured.update(noisy=kwargs["hidden_states"].detach().clone(),
+                                                timestep=kwargs["timestep"].detach().clone()), with_kwargs=True)
+    moments = torch.cat([latent, log_variance], dim=0).unsqueeze(0)
+    pred, target, sigmas_out = WanModelSpecification.forward(
+        stub, transformer=model, condition_model_conditions={"encoder_hidden_states": text.unsqueeze(0)},
+        latent_model_conditions={"latents": moments, "latents_mean": latents_mean.view(1, -1, 1, 1, 1),
+                                 "latents_std": latents_std.view(1, -1, 1, 1, 1)},
+        sigmas=sigma.view(-1, 1, 1, 1, 1), generator=torch.Generator().manual_seed(85))
+    weights = prepare_loss_weights(scheduler, sigmas=sigma.view(-1, 1, 1, 1, 1), flow_weighting_scheme="logit_normal")
+    loss = (weights.float() * (pred.float() - target.float()) ** 2).flatten(1).mean(1).mean()
+    loss.backward()
+
+    normalized_mean = (latent - latents_mean.view(-1, 1, 1, 1)) * (1 / latents_std.view(-1, 1, 1, 1))
+    normalized_log_variance = (log_variance - latents_mean.view(-1, 1, 1, 1)) * (1 / latents_std.view(-1, 1, 1, 1))
+    s = sigma.view(()).item()
+    clean = captured["noisy"][0] - s * target[0]
+    noise = target[0] + clean
+    std = torch.exp(0.5 * normalized_log_variance.clamp(-30.0, 20.0))
+    extra.update({"u": u0.contiguous(), "sigma": sigma.contiguous(), "timestep": captured["timestep"].float().contiguous(),
+                  "latent": normalized_mean.contiguous(), "log_variance": normalized_log_variance.contiguous(),
+                  "epsilon": ((clean - normalized_mean) / std).contiguous(), "noise": noise.contiguous(),
+                  "text": text.contiguous(), "noisy": captured["noisy"][0].contiguous(),
+                  "prediction": pred[0].detach().float().contiguous(), "loss": loss.detach().reshape(1)})
+
+    adapters = {}
+    modules = dict(model.named_modules())
+    for name, module in modules.items():
+        if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+            a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+            adapters[name] = (a, b, a.grad, b.grad)
+    _wan_lora_record(extra, adapters, 8 / 4)
+
+    saved = get_peft_model_state_dict(model)
+    for key, value in saved.items():
+        extra[f"file::transformer.{key}"] = value.detach().float().contiguous()
+    configuration = {"r": 4, "lora_alpha": 8, "init_lora_weights": True,
+                     "target_modules": "blocks.*(to_q|to_k|to_v|to_out.0)"}
+    extra["file_metadata::lora_config"] = torch.tensor(list(json_module.dumps(configuration).encode()), dtype=torch.uint8)
+    with torch.no_grad():
+        adapted = model(hidden_states=captured["noisy"], encoder_hidden_states=text.unsqueeze(0),
+                        timestep=captured["timestep"], return_dict=False)[0]
+    extra["adapted"] = adapted[0].float().contiguous()
+    globals()["_extra"] = extra
+    return extra["prediction"].clone()
+
+
+MODELS["wan_lora_finetrainers"] = run_wan_lora_finetrainers
+
+
+def run_wan_lora_diffsynth(image):
+    """DiffSynth-Studio's Wan LoRA objective (modelscope/DiffSynth-Studio at 1e8ae1d, `IK_DIFFSYNTH_SRC` on
+    PYTHONPATH), under the `wantrain-diffsynth` env: DiffSynth's own `WanModel` at a tiny random geometry
+    adapted by its `add_lora_to_model` (rank 4, alpha 8, `q,k,v,o,ffn.0,ffn.2`), its `FlowMatchSFTLoss` over
+    `FlowMatchScheduler("Wan")` in training mode (an index uniform over the table, the noised input, the
+    target, its Gaussian loss weight) with `model_fn_wan_video`, at float32, and each adapter's gradient. The
+    draws replay the loss's own `torch.randint` / `torch.randn_like` from the same seed. The weights are recorded
+    under diffusers names. The adapter is saved as DiffSynth saves it (its `.default` keys) and fused by its own
+    `GeneralLoRALoader` into a fresh model (`fused::`), and `adapted` is the adapted model's prediction at a fixed
+    input. A `sampler.*` section holds the whole table and its weights. `image` unused.
+    """
+    from diffsynth.diffusion.flow_match import FlowMatchScheduler
+    from diffsynth.diffusion.loss import FlowMatchSFTLoss
+    from diffsynth.diffusion.training_module import DiffusionTrainingModule
+    from diffsynth.models.wan_video_dit import WanModel
+    from diffsynth.pipelines.wan_video import model_fn_wan_video
+    from diffsynth.utils.lora.general import GeneralLoRALoader
+    import copy
+
+    g = _WAN_TRAIN_GEOMETRY
+
+    def build():
+        return WanModel(dim=g["dim"], in_dim=g["channels"], ffn_dim=g["ffn"], out_dim=g["channels"],
+                        text_dim=g["text_dim"], freq_dim=g["freq"], eps=1e-6, patch_size=(1, 2, 2),
+                        num_heads=g["heads"], num_layers=g["layers"], has_image_input=False,
+                        require_vae_embedding=False, require_clip_embedding=False)
+
+    model = _randomized(build(), seed=91, scale=0.1)
+    base = copy.deepcopy(model)
+    extra = {}
+    for key, value in model.state_dict().items():
+        name = _wan_original_to_diffusers(key)
+        if name is not None:
+            extra[f"w::{name}"] = value.float().contiguous()
+    model = DiffusionTrainingModule.add_lora_to_model(None, model, ["q", "k", "v", "o", "ffn.0", "ffn.2"], 4, 8)
+    generator = torch.Generator().manual_seed(92)
+    for name, parameter in model.named_parameters():
+        if "lora_B" in name:
+            parameter.data = torch.randn(parameter.shape, generator=generator) * 0.1
+    for name, parameter in model.named_parameters():
+        parameter.requires_grad_("lora_" in name)
+
+    scheduler = FlowMatchScheduler("Wan")
+    scheduler.set_timesteps(1000, training=True)
+    extra.update({"sampler.sigma": scheduler.sigmas.float().contiguous(),
+                  "sampler.timestep": scheduler.timesteps.float().contiguous(),
+                  "sampler.weight": scheduler.linear_timesteps_weights.float().contiguous()})
+
+    latent, _, text = _wan_train_inputs(generator)
+    pipe = type("Pipeline", (), {})()
+    pipe.scheduler, pipe.torch_dtype, pipe.device = scheduler, torch.float32, "cpu"
+    pipe.in_iteration_models, pipe.dit = ("dit",), model
+    pipe.model_fn = model_fn_wan_video
+    torch.manual_seed(93)
+    loss = FlowMatchSFTLoss(pipe, input_latents=latent.unsqueeze(0), context=text.unsqueeze(0))
+    loss.backward()
+    torch.manual_seed(93)
+    index = torch.randint(0, 1000, (1,))
+    noise = torch.randn_like(latent.unsqueeze(0))[0]
+    timestep = scheduler.timesteps[index]
+    sigma = scheduler.sigmas[torch.argmin((scheduler.timesteps - timestep).abs())]
+    noisy = (1 - sigma) * latent + sigma * noise
+    with torch.no_grad():
+        prediction = model_fn_wan_video(dit=model, latents=noisy.unsqueeze(0), timestep=timestep,
+                                        context=text.unsqueeze(0))[0]
+    extra.update({"index": index.float(), "timestep": timestep.float().reshape(1), "sigma": sigma.float().reshape(1),
+                  "weight": scheduler.training_weight(timestep).float().reshape(1), "latent": latent.contiguous(),
+                  "noise": noise.contiguous(), "text": text.contiguous(), "prediction": prediction.float().contiguous(),
+                  "adapted": prediction.float().contiguous(), "loss": loss.detach().reshape(1)})
+
+    adapters = {}
+    for name, module in model.named_modules():
+        if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+            a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+            adapters[_wan_original_to_diffusers(name + ".weight").removesuffix(".weight")] = (a, b, a.grad, b.grad)
+    _wan_lora_record(extra, adapters, 8 / 4)
+
+    # DiffSynth saves the trainable parameters as they are named, and fuses a file at a strength of 1. Its
+    # trainer runs at alpha = rank, so the saved up weights carry the run's scaling.
+    saved = {}
+    for name, parameter in model.named_parameters():
+        if "lora_" in name:
+            value = parameter.detach().clone()
+            if "lora_B" in name:
+                value = value * (8 / 4)
+            saved[name] = value
+    for key, value in saved.items():
+        extra[f"file::{key}"] = value.float().contiguous()
+    GeneralLoRALoader(torch_dtype=torch.float32).fuse_lora_to_base_model(base, saved, alpha=1.0)
+    for key, value in base.state_dict().items():
+        name = _wan_original_to_diffusers(key)
+        if name is not None and not torch.equal(value, extra[f"w::{name}"]):
+            extra[f"fused::{name}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return extra["prediction"].clone()
+
+
+MODELS["wan_lora_diffsynth"] = run_wan_lora_diffsynth
+
+
+def run_wan_lora_musubi(image):
+    """musubi-tuner's Wan LoRA objective (kohya-ss/musubi-tuner at f8a1b03, `IK_MUSUBI_SRC/src` on PYTHONPATH),
+    under the `wantrain-musubi` env: musubi's own `WanModel` at a tiny random geometry adapted by its
+    `lora_wan.create_arch_network` (rank 4, alpha 8, every linear layer of the blocks), its `shift` sampler at
+    3.0 (`sample_timesteps` through `get_noisy_model_input_and_timesteps`: `t = shift(sigmoid(n))`, the noised
+    input, the timestep `1000t + 1`), its forward, and its loss (an MSE over every element in float32), with
+    each adapter's gradient. A `sigma`-mode section (`table.*`) holds its default sampler's draws. The adapter
+    is saved by the network's own `save_weights` (`lora_unet_` keys and alphas) and merged into a fresh model
+    by its own `merge_to` (`fused::`). `image` unused.
+    """
+    import argparse
+    import copy
+
+    from musubi_tuner.modules.scheduling_flow_match_discrete import FlowMatchDiscreteScheduler
+    from musubi_tuner.networks import lora_wan
+    from musubi_tuner.training.timesteps import compute_density_for_timestep_sampling
+    from musubi_tuner.training.trainer_base import NetworkTrainer
+    from musubi_tuner.wan.modules.model import WanModel
+
+    g = _WAN_TRAIN_GEOMETRY
+
+    def build():
+        return WanModel(model_type="t2v", patch_size=(1, 2, 2), text_len=_WAN_TRAIN_TOKENS, in_dim=g["channels"],
+                        dim=g["dim"], ffn_dim=g["ffn"], freq_dim=g["freq"], text_dim=g["text_dim"],
+                        out_dim=g["channels"], num_heads=g["heads"], num_layers=g["layers"], eps=1e-6, attn_mode="torch")
+
+    model = _randomized(build(), seed=101, scale=0.1)
+    base = copy.deepcopy(model)
+    extra = {}
+    for key, value in model.state_dict().items():
+        name = _wan_original_to_diffusers(key)
+        if name is not None:
+            extra[f"w::{name}"] = value.float().contiguous()
+    network = lora_wan.create_arch_network(1.0, 4, 8.0, None, [], model)
+    network.apply_to(None, model, apply_text_encoder=False, apply_unet=True)
+    generator = torch.Generator().manual_seed(102)
+    for lora in network.unet_loras:
+        lora.lora_up.weight.data = torch.randn(lora.lora_up.weight.shape, generator=generator) * 0.1
+    for parameter in model.parameters():
+        parameter.requires_grad_(False)
+    for parameter in network.parameters():
+        parameter.requires_grad_(True)
+
+    args = argparse.Namespace(timestep_sampling="shift", discrete_flow_shift=3.0, sigmoid_scale=1.0,
+                              min_timestep=None, max_timestep=None, preserve_distribution_shape=False,
+                              weighting_scheme="none", logit_mean=0.0, logit_std=1.0, mode_scale=1.29)
+    trainer = NetworkTrainer.__new__(NetworkTrainer)
+    trainer.num_timestep_buckets = None
+    scheduler = FlowMatchDiscreteScheduler(shift=3.0, reverse=True)
+    latent, _, text = _wan_train_inputs(generator)
+    noise = torch.randn(latent.shape, generator=generator)
+    torch.manual_seed(103)
+    z = torch.randn((1,))
+    torch.manual_seed(103)
+    noisy, timesteps = trainer.get_noisy_model_input_and_timesteps(args, noise.unsqueeze(0), latent.unsqueeze(0),
+                                                                  None, scheduler, "cpu", torch.float32)
+    tokens = latent.shape[1] * latent.shape[2] * latent.shape[3] // 4
+    prediction = torch.stack(model([noisy[0]], t=timesteps, context=[text], seq_len=tokens))
+    target = noise.unsqueeze(0) - latent.unsqueeze(0)
+    loss = torch.nn.functional.mse_loss(prediction.float(), target, reduction="none").mean()
+    loss.backward()
+    extra.update({"z": z.contiguous(), "timestep": timesteps.float().reshape(1),
+                  "sigma": ((timesteps - 1) / 1000).float().reshape(1), "latent": latent.contiguous(),
+                  "noise": noise.contiguous(), "text": text.contiguous(), "prediction": prediction[0].detach().float(),
+                  "adapted": prediction[0].detach().float().contiguous(), "loss": loss.detach().reshape(1)})
+
+    table_args = argparse.Namespace(**{**vars(args), "timestep_sampling": "sigma"})
+    torch.manual_seed(104)
+    u = compute_density_for_timestep_sampling("none", 64)
+    draws = []
+    for index in range(64):
+        torch.manual_seed(104)
+        compute_density_for_timestep_sampling("none", index)
+        _, t = trainer.get_noisy_model_input_and_timesteps(table_args, noise.unsqueeze(0), latent.unsqueeze(0), None,
+                                                           scheduler, "cpu", torch.float32)
+        draws.append(t.float().reshape(()))
+    extra.update({"table.u": u.contiguous(), "table.timestep": torch.stack(draws).contiguous()})
+
+    adapters = {}
+    for lora in network.unet_loras:
+        original = lora.lora_name.removeprefix("lora_unet_")
+        path = None
+        for candidate in [n for n, _ in base.named_modules()]:
+            if candidate.replace(".", "_") == original:
+                path = _wan_original_to_diffusers(candidate + ".weight").removesuffix(".weight")
+        adapters[path] = (lora.lora_down.weight, lora.lora_up.weight, lora.lora_down.weight.grad,
+                          lora.lora_up.weight.grad)
+    _wan_lora_record(extra, adapters, 8 / 4)
+
+    import tempfile
+    path = os.path.join(tempfile.mkdtemp(), "musubi.safetensors")
+    network.save_weights(path, torch.float32, None)
+    from safetensors.torch import load_file
+    for key, value in load_file(path).items():
+        extra[f"file::{key}"] = value.float().contiguous()
+    merged = lora_wan.create_arch_network_from_weights(1.0, load_file(path), unet=base, for_inference=True)
+    merged.merge_to(None, base, load_file(path), torch.float32, "cpu")
+    for key, value in base.state_dict().items():
+        name = _wan_original_to_diffusers(key)
+        if name is not None and not torch.equal(value.float(), extra[f"w::{name}"]):
+            extra[f"fused::{name}"] = value.float().contiguous()
+    globals()["_extra"] = extra
+    return extra["prediction"].clone()
+
+
+MODELS["wan_lora_musubi"] = run_wan_lora_musubi
+
 if __name__ == "__main__":
     sys.exit(main())

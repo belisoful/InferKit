@@ -35,6 +35,20 @@ public final class NFKMLXWanPipeline {
     private let inChannels: Int
 
     var transformer: NFKMLXWanTransformerNet { holder.transformer }
+
+    /// A clip `[T, H, W, 3]` in −1…1 encoded to the autoencoder's posterior, `(mean, logVariance)`, each
+    /// `[zDim, T', H', W']` and normalized by the release's statistics as the trainers normalize both.
+    func normalizedMoments(_ clip: MLXArray) -> (mean: MLXArray, logVariance: MLXArray) {
+        let moments = holder.vae.encodeMoments(clip.expandedDimensions(axis: 0).asType(.float32))[0]
+        let z = moments.dim(-1) / 2
+        func normalized(_ x: MLXArray) -> MLXArray {
+            guard let latentsMean, let latentsStd else { return x }
+            return (x - latentsMean) * (1 / latentsStd)
+        }
+        let mean = normalized(moments[0..., 0..., 0..., 0 ..< z]), logVariance = normalized(moments[0..., 0..., 0..., z...])
+        eval(mean, logVariance)
+        return (mean.transposed(3, 0, 1, 2), logVariance.transposed(3, 0, 1, 2))
+    }
     private let latentsMean: MLXArray?
     private let latentsStd: MLXArray?
     private let schedule: NFKMLXUniPCConfiguration
