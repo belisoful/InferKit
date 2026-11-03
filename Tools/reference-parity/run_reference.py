@@ -13644,7 +13644,8 @@ def run_dpm_solver(image):
 def run_unipc(image):
     """Wan's released sampler, `UniPCMultistepScheduler` in its flow-prediction configuration, run over a
     FIXED sequence of velocities so the predictor-corrector math is verified with no model. Records the
-    sigma schedule, timesteps, and the sample trajectory. Runs under the `ltx` oracle env.
+    sigma schedule, timesteps, and the sample trajectory. Runs under the `wananimate` oracle env (diffusers
+    0.40), whose flow sigmas are `linspace(1, 1/1000, n + 1)[:-1]`; diffusers 0.36 built them otherwise.
     """
     from diffusers import UniPCMultistepScheduler
 
@@ -25998,7 +25999,8 @@ def run_wan_pipeline(image, checkpoint):
     gives every token the same step.
 
     The record carries the token ids and masks, the prompt features, the starting latents, the final
-    latents of both runs, the decoded video, and the three models' weights in release naming.
+    latents of both runs, the decoded video, and the three models' weights in release naming. Runs under
+    the `wananimate` oracle env (diffusers 0.40), whose UniPC flow sigmas the port follows.
     """
     import types
 
@@ -26064,6 +26066,120 @@ def run_wan_pipeline(image, checkpoint):
 
 
 CHECKPOINT_MODELS["wan_pipeline"] = run_wan_pipeline
+
+
+def run_wan22_a14b_pipeline(image, checkpoint):
+    """Wan 2.2 A14B's two-expert glue, from diffusers' own `WanPipeline` (T2V-A14B) or
+    `WanImageToVideoPipeline` (I2V-A14B), end to end over a release directory.
+
+    `--checkpoint` is a test-dev release (`Tools/wan22-a14b-testdev/make_testdev.py`): the diffusers
+    release's own layout, file names, keys, and stored types at a small geometry with seeded random
+    weights, both experts included. Every component loads from it through its own class and runs at
+    float32. The clip is 9 frames of 32 × 48 over six UniPC steps at guidance 4 for the high-noise expert
+    and 3 for the low-noise one; at the release's flow shift of 3 the first two steps (999, 937) fall at or
+    above either release's boundary and the last four below it. I2V-A14B starts from a 40 × 56 picture,
+    which the pipeline resizes to the clip's size with PIL's Lanczos filter, and runs once more with a last
+    frame.
+
+    The record carries the pictures' bytes, the starting latents, the prompt features, which expert ran
+    each step, the latents after each step (`step.<i>`), each transformer call's prediction in order
+    (`call.<k>`: the conditioned and the unconditioned pass of each step), the image-to-video condition, the final latents,
+    and the decoded clip (`[frames, height,
+    width, 3]` in 0...1); the last-frame run's under `last.`. `image` unused.
+    """
+    import json as json_module
+    import types
+
+    import PIL.Image
+    from diffusers import (AutoencoderKLWan, UniPCMultistepScheduler, WanImageToVideoPipeline, WanPipeline,
+                           WanTransformer3DModel)
+    from diffusers.pipelines.wan import pipeline_wan, pipeline_wan_i2v
+    from transformers import AutoTokenizer, UMT5EncoderModel
+
+    # The pipelines' cleanup runs `ftfy.fix_text`, which repairs mis-decoded text and leaves well-formed
+    # text as it is; no oracle environment carries ftfy, and these prompts are well formed.
+    for module in (pipeline_wan, pipeline_wan_i2v):
+        module.ftfy = types.SimpleNamespace(fix_text=lambda text: text)
+
+    with open(os.path.join(checkpoint, "model_index.json")) as handle:
+        index = json_module.load(handle)
+    image_to_video = index["_class_name"] == "WanImageToVideoPipeline"
+    components = dict(
+        transformer=WanTransformer3DModel.from_pretrained(checkpoint, subfolder="transformer").float().eval(),
+        transformer_2=WanTransformer3DModel.from_pretrained(checkpoint, subfolder="transformer_2").float().eval(),
+        vae=AutoencoderKLWan.from_pretrained(checkpoint, subfolder="vae").float().eval(),
+        text_encoder=UMT5EncoderModel.from_pretrained(checkpoint, subfolder="text_encoder").float().eval(),
+        tokenizer=AutoTokenizer.from_pretrained(checkpoint, subfolder="tokenizer"),
+        scheduler=UniPCMultistepScheduler.from_pretrained(checkpoint, subfolder="scheduler"))
+    pipeline_class = WanImageToVideoPipeline if image_to_video else WanPipeline
+    pipeline = pipeline_class(**components, boundary_ratio=index["boundary_ratio"])
+
+    experts, outputs = [], []
+
+    def recording_expert(module, inputs, output, name):
+        experts.append(0 if name == "transformer" else 1)
+        outputs.append(output[0][0].detach().clone())
+    for name in ("transformer", "transformer_2"):
+        components[name].register_forward_hook(
+            lambda module, inputs, output, name=name: recording_expert(module, inputs, output, name))
+    captured = {}
+    if image_to_video:
+        prepare_latents = pipeline.prepare_latents
+
+        def recording_prepare(image, *args, **kwargs):
+            captured["image"] = image[0].detach().clone()
+            result = prepare_latents(image, *args, **kwargs)
+            captured["condition"] = result[1][0].detach().clone()
+            return result
+        pipeline.prepare_latents = recording_prepare
+
+    generator = np.random.default_rng(41)
+    pictures = [(generator.random((40, 56, 3)) * 255).astype(np.uint8) for _ in range(2)]
+    prompt, negative = "  A red fox   walking through fresh snow, cinematic ", "worst quality, blurry"
+    arguments = dict(prompt=prompt, negative_prompt=negative, height=32, width=48, num_frames=9,
+                     num_inference_steps=6, guidance_scale=4.0, guidance_scale_2=3.0, max_sequence_length=512)
+    torch.manual_seed(42)
+    latents = torch.randn(1, 16, 3, 4, 6)
+    extra = {"latents": latents[0].contiguous()}
+    runs = [("", {})]
+    if image_to_video:
+        extra.update({"picture": torch.from_numpy(pictures[0]).contiguous(),
+                      "last_picture": torch.from_numpy(pictures[1]).contiguous()})
+        runs = [("", {"image": PIL.Image.fromarray(pictures[0])}),
+                ("last.", {"image": PIL.Image.fromarray(pictures[0]), "last_image": PIL.Image.fromarray(pictures[1])})]
+    for prefix, inputs in runs:
+        experts.clear()
+        outputs.clear()
+        stepped = []
+
+        def recording_step(pipe, index, timestep, values):
+            stepped.append(values["latents"][0].detach().clone())
+            return {}
+        with torch.no_grad():
+            final = pipeline(latents=latents.clone(), output_type="latent", return_dict=False,
+                             callback_on_step_end=recording_step, **inputs, **arguments)[0]
+        for index, value in enumerate(stepped):
+            extra[f"{prefix}step.{index}"] = value.contiguous()
+        for index, value in enumerate(outputs):
+            extra[f"{prefix}call.{index}"] = value.contiguous()
+        outputs.clear()
+        with torch.no_grad():
+            video = pipeline(latents=latents.clone(), output_type="pt", return_dict=False, **inputs, **arguments)[0]
+        extra[f"{prefix}experts"] = torch.tensor(experts[:len(experts) // 2], dtype=torch.int32)
+        extra[f"{prefix}final_latents"] = final[0].contiguous()
+        extra[f"{prefix}video"] = video[0].permute(0, 2, 3, 1).contiguous()          # [F, H, W, C] in 0...1
+        if image_to_video:
+            extra[f"{prefix}image"] = captured["image"].permute(1, 2, 0).contiguous()  # [H, W, C] in -1...1
+            extra[f"{prefix}condition"] = captured["condition"].contiguous()
+    with torch.no_grad():
+        embeds, negative_embeds = pipeline.encode_prompt(prompt=prompt, negative_prompt=negative,
+                                                         do_classifier_free_guidance=True, max_sequence_length=512)
+    extra.update({"prompt_embeds": embeds[0].contiguous(), "negative_embeds": negative_embeds[0].contiguous()})
+    globals()["_extra"] = extra
+    return extra["final_latents"].clone()
+
+
+CHECKPOINT_MODELS["wan22_a14b_pipeline"] = run_wan22_a14b_pipeline
 
 
 def run_wan_animate_pipeline(image, checkpoint):

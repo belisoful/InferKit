@@ -44,18 +44,23 @@ public struct NFKMLXUniPCScheduler {
         self.configuration = configuration
     }
 
+    /// Sets the schedule for `steps` steps as diffusers 0.40 does: `σᵢ = linspace(1, 1/train, steps + 1)[:-1]`
+    /// in float64, shifted to `shift·σ/(1 + (shift − 1)σ)`, the first lowered by 1e-6 where it is 1, and each
+    /// timestep `⌊train·σ⌋`. diffusers 0.36 built the ramp as `1 − linspace(1, 1/train, steps + 1)` reversed,
+    /// which puts some timesteps one unit lower.
     public mutating func setTimesteps(_ steps: Int, sequenceLength: Int = 0) {
-        let train = Float(configuration.trainTimesteps)
-        let shift = configuration.flowShift
-        var s = (0 ... steps).map { index -> Float in
-            let alpha = 1 - (1 - 1 / train) * Float(index) / Float(steps)
-            let raw = 1 - alpha
+        let train = Double(configuration.trainTimesteps)
+        let shift = Double(configuration.flowShift)
+        let step = (1 / train - 1) / Double(steps)
+        var s = (0 ..< steps).map { index -> Double in
+            let raw = Double(index) * step + 1
             return shift * raw / (1 + (shift - 1) * raw)
         }
-        s.reverse()
-        s.removeLast()
-        timesteps = s.map { ($0 * train).rounded(.towardZero) }
-        sigmas = s + [0]
+        if let first = s.first, abs(first - 1) < 1e-6 {
+            s[0] = first - 1e-6
+        }
+        timesteps = s.map { Float(Int(train * $0)) }
+        sigmas = s.map { Float($0) } + [0]
         stepIndex = 0
         modelOutputs = Array(repeating: nil, count: configuration.solverOrder)
         lastSample = nil

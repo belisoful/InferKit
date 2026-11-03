@@ -5936,10 +5936,13 @@
     "wananimate": {
       "path": "wananimatevenv",
       "create": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wananimatevenv && ~/.inferkit-validation/wananimatevenv/bin/pip install 'diffusers>=0.40' 'transformers>=4.57' torch safetensors accelerate scipy",
-      "note": "WanAnimate2Transformer3DModel arrived in diffusers 0.40, which needs a modern torch; the 3.9 environments top out at diffusers 0.36, so this one is built on Homebrew python@3.12. Its transformers is the modern one too (5.x), which is where Sam2VideoModel lives, so the SAM 2 video oracle runs here. `scipy` is here for the SAM 3 objective, whose matcher calls `linear_sum_assignment`.",
+      "note": "WanAnimate2Transformer3DModel arrived in diffusers 0.40, which needs a modern torch; the Wan UniPC sampler and pipeline records are measured here too, because diffusers 0.40 builds the flow sigmas as linspace(1, 1/1000, n + 1)[:-1] where 0.36 built 1 − linspace(…) reversed, a timestep apart at some steps; the 3.9 environments top out at diffusers 0.36, so this one is built on Homebrew python@3.12. Its transformers is the modern one too (5.x), which is where Sam2VideoModel lives, so the SAM 2 video oracle runs here. `scipy` is here for the SAM 3 objective, whose matcher calls `linear_sum_assignment`.",
       "modes": [
         "wan_animate",
         "wan_animate_pipeline",
+        "unipc",
+        "wan_pipeline",
+        "wan22_a14b_pipeline",
         "sam2_video",
         "sam3_vision",
         "sam3_text",
@@ -5962,7 +5965,6 @@
         "flux_vae",
         "wan_vae",
         "dpm_solver",
-        "unipc",
         "wan_vae_21",
         "dc_ae_real",
         "sd3",

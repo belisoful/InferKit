@@ -2,8 +2,10 @@
 //  NFKMLXWanVideoGenerator.swift
 //  InferKitMLX
 //
-//  Wan text-to-video from a downloaded diffusers release directory, its two stages held as an
-//  `NFKMLXResidency` says: umT5-XXL runs once per clip and the transformer and autoencoder after it.
+//  Wan text-to-video and image-to-video from a downloaded diffusers release directory, its stages held as
+//  an `NFKMLXResidency` says: umT5-XXL runs once per clip and the transformer and autoencoder after it. A
+//  Wan 2.2 A14B release holds two transformers, a high-noise and a low-noise expert, each a stage of its
+//  own, so a machine that cannot hold both loads the second when the schedule reaches it.
 //  The file also carries the release loaders the three models lacked: the transformer's and the
 //  autoencoder's geometry from their configs, and their weights in the module's layout.
 //
@@ -14,6 +16,21 @@ import CoreGraphics
 import Foundation
 import InferKit
 import MLX
+
+/// The two transformers of a Wan 2.2 A14B release.
+///
+/// Introduced in InferKit 0.4.0.
+@objc(NFKMLXWanExpert)
+public enum NFKMLXWanExpert: Int, Sendable {
+    /// `transformer/`: the steps whose timestep is at least the release's boundary, and the only
+    /// transformer of a single-transformer release.
+    case highNoise
+    /// `transformer_2/`: the steps below the boundary.
+    case lowNoise
+
+    /// The release folder the expert loads from.
+    var folder: String { self == .highNoise ? "transformer" : "transformer_2" }
+}
 
 /// Reading a diffusers Wan release's transformer and autoencoder.
 enum NFKMLXWanRelease {
@@ -44,7 +61,21 @@ enum NFKMLXWanRelease {
             textDim: json["text_dim"] as? Int ?? base.textDim,
             freqDim: json["freq_dim"] as? Int ?? base.freqDim,
             patchSize: json["patch_size"] as? [Int] ?? base.patchSize,
-            eps: (json["eps"] as? NSNumber)?.floatValue ?? base.eps)
+            eps: (json["eps"] as? NSNumber)?.floatValue ?? base.eps,
+            outChannels: json["out_channels"] as? Int)
+    }
+
+    /// The timestep fraction at which an A14B release hands the schedule to its low-noise expert
+    /// (`boundary_ratio` in `model_index.json`: 0.875 for T2V-A14B, 0.9 for I2V-A14B), or nil for a release
+    /// with one transformer.
+    static func boundaryRatio(ofDirectory directoryURL: URL) throws -> Float? {
+        let url = directoryURL.appendingPathComponent("model_index.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let ratio = (try json(url)["boundary_ratio"] as? NSNumber)?.floatValue
+        let hasSecond = FileManager.default.fileExists(
+            atPath: directoryURL.appendingPathComponent("transformer_2/config.json").path)
+        guard let ratio, hasSecond else { return nil }
+        return ratio
     }
 
     /// Loads a release's `transformer/` weights. The module keys are the release's; the patchify
@@ -147,14 +178,18 @@ final class NFKWanTextStage {
     }
 }
 
-/// Wan text-to-video, assembled from a diffusers release directory.
+/// Wan text-to-video and image-to-video, assembled from a diffusers release directory.
 ///
 /// @discussion The release layout is `text_encoder/` (umT5-XXL), `tokenizer/` (its SentencePiece model),
-/// `transformer/`, `vae/`, and `scheduler/`. The factories read the text-to-video releases: Wan 2.1 T2V
-/// (1.3B and 14B, the Wan 2.1 autoencoder) and Wan 2.2 TI2V-5B (the Wan 2.2 autoencoder).
+/// `transformer/`, `vae/`, and `scheduler/`, and for a Wan 2.2 A14B release `transformer_2/` with the
+/// boundary in `model_index.json`. The factories read Wan 2.1 T2V (1.3B and 14B, the Wan 2.1
+/// autoencoder), Wan 2.2 TI2V-5B (the Wan 2.2 autoencoder) for text to video, and Wan 2.2 T2V-A14B and
+/// I2V-A14B (two experts, the Wan 2.1 autoencoder).
 /// ``video(forPrompt:negativePrompt:frames:width:height:seed:)`` encodes the prompt through the masked
-/// umT5, denoises over the UniPC flow schedule with classifier-free guidance, and decodes. The glue is
-/// measured against diffusers' `WanPipeline`.
+/// umT5, denoises over the UniPC flow schedule with classifier-free guidance, and decodes;
+/// ``video(forPrompt:image:lastImage:negativePrompt:frames:width:height:seed:)`` conditions I2V-A14B on a
+/// first frame, and a last one where given. The glue is measured against diffusers' `WanPipeline` and
+/// `WanImageToVideoPipeline`.
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXWanVideoGenerator)
@@ -173,16 +208,48 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     private let staging: NFKMLXStagedModel
     private let textStage: NFKMLXStage<NFKWanTextStage>
     private let pipelineStage: NFKMLXStage<NFKMLXWanPipeline>
+    /// An A14B release's experts, high-noise first; empty where the pipeline holds the one transformer.
+    private let expertStages: [NFKMLXStage<NFKMLXWanTransformerNet>]
+    private let boundaryRatio: Float?
     private let segmenter: NFKMLXSentencePieceSegmenter
     private let compression: (spatial: Int, temporal: Int)
     private let sequenceLength: Int
-    private let adapters: NFKWanAdapterList
+    /// Each expert's adapters, high-noise first.
+    private let adapters: [NFKWanAdapterList]
+    /// Whether a transformer merges an adapter only as it loads: a packed or streamed one.
+    private let mergesOnLoad: Bool
 
     /// The denoising steps, 50 by the reference's default.
     @objc public var steps: Int = 50
     /// The classifier-free guidance scale, 5 by the reference's default. Above 1 the clip guides against
     /// the negative prompt, or an empty one where none is given.
     @objc public var guidance: Float = 5
+
+    /// The low-noise expert's guidance scale (the reference's `guidance_scale_2`); nil takes ``guidance``.
+    /// Guidance applies on both experts only where ``guidance`` is above 1, as the reference decides.
+    /// Introduced in InferKit 0.4.0.
+    public var lowNoiseGuidance: Float?
+
+    /// ``lowNoiseGuidance`` for Objective-C. Introduced in InferKit 0.4.0.
+    @objc(lowNoiseGuidance) public var lowNoiseGuidanceNumber: NSNumber? {
+        get { lowNoiseGuidance.map { NSNumber(value: $0) } }
+        set { lowNoiseGuidance = newValue?.floatValue }
+    }
+
+    /// Whether the release holds two experts (Wan 2.2 A14B). Introduced in InferKit 0.4.0.
+    @objc public var hasExperts: Bool { !expertStages.isEmpty }
+
+    /// Whether the release conditions on an image (Wan 2.2 I2V-A14B), which
+    /// ``video(forPrompt:image:lastImage:negativePrompt:frames:width:height:seed:)`` then requires.
+    /// Introduced in InferKit 0.4.0.
+    @objc public let isImageToVideo: Bool
+
+    /// The bits the transformers' block weights are packed to, or 0. Introduced in InferKit 0.4.0.
+    @objc public internal(set) var quantizationBits = 0
+
+    /// How many transformer blocks are read from the release on every pass, across the experts.
+    /// Introduced in InferKit 0.4.0.
+    @objc public internal(set) var streamedLayerCount = 0
 
     /// Whether the text encoder and the transformer stay loaded together between clips.
     @objc public var holdsStagesResident: Bool { staging.resident }
@@ -218,13 +285,19 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     init(resident: Bool, segmenter: NFKMLXSentencePieceSegmenter, compression: (spatial: Int, temporal: Int),
          framesPerSecond: Double = 16,
          sequenceLength: Int = NFKMLXWanVideoGenerator.maximumSequenceLength,
-         adapters: NFKWanAdapterList = NFKWanAdapterList(),
+         adapters: [NFKWanAdapterList] = [NFKWanAdapterList()],
+         imageToVideo: Bool = false, boundaryRatio: Float? = nil, mergesOnLoad: Bool = false,
          loadTextEncoder: @escaping () throws -> NFKMLXT5EncoderNet,
-         loadPipeline: @escaping () throws -> NFKMLXWanPipeline) {
+         loadPipeline: @escaping () throws -> NFKMLXWanPipeline,
+         loadExperts: [() throws -> NFKMLXWanTransformerNet] = []) {
         staging = NFKMLXStagedModel(resident: resident)
         self.adapters = adapters
         textStage = NFKMLXStage { NFKWanTextStage(try loadTextEncoder()) }
         pipelineStage = NFKMLXStage(loadPipeline)
+        expertStages = loadExperts.map { NFKMLXStage($0) }
+        self.boundaryRatio = boundaryRatio
+        self.isImageToVideo = imageToVideo
+        self.mergesOnLoad = mergesOnLoad
         self.segmenter = segmenter
         self.compression = compression
         self.framesPerSecond = framesPerSecond
@@ -239,10 +312,39 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         // would otherwise sit on top of.
         NFKMLXGPU.clearCache()
         try staging.use(pipelineStage) { _ in }
+        for stage in expertStages {
+            try staging.use(stage) { _ in }
+        }
     }
 
     var isHoldingTextEncoder: Bool { staging.exclusively { textStage.isHeld } }
     var isHoldingPipeline: Bool { staging.exclusively { pipelineStage.isHeld } }
+    func isHoldingExpert(_ expert: NFKMLXWanExpert) -> Bool {
+        staging.exclusively { expertStages.indices.contains(expert.rawValue) && expertStages[expert.rawValue].isHeld }
+    }
+
+    /// Runs `body` with the text stage.
+    func usingText<T>(_ body: (NFKWanTextStage) throws -> T) throws -> T {
+        try staging.use(textStage, body)
+    }
+
+    /// Runs `body` with the pipeline (the autoencoder, and a single-transformer release's transformer).
+    func usingPipeline<T>(_ body: (NFKMLXWanPipeline) throws -> T) throws -> T {
+        try staging.use(pipelineStage, body)
+    }
+
+    /// Runs `body` with `expert`'s transformer: the pipeline's own for a single-transformer release.
+    private func withExpert<T>(_ expert: NFKMLXWanExpert, _ body: (NFKMLXWanTransformerNet) throws -> T) throws -> T {
+        guard !expertStages.isEmpty else {
+            return try staging.use(pipelineStage) { pipeline in
+                guard let transformer = pipeline.transformer else {
+                    throw NFKMLXError.unsupportedConfiguration("the pipeline holds no transformer")
+                }
+                return try body(transformer)
+            }
+        }
+        return try staging.use(expertStages[expert.rawValue], body)
+    }
 
     /// The autoencoder's compression: `2^downsamplings · patch` spatially and `2^temporal downsamplings`
     /// in time.
@@ -269,8 +371,10 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     ///
     /// @discussion Wan 2.1 T2V 1.3B stores umT5-XXL at float32 (22.7 GB) beside a 5.7 GB transformer.
     /// The encoder runs at float32 where the plan affords it (beside the transformer when resident,
-    /// on its own when staged) and at bfloat16, the reference pipeline's precision, otherwise; the transformer and the autoencoder load as stored.
-    /// The 14B transformer alone is beyond a 32 GB machine in any placement. A machine that cannot hold the stages together stages under
+    /// on its own when staged) and at bfloat16, the reference pipeline's precision, otherwise; the
+    /// transformer and the autoencoder load as stored. A 14B transformer is 28 GB at bfloat16 and the
+    /// A14B releases store each expert at float32 (57 GB); ``generator(directoryURL:residency:precision:quantizationBits:)``
+    /// packs them. A machine that cannot hold the stages together stages under
     /// ``NFKMLXResidency/automatic``. The release has no routed experts, so ``NFKMLXResidency/paged``
     /// holds it as ``NFKMLXResidency/staged`` does.
     @objc(generatorWithDirectoryURL:residency:error:)
@@ -278,37 +382,92 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         try generator(directoryURL: directoryURL, residency: residency, transformerType: nil)
     }
 
-    /// Assembles the model as ``generator(directoryURL:residency:)`` does, with the transformer's floating
-    /// weights converted to `transformerType` as they load, or held as stored where it is nil.
-    static func generator(directoryURL: URL, residency: NFKMLXResidency,
-                          transformerType: DType?) throws -> NFKMLXWanVideoGenerator {
+    /// Assembles the model from a downloaded release directory, holding it as `residency` says, the
+    /// transformers' weights at `precision`, and their block weights packed to `quantizationBits`.
+    ///
+    /// @discussion A `quantizationBits` of 2 to 8 packs every linear layer inside a transformer's blocks as
+    /// each block loads, so the stored form is never held whole (4 bits holds a 14B expert in about
+    /// 8 GB); 0 packs nothing. Where an unpacked transformer and the autoencoder do not fit, the plan holds
+    /// the first blocks that fit and reads the others from the release on every pass
+    /// (``streamedLayerCount``). An A14B release's experts are stages of their own: a machine that cannot
+    /// hold both loads the low-noise expert when the schedule reaches it. Introduced in InferKit 0.4.0.
+    @objc(generatorWithDirectoryURL:residency:precision:quantizationBits:error:)
+    public static func generator(directoryURL: URL, residency: NFKMLXResidency, precision: NFKMLXWeightPrecision,
+                                 quantizationBits: Int) throws -> NFKMLXWanVideoGenerator {
+        try generator(directoryURL: directoryURL, residency: residency, transformerType: nil, precision: precision,
+                      bits: quantizationBits == 0 ? nil : quantizationBits)
+    }
+
+    /// Assembles the model as ``generator(directoryURL:residency:precision:quantizationBits:)`` does, with the
+    /// transformers' floating weights converted to `transformerType` as they load (held whole), or held at
+    /// `precision` where it is nil. `streamedBlocks`, where given, replaces the blocks the plan streams in
+    /// each transformer.
+    static func generator(directoryURL: URL, residency: NFKMLXResidency, transformerType: DType?,
+                          precision: NFKMLXWeightPrecision = .checkpoint, bits: Int? = nil,
+                          budget: Int? = nil, groupSize: Int = NFKMLXLoadOptions.defaultQuantizationGroupSize,
+                          streamedBlocks: Set<Int>? = nil) throws -> NFKMLXWanVideoGenerator {
+        guard transformerType == nil || bits == nil else {
+            throw NFKMLXError.unsupportedConfiguration("a transformer is converted to one type or packed, not both")
+        }
         let textDirectory = directoryURL.appendingPathComponent("text_encoder")
-        let transformerDirectory = directoryURL.appendingPathComponent("transformer")
         let vaeDirectory = directoryURL.appendingPathComponent("vae")
         let segmenter = NFKMLXSentencePieceSegmenter(model: try NFKMLXSentencePieceModel(
             contentsOf: directoryURL.appendingPathComponent("tokenizer/spiece.model")))
         let textConfiguration = try NFKMLXT5Encoder.configuration(
             fromHuggingFace: textDirectory.appendingPathComponent("config.json"))
-        let transformerConfiguration = try NFKMLXWanRelease.transformerConfiguration(
-            fromHuggingFace: transformerDirectory.appendingPathComponent("config.json"))
+        let boundaryRatio = try NFKMLXWanRelease.boundaryRatio(ofDirectory: directoryURL)
+        let experts: [NFKMLXWanExpert] = boundaryRatio == nil ? [.highNoise] : [.highNoise, .lowNoise]
+        let transformerDirectories = experts.map { directoryURL.appendingPathComponent($0.folder) }
+        let configurations = try transformerDirectories.map {
+            try NFKMLXWanRelease.transformerConfiguration(fromHuggingFace: $0.appendingPathComponent("config.json"))
+        }
         let vae = try NFKMLXWanRelease.vaeConfiguration(fromHuggingFace: vaeDirectory.appendingPathComponent("config.json"))
         let schedule = try NFKMLXWanRelease.schedule(
             fromHuggingFace: directoryURL.appendingPathComponent("scheduler/scheduler_config.json"))
+        let imageToVideo = configurations[0].inChannels != configurations[0].outChannels
 
         // umT5-XXL (stored at float32, 22.7 GB) takes float32 as its wider precision over the bfloat16
         // the reference pipeline runs it at.
-        let plan = try NFKMLXResidencyBudget.plan(
-            [NFKMLXStageFootprint(bytes: try NFKMLXStageWeights.bytes(inDirectory: textDirectory, holding: .bfloat16),
-                                  widenedBytes: try NFKMLXStageWeights.bytes(inDirectory: textDirectory, holding: .float32)),
-             NFKMLXStageFootprint(bytes: try transformerBytes(transformerDirectory, holding: transformerType)
-                                     + NFKMLXStageWeights.bytes(inDirectory: vaeDirectory, precision: .float32))],
-            residency: residency, budget: NFKMLXResidencyBudget.current())
+        let text = NFKMLXStageFootprint(
+            bytes: try NFKMLXStageWeights.bytes(inDirectory: textDirectory, holding: .bfloat16),
+            widenedBytes: try NFKMLXStageWeights.bytes(inDirectory: textDirectory, holding: .float32))
+        let vaeBytes = try NFKMLXStageWeights.bytes(inDirectory: vaeDirectory, precision: .float32)
+        let transformers = try transformerDirectories.map {
+            try transformerFootprint($0, holding: transformerType, precision: precision, bits: bits, groupSize: groupSize)
+        }
+        // A single transformer shares its stage with the autoencoder; an A14B release's experts are stages of
+        // their own, after the autoencoder's.
+        let stages = boundaryRatio == nil
+            ? [text, NFKMLXStageFootprint(bytes: transformers[0].bytes + vaeBytes, layerBytes: transformers[0].layerBytes)]
+            : [text, NFKMLXStageFootprint(bytes: vaeBytes)] + transformers
+        let plan = try NFKMLXResidencyBudget.plan(stages, residency: residency,
+                                                  budget: budget ?? NFKMLXResidencyBudget.current())
+        let firstExpertStage = boundaryRatio == nil ? 1 : 2
+        let streamed = experts.indices.map { index -> Set<Int> in
+            if let streamedBlocks { return streamedBlocks }
+            let stage = firstExpertStage + index
+            guard plan.streams(stage) else { return [] }
+            return Set(plan.heldLayers(stage, of: stages[stage]).upperBound ..< transformers[index].layerBytes.count)
+        }
         let textInFloat32 = plan.widens(0)
-        let adapters = NFKWanAdapterList()
+        let adapters = experts.map { _ in NFKWanAdapterList() }
+        func loadExpert(_ index: Int) throws -> NFKMLXWanTransformerNet {
+            try loadTransformer(configurations[index], directory: transformerDirectories[index],
+                                transformerType: transformerType, precision: precision, bits: bits,
+                                groupSize: groupSize, streamed: streamed[index],
+                                adapters: try adapters[index].deltas(naming: NFKMLXWanLoRA.textToVideoPath(original:)))
+        }
+        func loadAutoencoder() throws -> NFKMLXWanVideoVAENet {
+            let autoencoder = NFKMLXWanVideoVAENet(vae.configuration)
+            try NFKMLXWanRelease.loadVAE(into: autoencoder, fromDirectory: vaeDirectory)
+            return autoencoder
+        }
         let generator = NFKMLXWanVideoGenerator(
             resident: plan.holdsStagesResident, segmenter: segmenter,
             compression: compression(of: vae.configuration),
             framesPerSecond: framesPerSecond(of: vae.configuration), adapters: adapters,
+            imageToVideo: imageToVideo, boundaryRatio: boundaryRatio,
+            mergesOnLoad: bits != nil || streamed.contains { !$0.isEmpty },
             loadTextEncoder: {
                 let encoder = NFKMLXT5Encoder.makeNet(textConfiguration)
                 try NFKMLXT5Encoder.loadWeights(into: encoder, from: textDirectory,
@@ -316,35 +475,61 @@ public final class NFKMLXWanVideoGenerator: NSObject {
                 return encoder
             },
             loadPipeline: {
-                let transformer = NFKMLXWanTransformerNet(transformerConfiguration)
-                if let transformerType {
-                    try NFKMLXWanRelease.loadTransformer(into: transformer, fromDirectory: transformerDirectory,
-                                                         converting: transformerType)
-                } else {
-                    try NFKMLXWanRelease.loadTransformer(into: transformer, fromDirectory: transformerDirectory,
-                                                         precision: .checkpoint)
+                guard boundaryRatio == nil else {
+                    return NFKMLXWanPipeline(vae: try loadAutoencoder(), latentsMean: vae.mean, latentsStd: vae.std,
+                                             schedule: schedule)
                 }
-                for deltas in try adapters.deltas(naming: NFKMLXWanLoRA.textToVideoPath(original:)) {
-                    try NFKMLXWanLoRA.apply(deltas, to: transformer)
-                }
-                let autoencoder = NFKMLXWanVideoVAENet(vae.configuration)
-                try NFKMLXWanRelease.loadVAE(into: autoencoder, fromDirectory: vaeDirectory)
-                return NFKMLXWanPipeline(transformer: transformer, vae: autoencoder, latentsMean: vae.mean,
+                let transformer = try loadExpert(0)
+                return NFKMLXWanPipeline(transformer: transformer, vae: try loadAutoencoder(), latentsMean: vae.mean,
                                          latentsStd: vae.std, schedule: schedule)
-            })
+            },
+            loadExperts: boundaryRatio == nil ? [] : experts.indices.map { index in { try loadExpert(index) } })
         generator.encodesInFloat32 = textInFloat32
+        generator.quantizationBits = bits ?? 0
+        generator.streamedLayerCount = streamed.reduce(0) { $0 + $1.count }
         if plan.holdsStagesResident {
             try generator.loadResident()
         }
         return generator
     }
 
-    /// The bytes the transformer holds: as stored, or converted to `dtype`.
-    private static func transformerBytes(_ directory: URL, holding dtype: DType?) throws -> Int {
-        guard let dtype else {
-            return try NFKMLXStageWeights.bytes(inDirectory: directory, precision: .checkpoint)
+    /// Loads one transformer: packed or streamed block by block, converted to `transformerType` whole, or
+    /// held at `precision`, with `adapters` merged in order.
+    static func loadTransformer(_ configuration: NFKMLXWanConfiguration, directory: URL, transformerType: DType?,
+                                precision: NFKMLXWeightPrecision, bits: Int?, groupSize: Int, streamed: Set<Int>,
+                                adapters: [[String: NFKMLXWanLoRA.Delta]]) throws -> NFKMLXWanTransformerNet {
+        let transformer = NFKMLXWanTransformerNet(configuration)
+        if bits != nil || !streamed.isEmpty {
+            transformer.layerStream = try NFKMLXWanBlockedLoad.load(
+                into: transformer, blocks: transformer.blocks, fromDirectory: directory, precision: precision,
+                streamed: streamed, bits: bits, groupSize: groupSize, adapters: adapters)
+            return transformer
         }
-        return try NFKMLXStageWeights.bytes(inDirectory: directory, holding: dtype, float32: NFKMLXWanRelease.keepsFloat32)
+        if let transformerType {
+            try NFKMLXWanRelease.loadTransformer(into: transformer, fromDirectory: directory, converting: transformerType)
+        } else {
+            try NFKMLXWanRelease.loadTransformer(into: transformer, fromDirectory: directory, precision: precision)
+        }
+        for deltas in adapters {
+            try NFKMLXWanLoRA.apply(deltas, to: transformer)
+        }
+        return transformer
+    }
+
+    /// What one transformer holds: packed, converted to `dtype` (held whole), or at `precision` with each
+    /// block counted as a layer the plan may stream.
+    private static func transformerFootprint(_ directory: URL, holding dtype: DType?, precision: NFKMLXWeightPrecision,
+                                             bits: Int?, groupSize: Int) throws -> NFKMLXStageFootprint {
+        if let bits {
+            let packed = try NFKMLXWanBlockedLoad.quantizedFootprint(directory: directory, precision: precision,
+                                                                     bits: bits, groupSize: groupSize)
+            return NFKMLXStageFootprint(bytes: packed.bytes)
+        }
+        if let dtype {
+            return NFKMLXStageFootprint(bytes: try NFKMLXStageWeights.bytes(
+                inDirectory: directory, holding: dtype, float32: NFKMLXWanRelease.keepsFloat32))
+        }
+        return try NFKMLXWanBlockedLoad.footprint(directory: directory, precision: precision)
     }
 
     /// The component folders a download fetches.
@@ -360,18 +545,34 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         NFKMLXReleaseComponent(required: ["vae/config.json", "vae/diffusion_pytorch_model.safetensors"]),
     ]
 
-    /// Downloads a release (``releaseRepo`` when `repo` is nil, or `Wan-AI/Wan2.2-TI2V-5B-Diffusers`)
-    /// and assembles the model, holding it as `residency` says.
+    /// The component folders an A14B release's download fetches: the single-transformer set and `transformer_2/`.
+    static let expertReleaseComponents = releaseComponents + [
+        NFKMLXReleaseComponent(required: ["transformer_2/config.json"],
+                               weights: ["transformer_2/diffusion_pytorch_model.safetensors",
+                                         "transformer_2/diffusion_pytorch_model.safetensors.index.json"]),
+    ]
+
+    /// The Wan 2.2 A14B releases, Apache-2.0: two 14B experts at float32 (57 GB each), umT5-XXL, and the
+    /// Wan 2.1 autoencoder.
+    @objc public static let textToVideoExpertsRepo = "Wan-AI/Wan2.2-T2V-A14B-Diffusers"
+    /// The image-to-video A14B release. Introduced in InferKit 0.4.0.
+    @objc public static let imageToVideoExpertsRepo = "Wan-AI/Wan2.2-I2V-A14B-Diffusers"
+
+    /// Downloads a release (``releaseRepo`` when `repo` is nil, `Wan-AI/Wan2.2-TI2V-5B-Diffusers`,
+    /// ``textToVideoExpertsRepo``, or ``imageToVideoExpertsRepo``) and assembles the model, holding it as
+    /// `residency` says.
     ///
-    /// @discussion Wan 2.1 T2V 1.3B is about 29 GB. A file already in the cache is not fetched again. The
+    /// @discussion Wan 2.1 T2V 1.3B is about 29 GB, an A14B release about 126 GB. A file already in the cache is not fetched again. The
     /// call blocks on the network, so run it off the main and render threads.
     @objc(generatorWithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func generator(repo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency) throws -> NFKMLXWanVideoGenerator {
         try NFKMLXBuildHolds.keeping {
-            let directory = try NFKMLXReleaseDownload.directory(repo: repo ?? releaseRepo, revision: revision,
+            let name = repo ?? releaseRepo
+            let experts = [textToVideoExpertsRepo, imageToVideoExpertsRepo].contains(name)
+            let directory = try NFKMLXReleaseDownload.directory(repo: name, revision: revision,
                                                                 cacheDirectoryURL: cacheDirectoryURL,
-                                                                components: releaseComponents)
+                                                                components: experts ? expertReleaseComponents : releaseComponents)
             return try generator(directoryURL: directory, residency: residency)
         }
     }
@@ -423,20 +624,44 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     // MARK: Adapters
 
     /// Merges a released LoRA (``NFKMLXWanLoRA``) into the transformer at `scale`, now where the transformer
-    /// is loaded and on every later load. Adapters merge in the order they are added.
+    /// is loaded and on every later load. Adapters merge in the order they are added. In an A14B release
+    /// the adapter merges into the high-noise expert, as diffusers' `load_lora_weights` does by default.
     ///
     /// @discussion The file is read and its layers named now; a layer this transformer does not have, or a
     /// shape it does not match, throws now where the transformer is loaded and at its next load otherwise.
     /// Introduced in InferKit 0.4.0.
     @objc(addAdapterAtURL:scale:error:)
     public func addAdapter(at url: URL, scale: Float) throws {
+        try addAdapter(at: url, scale: scale, expert: .highNoise)
+    }
+
+    /// Merges a released LoRA into one expert of an A14B release: Wan 2.2 LoRAs ship as a high-noise and a
+    /// low-noise file. A single-transformer release takes ``NFKMLXWanExpert/highNoise`` alone. A packed or
+    /// streamed transformer merges an adapter only as it loads, so a loaded one is released and loads again
+    /// with it. Introduced in InferKit 0.4.0.
+    @objc(addAdapterAtURL:scale:expert:error:)
+    public func addAdapter(at url: URL, scale: Float, expert: NFKMLXWanExpert) throws {
+        guard adapters.indices.contains(expert.rawValue) else {
+            throw NFKMLXError.unsupportedConfiguration("this release has one transformer; it has no low-noise expert")
+        }
         try staging.exclusively {
             let deltas = try NFKMLXWanLoRA.deltas(adapterURL: url, naming: NFKMLXWanLoRA.textToVideoPath(original:),
                                                   scale: scale).deltas
-            if pipelineStage.isHeld {
-                _ = try staging.use(pipelineStage) { try NFKMLXWanLoRA.apply(deltas, to: $0.transformer) }
+            let stageHeld = expertStages.isEmpty ? pipelineStage.isHeld : expertStages[expert.rawValue].isHeld
+            if stageHeld && mergesOnLoad {
+                if expertStages.isEmpty {
+                    pipelineStage.release()
+                } else {
+                    expertStages[expert.rawValue].release()
+                }
+                NFKMLXGPU.clearCache()
+            } else if stageHeld {
+                _ = try withExpert(expert) { try NFKMLXWanLoRA.apply(deltas, to: $0) }
             }
-            adapters.add(url, scale: scale)
+            adapters[expert.rawValue].add(url, scale: scale)
+            if stageHeld && mergesOnLoad && staging.resident {
+                _ = try withExpert(expert) { _ in }
+            }
         }
     }
 
@@ -444,14 +669,15 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// InferKit 0.4.0.
     @objc public func removeAdapters() {
         staging.exclusively {
-            adapters.removeAll()
+            adapters.forEach { $0.removeAll() }
             pipelineStage.release()
+            expertStages.forEach { $0.release() }
             NFKMLXGPU.clearCache()
         }
     }
 
-    /// The adapters ``addAdapter(at:scale:)`` added. Introduced in InferKit 0.4.0.
-    @objc public var adapterCount: Int { staging.exclusively { adapters.entries.count } }
+    /// The adapters ``addAdapter(at:scale:)`` added, across the experts. Introduced in InferKit 0.4.0.
+    @objc public var adapterCount: Int { staging.exclusively { adapters.reduce(0) { $0 + $1.entries.count } } }
 
     // MARK: Generation
 
@@ -473,10 +699,42 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// transformer's patch (16 for Wan 2.1, 32 for Wan 2.2). Both prompts encode from one load of umT5.
     public func video(forPrompt prompt: String, negativePrompt: String? = nil, frames: Int = 81,
                       width: Int = 832, height: Int = 480, seed: UInt64 = 0) throws -> MLXArray {
+        try video(forPrompt: prompt, image: nil, lastImage: nil, negativePrompt: negativePrompt, frames: frames,
+                  width: width, height: height, seed: seed)
+    }
+
+    /// Generates a clip for `prompt` that starts at `image` (and ends at `lastImage`, where given),
+    /// `[frames, height, width, 3]` in `[0, 1]`. An image-to-video release (``isImageToVideo``) requires the
+    /// image and a text-to-video release refuses one.
+    ///
+    /// @discussion Each image is resized to the clip's `width` × `height` by PIL's 8-bit Lanczos filter, as
+    /// the reference's image processor resizes a picture, then encoded with zeros between as the clip's
+    /// first frame (and last) by the autoencoder. Introduced in InferKit 0.4.0.
+    public func video(forPrompt prompt: String, image: CGImage?, lastImage: CGImage? = nil,
+                      negativePrompt: String? = nil, frames: Int = 81, width: Int = 832, height: Int = 480,
+                      seed: UInt64 = 0) throws -> MLXArray {
+        try generate(prompt: prompt, image: image, lastImage: lastImage, negativePrompt: negativePrompt,
+                     frames: frames, width: width, height: height, seed: seed).clip
+    }
+
+    /// ``video(forPrompt:image:lastImage:negativePrompt:frames:width:height:seed:)`` with its final latent,
+    /// from `noise` in place of the seeded noise where given.
+    func generate(prompt: String, image: CGImage?, lastImage: CGImage?, negativePrompt: String?, frames: Int,
+                  width: Int, height: Int, seed: UInt64, noise: MLXArray? = nil) throws -> (clip: MLXArray, latent: MLXArray) {
         let tile = compression.spatial * 2
         let grid = ((frames - 1) / compression.temporal + 1, height / tile * 2, width / tile * 2)
         guard frames >= 1, grid.1 > 0, grid.2 > 0 else {
             throw NFKMLXError.unsupportedConfiguration("a clip is at least one frame of \(tile)×\(tile) pixels")
+        }
+        guard isImageToVideo == (image != nil), lastImage == nil || image != nil else {
+            throw NFKMLXError.unsupportedConfiguration(isImageToVideo
+                ? "this release starts a clip from an image; pass one"
+                : "this release generates from text alone; it takes no image")
+        }
+        let pixelFrames = (grid.0 - 1) * compression.temporal + 1
+        let size = (width: grid.2 * compression.spatial, height: grid.1 * compression.spatial)
+        let pictures = try [image, lastImage].map { picture in
+            try picture.map { try Self.preparedImage($0, width: size.width, height: size.height) }
         }
         let guides = guidance > 1
         let prompts = [self.prompt(prompt)] + (guides ? [self.prompt(negativePrompt ?? "")] : [])
@@ -487,13 +745,60 @@ public final class NFKMLXWanVideoGenerator: NSObject {
             }
             // The encode's buffers, and umT5's own where it was released, stay in MLX's cache until cleared.
             NFKMLXGPU.clearCache()
-            return try staging.with(pipelineStage) { pipeline in
-                let latent = pipeline.denoise(textEmbeds: features[0], negativeEmbeds: guides ? features[1] : nil,
-                                              frames: grid.0, height: grid.1, width: grid.2, steps: steps,
-                                              guidance: guidance, seed: seed)
-                return clip(pipeline.decode(latent)[0] / 2 + 0.5, min: 0, max: 1)
+            func denoiser(_ schedule: NFKMLXUniPCConfiguration, channels: Int, condition: MLXArray?) -> NFKWanDenoiser {
+                NFKWanDenoiser(schedule: schedule, steps: steps, text: features[0], negative: guides ? features[1] : nil,
+                               guidance: guidance, lowNoiseGuidance: lowNoiseGuidance,
+                               boundary: boundaryRatio.map { $0 * Float(schedule.trainTimesteps) }, condition: condition,
+                               noise: noise ?? NFKMLXWanPipeline.noise(channels: channels, frames: grid.0, height: grid.1,
+                                                                       width: grid.2, seed: seed))
             }
+            func decoded(_ pipeline: NFKMLXWanPipeline, _ latent: MLXArray) -> MLXArray {
+                let clip = MLX.clip(pipeline.decode(latent)[0] / 2 + 0.5, min: 0, max: 1)
+                eval(clip)
+                return clip
+            }
+            guard !expertStages.isEmpty else {
+                // One transformer: the pipeline stage holds it beside the autoencoder, loaded once per clip.
+                return try staging.use(pipelineStage) { pipeline in
+                    guard let transformer = pipeline.transformer else {
+                        throw NFKMLXError.unsupportedConfiguration("the pipeline holds no transformer")
+                    }
+                    var run = denoiser(pipeline.schedule, channels: transformer.config.inChannels, condition: nil)
+                    for index in run.timesteps.indices {
+                        run.step(index, with: transformer)
+                        try transformer.verifyStream()
+                    }
+                    return (decoded(pipeline, run.latent), run.latent)
+                }
+            }
+            let (schedule, channels, condition) = try staging.use(pipelineStage) { pipeline in
+                let condition = pictures[0].map { pipeline.imageCondition($0, lastImage: pictures[1], frames: pixelFrames) }
+                return (pipeline.schedule, pipeline.latentChannels, condition)
+            }
+            var run = denoiser(schedule, channels: channels, condition: condition)
+            for expert in [NFKMLXWanExpert.highNoise, .lowNoise] {
+                let indices = run.timesteps.indices.filter { run.usesLowNoiseExpert($0) == (expert == .lowNoise) }
+                guard !indices.isEmpty else { continue }
+                try staging.use(expertStages[expert.rawValue]) { transformer in
+                    for index in indices {
+                        run.step(index, with: transformer)
+                        try transformer.verifyStream()
+                    }
+                }
+            }
+            let latent = run.latent
+            return (try staging.use(pipelineStage) { decoded($0, latent) }, latent)
         }
+    }
+
+    /// A picture resized to `width` × `height` by PIL's 8-bit Lanczos filter, `[height, width, 3]` in −1…1.
+    static func preparedImage(_ image: CGImage, width: Int, height: Int) throws -> MLXArray {
+        let (rgb, sourceWidth, sourceHeight) = try NFKMLXImageBridge.rgbBytes(
+            from: image, colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!)
+        let resized = sourceWidth == width && sourceHeight == height ? rgb
+            : NFKMLXPILResample.resampled(rgb, width: sourceWidth, height: sourceHeight, toWidth: width,
+                                          toHeight: height, filter: .lanczos)
+        return MLXArray(resized.map { Float($0) / 255 * 2 - 1 }).reshaped([height, width, 3])
     }
 
     /// Generates a clip for `prompt` and returns its frames as `CGImage`s. Objective-C reads each element
@@ -502,8 +807,18 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     @objc(framesForPrompt:negativePrompt:frames:width:height:seed:error:)
     public func frames(forPrompt prompt: String, negativePrompt: String?, frames: Int, width: Int, height: Int,
                        seed: UInt64) throws -> [Any] {
-        let clip = try video(forPrompt: prompt, negativePrompt: negativePrompt, frames: frames, width: width,
-                             height: height, seed: seed)
+        try self.frames(forPrompt: prompt, image: nil, lastImage: nil, negativePrompt: negativePrompt, frames: frames,
+                        width: width, height: height, seed: seed)
+    }
+
+    /// ``video(forPrompt:image:lastImage:negativePrompt:frames:width:height:seed:)`` as `CGImage`s, read in
+    /// Objective-C as ``frames(forPrompt:negativePrompt:frames:width:height:seed:)`` returns them.
+    /// Introduced in InferKit 0.4.0.
+    @objc(framesForPrompt:image:lastImage:negativePrompt:frames:width:height:seed:error:)
+    public func frames(forPrompt prompt: String, image: CGImage?, lastImage: CGImage?, negativePrompt: String?,
+                       frames: Int, width: Int, height: Int, seed: UInt64) throws -> [Any] {
+        let clip = try video(forPrompt: prompt, image: image, lastImage: lastImage, negativePrompt: negativePrompt,
+                             frames: frames, width: width, height: height, seed: seed)
         return try (0 ..< clip.dim(0)).map {
             try NFKMLXImageBridge.cgImage(from: clip[$0], options: NFKMLXImageOptions())
         }

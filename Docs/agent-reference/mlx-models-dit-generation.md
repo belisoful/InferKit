@@ -862,10 +862,14 @@ arithmetic as before.
 
 - `NFKMLXDPMSolverScheduler` / `NFKMLXUniPCScheduler` — the released multistep samplers SANA and Wan use,
   ported in their flow-prediction configurations. Both are value types with no weights, so both are
-  verified exactly against diffusers with no downloads (`run_reference.py dpm_solver` / `unipc`, `ltx`
-  env): a fixed velocity sequence is run through the reference and this port, and the whole sample
-  trajectory is compared step by step (worst |difference| 1.7e-6 and 1.4e-6), with the sigma schedule
-  exact. **`NFKMLXDPMSolverScheduler`** is DPM-Solver++ (`algorithm_type: dpmsolver++`, `solver_order: 2`,
+  verified exactly against diffusers with no downloads (`run_reference.py dpm_solver`, `ltx` env;
+  `unipc`, `wananimate` env): a fixed velocity sequence is run through the reference and this port, and
+  the whole sample trajectory is compared step by step (worst |difference| 1.7e-6 and 1.2e-7), with the
+  sigma schedule exact. UniPC follows diffusers 0.40, whose flow sigmas are `linspace(1, 1/1000, n + 1)[:-1]`
+  in float64, shifted, with the first lowered by 1e-6 where it is 1; diffusers 0.36 built
+  `1 − linspace(1, 1/1000, n + 1)` reversed, which puts some timesteps one unit lower (four steps: 999,
+  899, 749, 499 against 999, 900, 750, 500). A one-unit timestep moved Wan 2.2 A14B's low-noise expert to
+  a cosine of 0.999 in one forward, which is how the difference was found. **`NFKMLXDPMSolverScheduler`** is DPM-Solver++ (`algorithm_type: dpmsolver++`, `solver_order: 2`,
   `solver_type: midpoint`, `final_sigmas_type: zero`): each step converts the flow velocity to a data
   prediction `x0` and takes a first- or second-order multistep update, the coefficients computed as
   `Float` scalars (so the `log 0` at the terminal zero sigma resolves to a clean `x0`) and applied to the
@@ -1343,8 +1347,9 @@ arithmetic as before.
 `NFKMLXQwenImageGenerator`, `NFKMLXLTXVideoGenerator` and `NFKMLXWanVideoGenerator` are the release-
 directory facades over the three pipelines, each two stages under `NFKMLXResidency` (text encoder; then
 transformer and autoencoder). Each pipeline's GLUE is measured against the reference pipeline at a tiny
-random geometry, with the models measured separately: `run_reference.py ltx_pipeline` and
-`wan_pipeline` (the `ltx` env, diffusers 0.36), keys `IK_PARITY_LTX_PIPELINE` / `IK_PARITY_WAN_PIPELINE`,
+random geometry, with the models measured separately: `run_reference.py ltx_pipeline` (the `ltx` env,
+diffusers 0.36) and `wan_pipeline` (the `wananimate` env, diffusers 0.40), keys `IK_PARITY_LTX_PIPELINE` /
+`IK_PARITY_WAN_PIPELINE`,
 tokenized through `IK_VAL_T5_TOKENIZER` (a FLUX.1 release's `tokenizer_2/`). The released components are
 held by shape (`IK_SHAPES_ROOT`: `wan21-t2v-1.3b-*`, `wan22-ti2v-5b-*`, `ltx-video-*`), 0 missing /
 unconsumed / mismatched across all seven. Qwen-Image ran end to end on its released weights, staged on

@@ -297,12 +297,20 @@ public enum NFKMLXPhi4MMImageProcessor {
 /// each accumulating fixed-point weights and rounding once. The filter's support widens with the scale
 /// when shrinking, which is PIL's antialiasing.
 enum NFKMLXPILResample {
-    /// PIL's `BILINEAR` (a triangle, support 1) or `BICUBIC` (Keys' cubic with a = −0.5, support 2).
+    /// PIL's `BILINEAR` (a triangle, support 1), `BICUBIC` (Keys' cubic with a = −0.5, support 2), or
+    /// `LANCZOS` (a sinc windowed by a sinc three times as wide, support 3).
     enum Filter: Sendable {
         case bilinear
         case bicubic
+        case lanczos
 
-        var support: Double { self == .bilinear ? 1 : 2 }
+        var support: Double {
+            switch self {
+            case .bilinear: return 1
+            case .bicubic: return 2
+            case .lanczos: return 3
+            }
+        }
 
         func weight(_ value: Double) -> Double {
             let x = abs(value)
@@ -314,7 +322,16 @@ enum NFKMLXPILResample {
                 if x < 1 { return ((a + 2) * x - (a + 3)) * x * x + 1 }
                 if x < 2 { return (((x - 5) * x + 8) * x - 4) * a }
                 return 0
+            case .lanczos:
+                guard x < 3 else { return 0 }
+                return Self.sinc(x) * Self.sinc(x / 3)
             }
+        }
+
+        private static func sinc(_ x: Double) -> Double {
+            guard x != 0 else { return 1 }
+            let scaled = x * Double.pi
+            return Foundation.sin(scaled) / scaled
         }
 
         /// The filter a `resample` code in a preprocessor configuration names (PIL's numbering).

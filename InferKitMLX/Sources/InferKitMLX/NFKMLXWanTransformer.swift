@@ -17,12 +17,16 @@ import MLXNN
 // The query/key normalization is `rms_norm_across_heads` — an RMS norm over the WHOLE inner width, before
 // the head split, where the Z-Image DiT norms per head.
 //
-// This is the text-to-video path (no image-conditioning branch). For parity the text embedding is
-// supplied directly (no umT5), so the DiT is validated in isolation.
+// The transformer has no image-embedding branch. Wan 2.2 I2V-A14B conditions on an image through its
+// input channels (the noise, a mask, and the image's latents, 36 in all) and predicts 16. For parity the
+// text embedding is supplied directly (no umT5), so the DiT is validated in isolation.
 
 /// Wan DiT geometry. Defaults are the released 14B model.
 public struct NFKMLXWanConfiguration: Sendable {
     public var inChannels: Int
+    /// The channels the transformer predicts: `inChannels` for text to video, 16 for Wan 2.2 I2V-A14B, whose
+    /// input carries a mask and the image's latents beside the noise. Introduced in InferKit 0.4.0.
+    public var outChannels: Int
     public var heads: Int
     public var headDim: Int
     public var layers: Int
@@ -35,8 +39,10 @@ public struct NFKMLXWanConfiguration: Sendable {
 
     public init(inChannels: Int = 16, heads: Int = 40, headDim: Int = 128, layers: Int = 40,
                 ffnDim: Int = 13824, textDim: Int = 4096, freqDim: Int = 256,
-                patchSize: [Int] = [1, 2, 2], eps: Float = 1e-6, ropeTheta: Float = 10000.0) {
+                patchSize: [Int] = [1, 2, 2], eps: Float = 1e-6, ropeTheta: Float = 10000.0,
+                outChannels: Int? = nil) {
         self.inChannels = inChannels
+        self.outChannels = outChannels ?? inChannels
         self.heads = heads
         self.headDim = headDim
         self.layers = layers
@@ -229,6 +235,8 @@ public final class NFKMLXWanTransformerNet: Module {
     let config: NFKMLXWanConfiguration
     let rope: NFKZImageRope
     let normOut: LayerNorm
+    /// The blocks left in the release and read in their turn on every pass, where the load streams them.
+    var layerStream: NFKMLXLayerStream?
 
     public init(_ config: NFKMLXWanConfiguration) {
         self.config = config
@@ -239,7 +247,7 @@ public final class NFKMLXWanTransformerNet: Module {
         _conditionEmbedder.wrappedValue = NFKWanConditionEmbedder(config)
         _blocks.wrappedValue = (0 ..< config.layers).map { _ in NFKWanBlock(config) }
         _scaleShiftTable.wrappedValue = MLXArray.zeros([1, 2, config.innerDim])
-        _projOut.wrappedValue = Linear(config.innerDim, config.inChannels * config.patchSize.reduce(1, *))
+        _projOut.wrappedValue = Linear(config.innerDim, config.outChannels * config.patchSize.reduce(1, *))
         self.normOut = LayerNorm(dimensions: config.innerDim, eps: config.eps, affine: false)
     }
 
@@ -252,9 +260,19 @@ public final class NFKMLXWanTransformerNet: Module {
             + bias.asType(.float32)).asType(x.dtype)
     }
 
-    /// Velocity prediction. `x` `[C, F, H, W]`, `text` `[Lc, textDim]`, `t` scalar.
+    /// Throws the first failed read of a streamed block, and clears it so the next pass reads every block
+    /// again. Every pass after a failed read skips every block, so a caller holding a streamed transformer
+    /// checks after each pass. Nothing is thrown where every block is held.
+    func verifyStream() throws {
+        guard let stream = layerStream, let failure = stream.readFailure else { return }
+        stream.clearFailure()
+        throw failure
+    }
+
+    /// Velocity prediction. `x` `[inChannels, F, H, W]`, `text` `[Lc, textDim]`, `t` scalar; the prediction
+    /// is `[outChannels, F, H, W]`.
     public func callAsFunction(_ x: MLXArray, text: MLXArray, t: MLXArray) -> MLXArray {
-        let c = x.dim(0), f = x.dim(1), h = x.dim(2), w = x.dim(3)
+        let c = config.outChannels, f = x.dim(1), h = x.dim(2), w = x.dim(3)
         let pt = config.patchSize[0], ph = config.patchSize[1], pw = config.patchSize[2]
         let ft = f / pt, ht = h / ph, wt = w / pw
         let inner = config.innerDim
@@ -281,8 +299,14 @@ public final class NFKMLXWanTransformerNet: Module {
         let (temb, proj, context) = conditionEmbedder(t, text: text, freqDim: config.freqDim)
         let blockMod = proj.reshaped([6, inner])                          // shared across blocks
 
-        for block in blocks {
-            hidden = block(hidden, context: context, temb: blockMod, cos: cosT, sin: sinT)
+        for (index, block) in blocks.enumerated() {
+            let input = hidden
+            guard let output = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
+                block(input, context: context, temb: blockMod, cos: cosT, sin: sinT)
+            }, keeping: { [$0] }) else {
+                continue
+            }
+            hidden = output
         }
 
         // Output modulation from the shared timestep embedding.
