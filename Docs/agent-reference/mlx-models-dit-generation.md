@@ -642,7 +642,10 @@ arithmetic as before.
   merge to the fuse of the same adapter in PEFT form. Every target is checked before any weight changes.
   The generators take adapters through `addAdapter(at:scale:)` (`addAdapterAtURL:scale:error:`),
   merged on every load of the transformer, into a packed Animate transformer before each block packs. A
-  streamed Animate transformer takes none. Measured: ⟨LORA⟩.
+  streamed Animate transformer takes none. Measured: every merged weight and bias equals diffusers'
+  fuse exactly (largest gap 0.0) in all eight cases: the original layout with alphas at bfloat16, the
+  original layout with the head's `.diff`, musubi, PEFT without and with metadata, two stacked adapters,
+  Animate in PEFT form, and Animate in the original layout held to its PEFT twin.
 - `NFKMLXQwenImageNet` / `NFKMLXQwenImage` (`@objc`) — the Qwen-Image 2.1 DiT
   (`QwenImage21Transformer2DModel`, Qwen), the denoising transformer of a 7.1B text-to-image model.
   Single-stream like Z-Image: one sequence carries the caption and the image latents. Two things
