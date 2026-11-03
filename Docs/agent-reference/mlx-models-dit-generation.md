@@ -628,8 +628,13 @@ arithmetic as before.
     drops the same keys and reports them. The reference reads an `.alpha` on the blocks' layers alone and
     refuses a file that states one on the head, the embedders, or the time projection; so does the merge.
   - musubi-tuner (`lora_unet_blocks_<n>_<layer>`, alpha required), attention and feed-forward only.
-  PEFT merges a delta as `up · down · scaling` formed in float32 and rounded to the ADAPTER's type
-  before it is added to the weight, and a bias delta likewise; two adapters fuse one after the other.
+  PEFT copies the file's tensors into adapter parameters of the BASE layer's type, so only the alpha fold
+  rounds at the file's precision: the delta is `up · down · scaling` in float32, added to the weight at the
+  weight's own type, and a bias delta likewise. Two adapters fuse one after the other. diffusers'
+  `fuse_lora(lora_scale:)` scales only the adapter loaded last and fuses any earlier one at 1 (measured:
+  the stacked case's first adapter matches its own scaling to 1.5e-8 and misses the scaled one by 8.5e-3);
+  the port takes a scale per adapter (`addAdapter(at:scale:)`), and the measured stacked case merges the
+  first at 1 to hold the reference.
   A DoRA file is refused: the reference silently drops `dora_scale` and loads the rest as a plain LoRA.
   diffusers maps the original and musubi layouts onto the text-to-video names only (`attn1`,
   `ffn.net.0.proj`), so it cannot load them into its Animate transformer, whose modules keep the

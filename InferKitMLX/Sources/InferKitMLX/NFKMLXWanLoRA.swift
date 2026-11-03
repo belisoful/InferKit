@@ -32,9 +32,9 @@ import MLXNN
 ///
 /// Where a file states an alpha, the reference folds `alpha / rank` into the down and up weights at the
 /// file's own precision before the merge, split into a power of two on the up weight; the merge forms the
-/// same rounded weights. Each delta is `up · down` in float32, scaled by the adapter's own scaling and by
-/// `scale`, rounded to the adapter's type, and added to the weight at its own type, as PEFT merges a
-/// layer. A bias delta is added the same way.
+/// same rounded weights. PEFT then holds the adapter at the base layer's type, so each delta is `up · down`
+/// in float32, scaled by the adapter's own scaling and by `scale`, and added to the weight at the weight's
+/// own type. A bias delta is added the same way.
 ///
 /// Wan Animate's modules keep the original names, so its original-layout and musubi files are read onto
 /// them directly. diffusers translates those layouts to the text-to-video transformer's names alone and
@@ -59,8 +59,6 @@ public enum NFKMLXWanLoRA {
         var weight: MLXArray?
         /// The bias delta in float32, already scaled.
         var bias: MLXArray?
-        /// The type the reference rounds the delta to before adding it: the adapter's own.
-        var dtype: DType
     }
 
     /// Merges the adapter at `url` into a Wan text-to-video transformer at `scale`.
@@ -105,7 +103,8 @@ public enum NFKMLXWanLoRA {
     /// The Animate transformer's module path for an original Wan layer name: its modules keep the original
     /// names but for the attention projections.
     static func animatePath(original name: String) -> String? {
-        NFKMLXWanAnimate.moduleKey(forRelease: name)
+        // The key map renames a projection only where a parameter name follows it.
+        String(NFKMLXWanAnimate.moduleKey(forRelease: name + ".weight").dropLast(".weight".count))
     }
 
     /// A musubi-tuner layer spelling (`blocks_3_self_attn_q`, `blocks_3_ffn_0`) as the original name.
@@ -224,8 +223,7 @@ public enum NFKMLXWanLoRA {
     /// conversion does; the head's `.diff` is its whole weight delta.
     private static func delta(_ stored: Stored, layer: String, layout: Layout, scaling: Float,
                               scale: Float) throws -> Delta {
-        let dtype = (stored.up ?? stored.weight ?? stored.bias ?? stored.down)?.dtype ?? .float32
-        var result = Delta(weight: nil, bias: nil, dtype: dtype)
+        var result = Delta(weight: nil, bias: nil)
         let strength = scaling * scale
         if let full = stored.weight {
             result.weight = full.asType(.float32) * strength
@@ -342,10 +340,10 @@ public enum NFKMLXWanLoRA {
         for (linear, delta, _) in planned {
             var update = [(String, MLXArray)]()
             if let weight = delta.weight {
-                update.append(("weight", linear.weight + weight.asType(delta.dtype).asType(linear.weight.dtype)))
+                update.append(("weight", linear.weight + weight.asType(linear.weight.dtype)))
             }
             if let bias = delta.bias, let base = linear.bias {
-                update.append(("bias", base + bias.asType(delta.dtype).asType(base.dtype)))
+                update.append(("bias", base + bias.asType(base.dtype)))
             }
             linear.update(parameters: ModuleParameters.unflattened(update))
         }
@@ -365,8 +363,7 @@ final class NFKWanAdapterList {
     func removeAll() { entries.removeAll() }
 
     /// Each adapter's deltas in the order they were added, read with `naming`. A layer two adapters change
-    /// takes one delta after the other, each rounded to its own adapter's type, as the reference fuses
-    /// one adapter after another.
+    /// takes one delta after the other, as the reference fuses one adapter after another.
     func deltas(naming: (String) -> String?) throws -> [[String: NFKMLXWanLoRA.Delta]] {
         try entries.map { try NFKMLXWanLoRA.deltas(adapterURL: $0.url, naming: naming, scale: $0.scale).deltas }
     }

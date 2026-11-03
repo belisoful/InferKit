@@ -78,8 +78,8 @@ final class NFKMLXWanLoRATests: XCTestCase {
         eval(before.map(\.1))
         // The first target fits; the second is the wrong width, so nothing may be merged.
         let deltas: [String: NFKMLXWanLoRA.Delta] = [
-            "proj_out": .init(weight: MLXArray.ones(net.projOut.weight.shape), bias: nil, dtype: .float32),
-            "blocks.0.attn1.to_q": .init(weight: MLXArray.ones([3, 3]), bias: nil, dtype: .float32),
+            "proj_out": .init(weight: MLXArray.ones(net.projOut.weight.shape), bias: nil),
+            "blocks.0.attn1.to_q": .init(weight: MLXArray.ones([3, 3]), bias: nil),
         ]
         XCTAssertThrowsError(try NFKMLXWanLoRA.apply(deltas, to: net))
         for (key, value) in net.parameters().flattened() {
@@ -152,7 +152,9 @@ final class NFKMLXWanLoRATests: XCTestCase {
             let scale = try XCTUnwrap(arrays["scale::\(name)"]).item(Float.self)
             let files = name == "stacked" ? ["stacked#0", "stacked#1"] : [name]
             for file in files {
-                let merged = try NFKMLXWanLoRA.merge(adapterURL: try adapterFile(arrays, file), into: net, scale: scale)
+                // diffusers' fuse_lora(lora_scale:) scales the adapter loaded last alone; an earlier one fuses at 1.
+                let fileScale = file == "stacked#0" ? 1 : scale
+                let merged = try NFKMLXWanLoRA.merge(adapterURL: try adapterFile(arrays, file), into: net, scale: fileScale)
                 if file == "original_alpha" || file == "stacked#1" {
                     XCTAssertEqual(merged.droppedKeys.count, 2, "the normalization's and the block's .diff are dropped")
                 }
