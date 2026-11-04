@@ -600,7 +600,9 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// - Parameters:
     ///   - video: the frames `[4k + 1, H, W, 3]` in `[0, 1]`, already cut and sized as the trainer's bucketing
     ///     leaves them; the sides are multiples of 16.
-    ///   - prompt: the clip's caption, read as written.
+    ///   - text: the clip's caption, read as written.
+    ///   - preset: the trainer whose text encoding the example follows, and for an image-to-video release whose
+    ///     condition it carries.
     ///
     /// Introduced in InferKit 0.4.0.
     public func trainingExample(video: MLXArray, prompt text: String,
