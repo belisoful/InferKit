@@ -144,4 +144,52 @@ final class NFKMLXStableDiffusionInpaintTests: XCTestCase {
         }
         return (value as! CGImage)
     }
+
+    // MARK: The catalog's downloads
+
+    // The two inpainters download as published: LaMa's checkpoint as a file the loader reads, and SD
+    // inpainting's release directory of safetensors. Neither needs a converter, so the hub plans both.
+    func testTheInpaintersDownloadAsPublished() throws {
+        let descriptors = Dictionary(uniqueKeysWithValues: NFKMLXModelDescriptors.modelDescriptors().map { ($0.identifier, $0) })
+        let lama = try XCTUnwrap(descriptors[NFKMLXLaMa.modelName]?.defaultVariant?.source)
+        XCTAssertFalse(lama.requiresConversion)
+        XCTAssertEqual(lama.layout, NFKModelSourceLayoutFile)
+        XCTAssertEqual(lama.files.map(\.path), ["big-lama/models/best.ckpt"])
+        let inpaint = try XCTUnwrap(descriptors[NFKMLXStableDiffusionInpaint.modelName]?.defaultVariant?.source)
+        XCTAssertFalse(inpaint.requiresConversion)
+        XCTAssertEqual(inpaint.layout, NFKModelSourceLayoutDirectory)
+        let weights = inpaint.files.map(\.path).filter { $0.hasSuffix(".safetensors") }
+        XCTAssertEqual(Set(weights), ["unet/diffusion_pytorch_model.fp16.safetensors",
+                                      "vae/diffusion_pytorch_model.fp16.safetensors", "text_encoder/model.fp16.safetensors"])
+        XCTAssertFalse(inpaint.files.contains { $0.path.hasSuffix(".bin") }, "no pickle file is fetched")
+    }
+
+    // The registry builds SD inpainting from a release directory as well as from a single checkpoint: a
+    // directory reaches the directory factory, which names the release file it lacks.
+    func testTheRegistryBuildsSDInpaintingFromADirectory() throws {
+        NFKMLXReferenceModels.registerAll()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NFKMLXStableDiffusionInpaintTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try NFKMLXModelRegistry.backend(named: NFKMLXStableDiffusionInpaint.modelName,
+                                                            weightsURL: directory)) { error in
+            XCTAssertTrue("\(error)".contains("unet/diffusion_pytorch_model.safetensors"), "\(error)")
+        }
+    }
+
+    // The released directory as the catalog downloads it builds and inpaints a plate at its own size.
+    func testTheReleasedDirectoryInpaints() throws {
+        try requireMLXRuntime()
+        guard let path = NFKMLXValidationConfig.environment["IK_VAL_SD_INPAINT_DIR"] else {
+            throw XCTSkip("set IK_VAL_SD_INPAINT_DIR to the stable-diffusion-v1-5/stable-diffusion-inpainting directory")
+        }
+        let backend = try NFKMLXStableDiffusionInpaint.backend(directoryURL: URL(fileURLWithPath: path))
+        let side = 256
+        let result = try backend.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputImage: Self.solid(side, side, 200, 120, 60), NFKInputMask: Self.leftHalfMask(side, side)],
+            parameters: [NFKParameterSteps: 4, NFKParameterSeed: 1]))
+        let image = try Self.cgImage(result.output(forKey: NFKOutputImage))
+        XCTAssertEqual(image.width, side)
+        XCTAssertEqual(image.height, side)
+    }
 }

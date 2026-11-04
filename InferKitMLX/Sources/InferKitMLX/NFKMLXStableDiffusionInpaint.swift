@@ -73,6 +73,32 @@ public final class NFKMLXStableDiffusionInpaint: NSObject {
         return model.makeBackend()
     }
 
+    /// Builds from a downloaded release directory: `unet/` and `vae/`, each `diffusion_pytorch_model.safetensors`
+    /// or the `.fp16.safetensors` the release publishes, and `text_encoder/` with `tokenizer/`.
+    ///
+    /// @discussion The networks load at float32. The text encoder encodes the empty prompt the inpainter
+    /// conditions on, as diffusers' `StableDiffusionInpaintPipeline` encodes `""`, and is released after.
+    /// Run inference off the render thread. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:error:)
+    public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
+        let files = try NFKMLXSDReleaseFiles(directoryURL: directoryURL)
+        let model = makeModel()
+        try model.pipeline.loadWeights(unetURL: files.unet, vaeURL: files.vae, precision: .float32)
+        model.pipeline.textContext = try emptyPromptContext(textEncoderURL: files.textEncoder,
+                                                            tokenizerURL: files.tokenizer)
+        return model.makeBackend()
+    }
+
+    /// The `[tokens, 768]` embedding of the empty prompt, from the release's CLIP text encoder.
+    static func emptyPromptContext(textEncoderURL: URL, tokenizerURL: URL) throws -> MLXArray {
+        let configuration = NFKMLXSDTextEncoderConfiguration.stableDiffusion15
+        let encoder = try NFKMLXSDTextEncoder.net(configuration: configuration, weightsURL: textEncoderURL)
+        let tokenizer = try NFKMLXSDPromptTokenizer(directoryURL: tokenizerURL)
+        let hidden = encoder.encode(tokenizer.tokens(for: "", contextLength: configuration.contextLength)).hidden[0]
+        eval(hidden)
+        return hidden
+    }
+
     /// Downloads the checkpoint from Hugging Face, then builds — no registry required.
     /// Blocking on the network; run off the render thread.
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
@@ -96,9 +122,17 @@ public final class NFKMLXStableDiffusionInpaint: NSObject {
                                completionHandler: completionHandler)
     }
 
-    /// Registers SD inpainting (`sd-inpaint`) with `NFKMLXModelRegistry`.
+    /// Registers SD inpainting (`sd-inpaint`) with `NFKMLXModelRegistry`: a release directory builds through
+    /// ``backend(directoryURL:)``, and a single checkpoint through ``backend(weightsURL:)``.
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }
+        NFKMLXModelRegistry.register(name: modelName) { weightsURL in
+            var isDirectory: ObjCBool = false
+            if let weightsURL, FileManager.default.fileExists(atPath: weightsURL.path, isDirectory: &isDirectory),
+               isDirectory.boolValue {
+                return try backend(directoryURL: weightsURL)
+            }
+            return try backend(weightsURL: weightsURL)
+        }
     }
 }
 

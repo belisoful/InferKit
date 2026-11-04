@@ -23600,7 +23600,7 @@
       ],
       "registryName" : "lama-inpaint",
       "requirements" : {
-        "minimumMemoryBytes" : 897479342,
+        "minimumMemoryBytes" : 964815033,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -23618,42 +23618,42 @@
       "variants" : [
         {
           "displayName" : "Big LaMa",
-          "downloadBytes" : 381428720,
+          "downloadBytes" : 410046389,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 381428720
+                  "checkpoint" : 410046389
                 },
                 "id" : "model",
                 "title" : "model"
               }
             ]
           },
-          "minimumMemoryBytes" : 897479342,
-          "peakBytes" : 381428720,
+          "minimumMemoryBytes" : 964815033,
+          "peakBytes" : 410046389,
           "registryName" : "lama-inpaint",
-          "residentBytes" : 381428720,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 410046389,
           "source" : {
             "files" : [
               {
-                "bytes" : 381428720,
+                "bytes" : 410046389,
                 "optional" : false,
-                "path" : "big-lama.zip",
+                "path" : "big-lama/models/best.ckpt",
                 "role" : "weights",
-                "sha256" : "f1b358ca24093b93a106183b98a3dea6e8ed09f3b43ea7251eb2c81e7b4575f6"
+                "sha256" : "fccb7adffd53ec0974ee5503c3731c2c2f1e7e07856fd9228cdcc0b46fd5d423"
               }
             ],
             "kind" : "huggingface",
             "layout" : "file",
-            "measuredRevision" : "05cb2be7f8dbe6ca7c6e78f4fc827a4b2baaa4a9",
-            "repository" : "smartywu/big-lama",
-            "requiresConversion" : true
+            "note" : "The publisher ships the checkpoint inside smartywu/big-lama's big-lama.zip. This repository serves the same best.ckpt as a file, byte for byte, which the loader reads as published.",
+            "repository" : "camenduru/big-lama",
+            "requiresConversion" : false,
+            "revision" : "3576f52d03463061e999fb534f2d0a6c2f2212e9"
           }
         }
       ]
@@ -53803,7 +53803,7 @@
       ],
       "registryName" : "sd-inpaint",
       "requirements" : {
-        "minimumMemoryBytes" : 10036293829,
+        "minimumMemoryBytes" : 5017647130,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -53821,56 +53821,101 @@
       "variants" : [
         {
           "displayName" : "Stable Diffusion 1.5 Inpainting",
-          "downloadBytes" : 4265424877,
+          "downloadBytes" : 2134222086,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 4265424877
+                  "bfloat16" : 2132500030,
+                  "checkpoint" : 2132500030,
+                  "float32" : 4264999444
                 },
                 "id" : "model",
                 "title" : "model"
               }
             ]
           },
-          "minimumMemoryBytes" : 10036293829,
-          "peakBytes" : 4265424877,
+          "minimumMemoryBytes" : 5017647130,
+          "parameterCount" : 1066249784,
+          "peakBytes" : 2132500030,
+          "precision" : "float16",
           "registryName" : "sd-inpaint",
-          "residentBytes" : 4265424877,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 2132500030,
           "source" : {
             "files" : [
               {
-                "bytes" : 3438412325,
+                "bytes" : 748,
                 "optional" : false,
-                "path" : "unet/diffusion_pytorch_model.bin",
-                "role" : "weights",
-                "sha256" : "af4e22eecaca7a1c5dd849f51924effdccc1f765141e898c323b775cc80a43b3"
+                "path" : "unet/config.json",
+                "role" : "config"
               },
               {
-                "bytes" : 334707217,
+                "bytes" : 552,
                 "optional" : false,
-                "path" : "vae/diffusion_pytorch_model.bin",
-                "role" : "weights",
-                "sha256" : "1b134cded8eb78b184aefb8805b6b572f36fa77b255c483665dda931fa0130c5"
+                "path" : "vae/config.json",
+                "role" : "config"
               },
               {
-                "bytes" : 492305335,
+                "bytes" : 617,
                 "optional" : false,
-                "path" : "text_encoder/pytorch_model.bin",
+                "path" : "text_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 806,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 1719154104,
+                "optional" : false,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
                 "role" : "weights",
-                "sha256" : "770a47a9ffdcfda0b05506a7888ed714d06131d60267e6cf52765d61cf59fd67"
+                "sha256" : "24b788b4a777748377cc20364eea4ae113c8c42f4468c16bc8c02fdae5492af9"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "4fbcf0ebe55a0984f5a5e00d8c4521d52359af7229bb4d81890039d2aa16dd7c"
+              },
+              {
+                "bytes" : 246144864,
+                "optional" : false,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "77795e2023adcf39bc29a884661950380bd093cf0750a966d473d1718dc9ef4e"
               }
             ],
             "kind" : "huggingface",
-            "layout" : "file",
+            "layout" : "directory",
             "measuredRevision" : "8a4288a76071f7280aedbdb3253bdb9e9d5d84bb",
             "repository" : "stable-diffusion-v1-5/stable-diffusion-inpainting",
-            "requiresConversion" : true
+            "requiresConversion" : false
           }
         }
       ]

@@ -68,7 +68,11 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
 - `NFKMLXLaMa` (`@objc`) — a real single-forward inpainter: the LaMa FFC-ResNet generator in `MLXNN`
   (each Fast Fourier Convolution runs a spatial branch and an FFT spectral branch via `MLXFFT`
   `rfft2`/`irfft2`, orthogonally normalized), run through an `NFKMLXMattingBackend` (plate under
-  `NFKInputImage`, mask under `NFKInputMask`). `+register` under `lama-inpaint`. The configuration
+  `NFKInputImage`, mask under `NFKInputMask`). `+register` under `lama-inpaint`. The publisher ships the
+  Lightning checkpoint inside `smartywu/big-lama`'s `big-lama.zip`, which the hub does not unpack; the
+  catalog downloads `camenduru/big-lama`'s `big-lama/models/best.ckpt` at `3576f52d`, the same file byte for
+  byte (SHA-256 `fccb7adf…d5d423`, 410,046,389 bytes), and the native torch reader loads it as published,
+  stripping the `generator.` prefix itself. The configuration
   defaults are big-lama's own `config.yaml`: 64 base channels, three downsampling stages, 18 residual
   blocks, ratio 0.75 through the trunk and at the last downsample only, sigmoid output.
   `remapReferenceKey` translates the checkpoint's flat `model.N` Sequential (the parameter-free entries

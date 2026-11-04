@@ -1834,6 +1834,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### LaMa and SD inpainting download from the catalog
+
+- `lama-inpaint` downloads `big-lama/models/best.ckpt` from `camenduru/big-lama`, the checkpoint inside the
+  publisher's `big-lama.zip` byte for byte, which the loader reads as published. Before, the catalog listed
+  the archive and refused the download as needing a converter.
+- `sd-inpaint` downloads the release directory as published (the UNet, autoencoder, and text encoder as
+  half-precision safetensors, with the tokenizer and configurations) and builds from it through
+  `+[NFKMLXStableDiffusionInpaint backendWithDirectoryURL:error:]`, which loads the networks at float32 and
+  encodes the empty prompt with the release's text encoder. Before, the catalog listed three pickle
+  checkpoints for a conversion and refused the download.
+
 #### LTX-2.5 decodes through its diffusion decoder and refines in two stages
 
 - `NFKMLXLTX2DiffusionDecoderNet` runs LTX-2.5's diffusion video decoder (`diffusion_decoder/`): four

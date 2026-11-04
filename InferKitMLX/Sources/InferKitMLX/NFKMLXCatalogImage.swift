@@ -581,7 +581,9 @@ enum NFKMLXCatalogImage {
               outputs: [imageOutput("The plate with the masked region filled.")],
               license: .license("Apache-2.0", name: "Apache License 2.0",
                                 url: "https://github.com/advimman/lama/blob/main/LICENSE"),
-              source: hubFile("smartywu/big-lama", "big-lama.zip", requiresConversion: true))
+              source: hubFile("camenduru/big-lama", "big-lama/models/best.ckpt",
+                              revision: "3576f52d03463061e999fb534f2d0a6c2f2212e9", requiresConversion: false)
+                .noting("The publisher ships the checkpoint inside smartywu/big-lama's big-lama.zip. This repository serves the same best.ckpt as a file, byte for byte, which the loader reads as published."))
     }
 
     static let codeFormerLicense = NFKModelLicense.license(nil, name: "S-Lab License 1.0",
@@ -626,9 +628,14 @@ enum NFKMLXCatalogImage {
               license: .license(nil, name: "CreativeML Open RAIL-M License",
                                 url: "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-inpainting",
                                 note: "Use restrictions apply."),
-              source: hubFiles("stable-diffusion-v1-5/stable-diffusion-inpainting",
-                               ["unet/diffusion_pytorch_model.bin", "vae/diffusion_pytorch_model.bin",
-                                "text_encoder/pytorch_model.bin"]))
+              source: .hub("stable-diffusion-v1-5/stable-diffusion-inpainting", layout: NFKModelSourceLayoutDirectory,
+                           files: [file("unet/config.json"), file("vae/config.json"), file("text_encoder/config.json"),
+                                   file("tokenizer/vocab.json"), file("tokenizer/merges.txt"),
+                                   file("tokenizer/tokenizer_config.json", optional: true),
+                                   file("tokenizer/special_tokens_map.json", optional: true),
+                                   file("unet/diffusion_pytorch_model.fp16.safetensors"),
+                                   file("vae/diffusion_pytorch_model.fp16.safetensors"),
+                                   file("text_encoder/model.fp16.safetensors")]))
     }
 
     static var taesd: NFKMLXCatalogEntry {

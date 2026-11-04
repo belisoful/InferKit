@@ -113,7 +113,15 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   the plate's latent with the hole blanked; the encoder is not local, so the two differ. Both latents are
   draws from the encoded distribution (`sampledLatent`), as diffusers' `_encode_vae_image` takes them;
   `NFKMLXTextToImage`'s image-to-image draws its source the same way. `+register`
-  under `sd-inpaint`. Pipeline and offline round-trip tested under xcodebuild.
+  under `sd-inpaint`: a release directory builds through `backendWithDirectoryURL:error:`, a single
+  checkpoint through `backendWithWeightsURL:error:`. The catalog downloads the release directory as
+  published (`unet/`, `vae/`, `text_encoder/` as `.fp16.safetensors`, `tokenizer/`, and the two network
+  configurations); the networks load at float32, and the release's CLIP text encoder encodes the empty
+  prompt the UNet cross-attends to, as diffusers' pipeline encodes `""`, then is released. Pipeline and
+  offline round-trip tested under xcodebuild; no reference-parity record yet. Two departures from
+  diffusers' `StableDiffusionInpaintPipeline` stand in the way of one: the backend composites the kept
+  region back at every step, where the reference's nine-channel path does not, and a source latent starts
+  the loop noised to the first step, where the reference at strength 1 starts from pure noise.
 - `NFKMLXTextToImage` (`@objc`) — Stable Diffusion **text-to-image**, on `NFKMLXDiffusionBackend`, and
   what `NFKMLXBackend` is built from. `encode` turns the prompt into a conditioning sequence, `denoise`
   is the UNet with classifier-free guidance, `decode` is the autoencoder; the backend owns the loop.
