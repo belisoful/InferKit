@@ -986,7 +986,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			cancelled = run.cancelled;
 		}
 		__weak NFKServedRun *weakRun = run;
-		job.progressHandler = ^(NFKInferenceJob *progressed) {
+		void (^forward)(NFKInferenceJob *) = ^(NFKInferenceJob *progressed) {
 			NFKServedRun *progressing = weakRun;
 			double progress = progressed.progress;
 			if (isfinite(progress) && progress > 0) {
@@ -994,6 +994,22 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			}
 			[progressing reportPartial:progressed.partialResult progress:progress];
 		};
+		NSObject *progressLock = [[NSObject alloc] init];
+		__block BOOL progressForwarded = NO;
+		job.progressHandler = ^(NFKInferenceJob *progressed) {
+			@synchronized (progressLock) {
+				progressForwarded = YES;
+				forward(progressed);
+			}
+		};
+		// The job runs from submit, so a partial it reported before the handler was set is forwarded
+		// here. This precedes setting the completion handler, which fires at once on a finished job,
+		// so a failure after that partial reaches an opened stream.
+		@synchronized (progressLock) {
+			if (!progressForwarded && job.partialResult != nil) {
+				forward(job);
+			}
+		}
 		job.completionHandler = ^(NFKInferenceJob *finished) {
 			NSError *error = finished.status == NFKInferenceJobStatusCancelled ? NFKServedCancellation() : finished.error;
 			[self run:run endedWithResult:finished.result error:error];

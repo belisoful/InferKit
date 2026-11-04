@@ -60,7 +60,9 @@ typedef NS_ENUM(NSInteger, NFKInferenceJobStatus) {
 	job has finished, it fires immediately on the setting thread. */
 @property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE completionHandler)(NFKInferenceJob *job);
 
-/*! Invoked whenever progress changes, on the thread that reported it. */
+/*! Invoked whenever progress changes, on the thread that reported it. Setting it does not replay
+	earlier progress. A job runs from the moment its backend returns it, so a caller reads
+	partialResult once after setting the handler to see a partial reported before then. */
 @property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE progressHandler)(NFKInferenceJob *job);
 
 /*! Cancels the job. Runs the backend's cancellationHandler and moves to the cancelled state,

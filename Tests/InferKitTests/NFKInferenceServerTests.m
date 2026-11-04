@@ -16,6 +16,7 @@
 #import <netinet/in.h>
 #import <sys/socket.h>
 #import <unistd.h>
+#import "NFKTestJobs.h"
 
 /*! A synchronous backend whose reply a test writes, recording what reached it. */
 @interface NFKServedTestBackend : NSObject <NFKInferenceBackend>
@@ -101,6 +102,7 @@
 		if (gate != nil) {
 			dispatch_semaphore_wait(gate, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
 		}
+		NFKTestJobAwaitConsumer(job, 10);
 		for (NSString *text in partials) {
 			[job reportProgress:0.5 partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: text }]];
 			[NSThread sleepForTimeInterval:0.02];
@@ -122,6 +124,7 @@
 {
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NFKTestJobAwaitConsumer(job, 10);
 		[job reportProgress:0.5 partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: @"partial" }]];
 		[NSThread sleepForTimeInterval:0.05];
 		[job finishWithError:[NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_InferenceRateLimited

@@ -10,6 +10,7 @@
 
 #import <XCTest/XCTest.h>
 #import <InferKit/InferKit.h>
+#import "NFKTestJobs.h"
 
 /*! A synchronous backend whose reply a test writes, recording what reached it, and counting tokens
 	when a count is set. */
@@ -62,6 +63,8 @@
 @property (nonatomic, copy) NSArray<NFKInferenceResult *> *partials;
 @property (nonatomic, strong, nullable) NFKInferenceResult *finalResult;
 @property (nonatomic, strong, nullable) NSError *finalError;
+/*! When YES, the job reports and finishes on the calling thread before it is returned. */
+@property (nonatomic, assign) BOOL finishesBeforeReturning;
 @end
 
 @implementation NFKAnthropicRouteStreamingBackend
@@ -73,17 +76,28 @@
 	NSArray<NFKInferenceResult *> *partials = self.partials;
 	NFKInferenceResult *finalResult = self.finalResult;
 	NSError *finalError = self.finalError;
-	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+	BOOL finishesBeforeReturning = self.finishesBeforeReturning;
+	void (^work)(void) = ^{
+		if (!finishesBeforeReturning) {
+			NFKTestJobAwaitConsumer(job, 10);
+		}
 		for (NFKInferenceResult *partial in partials) {
 			[job reportProgress:-1.0 partialResult:partial];
-			[NSThread sleepForTimeInterval:0.02];
+			if (!finishesBeforeReturning) {
+				[NSThread sleepForTimeInterval:0.02];
+			}
 		}
 		if (finalError != nil) {
 			[job finishWithError:finalError];
 		} else {
 			[job finishWithResult:finalResult];
 		}
-	});
+	};
+	if (finishesBeforeReturning) {
+		work();
+	} else {
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), work);
+	}
 	return job;
 }
 
@@ -521,6 +535,25 @@
 				headers:nil server:server status:&status];
 	XCTAssertEqual(status, 429, @"a failure before the first event is the reply's status");
 	XCTAssertTrue([stream containsString:@"\"rate_limit_error\""], @"%@", stream);
+}
+
+- (void)testAPartialReportedBeforeTheJobIsReturnedStillOpensTheStream
+{
+	NFKAnthropicRouteStreamingBackend *backend = [[NFKAnthropicRouteStreamingBackend alloc] init];
+	backend.finishesBeforeReturning = YES;
+	backend.partials = @[ [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: @"partial" }] ];
+	backend.finalError = [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_InferenceRateLimited
+										 userInfo:@{ NSLocalizedDescriptionKey: @"out of quota" }];
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"eager": backend }];
+	NSInteger status = 0;
+	NSString *stream = [self send:@"POST" path:@"/v1/messages"
+							 body:@{ @"model": @"eager", @"max_tokens": @8, @"stream": @YES, @"messages": @[ @{ @"role": @"user", @"content": @"Go" } ] }
+						  headers:nil server:server status:&status];
+	XCTAssertEqual(status, 200, @"%@", stream);
+	NSArray<NFKAnthropicRouteEvent *> *events = [self eventsIn:stream];
+	XCTAssertEqualObjects([events valueForKey:@"name"], (@[ @"message_start", @"content_block_start", @"content_block_delta", @"error" ]), @"%@", stream);
+	XCTAssertEqualObjects(events.count > 2 ? events[2].data[@"delta"][@"text"] : nil, @"partial");
+	XCTAssertEqualObjects(events.lastObject.data[@"error"][@"type"], @"rate_limit_error");
 }
 
 #pragma mark Errors

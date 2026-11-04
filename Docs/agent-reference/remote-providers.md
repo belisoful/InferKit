@@ -1756,7 +1756,16 @@ code is in its own file and reaches the server through `NFKInferenceServerPrivat
   the event and repeat it as the data's `type`. Each stream opens at the first event, so a failure
   before it is an ordinary error reply with its status; after it, Messages sends an `error` event and
   Responses `response.failed`. Text and reasoning deltas come from cumulative partials through
-  `NFKServedSuffix`, as on the chat route. Responses events carry `sequence_number` from 0, and
+  `NFKServedSuffix`, as on the chat route. A job backend's job runs from the moment
+  `submitInferenceJobForRequest:` returns it, and `NFKInferenceJob` does not replay progress to a
+  handler set later. So `NFKServedModel` forwards the job's `partialResult` once after it sets
+  `progressHandler` and before it sets `completionHandler`. A partial the backend reported before
+  that point still opens the stream, and a failure after it arrives as an error event. Only
+  the latest partial survives that window, so two partials reported in it arrive as one delta; the
+  contract does not promise one delta per partial. The route tests' streaming backends wait in
+  `NFKTestJobAwaitConsumer` (`Tests/InferKitTests/NFKTestJobs.h`) until the server has set both
+  handlers, which makes their delta counts deterministic, and
+  `testAPartialReportedBeforeTheJobIsReturnedStillOpensTheStream` covers the forwarding. Responses events carry `sequence_number` from 0, and
   `response.completed` lists the items the stream finished, with the same ids. A thinking block's
   `signature` is the empty string.
 - Errors: Messages routes answer `{type: "error", error: {type, message}}`, the type by status (401
@@ -1792,7 +1801,7 @@ code is in its own file and reaches the server through `NFKInferenceServerPrivat
 - Model names: every route resolves `model` through `modelNamed:error:`, the one place presets and
   aliases resolve (see "Presets and aliases" below). Claude Code also sends its background model
   (`ANTHROPIC_DEFAULT_HAIKU_MODEL`), which must be a name the server serves too.
-- Tests: `NFKServedAnthropicTests` (24) and `NFKServedResponsesTests` (15), each over a real loopback
+- Tests: `NFKServedAnthropicTests` (26) and `NFKServedResponsesTests` (15), each over a real loopback
   listener with raw HTTP and with the core client pointed at the server (non-streaming, streaming,
   tool round trips, images, schemas, error codes).
 

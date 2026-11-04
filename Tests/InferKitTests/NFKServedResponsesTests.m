@@ -10,6 +10,7 @@
 
 #import <XCTest/XCTest.h>
 #import <InferKit/InferKit.h>
+#import "NFKTestJobs.h"
 
 /*! A synchronous backend whose reply a test writes, recording what reached it. */
 @interface NFKResponsesRouteBackend : NSObject <NFKInferenceBackend>
@@ -68,6 +69,7 @@
 	NFKInferenceResult *finalResult = self.finalResult;
 	NSError *finalError = self.finalError;
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NFKTestJobAwaitConsumer(job, 10);
 		for (NFKInferenceResult *partial in partials) {
 			[job reportProgress:-1.0 partialResult:partial];
 			[NSThread sleepForTimeInterval:0.02];
