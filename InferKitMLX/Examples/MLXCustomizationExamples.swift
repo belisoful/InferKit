@@ -536,6 +536,13 @@ final class MLXCustomizationExamples: XCTestCase {
         try NFKMLXWanVideoGenerator.saveAdapters(of: net, to: adapters, preset: preset)
         let base = NFKMLXWanTransformerNet(.tiny)
         XCTAssertEqual(try NFKMLXWanLoRA.merge(adapterURL: adapters, into: base).mergedLayers, 2 * 10)
+
+        // A Wan 2.2 A14B expert trains over its side of the release's boundary; a real run builds the expert with
+        // NFKMLXWanVideoGenerator.network(directoryURL:expert:quantizationBits:).
+        let expert = NFKMLXWanTrainingPreset.diffSynth(expert: .lowNoise, imageToVideo: true)
+        guard case let .diffSynth(_, lower, upper) = expert.objective.sampler else { return XCTFail("DiffSynth's sampler") }
+        XCTAssertEqual(lower, 0.358)
+        XCTAssertEqual(upper, 1)
     }
 
     // Docs/examples.md: Adapting a decision model to your own decisions

@@ -29728,6 +29728,84 @@ def run_wan_lora_diffsynth(image):
 MODELS["wan_lora_diffsynth"] = run_wan_lora_diffsynth
 
 
+def run_wan_lora_diffsynth_experts(image):
+    """DiffSynth-Studio's Wan 2.2 A14B expert training (modelscope/DiffSynth-Studio at 1e8ae1d), under the
+    `wantrain-diffsynth` env: the index range each of its `Wan2.2-T2V-A14B` and `Wan2.2-I2V-A14B` LoRA scripts
+    gives `FlowMatchSFTLoss` (`--max_timestep_boundary` / `--min_timestep_boundary`, 0.417 and 0.358), and the
+    low-noise I2V expert's objective over DiffSynth's own `WanModel` at a tiny random geometry with 36 input
+    channels (`require_vae_embedding`), where `model_fn_wan_video` reads the noised latent and the condition `y`
+    together. The condition is random, standing in for the mask and the first frame's latents. Records the
+    ranges (`range.<case>`), the index, timestep, sigma, weight, the prediction, the loss, and each adapter's
+    gradient, as `wan_lora_diffsynth` records them. `image` unused.
+    """
+    from diffsynth.diffusion.flow_match import FlowMatchScheduler
+    from diffsynth.diffusion.loss import FlowMatchSFTLoss
+    from diffsynth.diffusion.training_module import DiffusionTrainingModule
+    from diffsynth.models.wan_video_dit import WanModel
+    from diffsynth.pipelines.wan_video import model_fn_wan_video
+
+    g = _WAN_TRAIN_GEOMETRY
+    scheduler = FlowMatchScheduler("Wan")
+    scheduler.set_timesteps(1000, training=True)
+    extra = {}
+    for case, (low, high) in {"t2v_high": (0, 0.417), "t2v_low": (0.417, 1), "i2v_high": (0, 0.358),
+                              "i2v_low": (0.358, 1)}.items():
+        extra[f"range.{case}"] = torch.tensor([int(low * len(scheduler.timesteps)),
+                                               int(high * len(scheduler.timesteps))], dtype=torch.int32)
+
+    model = _randomized(WanModel(dim=g["dim"], in_dim=g["channels"] + 4 + g["channels"], ffn_dim=g["ffn"],
+                                 out_dim=g["channels"], text_dim=g["text_dim"], freq_dim=g["freq"], eps=1e-6,
+                                 patch_size=(1, 2, 2), num_heads=g["heads"], num_layers=g["layers"],
+                                 has_image_input=False, require_vae_embedding=True, require_clip_embedding=False),
+                        seed=111, scale=0.1)
+    for key, value in model.state_dict().items():
+        name = _wan_original_to_diffusers(key)
+        if name is not None:
+            extra[f"w::{name}"] = value.float().contiguous()
+    model = DiffusionTrainingModule.add_lora_to_model(None, model, ["q", "k", "v", "o", "ffn.0", "ffn.2"], 4, 8)
+    generator = torch.Generator().manual_seed(112)
+    for name, parameter in model.named_parameters():
+        if "lora_B" in name:
+            parameter.data = torch.randn(parameter.shape, generator=generator) * 0.1
+    for name, parameter in model.named_parameters():
+        parameter.requires_grad_("lora_" in name)
+
+    latent, _, text = _wan_train_inputs(generator)
+    condition = torch.randn(4 + g["channels"], *latent.shape[1:], generator=generator)
+    pipe = type("Pipeline", (), {})()
+    pipe.scheduler, pipe.torch_dtype, pipe.device = scheduler, torch.float32, "cpu"
+    pipe.in_iteration_models, pipe.dit = ("dit",), model
+    pipe.model_fn = model_fn_wan_video
+    torch.manual_seed(113)
+    loss = FlowMatchSFTLoss(pipe, input_latents=latent.unsqueeze(0), context=text.unsqueeze(0),
+                            y=condition.unsqueeze(0), max_timestep_boundary=1, min_timestep_boundary=0.358)
+    loss.backward()
+    torch.manual_seed(113)
+    index = torch.randint(int(0.358 * len(scheduler.timesteps)), int(1 * len(scheduler.timesteps)), (1,))
+    noise = torch.randn_like(latent.unsqueeze(0))[0]
+    timestep = scheduler.timesteps[index]
+    sigma = scheduler.sigmas[torch.argmin((scheduler.timesteps - timestep).abs())]
+    noisy = (1 - sigma) * latent + sigma * noise
+    with torch.no_grad():
+        prediction = model_fn_wan_video(dit=model, latents=noisy.unsqueeze(0), timestep=timestep,
+                                        context=text.unsqueeze(0), y=condition.unsqueeze(0))[0]
+    extra.update({"index": index.float(), "timestep": timestep.float().reshape(1), "sigma": sigma.float().reshape(1),
+                  "weight": scheduler.training_weight(timestep).float().reshape(1), "latent": latent.contiguous(),
+                  "condition": condition.contiguous(), "noise": noise.contiguous(), "text": text.contiguous(),
+                  "prediction": prediction.float().contiguous(), "loss": loss.detach().reshape(1)})
+    adapters = {}
+    for name, module in model.named_modules():
+        if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+            a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+            adapters[_wan_original_to_diffusers(name + ".weight").removesuffix(".weight")] = (a, b, a.grad, b.grad)
+    _wan_lora_record(extra, adapters, 8 / 4)
+    globals()["_extra"] = {key: value.clone() for key, value in extra.items()}
+    return extra["prediction"].clone()
+
+
+MODELS["wan_lora_diffsynth_experts"] = run_wan_lora_diffsynth_experts
+
+
 def run_wan_lora_musubi(image):
     """musubi-tuner's Wan LoRA objective (kohya-ss/musubi-tuner at f8a1b03, `IK_MUSUBI_SRC/src` on PYTHONPATH),
     under the `wantrain-musubi` env: musubi's own `WanModel` at a tiny random geometry adapted by its

@@ -5813,6 +5813,20 @@ try NFKMLXWanVideoGenerator.saveAdapters(of: net, to: adaptersURL, preset: .diff
 try generator.addAdapter(at: adaptersURL, scale: 1)  // Objective-C: addAdapterAtURL:scale:error:
 ```
 
+A Wan 2.2 A14B release trains one LoRA per expert, as DiffSynth-Studio's scripts do: each draws its noise
+levels from its own side of the release's boundary, and an image-to-video example carries the condition
+built from the clip's first frame. The 14B experts train over a packed base:
+
+```swift
+let preset = NFKMLXWanTrainingPreset.diffSynth(expert: .lowNoise, imageToVideo: true)
+let i2vExamples = try myClips.map { try i2v.trainingExample(video: $0.frames, prompt: $0.caption, preset: preset) }
+let lowNoise = try NFKMLXWanVideoGenerator.network(directoryURL: i2vRelease, expert: .lowNoise, quantizationBits: 4)
+try NFKMLXWanVideoGenerator.fineTune(lowNoise, examples: { _ in [i2vExamples.randomElement()!] }, preset: preset,
+                                     steps: 2_000)
+try NFKMLXWanVideoGenerator.saveAdapters(of: lowNoise, to: lowNoiseURL, preset: preset)
+try i2v.addAdapter(at: lowNoiseURL, scale: 1, expert: .lowNoise)
+```
+
 Every preset noises the clean latent to `(1 − σ)·clean + σ·noise` and holds the prediction to
 `noise − clean` by the mean squared error. finetrainers draws σ from a logit-normal over the unshifted
 table and samples the encoder's posterior; DiffSynth-Studio draws a uniform index over its shift-5 table

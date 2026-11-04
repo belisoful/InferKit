@@ -594,7 +594,8 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// Encodes one clip as `preset`'s trainer prepares it: the frames through the autoencoder to the
     /// posterior's normalized mean and log-variance, and the prompt through umT5 at 512 tokens — zeros past
     /// the prompt, or the encoder's outputs at the padded positions where the trainer keeps them
-    /// (finetrainers encodes the padded prompt with no mask).
+    /// (finetrainers encodes the padded prompt with no mask). An image-to-video release adds the condition its
+    /// experts read, built from the clip's first frame.
     ///
     /// - Parameters:
     ///   - video: the frames `[4k + 1, H, W, 3]` in `[0, 1]`, already cut and sized as the trainer's bucketing
@@ -614,10 +615,14 @@ public final class NFKMLXWanVideoGenerator: NSObject {
                 preset.keepsPaddedText ? stage.encoder(tokens.tokens)[0] : stage.features(tokens)
             }
             let moments = try staging.with(pipelineStage) { pipeline -> [MLXArray] in
-                let encoded = pipeline.normalizedMoments(video * 2 - 1)
-                return [encoded.mean, encoded.logVariance]
+                let clip = video * 2 - 1
+                let encoded = pipeline.normalizedMoments(clip)
+                // An image-to-video expert trains from the clip's own first frame, as DiffSynth-Studio's does.
+                let condition = isImageToVideo ? [pipeline.imageCondition(clip[0], lastImage: nil, frames: clip.dim(0))] : []
+                return [encoded.mean, encoded.logVariance] + condition
             }
-            return NFKMLXWanTrainingExample(latent: moments[0], logVariance: moments[1], text: features)
+            return NFKMLXWanTrainingExample(latent: moments[0], logVariance: moments[1], text: features,
+                                            condition: moments.count > 2 ? moments[2] : nil)
         }
     }
 

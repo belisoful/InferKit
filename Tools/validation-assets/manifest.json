@@ -6276,7 +6276,8 @@
       "why": "modelscope/DiffSynth-Studio at 1e8ae1d, run from its checkout with PYTHONPATH=$IK_DIFFSYNTH_SRC: torch 2.15.0, transformers 5.22.1, peft 0.21.2, accelerate 1.15.0, its own requirements otherwise. diffusers is not installed; DiffSynth carries its own Wan model.",
       "rebuild": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wantrain-diffsynthvenv && ~/.inferkit-validation/wantrain-diffsynthvenv/bin/pip install torch==2.15.0 transformers==5.22.1 peft==0.21.2 accelerate==1.15.0 safetensors einops; git clone https://github.com/modelscope/DiffSynth-Studio $IK_DIFFSYNTH_SRC && git -C $IK_DIFFSYNTH_SRC checkout 1e8ae1d",
       "modes": [
-        "wan_lora_diffsynth"
+        "wan_lora_diffsynth",
+        "wan_lora_diffsynth_experts"
       ]
     },
     "wantrain_musubi": {
@@ -7440,6 +7441,12 @@
       "record": "reference/wan-lora-diffsynth.safetensors",
       "environment": "wantrain_diffsynth",
       "command": "wan_lora_diffsynth (DiffSynth-Studio's FlowMatchSFTLoss over its own tiny WanModel under its add_lora_to_model; the drawn index, prediction, loss, adapter gradients, the saved file, its GeneralLoRALoader fuse under fused::, and sampler.* the whole training table)"
+    },
+    {
+      "key": "IK_PARITY_WAN_LORA_DIFFSYNTH_EXPERTS",
+      "record": "reference/wan-lora-diffsynth-experts.safetensors",
+      "environment": "wantrain_diffsynth",
+      "command": "wan_lora_diffsynth_experts (the index range each Wan 2.2 A14B LoRA script gives FlowMatchSFTLoss under range.<case>, and the low-noise I2V expert's objective over DiffSynth's own 12-channel WanModel under its LoRA with a condition y: index, timestep, sigma, weight, prediction, loss, adapter gradients)"
     },
     {
       "key": "IK_PARITY_WAN_LORA_MUSUBI",

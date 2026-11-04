@@ -176,8 +176,9 @@ final class NFKMLXWanTrainingTests: XCTestCase {
     }
 
     /// The oracle's network with its adapters (rank 4, alpha 8) at the recorded values.
-    private func adaptedNetwork(_ record: Record, targets: NFKMLXWanLoRATargets) throws -> NFKMLXWanTransformerNet {
-        let net = NFKMLXWanTransformerNet(geometry)
+    private func adaptedNetwork(_ record: Record, targets: NFKMLXWanLoRATargets,
+                                geometry: NFKMLXWanConfiguration? = nil) throws -> NFKMLXWanTransformerNet {
+        let net = NFKMLXWanTransformerNet(geometry ?? self.geometry)
         let adapted = try NFKMLXLoRA.apply(to: net, rank: 4, alpha: 8) { path, _ in targets.contains(path) }
         let adapters = record.section("lora::")
         XCTAssertEqual(adapted * 2, adapters.count, "the oracle adapts the preset's targets")
@@ -335,6 +336,44 @@ final class NFKMLXWanTrainingTests: XCTestCase {
         print("VALIDATION PARITY wan-lora-diffsynth: table weight gap \(weightGap), prediction cosine \(predictionCosine), "
               + "loss \(loss.item(Float.self)) vs \(record["loss"].item(Float.self)), lowest gradient cosine "
               + "\(gradientCosine), merge gap \(mergeGap)")
+    }
+
+    func testDiffSynthExpertsTrainOnTheirSideOfTheBoundary() throws {
+        try requireMLXRuntime()
+        let record = try record("IK_PARITY_WAN_LORA_DIFFSYNTH_EXPERTS", "wan_lora_diffsynth_experts")
+        for (key, expert, imageToVideo) in [("t2v_high", NFKMLXWanExpert.highNoise, false), ("t2v_low", .lowNoise, false),
+                                            ("i2v_high", .highNoise, true), ("i2v_low", .lowNoise, true)] {
+            guard case let .diffSynth(_, lower, upper) = NFKMLXWanTrainingPreset.diffSynth(expert: expert,
+                                                                                         imageToVideo: imageToVideo).objective.sampler
+            else { return XCTFail("\(key) is not DiffSynth's sampler") }
+            let range = NFKMLXWanSigmaSampler.indexRange(lower: lower, upper: upper)
+            XCTAssertEqual([range.low, range.high], record["range.\(key)"].asArray(Int32.self).map(Int.init), key)
+        }
+
+        let preset = NFKMLXWanTrainingPreset.diffSynth(expert: .lowNoise, imageToVideo: true)
+        let draw = preset.objective.sampler.draw(record["index"].item(Float.self), weighting: preset.objective.weighting)
+        XCTAssertEqual(draw.timestep, record["timestep"].item(Float.self))
+        XCTAssertEqual(draw.sigma, record["sigma"].item(Float.self))
+        XCTAssertEqual(draw.weight, record["weight"].item(Float.self), accuracy: 1e-7)
+        let raws = preset.objective.sampler.raw(count: 256, key: MLXRandom.key(1))
+        XCTAssertTrue(raws.allSatisfy { (358 ..< 1000).contains(Int($0)) }, "every draw on the low-noise side")
+
+        var imageGeometry = geometry
+        imageGeometry.inChannels = 12
+        imageGeometry.outChannels = 4
+        let net = try adaptedNetwork(record, targets: preset.targets, geometry: imageGeometry)
+        let example = NFKMLXWanTrainingExample(latent: record["latent"], text: record["text"], condition: record["condition"])
+        let noisy = (1 - draw.sigma) * example.latent + draw.sigma * record["noise"]
+        let input = concatenated([noisy, record["condition"]], axis: 0)
+        let predictionCosine = cosine(net(input, text: example.text, t: MLXArray([draw.timestep])), record["prediction"])
+        XCTAssertGreaterThan(predictionCosine, 0.999999)
+        let loss = preset.objective.score(net, example: example, draw: draw, noise: record["noise"], epsilon: nil)
+        XCTAssertEqual(loss.item(Float.self), record["loss"].item(Float.self), accuracy: 1e-5 * record["loss"].item(Float.self))
+        let gradientCosine = assertGradientsMatch(net, record) {
+            preset.objective.score($0, example: example, draw: draw, noise: record["noise"], epsilon: nil)
+        }
+        print("VALIDATION PARITY wan-lora-diffsynth-experts: ranges equal, prediction cosine \(predictionCosine), "
+              + "loss \(loss.item(Float.self)) vs \(record["loss"].item(Float.self)), lowest gradient cosine \(gradientCosine)")
     }
 
     func testMusubiObjectiveMatchesTheTrainer() throws {

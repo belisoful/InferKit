@@ -13,6 +13,8 @@ import CoreGraphics
 import XCTest
 import InferKit
 import MLX
+import MLXOptimizers
+import MLXRandom
 @testable import InferKitMLX
 
 final class NFKMLXWanExpertsTests: XCTestCase {
@@ -204,5 +206,34 @@ final class NFKMLXWanExpertsTests: XCTestCase {
                                                            transformerType: nil, bits: 8, groupSize: 32)
         XCTAssertEqual(packed.quantizationBits, 8)
         XCTAssertGreaterThan(cosine(try run(packed), held), 0.999)
+    }
+
+    func testAnImageToVideoExpertFineTunesFromItsRelease() throws {
+        try requireMLXRuntime()
+        let (directory, _) = try release("IK_VAL_WAN22_I2V_A14B_TESTDEV", record: "IK_PARITY_WAN22_I2V_A14B_PIPELINE",
+                                         mode: "wan22_a14b_pipeline")
+        let generator = try NFKMLXWanVideoGenerator.generator(directoryURL: directory, residency: .resident)
+        let preset = NFKMLXWanTrainingPreset.diffSynth(expert: .lowNoise, imageToVideo: true)
+        let clip = MLXRandom.uniform(low: 0, high: 1, [9, 32, 48, 3], key: MLXRandom.key(4))
+        let example = try generator.trainingExample(video: clip, prompt: "a red fox", preset: preset)
+        let condition = try XCTUnwrap(example.condition, "an image-to-video release trains with its condition")
+        XCTAssertEqual(condition.shape, [20, 3, 4, 6])
+        let expected = try generator.usingPipeline { $0.imageCondition(clip[0] * 2 - 1, lastImage: nil, frames: 9) }
+        XCTAssertEqual(abs(condition - expected).max().item(Float.self), 0, "the clip's own first frame")
+
+        let low = try NFKMLXWanVideoGenerator.network(directoryURL: directory, expert: .lowNoise, quantizationBits: 0)
+        let high = try NFKMLXWanVideoGenerator.network(directoryURL: directory, expert: .highNoise, quantizationBits: 0)
+        XCTAssertEqual(low.config.inChannels, 36)
+        XCTAssertGreaterThan(abs(low.projOut.weight - high.projOut.weight).max().item(Float.self), 0,
+                             "the low-noise expert is transformer_2/")
+        let packed = try NFKMLXWanVideoGenerator.network(directoryURL: directory, expert: .lowNoise, quantizationBits: 8)
+        var small = preset
+        small.rank = 4
+        small.alpha = 4
+        let losses = try NFKMLXWanVideoGenerator.fineTune(packed, examples: { _ in [example] }, preset: small,
+                                                          optimizer: Adam(learningRate: 1e-2), steps: 3, seed: 2,
+                                                          learningRateSchedule: .constant)
+        XCTAssertEqual(losses.count, 3)
+        XCTAssertTrue(losses.allSatisfy(\.isFinite))
     }
 }

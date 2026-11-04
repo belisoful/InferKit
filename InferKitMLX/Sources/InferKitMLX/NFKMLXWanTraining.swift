@@ -86,9 +86,10 @@ public enum NFKMLXWanSigmaSampler: Sendable, Equatable {
     /// DiffSynth-Studio: an index uniform on `[⌊1000·lower⌋, ⌊1000·upper⌋)` into the Wan table
     /// `σ = shift·s/(1 + (shift − 1)s)` over `s = linspace(1, 0, 1001)[:-1]` (torch, float32), the timestep
     /// `1000σ` rounded to the transformer's type, and `σ` and the loss weight read back at the table entry
-    /// nearest that timestep. The raw draw is the index. Wan 2.2's experts train on their side of a boundary
-    /// (T2V: `upper` 0.417 for the high-noise expert, `lower` 0.417 for the low-noise one).
-    case diffSynth(shift: Float, lower: Float, upper: Float)
+    /// nearest that timestep. The raw draw is the index. Wan 2.2 A14B's experts train on their side of a
+    /// boundary (``NFKMLXWanTrainingPreset/diffSynth(expert:imageToVideo:)``). The bounds are fractions in
+    /// float64, as the trainer's arguments are, so `⌊1000 · 0.417⌋` is 417.
+    case diffSynth(shift: Float, lower: Double, upper: Double)
     /// musubi-tuner's `sigma` sampling: `u` from `density`, the index `⌊u·(maximum − minimum) + minimum⌋`
     /// into the unshifted table `linspace(1, 0, 1001)[:-1]·1000` (float32), `σ` the table's entry at that
     /// index. `minimum` and `maximum` count table positions, so a range of 900–1000 reaches timesteps 100–1.
@@ -146,6 +147,11 @@ public enum NFKMLXWanSigmaSampler: Sendable, Equatable {
         }
     }
 
+    /// The table indices DiffSynth-Studio draws from, `[⌊1000 · lower⌋, ⌊1000 · upper⌋)`.
+    static func indexRange(lower: Double, upper: Double) -> (low: Int, high: Int) {
+        (Int(lower * 1000), Int(upper * 1000))
+    }
+
     /// `count` raw draws from `key`, each what ``draw(_:weighting:dtype:)`` reads.
     public func raw(count: Int, key: MLXArray) -> [Float] {
         let values: MLXArray
@@ -153,7 +159,7 @@ public enum NFKMLXWanSigmaSampler: Sendable, Equatable {
         case .finetrainers(let density), .musubiTable(let density, _, _):
             values = density.raw(count: count, key: key)
         case .diffSynth(_, let lower, let upper):
-            let low = Int(lower * 1000), high = Int(upper * 1000)
+            let (low, high) = Self.indexRange(lower: lower, upper: upper)
             values = MLXRandom.randInt(low: low, high: max(high, low + 1), [count], key: key).asType(.float32)
         case .musubiShift:
             values = MLXRandom.normal([count], key: key)
@@ -193,11 +199,15 @@ public struct NFKMLXWanTrainingExample {
     public var logVariance: MLXArray?
     /// The text features `[tokens, textDim]`.
     public var text: MLXArray
+    /// The channels an image-to-video transformer reads beside the noised latent: a mask and the first
+    /// frame's latents, `[4 + zDim, frames, height, width]`. Introduced in InferKit 0.4.0.
+    public var condition: MLXArray?
 
-    public init(latent: MLXArray, logVariance: MLXArray? = nil, text: MLXArray) {
+    public init(latent: MLXArray, logVariance: MLXArray? = nil, text: MLXArray, condition: MLXArray? = nil) {
         self.latent = latent
         self.logVariance = logVariance
         self.text = text
+        self.condition = condition
     }
 }
 
@@ -235,7 +245,8 @@ public struct NFKMLXWanObjective: Sendable {
         let dtype = NFKReferenceRounding.parameterType(of: net)
         let x0 = clean(example, epsilon: epsilon)
         let noisy = (1 - draw.sigma) * x0 + draw.sigma * noise
-        let prediction = net(noisy.asType(dtype), text: example.text.asType(dtype), t: MLXArray([draw.timestep]))
+        let input = example.condition.map { concatenated([noisy, $0], axis: 0) } ?? noisy
+        let prediction = net(input.asType(dtype), text: example.text.asType(dtype), t: MLXArray([draw.timestep]))
         return Self.loss(prediction: prediction, clean: x0, noise: noise, weight: draw.weight)
     }
 }
@@ -302,6 +313,19 @@ public struct NFKMLXWanTrainingPreset: Sendable {
         betas: (0.9, 0.999), weightDecay: 0.01, warmupSteps: 5, warmupStartsAtZero: false, clipGradientNorm: nil,
         format: .diffSynth)
 
+    /// DiffSynth-Studio's Wan 2.2 A14B LoRA scripts for one expert: ``diffSynth`` with the index drawn from
+    /// the expert's side of the boundary, `[0, 0.417)` for T2V-A14B's high-noise expert and `[0.417, 1)` for
+    /// its low-noise one (timesteps 875 and above, and below; 0.358 and timestep 900 for I2V-A14B).
+    /// Introduced in InferKit 0.4.0.
+    public static func diffSynth(expert: NFKMLXWanExpert, imageToVideo: Bool) -> NFKMLXWanTrainingPreset {
+        let boundary = imageToVideo ? 0.358 : 0.417
+        var preset = diffSynth
+        preset.objective.sampler = expert == .highNoise
+            ? .diffSynth(shift: 5, lower: 0, upper: boundary)
+            : .diffSynth(shift: 5, lower: boundary, upper: 1)
+        return preset
+    }
+
     /// musubi-tuner's documented Wan recipe (`docs/wan.md`): `shift` sampling at 3.0, no loss weight, the
     /// posterior mean, rank 32 at alpha 1 on every linear layer of the blocks, AdamW at 2e-4 (the recipe
     /// names `adamw8bit`; this runs float32 AdamW with torch's defaults), a constant rate, and the gradient
@@ -360,11 +384,21 @@ extension NFKMLXWanVideoGenerator {
     ///
     /// Introduced in InferKit 0.4.0.
     public static func network(directoryURL: URL) throws -> NFKMLXWanTransformerNet {
-        let directory = directoryURL.appendingPathComponent("transformer")
-        let net = NFKMLXWanTransformerNet(try NFKMLXWanRelease.transformerConfiguration(
-            fromHuggingFace: directory.appendingPathComponent("config.json")))
-        try NFKMLXWanRelease.loadTransformer(into: net, fromDirectory: directory, precision: .checkpoint)
-        return net
+        try network(directoryURL: directoryURL, expert: .highNoise, quantizationBits: 0)
+    }
+
+    /// Builds one expert of a release directory, ready to fine-tune: ``NFKMLXWanExpert/highNoise`` is
+    /// `transformer/` (a single-transformer release's only one), ``NFKMLXWanExpert/lowNoise`` an A14B release's
+    /// `transformer_2/`. A `quantizationBits` of 2 to 8 packs the blocks' linear layers as each loads, so the
+    /// adapters train over a packed base (QLoRA); 0 keeps the stored type. Introduced in InferKit 0.4.0.
+    public static func network(directoryURL: URL, expert: NFKMLXWanExpert,
+                               quantizationBits: Int) throws -> NFKMLXWanTransformerNet {
+        let directory = directoryURL.appendingPathComponent(expert.folder)
+        return try loadTransformer(
+            try NFKMLXWanRelease.transformerConfiguration(fromHuggingFace: directory.appendingPathComponent("config.json")),
+            directory: directory, transformerType: nil, precision: .checkpoint,
+            bits: quantizationBits == 0 ? nil : quantizationBits,
+            groupSize: NFKMLXLoadOptions.defaultQuantizationGroupSize, streamed: [], adapters: [])
     }
 
     /// Fine-tunes the text-to-video transformer with LoRA as `preset`'s trainer does, returning each step's

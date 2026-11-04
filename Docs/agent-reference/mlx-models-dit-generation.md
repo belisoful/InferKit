@@ -781,9 +781,20 @@ arithmetic as before.
   bfloat16 attention); losses 3.1826549 against 3.1826553, 0.14676003 against 0.14675987, 2.4950247
   against 2.495024; lowest adapter gradient cosine 0.99999984 / 0.99999983 / 0.99999982; each trainer's
   saved file written by `saveAdapters` key for key, and merged back through `NFKMLXWanLoRA` equal to the
-  trainer's own fuse (gap 0.0) or its adapted model (cosine 1.0). Not yet covered: DiffSynth's Wan 2.2
-  expert ranges (the sampler takes `lower` / `upper`), the Animate transformer (DiffSynth trains Animate 2
-  in one pass with the reference latent noised in the sequence), and a measured training step at 1.3B.
+  trainer's own fuse (gap 0.0) or its adapted model (cosine 1.0).
+  Wan 2.2 A14B experts: DiffSynth-Studio trains each expert of T2V-A14B and I2V-A14B as a LoRA of its own,
+  drawing the index from the expert's side of the boundary (`--max_timestep_boundary` /
+  `--min_timestep_boundary`: 0.417 for T2V, timestep 875 on the shift-5 table; 0.358 for I2V, timestep
+  900). `NFKMLXWanTrainingPreset.diffSynth(expert:imageToVideo:)` sets that range; the bounds are float64
+  so `⌊1000 · 0.417⌋` is 417, as Python computes it. `network(directoryURL:expert:quantizationBits:)` builds
+  `transformer/` or `transformer_2/`, packed for QLoRA where asked. An I2V expert's example carries the
+  condition built from the clip's own first frame (DiffSynth's `WanVideoUnit_ImageEmbedderVAE`, the same
+  mask and latents as diffusers'), read beside the noised latent. Measured (`wan_lora_diffsynth_experts`,
+  DiffSynth's own I2V `WanModel` at 12 input channels under its LoRA, the low-noise range): the four ranges
+  equal ([0, 417), [417, 1000), [0, 358), [358, 1000)); prediction 1.0000000; loss 2.027656 against
+  2.0276527; lowest of 40 adapter gradients 0.99999985. Not yet covered: the Animate transformer
+  (DiffSynth trains Animate 2 in one pass with the reference latent noised in the sequence), and a
+  measured training step on released weights.
 - `NFKMLXQwenImageNet` / `NFKMLXQwenImage` (`@objc`) — the Qwen-Image 2.1 DiT
   (`QwenImage21Transformer2DModel`, Qwen), the denoising transformer of a 7.1B text-to-image model.
   Single-stream like Z-Image: one sequence carries the caption and the image latents. Two things

@@ -215,9 +215,9 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 3177 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  157 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #   66 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXTests        …    # 3199 — the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  159 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #   67 — the Objective-C ones
    ```
 
    Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as
