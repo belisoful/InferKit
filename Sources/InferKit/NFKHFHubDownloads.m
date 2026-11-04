@@ -34,19 +34,10 @@ static NSString * const NFKHFHubTrashPrefix = @".inferkit-removing-";
 @implementation NFKHFHubRemovalTarget
 @end
 
-/*! The files of a catalog source that come from one place: a repository at a revision, or a URL. */
-@interface NFKHFHubSourcePart : NSObject
-@property (nonatomic, copy, nullable) NSString *repository;
-@property (nonatomic, copy, nullable) NSString *revision;
-@property (nonatomic, copy, nullable) NSURL *URL;
-/*! nil for a source that lists no files, which names the whole repository. */
-@property (nonatomic, strong, nullable) NSMutableArray<NFKModelFile *> *files;
-@end
-
 @implementation NFKHFHubSourcePart
 @end
 
-static BOOL NFKHFHubIsGlob(NSString *path)
+BOOL NFKHFHubIsGlob(NSString *path)
 {
 	return [path rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"*?["]].location != NSNotFound;
 }
@@ -1260,6 +1251,11 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 
 - (NFKDownloadStatus *)downloadStatusForModelSource:(NFKModelSource *)source
 {
+	return [self modelFolderStatusForModelSource:source] ?: [self cacheStatusForModelSource:source];
+}
+
+- (NFKDownloadStatus *)cacheStatusForModelSource:(NFKModelSource *)source
+{
 	if ([self modelSourceHoldsNoFiles:source]) {
 		return [[NFKDownloadStatus alloc] initWithPresence:NFKDownloadPresenceComplete byteCount:0 presentPaths:@[]
 											  missingPaths:@[] localURL:nil];
@@ -1446,7 +1442,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 				}
 				NSSet<NSString *> *listed = [self listedPathsOfPart:part];
 				BOOL sameDownload = (listed == nil && targetPaths == nil) || [listed isEqualToSet:targetPaths];
-				if (sameDownload || ![self downloadStatusForModelSource:source].holdsEveryRequiredFile) {
+				if (sameDownload || ![self cacheStatusForModelSource:source].holdsEveryRequiredFile) {
 					continue;
 				}
 				NSArray<NSString *> *used = listed != nil ? listed.allObjects : [self recordedCompletePathsInSnapshotURL:target.snapshotURL];

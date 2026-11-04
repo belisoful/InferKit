@@ -630,6 +630,33 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 						  config.URLByDeletingLastPathComponent.standardizedURL);
 }
 
+// A release kept in a model folder builds with an empty cache: the locator reads the hub's folders first.
+- (void)testABuildFindsItsFilesInAHubsModelFolder
+{
+	NSURL *root = [self scratchCache];
+	NSURL *folder = [root URLByAppendingPathComponent:@"model" isDirectory:YES];
+	[NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:NULL];
+	XCTAssertTrue([@"org/folder-model\n" writeToURL:[folder URLByAppendingPathComponent:@"REVISION"] atomically:YES
+										   encoding:NSUTF8StringEncoding error:NULL]);
+	XCTAssertTrue([@"{}" writeToURL:[folder URLByAppendingPathComponent:@"config.json"] atomically:YES
+						   encoding:NSUTF8StringEncoding error:NULL]);
+	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindHuggingFace repository:@"org/folder-model"
+														 revision:nil URL:nil layout:NFKModelSourceLayoutDirectory
+															files:@[ [NFKModelFile fileWithPath:@"config.json" role:NFKModelFileRoleConfig] ]
+											   requiresConversion:NO extensions:nil];
+	[self.catalog addDescriptor:[self modelWithIdentifier:@"folder.model" engine:NFKBuildTestEngine provider:nil
+											 requirements:nil variant:[self variantWithSource:source]]];
+	NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:[self scratchCache]];
+	self.catalog.locator = [NFKModelCatalog locatorForHub:hub];
+	NSError *error = nil;
+	XCTAssertNil([self.catalog backendForModelIdentifier:@"folder.model" options:nil error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorNotDownloaded);
+
+	hub.modelFolderURLs = @[ root ];
+	XCTAssertNotNil([self.catalog backendForModelIdentifier:@"folder.model" options:nil error:&error], @"%@", error);
+	XCTAssertEqualObjects(self.builder.lastRequest.location.URLByStandardizingPath.path, folder.URLByStandardizingPath.path);
+}
+
 // A page source's files are downloaded by hand: its refusal names the page. A plugin keeps its own weights
 // and is not refused.
 - (void)testAPageSourceNamesItsPageAndAPluginModelIsNotRefused

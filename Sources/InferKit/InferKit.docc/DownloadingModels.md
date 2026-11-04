@@ -128,8 +128,8 @@ takes the shards with it. An index that names a file the repository lacks fails 
 
 ### Downloaded or not, and removal
 
-`-downloadStatusForModelSource:` reads the cache alone and answers complete, partial, or absent, with
-the bytes on disk. An optional file the catalog lists after the download, which no download has asked
+`-downloadStatusForModelSource:` reads the model folders and the cache, with no network, and answers
+complete, partial, or absent, with the bytes on disk. An optional file the catalog lists after the download, which no download has asked
 the server for, makes the source partial and appears in `uncheckedOptionalPaths`; the next download
 fetches it or records that the server lacks it, and the model builds meanwhile. `-removalPlanForModelSource:error:` lists the files a removal deletes and the files
 it keeps, each with its reason: a file another catalog model whose download is complete uses, or the
@@ -137,6 +137,26 @@ target of a symbolic link that something else still needs, such as a file of ano
 that a link elsewhere in the cache resolves to stays too. `-removeFilesInPlan:error:` deletes them,
 all or none, and returns the bytes freed. It refuses with `NFKDownloadErrorInUse` while a download in
 the process writes into the same snapshot.
+
+### Model folders
+
+A release already on disk outside the cache, such as on an external volume, is found through
+`modelFolderURLs`, which starts from the process-wide `defaultModelFolderURLs`. Each URL is a root, and
+each direct subfolder that holds a `REVISION` file is one release in the repository's own file layout.
+`REVISION` names the repository as `owner/name` and the commit as 40 hexadecimal digits, one per line,
+in any order. A folder whose `REVISION` names no repository matches no source.
+
+```objc
+// modelsRootURL: a folder the user chose, such as one on an external drive.
+NFKHFHub.defaultModelFolderURLs = @[ modelsRootURL ];
+NSURL *folder = [hub modelFolderLocationForModelSource:variant.source];
+```
+
+`-modelFolderLocationForModelSource:` matches a Hugging Face source whose repository the folder names,
+without regard to case, at the source's revision when it names one other than `main`, and whose required
+files the folder holds. `-downloadStatusForModelSource:` reports such a folder complete, and the catalog's
+locators build from it, so nothing is downloaded again. A removal deletes cache files only and never
+touches a model folder.
 
 ## Topics
 

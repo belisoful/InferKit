@@ -108,6 +108,28 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A release kept in a folder outside the cache is found without a download
+
+- `NFKHFHub.modelFolderURLs` names roots whose direct subfolders each hold one Hugging Face release, or
+  part of one, in the repository's own file layout, keyed by a `REVISION` file. `REVISION` is read line
+  by line in any order: 40 hexadecimal digits are the revision, `owner/name` is the repository, and
+  other lines are ignored. A folder whose `REVISION` names no repository matches no source. A new hub
+  starts from the process-wide `+defaultModelFolderURLs`, empty by default.
+- `-modelFolderLocationForModelSource:` reports where a folder holds a Hugging Face source: the
+  repository matches without regard to case, a source revision other than `main` must equal the
+  folder's, and the folder holds every required file of the source's own repository. The location is
+  the folder for a directory layout and the weights file for a file layout. Several matches take the
+  roots in order, then folder names in ascending order.
+- `-downloadStatusForModelSource:` reports a matching folder complete, its files counted at their size
+  on disk and its `localURL` in the folder, once the files the source takes from other repositories are
+  in the cache. A folder that lacks a required file leaves the cache's answer unchanged. Before, a
+  release on another volume read absent, and an app downloaded it again into the cache.
+- `+[NFKModelCatalog locatorForHub:]` finds a variant in a hub's model folders, then in its cache.
+  `hubCacheLocator` and `hubCacheLocatorForCacheDirectoryURL:` are that locator over a hub made at each
+  lookup, which reads `+defaultModelFolderURLs`, so the build and the status agree.
+- A removal plans and deletes cache files only. A source found only in a model folder yields a plan
+  that removes nothing, and the folder's files stay in place.
+
 #### A tool served on /mcp learns its caller
 
 - Every `tools/call` through an `NFKInferenceServer`'s `/mcp` reaches its tool with an `NFKToolCaller`:

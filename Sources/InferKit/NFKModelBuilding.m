@@ -10,6 +10,7 @@
 #import "NFKDynamicBackend.h"
 #import "NFKHardwareProfile.h"
 #import "NFKHFHub.h"
+#import "NFKHFHubInternal.h"
 #import "NFKDownloadInternal.h"
 #import "NFKModelEngineBuilders.h"
 
@@ -365,6 +366,51 @@ static NSString *NFKModelNotDownloadedReason(NFKModelDescriptor *descriptor, NFK
 			@"-[NFKHFHub downloadModelSource:progressHandler:completionHandler:], or pass their location.", name];
 }
 
+// The location of a source's files: a model folder of the hub that holds them, else the hub's cache.
+static NSURL * _Nullable NFKModelLocationThroughHub(NFKHFHub *hub, NFKModelSource * _Nullable source)
+{
+	if (!NFKModelSourceDownloadsFiles(source)) {
+		return nil;
+	}
+	NSURL *folderLocation = [hub buildableModelFolderLocationForModelSource:source];
+	if (folderLocation != nil) {
+		return folderLocation;
+	}
+	NFKDownloadStatus *status = [hub cacheStatusForModelSource:source];
+	BOOL complete = status.holdsEveryRequiredFile;
+	if (!complete && !NFKModelSourceListsNoRequiredFile(source)) {
+		return nil;
+	}
+	if ([source.kind isEqualToString:NFKModelSourceKindURL]) {
+		return status.localURL;
+	}
+	NFKModelFile *file = nil;
+	for (NFKModelFile *candidate in source.files) {
+		if (candidate.overridesSource || candidate.isOptional) {
+			continue;
+		}
+		if (file == nil || ([candidate.role isEqualToString:NFKModelFileRoleWeights]
+							&& ![file.role isEqualToString:NFKModelFileRoleWeights])) {
+			file = candidate;
+		}
+	}
+	NSString *path = file.path ?: @"config.json";
+	NSURL *fileURL = [hub localURLForRepo:source.repository revision:source.revision path:path];
+	if (fileURL == nil || (!complete && ![NSFileManager.defaultManager fileExistsAtPath:fileURL.path])) {
+		return nil;
+	}
+	if ([source.layout isEqualToString:NFKModelSourceLayoutFile]) {
+		return [NSFileManager.defaultManager fileExistsAtPath:fileURL.path] ? fileURL : nil;
+	}
+	NSURL *directory = fileURL;
+	for (NSUInteger index = 0; index < path.pathComponents.count; index += 1) {
+		directory = directory.URLByDeletingLastPathComponent;
+	}
+	BOOL isDirectory = NO;
+	BOOL exists = [NSFileManager.defaultManager fileExistsAtPath:directory.path isDirectory:&isDirectory];
+	return exists && isDirectory ? directory : nil;
+}
+
 + (NFKModelLocator)hubCacheLocator
 {
 	return ^NSURL * _Nullable (NFKModelDescriptor *descriptor, NFKModelVariant * _Nullable variant, NSError **error) {
@@ -376,44 +422,14 @@ static NSString *NFKModelNotDownloadedReason(NFKModelDescriptor *descriptor, NFK
 + (NFKModelLocator)hubCacheLocatorForCacheDirectoryURL:(NSURL *)cacheDirectoryURL
 {
 	return ^NSURL * _Nullable (NFKModelDescriptor *descriptor, NFKModelVariant * _Nullable variant, NSError **error) {
-		NFKModelSource *source = variant.source;
-		if (!NFKModelSourceDownloadsFiles(source)) {
-			return nil;
-		}
-		NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:cacheDirectoryURL];
-		NFKDownloadStatus *status = [hub downloadStatusForModelSource:source];
-		BOOL complete = status.holdsEveryRequiredFile;
-		if (!complete && !NFKModelSourceListsNoRequiredFile(source)) {
-			return nil;
-		}
-		if ([source.kind isEqualToString:NFKModelSourceKindURL]) {
-			return status.localURL;
-		}
-		NFKModelFile *file = nil;
-		for (NFKModelFile *candidate in source.files) {
-			if (candidate.overridesSource || candidate.isOptional) {
-				continue;
-			}
-			if (file == nil || ([candidate.role isEqualToString:NFKModelFileRoleWeights]
-								&& ![file.role isEqualToString:NFKModelFileRoleWeights])) {
-				file = candidate;
-			}
-		}
-		NSString *path = file.path ?: @"config.json";
-		NSURL *fileURL = [hub localURLForRepo:source.repository revision:source.revision path:path];
-		if (fileURL == nil || (!complete && ![NSFileManager.defaultManager fileExistsAtPath:fileURL.path])) {
-			return nil;
-		}
-		if ([source.layout isEqualToString:NFKModelSourceLayoutFile]) {
-			return [NSFileManager.defaultManager fileExistsAtPath:fileURL.path] ? fileURL : nil;
-		}
-		NSURL *directory = fileURL;
-		for (NSUInteger index = 0; index < path.pathComponents.count; index += 1) {
-			directory = directory.URLByDeletingLastPathComponent;
-		}
-		BOOL isDirectory = NO;
-		BOOL exists = [NSFileManager.defaultManager fileExistsAtPath:directory.path isDirectory:&isDirectory];
-		return exists && isDirectory ? directory : nil;
+		return NFKModelLocationThroughHub([NFKHFHub hubWithCacheDirectoryURL:cacheDirectoryURL], variant.source);
+	};
+}
+
++ (NFKModelLocator)locatorForHub:(NFKHFHub *)hub
+{
+	return ^NSURL * _Nullable (NFKModelDescriptor *descriptor, NFKModelVariant * _Nullable variant, NSError **error) {
+		return NFKModelLocationThroughHub(hub, variant.source);
 	};
 }
 

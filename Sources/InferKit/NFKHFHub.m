@@ -114,6 +114,7 @@ static NSString *NFKHFHubRealPath(NSString *path)
 static long long NFKHFHubDefaultCacheSizeLimitValue = -1;
 static BOOL NFKHFHubDefaultExcludesCacheFromBackupValue = YES;
 static NSString *NFKHFHubDefaultAccessTokenValue = nil;
+static NSArray<NSURL *> *NFKHFHubDefaultModelFolderURLsValue = nil;
 
 /*! A cached snapshot eviction may remove. */
 @interface NFKHFHubSnapshot : NSObject
@@ -192,6 +193,7 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 @synthesize modelCatalog = _modelCatalog;
 @synthesize followsFolderLinksOutOfCache = _followsFolderLinksOutOfCache;
 @synthesize maximumFileByteCount = _maximumFileByteCount;
+@synthesize modelFolderURLs = _modelFolderURLs;
 
 + (instancetype)hubWithCacheDirectoryURL:(nullable NSURL *)cacheDirectoryURL
 {
@@ -207,6 +209,7 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		_cacheSizeLimit = NFKHFHub.defaultCacheSizeLimit;
 		_excludesCacheFromBackup = NFKHFHub.defaultExcludesCacheFromBackup;
 		_maximumFileByteCount = -1;
+		_modelFolderURLs = NFKHFHub.defaultModelFolderURLs;
 	}
 	return self;
 }
@@ -301,6 +304,34 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 {
 	@synchronized (NFKHFHub.class) {
 		NFKHFHubDefaultAccessTokenValue = [defaultAccessToken copy];
+	}
+}
+
++ (NSArray<NSURL *> *)defaultModelFolderURLs
+{
+	@synchronized (NFKHFHub.class) {
+		return NFKHFHubDefaultModelFolderURLsValue ?: @[];
+	}
+}
+
++ (void)setDefaultModelFolderURLs:(NSArray<NSURL *> *)defaultModelFolderURLs
+{
+	@synchronized (NFKHFHub.class) {
+		NFKHFHubDefaultModelFolderURLsValue = [defaultModelFolderURLs copy];
+	}
+}
+
+- (NSArray<NSURL *> *)modelFolderURLs
+{
+	@synchronized (self) {
+		return _modelFolderURLs ?: @[];
+	}
+}
+
+- (void)setModelFolderURLs:(NSArray<NSURL *> *)modelFolderURLs
+{
+	@synchronized (self) {
+		_modelFolderURLs = [modelFolderURLs copy];
 	}
 }
 

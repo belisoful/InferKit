@@ -135,6 +135,39 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 
 + (instancetype)hubWithCacheDirectoryURL:(nullable NSURL *)cacheDirectoryURL;
 
+#pragma mark Model folders
+
+/*!
+	@property   defaultModelFolderURLs
+	@abstract   The model folder roots a new hub starts with. Defaults to an empty array.
+	@discussion Process-wide. A hub reads it once, at initialization; changing it later leaves existing
+				hubs unchanged. The hubs the NFKModelCatalog locators make for each lookup read it then,
+				so an app that sets it once has the build and downloadStatusForModelSource: find the same
+				folders. Introduced in InferKit 0.4.0.
+*/
+@property (class, nonatomic, copy) NSArray<NSURL *> *defaultModelFolderURLs;
+
+/*!
+	@property   modelFolderURLs
+	@abstract   Folders that hold Hugging Face releases outside the cache, one release per subfolder.
+	@discussion Starts from defaultModelFolderURLs. Each URL is a root. A direct subfolder of a root
+				that holds a file named REVISION is a model folder: one release, or part of one, in the
+				repository's own file layout. REVISION is read line by line, whitespace trimmed, in any
+				order:
+				- 40 hexadecimal digits → the revision, the commit the files come from.
+				- owner/name, one slash and no whitespace → the repository.
+				- any other line → ignored.
+				A folder whose REVISION names no repository matches no source. Hidden folders, and
+				folders whose REVISION cannot be read, are skipped. The roots are read on each lookup,
+				so a root on a removable volume is found while it is mounted.
+				modelFolderLocationForModelSource: states how a folder matches a source.
+				downloadStatusForModelSource: and the NFKModelCatalog locators read the model folders
+				before the cache. The hub never writes into a model folder or removes from one: a
+				download fetches into the cache, and a removal deletes cache files only.
+				Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, copy) NSArray<NSURL *> *modelFolderURLs;
+
 #pragma mark Cache policy
 
 /*!
@@ -559,10 +592,18 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 /*! Whether a URL's file is in the cache: complete or absent. */
 - (NFKDownloadStatus *)downloadStatusForURL:(NSURL *)URL NS_SWIFT_NAME(downloadStatus(url:));
 
-/*! Whether a catalog model source's files are in the cache. Optional files count toward byteCount
-	and not toward completeness. A file that names its own repository, revision, or URL is read in
-	that place's snapshot, so the source is complete only when every place holds its files. A source
-	of kind system or none is complete with no bytes. */
+/*!
+	@method     downloadStatusForModelSource:
+	@abstract   Whether a catalog model source's files are in a model folder or in the cache.
+	@discussion Optional files count toward byteCount and not toward completeness. A file that names its
+				own repository, revision, or URL is read in that place's snapshot, so the source is
+				complete only when every place holds its files. A source of kind system or none is
+				complete with no bytes.
+				A model folder that matches the source (modelFolderLocationForModelSource:) makes the
+				status complete when every file the source takes from another repository or URL is
+				complete in the cache. The status then counts the folder's files at their size on disk,
+				and its localURL lies in the folder. Otherwise the status is the cache's.
+*/
 - (NFKDownloadStatus *)downloadStatusForModelSource:(NFKModelSource *)source NS_SWIFT_NAME(downloadStatus(source:));
 
 /*!
@@ -627,8 +668,10 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 /*! The cached files a removal of a catalog model source's download deletes and keeps. A source that
 	lists files names those; one that lists none names the whole snapshot. A file that names its own
 	repository, revision, or URL is removed from that place's snapshot, and another catalog variant
-	whose download is complete keeps the files it uses there. A source of kind system or none yields
-	an empty plan. */
+	whose download is complete in the cache keeps the files it uses there. A source of kind system or
+	none yields an empty plan. The plan names cache files only: a source found in a model folder
+	(modelFolderURLs) and not in the cache yields a plan that removes nothing, and its folder's files
+	are left in place. */
 - (nullable NFKRemovalPlan *)removalPlanForModelSource:(NFKModelSource *)source
 												 error:(NSError * _Nullable *)outError NS_SWIFT_NAME(removalPlan(source:));
 
@@ -646,6 +689,40 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 /*! The asynchronous form of removeFilesInPlan:error:. The handler runs on a background queue. */
 - (void)removeFilesInPlan:(NFKRemovalPlan *)plan
 		completionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKRemovalPlan * _Nullable removal, NSError * _Nullable error))completionHandler;
+
+@end
+
+/*!
+	@category   NFKHFHub (NFKModelFolders)
+	@abstract   Finds a catalog model source in the hub's model folders.
+	@discussion Introduced in InferKit 0.4.0.
+*/
+@interface NFKHFHub (NFKModelFolders)
+
+/*!
+	@method     modelFolderLocationForModelSource:
+	@abstract   Where a model folder holds a catalog model source's files; nil when no folder matches.
+	@discussion Reads the folders under modelFolderURLs and nothing in the cache. A folder matches a
+				source when:
+				- the source is a Hugging Face source. A URL, page, system, or none source matches no
+				  folder.
+				- the folder's repository equals the source's, compared without regard to case.
+				- the source's revision, when it names one other than "main", equals the folder's,
+				  compared without regard to case. A folder whose REVISION names no revision then does
+				  not match. A source without a revision, or at "main", matches any revision.
+				- the folder holds every required file the source takes from its own repository, at the
+				  file's path relative to the folder. A glob matches at least one file. A shard index the
+				  folder holds brings the shards its weight_map names as required files. An optional file
+				  the folder lacks does not prevent a match. A source that requires none of its own files
+				  matches a folder holding one of them, or its config.json.
+				Files the source takes from another repository or URL are not read from the folders.
+				The location follows the cache's rule inside the folder: the folder for a directory
+				layout, and for a file layout the first required weights file, else the first required
+				file, else config.json. When several folders match, the roots are taken in order and the
+				folders of a root in ascending name order, and the first match wins.
+				Introduced in InferKit 0.4.0.
+*/
+- (nullable NSURL *)modelFolderLocationForModelSource:(NFKModelSource *)source NS_SWIFT_NAME(modelFolderLocation(source:));
 
 @end
 

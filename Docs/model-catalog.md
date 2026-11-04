@@ -254,6 +254,51 @@ without a location fails with `NFKModelCatalogErrorNotDownloaded`, naming the pa
 `requiresConversion` is refused with `NFKDownloadErrorRequiresConversion`. The [examples](examples.md#downloading-with-progress-then-removing-nfkdownload)
 show the calls.
 
+### Model folders
+
+A release already on disk outside the cache, such as on an external volume, is found through
+`NFKHFHub.modelFolderURLs`, which starts from the process-wide `+[NFKHFHub defaultModelFolderURLs]`
+(empty by default). Each URL is a root. A direct subfolder of a root is a model folder when it holds a
+file named `REVISION`; it holds one release, or part of one, in the repository's own file layout.
+
+```
+<root>/model/REVISION            org/model
+                                 0123456789abcdef0123456789abcdef01234567
+<root>/model/config.json
+<root>/model/model.safetensors
+```
+
+`REVISION` is read line by line, whitespace trimmed, in any order:
+
+- 40 hexadecimal digits → the revision, the commit the files come from.
+- `owner/name`, one slash and no whitespace → the repository.
+- any other line → ignored.
+
+A folder whose `REVISION` names no repository matches no source. Hidden folders, and folders whose
+`REVISION` cannot be read, are skipped. The roots are read at each lookup, so a removable volume is
+found while it is mounted.
+
+A model folder matches a `huggingface` source (`-modelFolderLocationForModelSource:`) when:
+
+- its repository equals the source's, compared without regard to case;
+- the source's revision, when it names one other than `main`, equals the folder's. A folder whose
+  `REVISION` names no revision then does not match;
+- it holds every required file of the source's own repository, at the file's path relative to the
+  folder. A shard index the folder holds requires the shards it names. A missing optional file does not
+  prevent a match.
+
+A `url`, `page`, `system`, or `none` source matches no folder. When several folders match, the roots
+are taken in order and a root's folders in ascending name order; the first wins. The location is the
+folder for a directory layout and the first required weights file for a file layout.
+
+- `downloadStatusForModelSource:` reports a matching folder complete, with the files counted at their
+  size on disk and `localURL` in the folder, once the files the source takes from other repositories or
+  URLs are complete in the cache. Otherwise the status is the cache's.
+- The catalog locators read the model folders before the cache (step 5 of the build).
+- A download fetches into the cache, and a removal deletes cache files only. A source found only in a
+  model folder yields a removal plan that removes nothing; the folder's files are the user's and stay in
+  place.
+
 ## File
 
 `NFKModelFile`, an entry of a source's `files`.
@@ -630,8 +675,10 @@ model's identifier, or `model@preset`, and the option values an app collected:
    `hubCacheLocator`, finds a source in `NFKHFHub`'s default cache: a Hugging Face source at the
    snapshot directory of a directory layout or the first weights file of a file layout, a URL source at
    its downloaded file. It finds a source only when every file it requires is present
-   (`downloadStatusForModelSource:` reports it complete). A host that downloads into its own cache sets
-   `hubCacheLocatorForCacheDirectoryURL:`, and a download store sets its own. A variant whose source
+   (`downloadStatusForModelSource:` reports it complete). Before the cache it reads the
+   [model folders](#model-folders) of `+[NFKHFHub defaultModelFolderURLs]`. A host that downloads into
+   its own cache sets `hubCacheLocatorForCacheDirectoryURL:`, a host that configures a hub of its own
+   sets `+locatorForHub:` (that hub's model folders, then its cache), and a download store sets its own. A variant whose source
    downloads files the locator does not find is refused (`NFKModelCatalogErrorNotDownloaded`); a build
    never runs a model on weights it did not read. Three cases differ:
    - a whole-repository source, with no file list, is located by its snapshot's `config.json` when no

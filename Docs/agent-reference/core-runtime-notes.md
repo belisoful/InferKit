@@ -666,6 +666,39 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   never the network. A cancellation test polls `currentProgress`: the throttled handler may never
   report the single chunk that arrives before a stall.
 
+## Model folders outside the cache
+
+`NFKHFHub.modelFolderURLs` and `+defaultModelFolderURLs`, the `NFKHFHub (NFKModelFolders)` category
+(`NFKHFHubModelFolders.m`, added 2026-11-03, InferKit 0.4.0). A user keeps releases on another volume,
+one folder per release keyed by a `REVISION` file; before this, the status read them absent and an app
+downloaded them again. The consumer rules are in `Docs/model-catalog.md` ("Model folders").
+
+- `REVISION` comes in more than one form: the commit first or the repository first, and some folders
+  (one component of a split release) name only the commit. The reader takes the first 40-hex line as the
+  revision and the first `owner/name` line as the repository, in any order; a folder with no repository
+  line is never matched, since nothing ties it to a source.
+- Only the files of the source's own part (`part:isTheRepositoryOfSource:`) are read in the folder. A
+  file from another repository or URL stays a cache read (`statusOfPart:`), because the backends fetch
+  those through the hub by repository and would not look in the folder.
+- A missing optional file does not block a match, unlike the cache, where an unchecked optional path
+  makes the status partial. A folder has no record of what the server lacks; it is the user's finished
+  copy.
+- A source revision of nil or `main` matches any folder revision; any other value must equal the
+  folder's commit. The catalog pins 38 of its 318 Hugging Face sources (2026-11-03); the rest carry none.
+- `downloadStatusForModelSource:` asks the folders first (`modelFolderStatusForModelSource:`) and falls
+  back to `cacheStatusForModelSource:`, the former body. The removal planner's "another variant's
+  download is complete" check (`claimedPathsForTarget:`) calls the cache status directly: a variant
+  complete only in a folder uses no cache file and must not keep one.
+- The locators share one function, `NFKModelLocationThroughHub`: the folder location
+  (`buildableModelFolderLocationForModelSource:`, which requires the other parts' required files and
+  ignores their unchecked optional ones, as the cache locator does), then the cache rule.
+  `hubCacheLocatorForCacheDirectoryURL:` makes its hub inside the block, so a later change to
+  `+defaultModelFolderURLs` reaches it.
+- Nothing is cached across lookups: each call lists the roots and reads each `REVISION`. A root is
+  accessed through `startAccessingSecurityScopedResource` for the lookup, as the cache is.
+- Tests: `NFKHFHubModelFolderTests` on UUID temporary roots, and
+  `NFKModelBuildingTests/testABuildFindsItsFilesInAHubsModelFolder` for the build path.
+
 ## Serving identity and certificate pinning
 
 `NFKServerIdentity` makes the `SecIdentityRef` that `NFKInferenceServer.TLSIdentity` takes; the
