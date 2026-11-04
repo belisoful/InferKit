@@ -925,3 +925,19 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   - **Probing it from Python.** `mx.array` of a float64 NumPy array rounds to float32 unless `dtype=mx.float64`
     is passed, and an operation without `stream=` (a slice, `mx.ones`) runs on the default GPU. Either makes a
     CPU probe read wrong.
+- **A custom function with a gradient crosses streams on every call (2026-11-04, mlx-swift's mlx 0.32).**
+  mlx-swift runs every operation on GPU and CPU streams it takes from its own pool, never on the C++ core's
+  per-thread default stream. MLX's `custom_function` places the `stop_gradient` of each output and the
+  `CustomTransforms` node that carries the gradient on that C++ default stream.
+  - **The cost.** Each call of a `CustomFunction` with a `VJP` waits on a fence into the C++ stream and another
+    back: about 0.5 ms of wall time on an M1 Max, whatever the input's size. A chain of 64 `torchSiLU` calls
+    over 17,408 values took 34 ms against 3.6 ms for MLX's `silu`. A function with no `VJP` builds no node and
+    costs nothing extra. Through the Qwen3.8 27B decode step's 112 SiLU calls this was over half of each token.
+  - **The fix.** `NFKMLXCustomFunction.make` sets the C++ default stream to the caller's stream
+    (`StreamOrDevice.default`) for the call and restores the previous one after it. The same chain then takes
+    5.4 ms. Every custom function in the package is made through it; a new one is too.
+- **A debug build's encoding cost is not a release build's (2026-11-04).** `swift test` builds mlx's C++ core
+  at `-O0` with libc++'s hardening checks, which verify the whole red-black tree of MLX's buffer cache on each
+  insert and erase (`std::__tree_sub_invariant`). A token-by-token decoder, which encodes thousands of small
+  kernels a token, measures CPU-bound there. A speed figure for a consumer comes from
+  `swift build -c release --build-tests -Xswiftc -enable-testing`, then `swift test -c release --skip-build`.

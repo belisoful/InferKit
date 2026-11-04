@@ -294,7 +294,7 @@ extension NFKReferenceRounding {
         return [(normalized * inputs[1].asType(.float32) + inputs[2].asType(.float32)).asType(inputs[0].dtype)]
     }
 
-    private static let torchExpFunction = CustomFunction {
+    private static let torchExpFunction = NFKMLXCustomFunction.make {
         Forward { inputs in
             torchExpKernel([inputs[0]], grid: (inputs[0].size, 1, 1), threadGroup: (256, 1, 1),
                            outputShapes: [inputs[0].shape], outputDTypes: [.float32])
@@ -302,7 +302,7 @@ extension NFKReferenceRounding {
         VJP { primals, cotangents in [cotangents[0] * exp(primals[0])] }
     }
 
-    private static let torchGELUFunction = CustomFunction {
+    private static let torchGELUFunction = NFKMLXCustomFunction.make {
         Forward { inputs in
             torchGELUKernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
                             threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape], outputDTypes: [inputs[0].dtype])
@@ -314,7 +314,7 @@ extension NFKReferenceRounding {
         }
     }
 
-    private static let torchExpm1Function = CustomFunction {
+    private static let torchExpm1Function = NFKMLXCustomFunction.make {
         Forward { inputs in
             torchExpm1Kernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
                              threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape], outputDTypes: [inputs[0].dtype])
@@ -322,7 +322,7 @@ extension NFKReferenceRounding {
         VJP { primals, cotangents in [cotangents[0] * exp(primals[0])] }
     }
 
-    private static let torchSiLUFunction = CustomFunction {
+    private static let torchSiLUFunction = NFKMLXCustomFunction.make {
         Forward { inputs in
             torchSiLUKernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
                             threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape], outputDTypes: [inputs[0].dtype])
@@ -330,7 +330,7 @@ extension NFKReferenceRounding {
         VJP { primals, cotangents in vjp(siluOperations, primals: primals, cotangents: cotangents).1 }
     }
 
-    private static let torchSoftmaxFunction = CustomFunction {
+    private static let torchSoftmaxFunction = NFKMLXCustomFunction.make {
         Forward { inputs in
             let x = inputs[0]
             let size = x.dim(-1), rows = x.size / size
@@ -345,7 +345,7 @@ extension NFKReferenceRounding {
         }
     }
 
-    private static let torchHalfSoftmaxFunction = CustomFunction {
+    private static let torchHalfSoftmaxFunction = NFKMLXCustomFunction.make {
         Forward { inputs in
             let x = inputs[0]
             let size = x.dim(-1), rows = x.size / size
@@ -361,7 +361,7 @@ extension NFKReferenceRounding {
         }
     }
 
-    private static let torchSoftplusFunction = CustomFunction {
+    private static let torchSoftplusFunction = NFKMLXCustomFunction.make {
         Forward { inputs in
             torchSoftplusKernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
                                 threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape],
@@ -370,7 +370,7 @@ extension NFKReferenceRounding {
         VJP { primals, cotangents in vjp(softplusOperations, primals: primals, cotangents: cotangents).1 }
     }
 
-    private static let torchWindowPoolFunction = CustomFunction {
+    private static let torchWindowPoolFunction = NFKMLXCustomFunction.make {
         Forward { inputs in
             let shape = inputs[0].shape
             let window = shape[shape.count - 2], width = shape[shape.count - 1]
@@ -385,7 +385,7 @@ extension NFKReferenceRounding {
         VJP { primals, cotangents in vjp(windowPoolOperations, primals: primals, cotangents: cotangents).1 }
     }
 
-    private static let torchLayerNormFunction = CustomFunction {
+    private static let torchLayerNormFunction = NFKMLXCustomFunction.make {
         Forward { inputs in
             let x = inputs[0]
             let width = x.dim(-1), rows = x.size / width

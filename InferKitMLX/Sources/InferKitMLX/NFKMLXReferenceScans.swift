@@ -69,7 +69,7 @@ extension NFKReferenceRounding {
     /// order, which holds from 8 state values a head; torch sums a head width times head count under 16 another way.
     static func torchMamba2ChunkScan(x: MLXArray, dt: MLXArray, a: MLXArray, b: MLXArray, c: MLXArray, d: MLXArray,
                                      chunkSize: Int) -> MLXArray {
-        let function = CustomFunction {
+        let function = NFKMLXCustomFunction.make {
             Forward { inputs in
                 [mamba2ChunkScan(x: inputs[0], dt: inputs[1], a: inputs[2], b: inputs[3], c: inputs[4], d: inputs[5],
                                  chunkSize: chunkSize)]
@@ -142,7 +142,7 @@ extension NFKReferenceRounding {
     /// stream and the unit lower-triangular solves through `cblas_strsm`. Returns the float32 read `[B, L, H, V]`.
     static func torchChunkGatedDeltaRule(queries: MLXArray, keys: MLXArray, values: MLXArray, logDecay: MLXArray,
                                          beta: MLXArray, chunkSize: Int = 64) -> MLXArray {
-        let function = CustomFunction {
+        let function = NFKMLXCustomFunction.make {
             Forward { inputs in
                 [chunkGatedDeltaRule(queries: inputs[0], keys: inputs[1], values: inputs[2], logDecay: inputs[3],
                                      beta: inputs[4], chunkSize: chunkSize)]

@@ -1910,6 +1910,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKMLXLTX2DFRLayout`, `NFKMLXLTX2AncestralScheduler`, `NFKMLXLTX2ImageCondition`, and `NFKMLXLTX2LoRA`, which
   loads LTX-2 LoRAs in Lightricks' key format. The transformer takes explicit token coordinates
   (`videoCoordinates`), and a LoRA adapter takes a `strength`.
+
+#### Custom functions run on the caller's stream
+
+- Every custom function in InferKitMLX (the PyTorch-exact kernels, the reference scans, the staged batch norm)
+  is made through `NFKMLXCustomFunction.make`, which places the nodes carrying its gradient on the stream the
+  caller's operations run on. Before, each call waited on a fence into MLX's C++ default stream and another
+  back, about half a millisecond whatever the input's size. A chain of 64 PyTorch-exact SiLU calls over 17,408
+  values takes 5.4 ms where it took 34 ms.
+
 #### LaMa and SD inpainting download from the catalog
 
 - `lama-inpaint` downloads `big-lama/models/best.ckpt` from `camenduru/big-lama`, the checkpoint inside the

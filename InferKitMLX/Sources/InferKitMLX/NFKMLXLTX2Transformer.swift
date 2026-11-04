@@ -801,7 +801,7 @@ public final class NFKMLXLTX2TransformerNet: Module {
             block.update(parameters: held)
             return [output.video, output.audio]
         }
-        let checkpointed = CustomFunction {
+        let checkpointed = NFKMLXCustomFunction.make {
             Forward(forward)
             VJP { primals, cotangents in vjp(forward, primals: primals, cotangents: cotangents).1 }
         }

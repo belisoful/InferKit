@@ -59,7 +59,7 @@ enum NFKMLXStagedReduction {
         precondition(convolution.weight.dim(1) == 1 && convolution.weight.dim(2) == 1 && convolution.groups == 1
                      && convolution.stride == (1, 1) && convolution.padding == (0, 0),
                      "a pointwise convolution has a 1×1 kernel, unit stride, no padding, and one group")
-        let function = CustomFunction {
+        let function = NFKMLXCustomFunction.make {
             Forward { inputs in [conv2d(inputs[0], inputs[1])] }
             VJP { primals, cotangents in
                 let (x, weight, cotangent) = (primals[0], primals[1], cotangents[0])
