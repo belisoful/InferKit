@@ -442,6 +442,19 @@ public final class NFKMLXMamba2Net: Module {
     @ModuleInfo(key: "backbone") var backbone: NFKMLXMamba2Backbone
     @ModuleInfo(key: "lm_head") var lmHead: Linear?
 
+    /// The reader of the blocks a streamed load leaves in the release, read in their turn on every pass;
+    /// nil where every block is held. Introduced in InferKit 0.4.0.
+    public internal(set) var layerStream: NFKMLXLayerStream?
+
+    /// Throws the first failed read of a streamed block. Every pass after a failed read skips every
+    /// block, so a caller holding a streamed decoder checks after each pass. Nothing is thrown where
+    /// every block is held. Introduced in InferKit 0.4.0.
+    public func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            throw failure
+        }
+    }
+
     public init(_ config: NFKMLXMamba2Configuration) {
         self.config = config
         _backbone.wrappedValue = NFKMLXMamba2Backbone(config)
@@ -461,8 +474,12 @@ public final class NFKMLXMamba2Net: Module {
     public func blockStates(_ tokens: MLXArray) -> [MLXArray] {
         var hidden = backbone.embeddings(tokens)
         var states = [hidden]
-        for layer in backbone.layers {
-            hidden = layer(hidden)
+        for (index, layer) in backbone.layers.enumerated() {
+            guard let next = NFKMLXLayerStream.run(layerStream, layer: layer, index: index, { layer(hidden) },
+                                                   keeping: { [$0] }) else {
+                continue
+            }
+            hidden = next
             states.append(hidden)
         }
         return states
@@ -511,14 +528,63 @@ public final class NFKMLXMamba: NSObject {
     /// The squeeze is guarded on the released 3-D shape, so a fine-tuned 2-D save round-trips unchanged.
     public static func loadWeights(into net: NFKMLXMamba2Net, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
+        try loadWeights(into: net, fromDirectory: directory, precision: precision, keeping: { _ in true })
+    }
+
+    private static func loadWeights(into net: NFKMLXMamba2Net, fromDirectory directory: URL,
+                                    precision: NFKMLXWeightPrecision, keeping keep: (String) -> Bool,
+                                    adding placeholders: [(String, MLXArray)] = []) throws {
         let tied = net.lmHead == nil
         let read = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
-            tied && $0.hasPrefix("lm_head.") ? nil : $0
+            tied && $0.hasPrefix("lm_head.") || !keep($0) ? nil : $0
         })
         let merged = read.map { name, value in
             (name, name.hasSuffix("conv1d.weight") && value.ndim == 3
                  ? value.reshaped([value.dim(0), value.dim(2)]) : value)
         }
-        try NFKMLXWeights.apply(merged, to: net)
+        try NFKMLXWeights.apply(merged + placeholders, to: net, verifyShapes: !placeholders.isEmpty)
+    }
+
+    /// The block a release tensor belongs to and its name inside the block, or nil outside the blocks.
+    static func block(ofKey key: String) -> (layer: Int, name: String)? {
+        key.hasPrefix("backbone.") ? NFKMLXLayerStream.layer(ofDecoderName: String(key.dropFirst("backbone.".count))) : nil
+    }
+
+    /// The blocks a release's load leaves in the release under `residency`, as
+    /// ``NFKMLXLayerStream/plannedLayers(residency:budget:footprint:fitsWhole:)`` plans them; empty where it
+    /// holds them all.
+    static func streamedLayers(directory: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                               tied: Bool, budget: Int = NFKMLXResidencyBudget.current()) throws -> Set<Int> {
+        try NFKMLXLayerStream.plannedLayers(residency: residency, budget: budget, footprint: {
+            try NFKMLXLayerStream.footprint(directory: directory, precision: precision,
+                                            includes: { !(tied && $0.hasPrefix("lm_head.")) },
+                                            layerOf: { block(ofKey: $0)?.layer })
+        }, fitsWhole: {
+            try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision)
+        })
+    }
+
+    /// Loads a released decoder with the blocks `residency` plans to leave in the release read in their
+    /// turn on every pass (``NFKMLXMamba2Net/layerStream``), and every other tensor held. Under
+    /// ``NFKMLXResidency/automatic`` a release that fits loads whole, as
+    /// ``loadWeights(into:fromDirectory:precision:)`` loads it. Only a caller that checks
+    /// ``NFKMLXMamba2Net/verifyStream()`` after each pass loads a streamed decoder.
+    static func loadWeights(into net: NFKMLXMamba2Net, fromDirectory directory: URL, precision: NFKMLXWeightPrecision,
+                            residency: NFKMLXResidency, budget: Int = NFKMLXResidencyBudget.current()) throws {
+        let streamed = try streamedLayers(directory: directory, precision: precision, residency: residency,
+                                          tied: net.lmHead == nil, budget: budget)
+        guard let vacated = try NFKMLXLayerStream.vacating(
+            streamed, of: net.backbone.layers, prefix: "backbone.layers.", directory: directory, precision: precision,
+            layerOf: block(ofKey:), shaping: { name, shape in
+                name.hasSuffix("conv1d.weight") && shape.count == 3 ? [shape[0], shape[2]] : shape
+            }) else {
+            try loadWeights(into: net, fromDirectory: directory, precision: precision)
+            return
+        }
+        try loadWeights(into: net, fromDirectory: directory, precision: precision, keeping: { key in
+            block(ofKey: key).map { streamed.contains($0.layer) } != true
+        }, adding: vacated.placeholders)
+        net.layerStream = vacated.stream
+        vacated.stream.prime()
     }
 }

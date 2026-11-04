@@ -40,11 +40,21 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     /// The sampling the release's generation config sets: step 3 of ``NFKMLXGenerationOptions``' sampling order.
     private let releaseSampling: NFKMLXReleaseSampling?
     private let modelInfoCache = NFKMLXModelInfoCache()
+    private let layerStream: NFKMLXLayerStream?
+
+    /// How many decoder blocks the model leaves in the release, read in their turn on every pass; 0
+    /// where every block is held. Introduced in InferKit 0.4.0.
+    @objc public var streamedLayerCount: Int { layerStream?.layers.count ?? 0 }
+
+    /// The bytes each pass reads from the release for the streamed blocks; 0 where every block is held.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var streamedBytesPerPass: Int { layerStream?.bytesPerPass ?? 0 }
 
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXMistralTokenizer, identifier: String,
-         modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
+         modules: [Module] = [], releaseDirectoryURL: URL? = nil, layerStream: NFKMLXLayerStream? = nil) {
         self.holder = NFKMambaBackendHolder(logits: logits, tokenizer: tokenizer)
         self.identifier = identifier
+        self.layerStream = layerStream
         self.describedModules = modules
         self.releaseDirectoryURL = releaseDirectoryURL
         releaseSampling = NFKMLXReleaseSampling(directoryURL: releaseDirectoryURL)
@@ -56,15 +66,18 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     public var isReady: Bool { true }
     public var backendIdentifier: String { identifier }
 
-    /// The decoder's parameter count, weight bytes, precision, and quantization, with the bytes its
-    /// release directory occupies on disk and the `model_type` and `max_position_embeddings` its
-    /// `config.json` states (`NFKModelInfo*` keys). Introduced in InferKit 0.4.0.
     /// The positions the release's configuration states, which bound a prompt and its reply.
     private var contextLength: Int? { modelInfo[NFKModelInfoContextLength] as? Int }
 
+    /// The decoder's parameter count, weight bytes, precision, and quantization, with the bytes its
+    /// release directory occupies on disk, the `model_type` and `max_position_embeddings` its
+    /// `config.json` states, and the residency, `streamed` for a decoder that streams its blocks
+    /// (`NFKModelInfo*` keys). Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
-            NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+            var info = NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+            info[NFKModelInfoResidency] = layerStream != nil ? NFKModelResidencyStreamed : NFKModelResidencyResident
+            return info
         }
     }
 
@@ -139,11 +152,20 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
             let next = sampling.next(logits, seed: seed, step: step)
+            try verifyStream()
             if stopTokens.contains(next) { break }
             produced.append(next)
             tokens.append(next)
         }
         return (produced, limit)
+    }
+
+    /// Throws a streamed block's failed read and clears it, so the next request reads the release again.
+    private func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            layerStream?.clearFailure()
+            throw failure
+        }
     }
 }
 
@@ -154,19 +176,43 @@ public extension NFKMLXMamba {
     /// weights, and `tokenizer.json`. Run inference off the render thread; the decoder is prefill-only.
     static func backend(directoryURL: URL,
                         precision: NFKMLXWeightPrecision = .checkpoint) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: .automatic)
+    }
+
+    /// ``backend(directoryURL:precision:)`` holding the decoder as `residency` says. Under
+    /// ``NFKMLXResidency/automatic`` a release that fits the working set loads whole, and one that does
+    /// not, such as Codestral Mamba at float32 on a 32 GB machine, holds the first blocks that fit and reads
+    /// the others from the release on every pass (``NFKMLXMambaBackend/streamedLayerCount``);
+    /// ``NFKMLXResidency/streamed`` streams wherever the decoder does not fit whole. A failed read fails
+    /// the request, and the next request reads every block again. Introduced in InferKit 0.4.0.
+    static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                        residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: residency,
+                    budget: NFKMLXResidencyBudget.current())
+    }
+
+    internal static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                                 budget: Int) throws -> NFKMLXMambaBackend {
         guard let tokenizer = NFKMLXMistralTokenizer(directoryURL: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("the Mamba release has no readable tokenizer.json")
         }
         let net = makeNet(try configuration(fromDirectory: directoryURL))
-        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision)
+        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency, budget: budget)
         return NFKMLXMambaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
-                                  modules: [net], releaseDirectoryURL: directoryURL)
+                                  modules: [net], releaseDirectoryURL: directoryURL, layerStream: net.layerStream)
     }
 
     /// The Objective-C entry: builds a Mamba text-generation backend from a release directory.
     @objc(mambaBackendWithDirectoryURL:error:)
     static func mambaBackend(directoryURL: URL) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL)
+    }
+
+    /// The Objective-C entry for ``backend(directoryURL:precision:residency:)``. Introduced in InferKit 0.4.0.
+    @objc(mambaBackendWithDirectoryURL:precision:residency:error:)
+    static func mambaBackend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                             residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: residency)
     }
 
     internal static let requiredFiles = ["config.json", "tokenizer.json"]

@@ -2710,6 +2710,10 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "memoryModel" : {
+        "precision" : "precision",
+        "residency" : "residency"
+      },
       "options" : [
         {
           "default" : 0,
@@ -2756,6 +2760,64 @@
           "kind" : "integer",
           "stage" : "request",
           "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14570807296,
+                "residentBytes" : 14570807296
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 975439360,
+                "residentBytes" : 975439360
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 14570807296,
+                "residentBytes" : 14570807296
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 29141614592,
+                "residentBytes" : 29141614592
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -2785,6 +2847,17 @@
           "valueType" : "text"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "codestral-mamba",
       "requirements" : {
         "minimumMemoryBytes" : 22195028932,
@@ -2795,7 +2868,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Mistral's Codestral Mamba 7B, a Mamba-2 state-space decoder that writes code and text.",
@@ -2818,8 +2892,19 @@
                   "checkpoint" : 14570807296,
                   "float32" : 29141614592
                 },
-                "id" : "model",
-                "title" : "model"
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 219280128,
+                  "checkpoint" : 219280128,
+                  "float32" : 438560256
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 14033928192,
+                  "checkpoint" : 14033928192,
+                  "float32" : 28067856384
+                },
+                "layerCount" : 64,
+                "title" : "decoder"
               }
             ],
             "vocabularySize" : 32768

@@ -5911,6 +5911,54 @@ def run_mamba2_real(image, checkpoint):
     return logits.contiguous()
 
 
+def run_mamba2_layerwise(image, checkpoint):
+    """Codestral Mamba (`Mamba2ForCausalLM`) for a release too large to hold whole at float32 (the 7B: 29 GB),
+    from transformers' own class built on the meta device, every tensor outside the blocks read once and
+    each block read as the forward reaches it (`_read_layers_in_turn`). Precision from MAMBA_DTYPE (default
+    float32).
+
+    The record is `run_mamba2_real`'s, on its ids: every hidden state, the prefill logits, and the 12-token
+    greedy continuation, decoded by one uncached pass per token (`_nemotron_h_record`), since a cache over meta
+    modules cannot be built. `MAMBA_CHECK=1` also loads a release small enough to hold whole through
+    `from_pretrained` and requires the two records to agree bit for bit. Runs under the llm env.
+    """
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    dtype = getattr(torch, os.environ.get("MAMBA_DTYPE", "float32"))
+    config = AutoConfig.from_pretrained(checkpoint)
+    with torch.device("meta"):
+        model = AutoModelForCausalLM.from_config(config).eval()
+    entries, read, close = _layerwise_release(checkpoint, dtype)
+    try:
+        outside = {k: read(k) for k in entries if not k.startswith("backbone.layers.")}
+        missing, unexpected = model.load_state_dict(outside, strict=False, assign=True)
+        missing = [k for k in missing if not k.startswith("backbone.layers.")]
+        if missing or unexpected:
+            raise ValueError(f"outside the blocks: missing {missing}, unexpected {unexpected}")
+        _read_layers_in_turn(model.backbone.layers, "backbone.", entries, read)
+        ids = torch.tensor([[1, 1602, 4934, 322, 1148, 42, 7]], dtype=torch.long)
+        logits, extra = _nemotron_h_record(model, ids)
+    finally:
+        close()
+    del model
+
+    if os.environ.get("MAMBA_CHECK") == "1":
+        whole = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=dtype).eval()
+        whole_logits, whole_extra = _nemotron_h_record(whole, ids)
+        del whole
+        if set(whole_extra) != set(extra):
+            raise ValueError(f"the records differ in keys: {sorted(set(whole_extra) ^ set(extra))}")
+        for name in sorted(extra):
+            if not torch.equal(extra[name], whole_extra[name]):
+                raise ValueError(f"{name} differs from the whole load")
+        if not torch.equal(logits, whole_logits):
+            raise ValueError(f"the logits differ from the whole load by {(logits - whole_logits).abs().max()}")
+        print("MAMBA_CHECK: every state, the logits and the continuation equal the whole load bit for bit")
+
+    print("states", len([k for k in extra if k.startswith("hidden.")]), "continuation", extra["continuation"].tolist())
+    globals()["_extra"] = extra
+    return logits
+
 def run_granite_hybrid(image, checkpoint):
     """Granite 4.0-H (`GraniteMoeHybridForCausalLM`, IBM) at a tiny random configuration: a hybrid of
     Mamba-2 selective-scan layers and NoPE grouped-query attention layers, a gated-linear shared MLP,
@@ -26783,6 +26831,7 @@ def run_sd35_layerwise(image, checkpoint):
 
 CHECKPOINT_MODELS["sd35_layerwise"] = run_sd35_layerwise
 CHECKPOINT_MODELS["nemotron_h_layerwise"] = run_nemotron_h_layerwise
+CHECKPOINT_MODELS["mamba2_layerwise"] = run_mamba2_layerwise
 
 
 

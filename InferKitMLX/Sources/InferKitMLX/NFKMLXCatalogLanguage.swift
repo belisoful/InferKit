@@ -889,7 +889,7 @@ extension NFKMLXCatalogLanguage {
                                      files: releaseFiles(required: NFKMLXMamba.requiredFiles, optional: NFKMLXMamba.optionalFiles,
                                                          weights: NFKMLXMamba.weightFiles))],
             license: .apache2(), readsReasoning: false, outputs: [textOutput, usageOutput, finishReasonOutput],
-            parameters: samplingOptions(nil) + [maxTokensOption(), seedOption()])
+            parameters: samplingOptions(nil) + [maxTokensOption(), seedOption()], residencies: streamedResidencies)
         // A state-space decoder has no position table; Mistral states retrieval tested to 256k tokens.
         entry.outputTokenLimit = 262_144
         return entry
