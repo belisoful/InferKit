@@ -6026,7 +6026,8 @@ def run_mamba2_layerwise(image, checkpoint):
 
     The record is `run_mamba2_real`'s, on its ids: every hidden state, the prefill logits, and the 12-token
     greedy continuation, decoded by one uncached pass per token (`_nemotron_h_record`), since a cache over meta
-    modules cannot be built. `MAMBA_CHECK=1` also loads a release small enough to hold whole through
+    modules cannot be built. transformers 4.57's `Mamba2Model` records each state after its block, so `hidden.i`
+    is block i's output and `hidden.N` follows `norm_f`. `MAMBA_CHECK=1` also loads a release small enough to hold whole through
     `from_pretrained` and requires the two records to agree bit for bit. Runs under the llm env.
     """
     from transformers import AutoConfig, AutoModelForCausalLM

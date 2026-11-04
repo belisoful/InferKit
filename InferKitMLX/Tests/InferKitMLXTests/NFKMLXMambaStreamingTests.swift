@@ -197,8 +197,10 @@ final class NFKMLXMambaStreamingTests: XCTestCase {
         try net.verifyStream()
         let seconds = Date().timeIntervalSince(started)
         var worst = (index: -1, similarity: 1.0)
+        // transformers 4.57's Mamba2Model records each state after its block: `hidden.i` is block i's
+        // output, which `blockStates` holds at i + 1 behind the embedding, and `hidden.N` follows norm_f.
         for index in 0 ..< configuration.layerCount {
-            let similarity = NFKMLXWav2Vec2Tests.cosine(states[index][0], try XCTUnwrap(record["hidden.\(index)"]))
+            let similarity = NFKMLXWav2Vec2Tests.cosine(states[index + 1][0], try XCTUnwrap(record["hidden.\(index)"]))
             if similarity < worst.similarity { worst = (index, similarity) }
         }
         let logits = NFKMLXWav2Vec2Tests.cosine(net(tokens)[0], try XCTUnwrap(record["output"]))
@@ -217,7 +219,7 @@ final class NFKMLXMambaStreamingTests: XCTestCase {
         let (bytes, readSeconds) = stream.readStatistics
         print("VALIDATION PARITY codestral-mamba float32: \(stream.layers.count) of \(configuration.layerCount) blocks "
               + "streamed, \(stream.bytesPerPass) bytes per pass, first pass \(Int(seconds)) s, read \(bytes) bytes in "
-              + "\(readSeconds) s; worst block state \(worst.similarity) (state \(worst.index)), logits \(logits), "
+              + "\(readSeconds) s; worst block state \(worst.similarity) (after block \(worst.index)), logits \(logits), "
               + "greedy \(zip(produced, reference).filter { $0 == $1 }.count)/\(reference.count)")
         XCTAssertGreaterThan(worst.similarity, 0.99999, "block state \(worst.index) diverges")
         XCTAssertGreaterThan(logits, 0.99999, "the logits diverge")
