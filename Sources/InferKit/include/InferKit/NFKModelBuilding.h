@@ -26,7 +26,8 @@ NS_ASSUME_NONNULL_BEGIN
 				   default (NFKModelCatalogErrorDoesNotFit), unless NFKModelLoadOptionIgnoreMemoryBudget
 				   is YES.
 				   The error carries the estimate under NFKModelMemoryEstimateKey. Where another
-				   combination fits, the one nearest the requested options is under
+				   combination fits, the one NFKModelMemoryConstraints.fittingOptions chooses with the
+				   requested options in place of the defaults is under
 				   NFKModelMemoryFittingOptionsKey with its estimate under NFKModelMemoryFittingEstimateKey,
 				   and the description names it: "… Choosing residency paged fits: it holds 9.0 GiB."
 				   Where nothing fits, the description adds the smallest combination's need.

@@ -142,8 +142,8 @@ typedef id _Nullable (^NFKModelElementReader)(id element, NSString *path, NSErro
 
 @interface NFKModelDescriptor (NFKModelMemoryConstraintsInternal)
 
-/*! The constraints with options fixed, against a catalog and a machine. fittingOptions is the fitting
-	combination nearest preferred (over the defaults) rather than nearest the defaults. */
+/*! The constraints with options fixed, against a catalog and a machine. fittingOptions counts its changed
+	choices from preferred, overlaid on the defaults. */
 - (NFKModelMemoryConstraints *)constraintsForOptions:(nullable NSDictionary<NSString *, id> *)options
 										memoryBudget:(NFKModelMemoryBudget *)budget
 											 profile:(nullable NFKHardwareProfile *)profile

@@ -554,8 +554,21 @@ maximum. Each reason is a sentence from a fixed template, and its numbers ride b
 | A maximum | `Context length fits up to 16384 against a 6.8 GiB budget.` |
 | No combination | `No combination of options fits: the smallest needs 9.0 GiB plus a 1.7 GiB reserve, against a 3.4 GiB budget.` |
 
-`fittingOptions` is the fitting combination that changes the fewest options from their defaults, with
-each linear option at its default or the largest value that fits, and `fittingEstimate` its estimate.
+`fittingOptions` is the first fitting combination in this order, each key deciding where the keys
+before it tie, and the enumeration order deciding the rest:
+
+1. A model whose primary task decodes token by token (`text-generation`, `visual-question-answering`,
+   `transcription`, `translation`, `text-recognition`) → a combination its residency resolves to hold
+   in memory (`resident`, `staged`) before one it resolves to `streamed` or `paged`, which read weights
+   again for every token. The key applies to those models only.
+2. The weights' packing → the requested `quantizationBits` (the default, 0, where none is requested),
+   then unquantized, then the most bits. A memory model without a quantization option ties here.
+3. The key-value cache's packing → the requested `cacheBits`, then unquantized, then the most bits, so
+   the cache narrows only as far as the fit needs, and before the weights.
+4. Fewer choice options changed from their defaults.
+
+Each linear option is at its default or the largest
+value that fits, and `fittingEstimate` is the estimate.
 Every constraint type reads and writes its dictionary; the constraints' dictionary carries `exhaustive`,
 which reads as true when absent.
 
@@ -665,7 +678,8 @@ model's identifier, or `model@preset`, and the option values an app collected:
    estimate under `NFKModelMemoryEstimateKey`). The budget is `+[NFKModelMemoryBudget currentBudget]`
    until an app sets one, such as a known host's, and setting nil restores it. `ignoreMemoryBudget` YES
    skips the refusal; an app sets it only when its user asks. The refusal carries the way out:
-   - another combination fits → the one nearest the requested options is under
+   - another combination fits → the first in the [constraints](#constraints) order, over the requested
+     options, is under
      `NFKModelMemoryFittingOptionsKey`, its estimate under `NFKModelMemoryFittingEstimateKey`, and the
      description names the options it changes and its peak:
      `The model needs 41.0 GiB plus a 4.0 GiB reserve, against a 27.2 GiB budget. Choosing residency paged fits: it holds 16.1 GiB.`

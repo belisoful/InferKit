@@ -556,8 +556,8 @@ static NSURL * _Nullable NFKModelLocationThroughHub(NFKHFHub *hub, NFKModelSourc
 													catalog:self];
 }
 
-// The refusal of a combination that does not fit, with the fitting combination nearest the requested one
-// as the way out, or the smallest combination's need when nothing fits.
+// The refusal of a combination that does not fit, with the fitting combination chosen against the requested
+// options as the way out, or the smallest combination's need when nothing fits.
 - (NSError *)doesNotFitErrorFor:(NFKModelDescriptor *)descriptor
 					   estimate:(NFKModelMemoryEstimate *)estimate
 					loadOptions:(NSDictionary<NSString *, id> *)loadOptions

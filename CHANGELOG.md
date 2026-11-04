@@ -108,6 +108,24 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### The fitting options keep the widest weights, and a token-by-token decoder stays in memory
+
+- `NFKModelMemoryConstraints.fittingOptions`, and the `NFKModelMemoryFittingOptionsKey` of a build's
+  refusal, rank the fitting combinations by four keys, each deciding where the keys before it tie:
+  - A model whose primary task decodes token by token (text generation, visual question answering,
+    transcription, translation, text recognition) → a combination held in memory before one that
+    streams its layers or pages its experts, which read weights again for every token. A model with
+    another primary task, such as a diffusion model, still streams or pages to fit.
+  - The weights' packing → the requested quantization bits, then unquantized, then the most bits. A
+    memory model without a quantization option ties here.
+  - The key-value cache's packing → the requested cache bits, then unquantized, then the most bits, so
+    the cache narrows only as far as the fit needs, and before the weights.
+  - Fewer choice options changed from their defaults, the earlier combination winning a tie.
+- Before, the fewest changed options alone decided:
+  a large language model whose automatic residency streamed was answered unquantized and streamed, and
+  with its residency pinned resident it was answered with 2-bit weights beside an unquantized cache,
+  one change away, over 3-bit weights beside an 8-bit cache, two changes away.
+
 #### A release kept in a folder outside the cache is found without a download
 
 - `NFKHFHub.modelFolderURLs` names roots whose direct subfolders each hold one Hugging Face release, or

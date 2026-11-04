@@ -92,8 +92,8 @@ the variant's files, and asks a builder for the backend: the descriptor's provid
 ``NFKModelBackendBuilding`` registered for its engine. Request options become defaults an
 ``NFKDefaultedBackend`` fills into each request. A combination that does not fit is refused with
 `NFKModelCatalogErrorDoesNotFit` unless the options set `NFKModelLoadOptionIgnoreMemoryBudget`, which an
-app sets only when its user asks. The refusal names the nearest combination that fits, under
-`NFKModelMemoryFittingOptionsKey`. A model with ``NFKModelPreset`` entries is also reached as
+app sets only when its user asks. The refusal names the combination that fits, chosen as
+``NFKModelMemoryConstraints/fittingOptions`` is, under `NFKModelMemoryFittingOptionsKey`. A model with ``NFKModelPreset`` entries is also reached as
 `model@preset`.
 
 ### Serving catalog models

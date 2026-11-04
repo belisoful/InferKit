@@ -152,6 +152,12 @@ static NSInteger NFKModelIntegerValue(id _Nullable value)
 	return 0;
 }
 
+// YES for a residency that reads layers or experts from storage while it runs: streamed or paged.
+static BOOL NFKModelResidencyReadsWeightsWhileRunning(NSString * _Nullable residency)
+{
+	return [residency isEqualToString:NFKModelResidencyStreamed] || [residency isEqualToString:NFKModelResidencyPaged];
+}
+
 // YES for a number that is a whole number from minimum to maximum. NaN and infinities are not.
 static BOOL NFKModelIsWholeNumberInRange(NSNumber *number, NSInteger minimum, NSInteger maximum)
 {
@@ -1506,6 +1512,8 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 @property (nonatomic, copy) NSDictionary<NSString *, id> *options;
 @property (nonatomic) NSInteger peak;
 @property (nonatomic) BOOL fits;
+// The residency the planner resolved: resident, staged, paged, or streamed.
+@property (nonatomic, copy) NSString *residency;
 // option key -> the largest value of a linear option that fits, -1 where none does.
 @property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *linearMaximums;
 // The option a one-at-a-time combination varies; nil in an exhaustive enumeration.
@@ -2043,6 +2051,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	combination.options = resolved;
 	combination.peak = estimate.peakByteCount;
 	combination.fits = estimate.fits;
+	combination.residency = estimate.residency;
 	NSMutableDictionary<NSString *, NSNumber *> *maximums = [NSMutableDictionary dictionary];
 	for (NFKModelOption *option in linearOptions) {
 		maximums[option.key] = @([self largestFittingValueOfOption:option options:resolved budget:budget catalog:catalog]);
@@ -2331,6 +2340,78 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	}
 }
 
+// YES where the primary task decodes token by token, so weights read from storage are read again for every
+// token.
+- (BOOL)generatesTokenByToken
+{
+	// The tasks whose models decode token by token.
+	NSArray<NSString *> *tasks = @[ NFKModelTaskTextGeneration, NFKModelTaskVisionQuestionAnswering,
+									NFKModelTaskTranscription, NFKModelTaskTranslation, NFKModelTaskTextRecognition ];
+	NSString *primary = self.tasks.firstObject;
+	return primary != nil && [tasks containsObject:primary];
+}
+
+// The rank of a combination's packing under the bits option key, larger first: the preferred bits, then
+// unpacked, then more bits. A memory model without the option ranks every combination the same.
+- (NSInteger)packingRankOfCombination:(NFKModelMemoryCombination *)combination
+								  key:(nullable NSString *)key
+							preferred:(NSDictionary<NSString *, id> *)preferred
+{
+	if (key == nil) {
+		return NSIntegerMax;
+	}
+	NSInteger bits = NFKModelIntegerValue(combination.options[key]);
+	if (preferred[key] != nil && bits == NFKModelIntegerValue(preferred[key])) {
+		return NSIntegerMax;
+	}
+	return bits > 0 ? bits : NSIntegerMax - 1;
+}
+
+// The choice options whose value in the combination differs from preferred.
+- (NSUInteger)changesOfCombination:(NFKModelMemoryCombination *)combination
+					 choiceOptions:(NSArray<NFKModelOption *> *)choiceOptions
+						 preferred:(NSDictionary<NSString *, id> *)preferred
+{
+	NSUInteger changes = 0;
+	for (NFKModelOption *option in choiceOptions) {
+		id value = combination.choices[option.key];
+		id defaultValue = preferred[option.key] ?: @"";
+		changes += [[value description] isEqualToString:[defaultValue description]] ? 0 : 1;
+	}
+	return changes;
+}
+
+// YES where candidate ranks before incumbent as the fitting combination. Each key decides where the ones
+// before it tie:
+// 1. a decoder that generates token by token → held in memory before streamed or paged.
+// 2. the weights' packing: the preferred bits, then wider weights.
+// 3. the key-value cache's packing, by the same rule, so the cache narrows only as far as the fit needs.
+// 4. fewer choices changed from preferred.
+// A tie on all four keeps the incumbent, the earlier in the enumeration.
+- (BOOL)combination:(NFKModelMemoryCombination *)candidate
+		ranksBefore:(NFKModelMemoryCombination *)incumbent
+	  choiceOptions:(NSArray<NFKModelOption *> *)choiceOptions
+		  preferred:(NSDictionary<NSString *, id> *)preferred
+{
+	if ([self generatesTokenByToken]) {
+		BOOL candidateHeld = !NFKModelResidencyReadsWeightsWhileRunning(candidate.residency);
+		BOOL incumbentHeld = !NFKModelResidencyReadsWeightsWhileRunning(incumbent.residency);
+		if (candidateHeld != incumbentHeld) {
+			return candidateHeld;
+		}
+	}
+	for (NSString *key in @[ self.memoryModel.quantizationBitsOptionKey ?: @"", self.memoryModel.cacheBitsOptionKey ?: @"" ]) {
+		NSString *packed = key.length > 0 ? key : nil;
+		NSInteger candidateRank = [self packingRankOfCombination:candidate key:packed preferred:preferred];
+		NSInteger incumbentRank = [self packingRankOfCombination:incumbent key:packed preferred:preferred];
+		if (candidateRank != incumbentRank) {
+			return candidateRank > incumbentRank;
+		}
+	}
+	return [self changesOfCombination:candidate choiceOptions:choiceOptions preferred:preferred]
+		< [self changesOfCombination:incumbent choiceOptions:choiceOptions preferred:preferred];
+}
+
 - (NFKModelMemoryConstraints *)constraintsWithMatching:(NSArray<NFKModelMemoryCombination *> *)matching
 									 optionConstraints:(NSDictionary<NSString *, NFKModelOptionConstraint *> *)constraints
 										 choiceOptions:(NSArray<NFKModelOption *> *)choiceOptions
@@ -2342,20 +2423,13 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 											exhaustive:(BOOL)exhaustive
 {
 	NFKModelMemoryCombination *nearest = nil;
-	NSUInteger nearestChanges = NSUIntegerMax;
 	for (NFKModelMemoryCombination *combination in matching) {
 		if (!combination.fits) {
 			continue;
 		}
-		NSUInteger changes = 0;
-		for (NFKModelOption *option in choiceOptions) {
-			id value = combination.choices[option.key];
-			id defaultValue = preferred[option.key] ?: @"";
-			changes += [[value description] isEqualToString:[defaultValue description]] ? 0 : 1;
-		}
-		if (changes < nearestChanges) {
+		if (nearest == nil || [self combination:combination ranksBefore:nearest choiceOptions:choiceOptions
+									  preferred:preferred]) {
 			nearest = combination;
-			nearestChanges = changes;
 		}
 	}
 	if (nearest == nil) {

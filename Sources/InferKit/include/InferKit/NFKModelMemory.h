@@ -60,7 +60,8 @@ extern NSString * const NFKModelMemoryComponentLoadOverhead;
 	not fit. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelMemoryEstimateKey;
 /*! The userInfo key of an NFKModelCatalogErrorDoesNotFit error from a build: the load options that fit,
-	nearest the requested ones (NFKModelMemoryConstraints.fittingOptions). Absent when nothing fits.
+	chosen as NFKModelMemoryConstraints.fittingOptions is, with the requested options in place of the
+	defaults. Absent when nothing fits.
 	Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelMemoryFittingOptionsKey;
 /*! The userInfo key of an NFKModelCatalogErrorDoesNotFit error from a build: the NFKModelMemoryEstimate of
@@ -670,9 +671,19 @@ typedef NS_ENUM(NSInteger, NFKModelChoiceStatus) {
 	@class      NFKModelMemoryConstraints
 	@abstract   What a budget leaves of every option of a descriptor.
 	@discussion anyCombinationFits is NO when no combination of the options fits; reason then states the
-				smallest combination's need. fittingOptions is the combination that fits and changes the
-				fewest options from their defaults, with each linear integer option at its default or the
-				largest value that fits. fittingEstimate is its estimate.
+				smallest combination's need. fittingOptions is the first fitting combination in this
+				order, each key deciding where the keys before it tie:
+				1. A model whose primary task decodes token by token (text generation, visual question
+				   answering, transcription, translation, text recognition) → a combination held in
+				   memory before one that streams its layers or pages its experts, which read their
+				   weights again for every token. The key applies to those models only.
+				2. The weights' packing → the requested quantization bits, then unquantized, then the most
+				   bits.
+				3. The key-value cache's packing → the requested cache bits, then unquantized, then the
+				   most bits, so the cache narrows only as far as the fit needs and before the weights.
+				4. Fewer choice options changed from their defaults.
+				Each linear integer
+				option is at its default or the largest value that fits. fittingEstimate is its estimate.
 
 				The memory-affecting choices are enumerated in full up to 4096 combinations, and
 				exhaustive is YES. Past that, each option's choices are evaluated one at a time with every

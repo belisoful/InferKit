@@ -8,6 +8,15 @@
 
 static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 
+// The constraints a build's refusal asks for, which rank against the requested options.
+@interface NFKModelDescriptor (NFKModelMemoryTestsPreferred)
+- (NFKModelMemoryConstraints *)constraintsForOptions:(nullable NSDictionary<NSString *, id> *)options
+										memoryBudget:(NFKModelMemoryBudget *)budget
+											 profile:(nullable NFKHardwareProfile *)profile
+											 catalog:(NFKModelCatalog *)catalog
+										   preferred:(nullable NSDictionary<NSString *, id> *)preferred;
+@end
+
 @interface NFKModelMemoryTests : XCTestCase
 @end
 
@@ -585,6 +594,174 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertFalse(constraints.anyCombinationFits);
 	XCTAssertNil(constraints.fittingOptions);
 	XCTAssertTrue([constraints.reason hasPrefix:@"No combination of options fits: the smallest needs "]);
+}
+
+// One stage of forty layers stored at bfloat16 with a residency that streams, a cache of 1,000,000 bytes per
+// position at 16 bits with 0/8/4-bit choices, and a context-length option. With quantization the stage
+// stores 8e10 bytes, all of them 4e10 quantizable elements, with 0/8/6/5/4/3/2-bit choices; without it the
+// stage stores 1.75e10 bytes and the memory model names no quantization option.
+- (NFKModelDescriptor *)fittingDecoderWithTask:(NSString *)task quantizes:(BOOL)quantizes
+{
+	return [self fittingDecoderWithTask:task quantizes:quantizes cacheChoices:@[ @0, @8, @4 ]];
+}
+
+// fittingDecoderWithTask:quantizes: with the cache-quantization choices listed in the given order.
+- (NFKModelDescriptor *)fittingDecoderWithTask:(NSString *)task quantizes:(BOOL)quantizes
+								  cacheChoices:(NSArray<NSNumber *> *)cacheChoiceValues
+{
+	NSInteger stored = quantizes ? 80000000000 : 17500000000;
+	NFKModelStageFacts *stage = [[NFKModelStageFacts alloc]
+			initWithIdentifier:@"decoder" title:nil
+		  byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @(stored) }
+	   quantizableElementCount:quantizes ? stored / 2 : 0 pageableByteCountByPrecision:nil layerCount:40
+	largestLayerByteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @(stored / 40) } layerByteCountByPrecision:nil
+			  widenedPrecision:nil extensions:nil];
+	NFKModelMemoryFacts *facts = [[NFKModelMemoryFacts alloc] initWithStages:@[ stage ] keyValueByteCountPerToken:@1000000
+													boundedKeyValueByteCount:nil maximumContextLength:@32768
+															  vocabularySize:nil loadOverheadByteCount:0 basis:nil
+																  extensions:nil];
+	NFKModelVariant *variant = [[NFKModelVariant alloc] initWithIdentifier:@"base" displayName:nil isDefault:YES
+															  registryName:nil source:nil downloadByteCount:nil
+														 residentByteCount:nil peakByteCount:nil parameterCount:nil
+																 precision:NFKModelPrecisionBFloat16 minimumMemoryByteCount:nil
+																   license:nil memoryFacts:facts extensions:nil];
+	NSMutableArray<NFKModelOption *> *options = [NSMutableArray array];
+	if (quantizes) {
+		NSArray<NFKModelOptionChoice *> *bits = @[ [self choice:@0 title:@"None"], [self choice:@8 title:@"8-bit"],
+												   [self choice:@6 title:@"6-bit"], [self choice:@5 title:@"5-bit"],
+												   [self choice:@4 title:@"4-bit"], [self choice:@3 title:@"3-bit"],
+												   [self choice:@2 title:@"2-bit"] ];
+		[options addObject:[self loadOptionWithKey:NFKModelLoadOptionQuantizationBits kind:NFKModelOptionKindChoice
+											 title:@"Quantization" defaultValue:@0 choices:bits minimum:nil maximum:nil
+											  step:nil]];
+	}
+	NSMutableArray<NFKModelOptionChoice *> *cacheBits = [NSMutableArray array];
+	for (NSNumber *bits in cacheChoiceValues) {
+		[cacheBits addObject:[self choice:bits title:bits.integerValue == 0 ? @"None" : [NSString stringWithFormat:@"%@-bit", bits]]];
+	}
+	[options addObjectsFromArray:@[
+		[self loadOptionWithKey:NFKModelLoadOptionContextLength kind:NFKModelOptionKindInteger title:@"Context length"
+				   defaultValue:@4096 choices:nil minimum:@512 maximum:@32768 step:@512],
+		[self loadOptionWithKey:NFKModelLoadOptionCacheBits kind:NFKModelOptionKindChoice title:@"Cache quantization"
+				   defaultValue:@0 choices:cacheBits minimum:nil maximum:nil step:nil],
+		[self loadOptionWithKey:NFKModelLoadOptionResidency kind:NFKModelOptionKindChoice title:@"Residency"
+				   defaultValue:NFKModelResidencyAutomatic
+						choices:@[ [self choice:NFKModelResidencyAutomatic title:@"Automatic"],
+								   [self choice:NFKModelResidencyResident title:@"Resident"],
+								   [self choice:NFKModelResidencyStreamed title:@"Streamed"] ]
+						minimum:nil maximum:nil step:nil],
+	]];
+	NFKModelMemoryModel *model = [[NFKModelMemoryModel alloc] initWithPrecisionOptionKey:nil
+															   quantizationBitsOptionKey:quantizes ? NFKModelLoadOptionQuantizationBits : nil
+														  quantizationGroupSizeOptionKey:nil
+																  contextLengthOptionKey:NFKModelLoadOptionContextLength
+																	  cacheBitsOptionKey:NFKModelLoadOptionCacheBits
+																 cacheGroupSizeOptionKey:nil draftOptionKey:nil
+																	  draftBitsOptionKey:nil
+																	  residencyOptionKey:NFKModelLoadOptionResidency
+																			  cacheStage:nil draftStage:nil
+																		 stagePrecisions:nil extensions:nil];
+	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.fitting" displayName:nil family:@"test" summary:nil
+												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
+													tasks:@[ task ] inputModalities:nil outputModalities:nil inputs:nil
+												  outputs:nil options:options variants:@[ variant ] license:nil
+											 requirements:nil residencies:nil memoryModel:model presets:nil standIn:NO
+										introducedVersion:nil extensions:nil];
+}
+
+- (void)testADecoderNarrowsItsCacheBeforeItsWeightsAndStaysResident
+{
+	// The 29,205,777,612-byte budget holds 24,910,810,316 bytes beside its reserve. At 10240 positions the
+	// cache is 10,240,000,000 bytes, 5,440,000,000 at 8 bits, and 2,880,000,000 at 4 bits. Streamed, the
+	// unquantized weights fit. Resident, 2-bit weights (12,500,000,000 bytes) fit beside the whole cache,
+	// 3-bit weights (17,500,000,000) beside an 8-bit cache, and 4-bit weights (22,500,000,000) beside none.
+	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:32 * NFKTestGiB];
+	NFKModelDescriptor *decoder = [self fittingDecoderWithTask:NFKModelTaskTextGeneration quantizes:YES];
+	NFKModelMemoryConstraints *constraints = [decoder constraintsForOptions:@{ NFKModelLoadOptionContextLength: @10240 }
+															   memoryBudget:budget];
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionQuantizationBits], @3);
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionCacheBits], @8);
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionContextLength], @10240);
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionResidency], NFKModelResidencyAutomatic);
+	XCTAssertEqualObjects(constraints.fittingEstimate.residency, NFKModelResidencyResident);
+	XCTAssertEqual(constraints.fittingEstimate.peakByteCount, 22940000000);
+
+	NFKModelMemoryConstraints *pinned = [decoder constraintsForOptions:@{ NFKModelLoadOptionContextLength: @10240,
+																		  NFKModelLoadOptionResidency: NFKModelResidencyResident }
+														  memoryBudget:budget];
+	XCTAssertEqualObjects(pinned.fittingOptions[NFKModelLoadOptionQuantizationBits], @3);
+	XCTAssertEqualObjects(pinned.fittingOptions[NFKModelLoadOptionCacheBits], @8);
+}
+
+// The cache narrows only as far as the fit needs whatever order its choices are listed in: 3-bit weights fit
+// beside an 8-bit or a 4-bit cache, and the wider wins.
+- (void)testTheCacheNarrowsOnlyAsFarAsTheFitNeeds
+{
+	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:32 * NFKTestGiB];
+	NFKModelDescriptor *decoder = [self fittingDecoderWithTask:NFKModelTaskTextGeneration quantizes:YES
+												  cacheChoices:@[ @0, @4, @8 ]];
+	NFKModelMemoryConstraints *constraints = [decoder constraintsForOptions:@{ NFKModelLoadOptionContextLength: @10240 }
+															   memoryBudget:budget];
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionQuantizationBits], @3);
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionCacheBits], @8);
+}
+
+// A refusal's way out keeps the requested weights where they fit: a once-per-request model asked for 4-bit
+// weights held resident at a window that does not hold beside them is answered with 4-bit weights streamed,
+// not the unquantized weights the widest-first key would otherwise reach.
+- (void)testTheRequestedQuantizationRanksFirstWhereItFits
+{
+	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:32 * NFKTestGiB];
+	NFKModelDescriptor *model = [self fittingDecoderWithTask:NFKModelTaskTextToImage quantizes:YES];
+	NSDictionary *requested = @{ NFKModelLoadOptionQuantizationBits: @4, NFKModelLoadOptionContextLength: @10240,
+								 NFKModelLoadOptionResidency: NFKModelResidencyResident };
+	NFKModelMemoryConstraints *constraints = [model constraintsForOptions:nil memoryBudget:budget profile:nil
+																   catalog:NFKModelCatalog.sharedCatalog
+																 preferred:requested];
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionQuantizationBits], @4);
+	XCTAssertTrue(constraints.fittingEstimate.fits);
+}
+
+- (void)testADecoderKeepsItsCacheWhereItsWeightsFitBesideIt
+{
+	// At 1024 positions the cache is 1,024,000,000 bytes, which 4-bit weights hold beside them unquantized.
+	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:32 * NFKTestGiB];
+	NFKModelDescriptor *decoder = [self fittingDecoderWithTask:NFKModelTaskTextGeneration quantizes:YES];
+	NFKModelMemoryConstraints *constraints = [decoder constraintsForOptions:@{ NFKModelLoadOptionContextLength: @1024 }
+															   memoryBudget:budget];
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionQuantizationBits], @4);
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionCacheBits], @0);
+	XCTAssertEqualObjects(constraints.fittingEstimate.residency, NFKModelResidencyResident);
+}
+
+- (void)testAModelThatRunsOncePerRequestStreamsToKeepItsWidestWeights
+{
+	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:32 * NFKTestGiB];
+	NFKModelDescriptor *diffusion = [self fittingDecoderWithTask:NFKModelTaskTextToImage quantizes:YES];
+	NFKModelMemoryConstraints *constraints = [diffusion constraintsForOptions:@{ NFKModelLoadOptionContextLength: @10240 }
+																 memoryBudget:budget];
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionQuantizationBits], @0);
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionCacheBits], @0);
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionResidency], NFKModelResidencyAutomatic);
+	XCTAssertEqualObjects(constraints.fittingEstimate.residency, NFKModelResidencyStreamed);
+}
+
+- (void)testWithoutAQuantizationOptionTheFewestChangesDecide
+{
+	// 1.75e10 bytes of weights hold an 8-bit cache of 10240 positions resident and stream beside the whole cache.
+	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:32 * NFKTestGiB];
+	NFKModelDescriptor *model = [self fittingDecoderWithTask:NFKModelTaskTextToImage quantizes:NO];
+	NFKModelMemoryConstraints *constraints = [model constraintsForOptions:@{ NFKModelLoadOptionContextLength: @10240 }
+															 memoryBudget:budget];
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionCacheBits], @0);
+	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionResidency], NFKModelResidencyAutomatic);
+	XCTAssertEqualObjects(constraints.fittingEstimate.residency, NFKModelResidencyStreamed);
+
+	NFKModelMemoryConstraints *resident = [model constraintsForOptions:@{ NFKModelLoadOptionContextLength: @10240,
+																		  NFKModelLoadOptionResidency: NFKModelResidencyResident }
+														  memoryBudget:budget];
+	XCTAssertEqualObjects(resident.fittingOptions[NFKModelLoadOptionCacheBits], @8);
+	XCTAssertEqualObjects(resident.fittingEstimate.residency, NFKModelResidencyResident);
 }
 
 - (void)testConstraintsRoundTripThroughTheirDictionary
