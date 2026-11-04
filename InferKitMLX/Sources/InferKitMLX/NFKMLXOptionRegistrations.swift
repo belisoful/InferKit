@@ -155,9 +155,10 @@ enum NFKMLXOptionRegistrations {
 
     /// Qwen3.5, Qwen4-Exp, Nemotron Nano 2, Granite 4.0-H, Qwen3-VL, pplx-decider, and Pixtral.
     private static func registerOtherDecoders() {
-        registerDirectoryModels(registryNames(families: ["qwen3.5"]), consumes: [NFKModelLoadOptionPrecision]) {
-            url, _, options in
-            try NFKMLXHybridLanguage.backend(directoryURL: url, precision: options.precision ?? .checkpoint)
+        registerDirectoryModels(registryNames(families: ["qwen3.5"]),
+                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in
+            try NFKMLXHybridLanguage.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
+                                             residency: options.residency)
         }
         registerDirectoryModels(registryNames(families: ["qwen4-exp"]),
                                 consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in

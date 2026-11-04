@@ -803,7 +803,8 @@ extension NFKMLXCatalogLanguage {
                               revision: NFKMLXOpenJevVariant.twentySevenB.baseRevision, files: files),
             ],
             license: .apache2(), readsReasoning: true,
-            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions())
+            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions(),
+            residencies: streamedResidencies)
     }
 
     fileprivate static var qwen4ExpEntry: NFKMLXCatalogEntry {

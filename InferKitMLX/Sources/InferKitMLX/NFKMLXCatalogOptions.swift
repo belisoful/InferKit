@@ -236,6 +236,9 @@ struct NFKMLXLoadProfile {
                                      defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
                                      tasks: [NFKModelTaskVisionQuestionAnswering])],
         "qwen4-exp": [.pagedMixture()],
+        "qwen3.5": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                     defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,
+                                     tasks: [NFKModelTaskTextGeneration])],
         // A decision checkpoint runs one pass and decodes nothing, so it declares no context or cache option.
         "pplx-decider": [.decoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                   defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true, contextLength: nil,

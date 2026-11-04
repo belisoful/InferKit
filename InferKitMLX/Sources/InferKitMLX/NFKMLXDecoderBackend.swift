@@ -49,11 +49,22 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// The sampling the release's generation config sets: step 3 of ``NFKMLXGenerationOptions``' sampling order.
     private let releaseSampling: NFKMLXReleaseSampling?
     private let modelInfoCache = NFKMLXModelInfoCache()
+    private let layerStream: NFKMLXLayerStream?
+
+    /// How many decoder layers the model leaves in the release, read in their turn on every pass; 0
+    /// where every layer is held. Introduced in InferKit 0.4.0.
+    @objc public var streamedLayerCount: Int { layerStream?.layers.count ?? 0 }
+
+    /// The bytes each pass reads from the release for the streamed layers; 0 where every layer is held.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var streamedBytesPerPass: Int { layerStream?.bytesPerPass ?? 0 }
 
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, identifier: String,
-         chatTemplate: String?, stopTokens: Set<Int>, modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
+         chatTemplate: String?, stopTokens: Set<Int>, modules: [Module] = [], releaseDirectoryURL: URL? = nil,
+         layerStream: NFKMLXLayerStream? = nil) {
         self.holder = NFKDecoderBackendHolder(logits: logits, tokenizer: tokenizer)
         self.identifier = identifier
+        self.layerStream = layerStream
         self.describedModules = modules
         self.releaseDirectoryURL = releaseDirectoryURL
         releaseSampling = NFKMLXReleaseSampling(directoryURL: releaseDirectoryURL)
@@ -66,6 +77,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// The decoder, tokenizer, chat template, and stop ids a release directory supplies; `modules`
     /// are the networks `logits` runs, which ``modelInfo`` describes.
     static func release(directoryURL: URL, identifier: String, modules: [Module] = [],
+                        layerStream: NFKMLXLayerStream? = nil,
                         logits: @escaping (MLXArray) -> MLXArray) throws -> NFKMLXDecoderBackend {
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("\(directoryURL.lastPathComponent) has no readable tokenizer")
@@ -73,7 +85,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         return NFKMLXDecoderBackend(logits: logits, tokenizer: tokenizer, identifier: identifier,
                                     chatTemplate: NFKMLXLanguage.chatTemplate(inDirectory: directoryURL),
                                     stopTokens: stopTokens(tokenizer: tokenizer, directoryURL: directoryURL),
-                                    modules: modules, releaseDirectoryURL: directoryURL)
+                                    modules: modules, releaseDirectoryURL: directoryURL, layerStream: layerStream)
     }
 
     /// The tokenizer's end-of-sequence id and every id `generation_config.json` names as one; an
@@ -91,15 +103,20 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// release directory occupies on disk and the `model_type` and `max_position_embeddings` its
     /// `config.json` states (`NFKModelInfo*` keys). A paged decoder's routed experts count toward its
     /// parameters; its weight bytes are what memory holds, which leaves out experts read from the
-    /// release. Introduced in InferKit 0.4.0.
-    /// The positions the release's configuration states, which bound a prompt and its reply.
-    private var contextLength: Int? { modelInfo[NFKModelInfoContextLength] as? Int }
-
+    /// release. A decoder that streams its layers reports the `streamed` residency. Introduced in
+    /// InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
-            NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+            var info = NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+            if layerStream != nil {
+                info[NFKModelInfoResidency] = NFKModelResidencyStreamed
+            }
+            return info
         }
     }
+
+    /// The positions the release's configuration states, which bound a prompt and its reply.
+    private var contextLength: Int? { modelInfo[NFKModelInfoContextLength] as? Int }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
@@ -238,11 +255,20 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
             let next = sampling.next(logits, seed: seed, step: step)
+            try verifyStream()
             if stopTokens.contains(next) { break }
             produced.append(next)
             tokens.append(next)
             if let onToken, !onToken(next) { break }
         }
         return (produced, limit)
+    }
+
+    /// Throws a streamed layer's failed read and clears it, so the next request reads the release again.
+    private func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            layerStream?.clearFailure()
+            throw failure
+        }
     }
 }

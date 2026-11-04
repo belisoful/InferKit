@@ -469,6 +469,19 @@ public final class NFKMLXHybridLanguageNet: Module {
     /// The geometry the decoder was built at. Introduced in InferKit 0.4.0.
     public let configuration: NFKMLXHybridConfiguration
 
+    /// The reader of the layers a streamed load leaves in the release, read in their turn on every pass;
+    /// nil where every layer is held. Introduced in InferKit 0.4.0.
+    public internal(set) var layerStream: NFKMLXLayerStream?
+
+    /// Throws the first failed read of a streamed layer. Every pass after a failed read skips every
+    /// layer, so a caller holding a streamed decoder checks after each pass. Nothing is thrown where
+    /// every layer is held. Introduced in InferKit 0.4.0.
+    public func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            throw failure
+        }
+    }
+
     init(_ c: NFKMLXHybridConfiguration) {
         configuration = c
         _model.wrappedValue = NFKHybridCore(c)
@@ -523,8 +536,12 @@ public final class NFKMLXHybridLanguageNet: Module {
         trace?.append(hidden)
         let length = tokens.shape[1]
         let mask: MLXArray? = attention == .causal && length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: 0) : nil
-        for layer in model.layers {
-            hidden = layer(hidden, mask: mask)
+        for (index, layer) in model.layers.enumerated() {
+            guard let next = NFKMLXLayerStream.run(layerStream, layer: layer, index: index, { layer(hidden, mask: mask) },
+                                                   keeping: { [$0] }) else {
+                continue
+            }
+            hidden = next
             trace?.append(hidden)
         }
         hidden = model.norm(hidden)
@@ -602,9 +619,82 @@ public final class NFKMLXHybridLanguage: NSObject {
     /// multi-token-prediction head; only the decoder's tensors are taken. Introduced in InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXHybridLanguageNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
+        try loadWeights(into: net, fromDirectory: directory, precision: precision, keeping: { _ in true })
+    }
+
+    /// The layers of a release's decoder `residency` leaves in the release, as
+    /// ``NFKMLXLayerStream/plannedLayers(residency:budget:footprint:fitsWhole:)`` plans them; empty where it
+    /// holds them all. `reserved` is what something held beside the decoder takes from the check a whole
+    /// load makes; `budget` already leaves it out.
+    static func streamedLayers(directory: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                               tied: Bool, budget: Int = NFKMLXResidencyBudget.current(),
+                               reserving reserved: Int = 0) throws -> Set<Int> {
+        try NFKMLXLayerStream.plannedLayers(residency: residency, budget: budget, footprint: {
+            try NFKMLXLayerStream.footprint(
+                directory: directory, precision: precision,
+                converting: precision == .checkpoint ? try releasedType(inDirectory: directory) : nil,
+                includes: { key in moduleKey(forReference: key).map { !(tied && $0.hasPrefix("lm_head.")) } ?? false },
+                layerOf: { layer(ofKey: $0)?.layer })
+        }, fitsWhole: {
+            try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision, reserve: reserved)
+        })
+    }
+
+    /// Loads a released decoder with the layers `residency` plans to leave in the release read in their
+    /// turn on every pass (``NFKMLXHybridLanguageNet/layerStream``), and every other tensor held. Under
+    /// ``NFKMLXResidency/automatic`` a release that fits loads whole, as
+    /// ``loadWeights(into:fromDirectory:precision:)`` loads it. A streamed layer takes the types a whole
+    /// load gives it: at `.checkpoint` every floating tensor takes the type most of the release carries.
+    /// Only a caller that checks ``NFKMLXHybridLanguageNet/verifyStream()`` after each pass loads a
+    /// streamed decoder. Introduced in InferKit 0.4.0.
+    static func loadWeights(into net: NFKMLXHybridLanguageNet, fromDirectory directory: URL,
+                            precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                            budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0) throws {
+        let streamed = try streamedLayers(directory: directory, precision: precision, residency: residency,
+                                          tied: net.lmHead == nil, budget: budget, reserving: reserved)
+        guard let vacated = try NFKMLXLayerStream.vacating(
+            streamed, of: net.model.layers, prefix: "model.layers.", directory: directory, precision: precision,
+            converting: precision == .checkpoint ? try releasedType(inDirectory: directory) : nil,
+            layerOf: layer(ofKey:), shaping: { name, shape in
+                name.hasSuffix("conv1d.weight") && shape.count == 3 ? [shape[0], shape[2], shape[1]] : shape
+            }) else {
+            try loadWeights(into: net, fromDirectory: directory, precision: precision)
+            return
+        }
+        try loadWeights(into: net, fromDirectory: directory, precision: precision, keeping: { name in
+            NFKMLXLayerStream.layer(ofDecoderName: String(name.dropFirst("model.".count))).map { streamed.contains($0.layer) } != true
+        }, adding: vacated.placeholders)
+        net.layerStream = vacated.stream
+        vacated.stream.prime()
+    }
+
+    /// The layer a release tensor belongs to and its name inside the layer, or nil outside the layers.
+    static func layer(ofKey key: String) -> (layer: Int, name: String)? {
+        moduleKey(forReference: key).flatMap { name in
+            name.hasPrefix("model.") ? NFKMLXLayerStream.layer(ofDecoderName: String(name.dropFirst("model.".count))) : nil
+        }
+    }
+
+    /// The floating type most of a release's decoder tensors are stored in, read from its shard headers:
+    /// the type a `.checkpoint` load gives every floating tensor.
+    static func releasedType(inDirectory directory: URL) throws -> DType? {
+        var counts = [DType: Int]()
+        for url in try NFKMLXReleaseWeights.files(inDirectory: directory) {
+            for (key, entry) in try NFKMLXSafetensors.entries(inFile: url) where moduleKey(forReference: key) != nil {
+                if let dtype = NFKMLXSafetensors.dtype(entry.dtype), dtype.isFloatingPoint {
+                    counts[dtype, default: 0] += 1
+                }
+            }
+        }
+        return counts.max { $0.value < $1.value }?.key
+    }
+
+    private static func loadWeights(into net: NFKMLXHybridLanguageNet, fromDirectory directory: URL,
+                                    precision: NFKMLXWeightPrecision, keeping keep: (String) -> Bool,
+                                    adding placeholders: [(String, MLXArray)] = []) throws {
         let tied = net.lmHead == nil
         let read = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
-            guard let name = moduleKey(forReference: $0) else { return nil }
+            guard let name = moduleKey(forReference: $0), keep(name) else { return nil }
             return tied && name.hasPrefix("lm_head.") ? nil : name
         })
         // The releases store `A_log` and the recurrence's norm weight in float32 beside bf16 elsewhere,
@@ -620,7 +710,7 @@ public final class NFKMLXHybridLanguage: NSObject {
             }
             return (name, tensor)
         }
-        try NFKMLXWeights.apply(merged, to: net)
+        try NFKMLXWeights.apply(merged + placeholders, to: net, verifyShapes: !placeholders.isEmpty)
     }
 
     /// Loads a released decoder at its stored precision and packs its projections to `bits` as it reads
@@ -755,10 +845,30 @@ public final class NFKMLXHybridLanguage: NSObject {
     /// in InferKit 0.4.0.
     public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision) throws
         -> any NFKInferenceBackend {
-        let net = try network(directoryURL: directoryURL, precision: precision)
-        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName,
-                                                modules: [net]) { net($0) }
+        try backend(directoryURL: directoryURL, precision: precision, residency: .automatic)
     }
+
+    /// ``backend(directoryURL:precision:)`` holding the decoder as `residency` says. Under
+    /// ``NFKMLXResidency/automatic`` a release that fits the working set loads whole, and one that does
+    /// not, such as Qwen3.8 27B on a 32 GB machine, holds the first layers that fit and reads the others
+    /// from the release on every pass (``NFKMLXDecoderBackend/streamedLayerCount``);
+    /// ``NFKMLXResidency/streamed`` streams wherever the decoder does not fit whole. A failed read fails
+    /// the request, and the next request reads every layer again. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:precision:residency:error:)
+    public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: residency,
+                    budget: NFKMLXResidencyBudget.current())
+    }
+
+    static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                        budget: Int) throws -> NFKMLXDecoderBackend {
+        let net = makeNet(try configuration(fromHuggingFace: directoryURL.appendingPathComponent("config.json")))
+        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency, budget: budget)
+        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName, modules: [net],
+                                                layerStream: net.layerStream) { net($0) }
+    }
+
 
     /// The Objective-C entry for ``backend(directoryURL:precision:)`` at the released precision.
     /// Introduced in InferKit 0.4.0.
