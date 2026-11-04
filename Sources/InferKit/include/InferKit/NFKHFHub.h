@@ -162,11 +162,45 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				so a root on a removable volume is found while it is mounted.
 				modelFolderLocationForModelSource: states how a folder matches a source.
 				downloadStatusForModelSource: and the NFKModelCatalog locators read the model folders
-				before the cache. The hub never writes into a model folder or removes from one: a
-				download fetches into the cache, and a removal deletes cache files only.
+				before the Hugging Face caches and the cache. The hub never writes into a model folder or
+				removes from one: a download fetches into the cache, and a removal deletes cache files only.
 				Introduced in InferKit 0.4.0.
 */
 @property (nonatomic, copy) NSArray<NSURL *> *modelFolderURLs;
+
+#pragma mark Hugging Face caches
+
+/*!
+	@property   defaultHuggingFaceCacheURLs
+	@abstract   The Hugging Face cache roots a new hub starts with.
+	@discussion Defaults to one root, the one huggingface_hub reads in the process's environment:
+				- HF_HUB_CACHE, else HUGGINGFACE_HUB_CACHE → that folder.
+				- HF_HOME → its hub folder.
+				- XDG_CACHE_HOME → its huggingface/hub folder.
+				- none of them → ~/.cache/huggingface/hub, under NSHomeDirectory().
+				The default is resolved at its first read. Setting it replaces it, and an empty array
+				turns the lookup off for hubs made afterward. Process-wide. A hub reads it once, at
+				initialization; the hubs the NFKModelCatalog locators make for each lookup read it then.
+				Introduced in InferKit 0.4.0.
+*/
+@property (class, nonatomic, copy) NSArray<NSURL *> *defaultHuggingFaceCacheURLs;
+
+/*!
+	@property   huggingFaceCacheURLs
+	@abstract   Caches in Hugging Face's own layout, which transformers, huggingface_hub, and mlx-lm
+				download into. The hub reads them and never writes into them.
+	@discussion Starts from defaultHuggingFaceCacheURLs. Each URL is a root laid out as huggingface_hub
+				lays out its cache:
+				- models--owner--name/refs/branch → a text file holding a commit.
+				- models--owner--name/snapshots/commit/path → a release's files, often symbolic links into
+				  the repository's blobs folder.
+				huggingFaceCacheLocationForModelSource: states how a snapshot matches a source.
+				downloadStatusForModelSource: and the NFKModelCatalog locators read the roots after the
+				model folders and before the cache. The roots are read on each lookup. A download fetches
+				into the cache, and a removal deletes cache files only.
+				Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, copy) NSArray<NSURL *> *huggingFaceCacheURLs;
 
 #pragma mark Cache policy
 
@@ -594,7 +628,8 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 
 /*!
 	@method     downloadStatusForModelSource:
-	@abstract   Whether a catalog model source's files are in a model folder or in the cache.
+	@abstract   Whether a catalog model source's files are in a model folder, a Hugging Face cache, or the
+				cache.
 	@discussion Optional files count toward byteCount and not toward completeness. A file that names its
 				own repository, revision, or URL is read in that place's snapshot, so the source is
 				complete only when every place holds its files. A source of kind system or none is
@@ -602,7 +637,10 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				A model folder that matches the source (modelFolderLocationForModelSource:) makes the
 				status complete when every file the source takes from another repository or URL is
 				complete in the cache. The status then counts the folder's files at their size on disk,
-				and its localURL lies in the folder. Otherwise the status is the cache's.
+				and its localURL lies in the folder. A snapshot in a Hugging Face cache that matches the
+				source (huggingFaceCacheLocationForModelSource:) answers the same way, after the model
+				folders: its files counted at the size of the files their links resolve to, and its
+				localURL in the snapshot. Otherwise the status is the cache's.
 */
 - (NFKDownloadStatus *)downloadStatusForModelSource:(NFKModelSource *)source NS_SWIFT_NAME(downloadStatus(source:));
 
@@ -670,8 +708,8 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 	repository, revision, or URL is removed from that place's snapshot, and another catalog variant
 	whose download is complete in the cache keeps the files it uses there. A source of kind system or
 	none yields an empty plan. The plan names cache files only: a source found in a model folder
-	(modelFolderURLs) and not in the cache yields a plan that removes nothing, and its folder's files
-	are left in place. */
+	(modelFolderURLs) or a Hugging Face cache (huggingFaceCacheURLs) and not in the cache yields a plan
+	that removes nothing, and the files there are left in place. */
 - (nullable NFKRemovalPlan *)removalPlanForModelSource:(NFKModelSource *)source
 												 error:(NSError * _Nullable *)outError NS_SWIFT_NAME(removalPlan(source:));
 
@@ -723,6 +761,40 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				Introduced in InferKit 0.4.0.
 */
 - (nullable NSURL *)modelFolderLocationForModelSource:(NFKModelSource *)source NS_SWIFT_NAME(modelFolderLocation(source:));
+
+@end
+
+/*!
+	@category   NFKHFHub (NFKHuggingFaceCache)
+	@abstract   Finds a catalog model source in the Hugging Face caches the hub reads.
+	@discussion Introduced in InferKit 0.4.0.
+*/
+@interface NFKHFHub (NFKHuggingFaceCache)
+
+/*!
+	@method     huggingFaceCacheLocationForModelSource:
+	@abstract   Where a Hugging Face cache holds a catalog model source's files; nil when no snapshot
+				matches.
+	@discussion Reads the roots under huggingFaceCacheURLs, in order, and nothing in the cache or the model
+				folders. A snapshot matches a source when:
+				- the source is a Hugging Face source. A URL, page, system, or none source matches none.
+				- its repository folder is models-- followed by the source's repository with each / as --,
+				  compared without regard to case.
+				- it is the source's commit. A revision of 40 hexadecimal digits names the snapshot folder
+				  directly, compared without regard to case. Any other revision is a ref: the commit
+				  refs/revision holds, and refs/main for a source without a revision. A missing ref or
+				  snapshot folder is no match.
+				- it holds every required file the source takes from its own repository, at the file's
+				  path relative to the snapshot, its symbolic links followed. A link whose blob is missing,
+				  as an interrupted download leaves it, counts as absent. Globs, shard indexes, and
+				  optional files count as in modelFolderLocationForModelSource:.
+				Files the source takes from another repository or URL are not read from these roots. The
+				location is the snapshot folder for a directory layout, and for a file layout the first
+				required weights file, else the first required file, else config.json, at its path in the
+				snapshot rather than its blob. The hub never writes into these roots.
+				Introduced in InferKit 0.4.0.
+*/
+- (nullable NSURL *)huggingFaceCacheLocationForModelSource:(NFKModelSource *)source NS_SWIFT_NAME(huggingFaceCacheLocation(source:));
 
 @end
 

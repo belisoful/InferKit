@@ -16,6 +16,7 @@ static NSString * const NFKFolderTestOtherRevision = @"f21265c1e2710b3bd23865969
 
 @interface NFKHFHubModelFolderTests : XCTestCase
 @property (nonatomic, copy) NSArray<NSURL *> *savedDefaultModelFolderURLs;
+@property (nonatomic, copy) NSArray<NSURL *> *savedDefaultHuggingFaceCacheURLs;
 @property (nonatomic, strong) NSURL *root;
 @property (nonatomic, strong) NSURL *cacheDir;
 @property (nonatomic, strong) NFKHFHub *hub;
@@ -27,6 +28,8 @@ static NSString * const NFKFolderTestOtherRevision = @"f21265c1e2710b3bd23865969
 {
 	[super setUp];
 	self.savedDefaultModelFolderURLs = NFKHFHub.defaultModelFolderURLs;
+	self.savedDefaultHuggingFaceCacheURLs = NFKHFHub.defaultHuggingFaceCacheURLs;
+	NFKHFHub.defaultHuggingFaceCacheURLs = @[];
 	self.root = [self temporaryDirectory];
 	self.cacheDir = [self temporaryDirectory];
 	self.hub = [NFKHFHub hubWithCacheDirectoryURL:self.cacheDir];
@@ -38,6 +41,7 @@ static NSString * const NFKFolderTestOtherRevision = @"f21265c1e2710b3bd23865969
 - (void)tearDown
 {
 	NFKHFHub.defaultModelFolderURLs = self.savedDefaultModelFolderURLs;
+	NFKHFHub.defaultHuggingFaceCacheURLs = self.savedDefaultHuggingFaceCacheURLs;
 	[super tearDown];
 }
 

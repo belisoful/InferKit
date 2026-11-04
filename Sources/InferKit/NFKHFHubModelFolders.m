@@ -2,7 +2,8 @@
 //  NFKHFHubModelFolders.m
 //  InferKit
 //
-//  Catalog model sources found in folders kept outside the hub cache.
+//  Catalog model sources found in folders kept outside the hub cache, and the status and location the
+//  folders the hub only reads answer: its model folders, then its Hugging Face caches.
 //
 
 #import "NFKHFHub.h"
@@ -15,14 +16,13 @@ static NSString * const NFKHFHubModelFolderKeyName = @"REVISION";
 /*! The file a source that requires none of its own files is found by, as the cache locator finds it. */
 static NSString * const NFKHFHubModelFolderConfigurationPath = @"config.json";
 
-/*! YES for a commit hash: 40 hexadecimal digits in either case. */
-static BOOL NFKHFHubIsCommitHash(NSString *line)
+BOOL NFKHFHubIsCommitHash(NSString * _Nullable string)
 {
-	if (line.length != 40) {
+	if (string.length != 40) {
 		return NO;
 	}
 	NSCharacterSet *hex = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"];
-	return [line rangeOfCharacterFromSet:hex.invertedSet].location == NSNotFound;
+	return [string rangeOfCharacterFromSet:hex.invertedSet].location == NSNotFound;
 }
 
 /*! YES for a repository name: owner/name, one slash, no whitespace, and neither part ".", "..", or empty. */
@@ -91,15 +91,6 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 
 @end
 
-/*! A model folder that holds a source's own files. */
-@interface NFKHFHubModelFolderMatch : NSObject
-@property (nonatomic, copy) NSURL *folderURL;
-/*! The location a build reads: the folder, or a file in it for a file layout. */
-@property (nonatomic, copy) NSURL *location;
-@property (nonatomic, copy) NSArray<NSString *> *presentPaths;
-@property (nonatomic) long long byteCount;
-@end
-
 @implementation NFKHFHubModelFolderMatch
 @end
 
@@ -107,15 +98,16 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 
 - (nullable NSURL *)modelFolderLocationForModelSource:(NFKModelSource *)source
 {
-	return [self modelFolderMatchForModelSource:source parts:NULL].location;
+	return [self matchForModelSource:source inModelFolders:YES inHuggingFaceCaches:NO parts:NULL].location;
 }
 
 #pragma mark Status and location
 
-- (nullable NFKDownloadStatus *)modelFolderStatusForModelSource:(NFKModelSource *)source
+- (nullable NFKDownloadStatus *)readOnlyStatusForModelSource:(NFKModelSource *)source
 {
 	NSArray<NFKHFHubSourcePart *> *parts = nil;
-	NFKHFHubModelFolderMatch *match = [self modelFolderMatchForModelSource:source parts:&parts];
+	NFKHFHubModelFolderMatch *match = [self matchForModelSource:source inModelFolders:YES inHuggingFaceCaches:YES
+														 parts:&parts];
 	if (match == nil) {
 		return nil;
 	}
@@ -143,10 +135,11 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 											  localURL:localURL];
 }
 
-- (nullable NSURL *)buildableModelFolderLocationForModelSource:(NFKModelSource *)source
+- (nullable NSURL *)buildableReadOnlyLocationForModelSource:(NFKModelSource *)source
 {
 	NSArray<NFKHFHubSourcePart *> *parts = nil;
-	NFKHFHubModelFolderMatch *match = [self modelFolderMatchForModelSource:source parts:&parts];
+	NFKHFHubModelFolderMatch *match = [self matchForModelSource:source inModelFolders:YES inHuggingFaceCaches:YES
+														 parts:&parts];
 	if (match == nil) {
 		return nil;
 	}
@@ -160,12 +153,17 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 
 #pragma mark Matching
 
-/*! The first model folder that holds the source's own files, with the source's parts. */
-- (nullable NFKHFHubModelFolderMatch *)modelFolderMatchForModelSource:(NFKModelSource *)source
-																 parts:(NSArray<NFKHFHubSourcePart *> * _Nullable * _Nullable)outParts
+- (nullable NFKHFHubModelFolderMatch *)matchForModelSource:(NFKModelSource *)source
+											inModelFolders:(BOOL)inModelFolders
+									   inHuggingFaceCaches:(BOOL)inHuggingFaceCaches
+													 parts:(NSArray<NFKHFHubSourcePart *> * _Nullable * _Nullable)outParts
 {
-	NSArray<NSURL *> *roots = self.modelFolderURLs;
-	if (roots.count == 0 || ![source.kind isEqualToString:NFKModelSourceKindHuggingFace] || source.repository.length == 0) {
+	BOOL readsModelFolders = inModelFolders && self.modelFolderURLs.count > 0;
+	BOOL readsHuggingFaceCaches = inHuggingFaceCaches && self.huggingFaceCacheURLs.count > 0;
+	if (!readsModelFolders && !readsHuggingFaceCaches) {
+		return nil;
+	}
+	if (![source.kind isEqualToString:NFKModelSourceKindHuggingFace] || source.repository.length == 0) {
 		return nil;
 	}
 	NSArray<NFKHFHubSourcePart *> *parts = [self partsOfModelSource:source];
@@ -179,8 +177,19 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 			break;
 		}
 	}
+	NFKHFHubModelFolderMatch *match = readsModelFolders ? [self modelFolderMatchOfFiles:ownFiles source:source] : nil;
+	if (match == nil && readsHuggingFaceCaches) {
+		match = [self huggingFaceCacheMatchOfFiles:ownFiles source:source];
+	}
+	return match;
+}
+
+/*! The first model folder, roots in order, that holds files, the source's own. */
+- (nullable NFKHFHubModelFolderMatch *)modelFolderMatchOfFiles:(nullable NSArray<NFKModelFile *> *)ownFiles
+														source:(NFKModelSource *)source
+{
 	NSString *pinnedRevision = NFKHFHubPinnedRevision(source.revision);
-	for (NSURL *root in roots) {
+	for (NSURL *root in self.modelFolderURLs) {
 		BOOL scoped = [root startAccessingSecurityScopedResource];
 		NFKHFHubModelFolderMatch *match = nil;
 		@try {
@@ -188,7 +197,8 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 				if (![folder matchesRepository:source.repository pinnedRevision:pinnedRevision]) {
 					continue;
 				}
-				match = [self matchOfFolderURL:folder.URL files:ownFiles source:source];
+				match = [self matchOfFolderURL:folder.URL files:ownFiles source:source
+								   ignoredPath:NFKHFHubModelFolderKeyName];
 				if (match != nil) {
 					break;
 				}
@@ -229,11 +239,10 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 	return folders;
 }
 
-/*! The match of a folder holding files, the source's own; nil when a required file is absent. A nil files
-	names the whole repository, which the folder holds when it holds its config.json. */
 - (nullable NFKHFHubModelFolderMatch *)matchOfFolderURL:(NSURL *)folderURL
 												  files:(nullable NSArray<NFKModelFile *> *)files
 												 source:(NFKModelSource *)source
+											ignoredPath:(nullable NSString *)ignoredPath
 {
 	NSMutableArray<NSString *> *required = [NSMutableArray array];
 	NSMutableArray<NSString *> *optional = [NSMutableArray array];
@@ -254,7 +263,7 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 	NSMutableOrderedSet<NSString *> *present = [NSMutableOrderedSet orderedSet];
 	for (NSString *path in required) {
 		if (NFKHFHubIsGlob(path)) {
-			content = content ?: [self contentPathsInModelFolderURL:folderURL];
+			content = content ?: [self contentPathsInModelFolderURL:folderURL ignoredPath:ignoredPath];
 			NSArray<NSString *> *matches = [self paths:@[ path ] matchingContent:content];
 			if (matches.count == 0) {
 				return nil;
@@ -268,14 +277,14 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 	}
 	for (NSString *path in optional) {
 		if (NFKHFHubIsGlob(path)) {
-			content = content ?: [self contentPathsInModelFolderURL:folderURL];
+			content = content ?: [self contentPathsInModelFolderURL:folderURL ignoredPath:ignoredPath];
 			[present addObjectsFromArray:[self paths:@[ path ] matchingContent:content]];
 		} else if ([self modelFolderURL:folderURL holdsFileAtPath:path]) {
 			[present addObject:path];
 		}
 	}
 	if (files == nil) {
-		[present addObjectsFromArray:[self contentPathsInModelFolderURL:folderURL]];
+		[present addObjectsFromArray:[self contentPathsInModelFolderURL:folderURL ignoredPath:ignoredPath]];
 	}
 	BOOL holdsConfiguration = [self modelFolderURL:folderURL holdsFileAtPath:NFKHFHubModelFolderConfigurationPath];
 	BOOL foundByConfiguration = files == nil || (required.count == 0 && present.count == 0);
@@ -326,7 +335,7 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 	return [folderURL URLByAppendingPathComponent:path isDirectory:NO];
 }
 
-/*! YES when the folder holds a file, or a link to one, at path. */
+/*! YES when the folder holds a file, or a link that resolves to one, at path. */
 - (BOOL)modelFolderURL:(NSURL *)folderURL holdsFileAtPath:(NSString *)path
 {
 	BOOL isDirectory = NO;
@@ -334,9 +343,9 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 	return [NSFileManager.defaultManager fileExistsAtPath:filePath isDirectory:&isDirectory] && !isDirectory;
 }
 
-/*! The files in a model folder, as sorted paths relative to it: regular files and symbolic links, less
-	hidden entries and the folder's REVISION file. */
-- (NSArray<NSString *> *)contentPathsInModelFolderURL:(NSURL *)folderURL
+/*! The files in a folder, as sorted paths relative to it: regular files and the symbolic links that resolve
+	to one, less hidden entries and ignoredPath. */
+- (NSArray<NSString *> *)contentPathsInModelFolderURL:(NSURL *)folderURL ignoredPath:(nullable NSString *)ignoredPath
 {
 	NSArray<NSURLResourceKey> *keys = @[ NSURLIsRegularFileKey, NSURLIsSymbolicLinkKey ];
 	NSDirectoryEnumerator<NSURL *> *enumerator = [NSFileManager.defaultManager enumeratorAtURL:folderURL
@@ -346,11 +355,16 @@ static NSString * _Nullable NFKHFHubPinnedRevision(NSString * _Nullable revision
 	NSMutableArray<NSString *> *paths = [NSMutableArray array];
 	for (NSURL *url in enumerator) {
 		NSDictionary<NSURLResourceKey, id> *values = [url resourceValuesForKeys:keys error:NULL];
-		if (![values[NSURLIsRegularFileKey] boolValue] && ![values[NSURLIsSymbolicLinkKey] boolValue]) {
+		BOOL isLink = [values[NSURLIsSymbolicLinkKey] boolValue];
+		if (![values[NSURLIsRegularFileKey] boolValue] && !isLink) {
+			continue;
+		}
+		BOOL isDirectory = NO;
+		if (isLink && (![NSFileManager.defaultManager fileExistsAtPath:url.path isDirectory:&isDirectory] || isDirectory)) {
 			continue;
 		}
 		NSString *relative = [self relativePathOfURL:url underURL:folderURL];
-		if (relative != nil && ![relative isEqualToString:NFKHFHubModelFolderKeyName]) {
+		if (relative != nil && (ignoredPath == nil || ![relative isEqualToString:ignoredPath])) {
 			[paths addObject:relative];
 		}
 	}

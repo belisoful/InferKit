@@ -1251,7 +1251,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 
 - (NFKDownloadStatus *)downloadStatusForModelSource:(NFKModelSource *)source
 {
-	return [self modelFolderStatusForModelSource:source] ?: [self cacheStatusForModelSource:source];
+	return [self readOnlyStatusForModelSource:source] ?: [self cacheStatusForModelSource:source];
 }
 
 - (NFKDownloadStatus *)cacheStatusForModelSource:(NFKModelSource *)source

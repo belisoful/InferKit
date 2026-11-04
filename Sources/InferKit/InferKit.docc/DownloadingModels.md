@@ -128,7 +128,8 @@ takes the shards with it. An index that names a file the repository lacks fails 
 
 ### Downloaded or not, and removal
 
-`-downloadStatusForModelSource:` reads the model folders and the cache, with no network, and answers
+`-downloadStatusForModelSource:` reads the model folders, the Hugging Face caches, and the cache, with no
+network, and answers
 complete, partial, or absent, with the bytes on disk. An optional file the catalog lists after the download, which no download has asked
 the server for, makes the source partial and appears in `uncheckedOptionalPaths`; the next download
 fetches it or records that the server lacks it, and the model builds meanwhile. `-removalPlanForModelSource:error:` lists the files a removal deletes and the files
@@ -157,6 +158,27 @@ without regard to case, at the source's revision when it names one other than `m
 files the folder holds. `-downloadStatusForModelSource:` reports such a folder complete, and the catalog's
 locators build from it, so nothing is downloaded again. A removal deletes cache files only and never
 touches a model folder.
+
+### Hugging Face cache
+
+A release that transformers, huggingface_hub, or mlx-lm downloaded is found in their cache through
+`huggingFaceCacheURLs`, which starts from the process-wide `defaultHuggingFaceCacheURLs`. The default is
+the root huggingface_hub reads: `HF_HUB_CACHE`, else `HUGGINGFACE_HUB_CACHE`, else `$HF_HOME/hub`, else
+`$XDG_CACHE_HOME/huggingface/hub`, else `~/.cache/huggingface/hub`. A root holds
+`models--owner--name/refs/<branch>`, a file naming a commit, and `models--owner--name/snapshots/<commit>/`,
+the release's files as links into the repository's `blobs/`.
+
+```objc
+NSURL *snapshot = [hub huggingFaceCacheLocationForModelSource:variant.source];
+NFKHFHub.defaultHuggingFaceCacheURLs = @[];   // read InferKit's cache and model folders only
+```
+
+`-huggingFaceCacheLocationForModelSource:` matches a Hugging Face source in the repository's folder,
+compared without regard to case, at the snapshot of the source's commit or of the commit its ref names
+(`refs/main` without a revision), when the snapshot holds every required file with its links followed.
+A link whose blob is missing counts as absent. `-downloadStatusForModelSource:` and the catalog's
+locators read the Hugging Face caches after the model folders and before the cache. The hub never writes
+into a Hugging Face cache, and a removal leaves its snapshots and blobs in place.
 
 ## Topics
 

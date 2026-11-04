@@ -5,7 +5,7 @@
 //  The cache helpers NFKHFHub shares with its NFKDownloads category. Not public.
 //
 
-#import "NFKHFHub.h"
+#import <InferKit/NFKHFHub.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -24,6 +24,17 @@ extern NSError * _Nullable NFKHFHubUnsafePathError(NSString * _Nullable string, 
 
 /*! YES when a listed path is a glob (it holds *, ?, or [). */
 extern BOOL NFKHFHubIsGlob(NSString *path);
+
+/*! YES for a commit hash: 40 hexadecimal digits in either case. */
+extern BOOL NFKHFHubIsCommitHash(NSString * _Nullable string);
+
+/*! The Hugging Face cache root huggingface_hub reads under environment, with ~ expanded to homeDirectory:
+	- HF_HUB_CACHE, else HUGGINGFACE_HUB_CACHE → that folder.
+	- HF_HOME → its hub folder.
+	- XDG_CACHE_HOME → its huggingface/hub folder.
+	- none of them → ~/.cache/huggingface/hub.
+	An empty variable counts as unset. */
+extern NSURL *NFKHFHubHuggingFaceCacheURL(NSDictionary<NSString *, NSString *> *environment, NSString *homeDirectory);
 
 /*! The files of a catalog source that come from one place: a repository at a revision, or a URL. */
 @interface NFKHFHubSourcePart : NSObject
@@ -114,16 +125,49 @@ extern BOOL NFKHFHubIsGlob(NSString *path);
 
 @end
 
-/*! The model folder answers NFKHFHubModelFolders.m implements for the status and the locators. */
+/*! A folder the hub reads and never writes that holds a source's own files: a model folder, or a snapshot
+	in a Hugging Face cache. */
+@interface NFKHFHubModelFolderMatch : NSObject
+@property (nonatomic, copy) NSURL *folderURL;
+/*! The location a build reads: the folder, or a file in it for a file layout. */
+@property (nonatomic, copy) NSURL *location;
+@property (nonatomic, copy) NSArray<NSString *> *presentPaths;
+@property (nonatomic) long long byteCount;
+@end
+
+/*! The answers NFKHFHubModelFolders.m implements for the status and the locators, from the folders the
+	hub reads and never writes: its model folders, then its Hugging Face caches. */
 @interface NFKHFHub (NFKModelFoldersInternal)
 
-/*! The status of a catalog source a matching model folder answers: complete, with the folder's files and
-	the cached files the source takes from elsewhere; nil when no folder matches or a file from elsewhere
-	is not complete in the cache. */
-- (nullable NFKDownloadStatus *)modelFolderStatusForModelSource:(NFKModelSource *)source;
-/*! The location a build reads from a matching model folder, when every file the source takes from
-	elsewhere that it requires is in the cache; nil otherwise. */
-- (nullable NSURL *)buildableModelFolderLocationForModelSource:(NFKModelSource *)source;
+/*! The status of a catalog source a model folder or a Hugging Face cache answers: complete, with the
+	matching folder's files and the cached files the source takes from elsewhere; nil when nothing matches
+	or a file from elsewhere is not complete in the cache. */
+- (nullable NFKDownloadStatus *)readOnlyStatusForModelSource:(NFKModelSource *)source;
+/*! The location a build reads from a model folder or a Hugging Face cache, when every file the source
+	takes from elsewhere that it requires is in the cache; nil otherwise. */
+- (nullable NSURL *)buildableReadOnlyLocationForModelSource:(NFKModelSource *)source;
+/*! The first folder that holds the source's own files, with the source's parts: a model folder, then a
+	snapshot in a Hugging Face cache, as each is asked for. nil for a source other than a Hugging Face one. */
+- (nullable NFKHFHubModelFolderMatch *)matchForModelSource:(NFKModelSource *)source
+											inModelFolders:(BOOL)inModelFolders
+									   inHuggingFaceCaches:(BOOL)inHuggingFaceCaches
+													 parts:(NSArray<NFKHFHubSourcePart *> * _Nullable * _Nullable)outParts;
+/*! The match of a folder holding files, the source's own, with symbolic links followed; nil when a
+	required file is absent. A nil files names the whole repository, which the folder holds when it holds
+	its config.json. ignoredPath, when given, is left out of the folder's listing. */
+- (nullable NFKHFHubModelFolderMatch *)matchOfFolderURL:(NSURL *)folderURL
+												  files:(nullable NSArray<NFKModelFile *> *)files
+												 source:(NFKModelSource *)source
+											ignoredPath:(nullable NSString *)ignoredPath;
+
+@end
+
+/*! The snapshot lookup NFKHFHubHuggingFaceCache.m implements. */
+@interface NFKHFHub (NFKHuggingFaceCacheInternal)
+
+/*! The first snapshot in the Hugging Face caches, roots in order, that holds files, the source's own. */
+- (nullable NFKHFHubModelFolderMatch *)huggingFaceCacheMatchOfFiles:(nullable NSArray<NFKModelFile *> *)files
+															 source:(NFKModelSource *)source;
 
 @end
 

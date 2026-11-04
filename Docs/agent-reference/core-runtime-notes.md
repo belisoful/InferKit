@@ -699,6 +699,41 @@ downloaded them again. The consumer rules are in `Docs/model-catalog.md` ("Model
 - Tests: `NFKHFHubModelFolderTests` on UUID temporary roots, and
   `NFKModelBuildingTests/testABuildFindsItsFilesInAHubsModelFolder` for the build path.
 
+## Hugging Face caches
+
+`NFKHFHub.huggingFaceCacheURLs` and `+defaultHuggingFaceCacheURLs`, the `NFKHFHub (NFKHuggingFaceCache)`
+category (`NFKHFHubHuggingFaceCache.m`, added 2026-11-03, InferKit 0.4.0). A release that transformers,
+huggingface_hub, or mlx-lm downloaded sat in `~/.cache/huggingface/hub`, which InferKit's own cache
+layout does not read, so the status read it absent and an app downloaded it again. The consumer rules
+are in `Docs/model-catalog.md` ("Hugging Face cache").
+
+- The default root follows huggingface_hub's `constants.py`: `HF_HUB_CACHE`, the legacy
+  `HUGGINGFACE_HUB_CACHE`, `HF_HOME/hub`, `XDG_CACHE_HOME/huggingface/hub`, `~/.cache/huggingface/hub`.
+  `NFKHFHubHuggingFaceCacheURL(environment, homeDirectory)` in `NFKHFHubInternal.h` resolves it from
+  arguments, so the test never touches the process environment. The class default is resolved at its
+  first read and kept; a sandboxed app's home is its container, where the folder is usually absent.
+- The repository folder is `models--` plus the repository with each `/` as `--`, as huggingface_hub's
+  `repo_folder_name` forms it; an owner-less repository such as `gpt2` is `models--gpt2`. The lookup
+  lists the root and compares names without regard to case, which a case-sensitive volume needs.
+- A 40-hex revision is a commit and names `snapshots/<commit>` directly; any other revision is read from
+  `refs/<revision>` (a nested ref such as `refs/pr/1` is `refs/refs/pr/1`). The ref's text must be a
+  commit hash, which keeps it from naming a path outside `snapshots/`.
+- The snapshot is matched by the model folders' matcher (`matchOfFolderURL:files:source:ignoredPath:`),
+  which follows links throughout: a literal path through `fileExistsAtPath:`, and a glob over a listing
+  that leaves out links whose target is missing or is a folder. That listing change also applies to the
+  model folders. The status counts each file's blob through `onDiskSizeOfURL:`; the location and
+  `localURL` stay inside `snapshots/`.
+- Order: `matchForModelSource:inModelFolders:inHuggingFaceCaches:parts:` tries the model folders, then
+  the roots in order. `readOnlyStatusForModelSource:` and `buildableReadOnlyLocationForModelSource:`
+  answer the status and `NFKModelLocationThroughHub` from that match, and fall back to the cache.
+- Nothing is written under a root: no `markSnapshotUsedAtURL:`, no completion record, no eviction. The
+  removal planner reads only `cacheDirectoryURL` and asks `cacheStatusForModelSource:` in
+  `claimedPathsForTarget:`, so a snapshot in a root neither appears in a plan nor keeps a cache file.
+- Test classes that assert a status or a build refusal (`NFKDownloadTests`, `NFKDownloadRemovalTests`,
+  `NFKModelBuildingTests`, `NFKHFHubModelFolderTests`) set `+defaultHuggingFaceCacheURLs` to `@[]` in
+  `setUp`, so a developer's own cache cannot answer for them. `NFKHFHubHuggingFaceCacheTests` builds its
+  roots in UUID temporary folders with real links into `blobs/`.
+
 ## Serving identity and certificate pinning
 
 `NFKServerIdentity` makes the `SecIdentityRef` that `NFKInferenceServer.TLSIdentity` takes; the

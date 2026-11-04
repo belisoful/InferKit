@@ -166,25 +166,28 @@ typedef NSURL * _Nullable (^NFKModelLocator)(NFKModelDescriptor *descriptor,
 
 /*!
 	@method     hubCacheLocatorForCacheDirectoryURL:
-	@abstract   The locator that finds a variant's downloaded files in NFKHFHub's model folders and in an
-				NFKHFHub cache.
+	@abstract   The locator that finds a variant's downloaded files in NFKHFHub's model folders, in its
+				Hugging Face caches, and in an NFKHFHub cache.
 	@discussion locatorForHub: over a hub made for each lookup with cacheDirectoryURL, whose model folders
-				are +[NFKHFHub defaultModelFolderURLs] at that time. A host that downloads into its own
+				are +[NFKHFHub defaultModelFolderURLs] and whose Hugging Face caches are
+				+[NFKHFHub defaultHuggingFaceCacheURLs] at that time. A host that downloads into its own
 				cache sets this as the catalog's locator. Introduced in InferKit 0.4.0.
 */
 + (NFKModelLocator)hubCacheLocatorForCacheDirectoryURL:(NSURL *)cacheDirectoryURL;
 
 /*!
 	@method     locatorForHub:
-	@abstract   The locator that finds a variant's files in a hub's model folders, then in its cache.
-	@discussion A model folder that matches the source (-[NFKHFHub modelFolderLocationForModelSource:])
-				gives the location, once every file the source requires from another repository or URL is
-				in the cache. Otherwise a Hugging Face source is located at the snapshot directory of a
+	@abstract   The locator that finds a variant's files in a hub's model folders, then in its Hugging Face
+				caches, then in its cache.
+	@discussion A model folder that matches the source (-[NFKHFHub modelFolderLocationForModelSource:]),
+				else a Hugging Face cache snapshot that matches it
+				(-[NFKHFHub huggingFaceCacheLocationForModelSource:]), gives the location, once every file
+				the source requires from another repository or URL is in the cache. Otherwise a Hugging Face source is located at the snapshot directory of a
 				directory layout, or the first weights file of a file layout; a URL source at its
 				downloaded file. The locator returns nil until every file the source requires is present
 				(-[NFKHFHub downloadStatusForModelSource:] reports it complete), and the build then
 				refuses with NFKModelCatalogErrorNotDownloaded. The locator reads the hub's
-				modelFolderURLs at each lookup. For an app that configures a hub of its own.
+				modelFolderURLs and huggingFaceCacheURLs at each lookup. For an app that configures a hub of its own.
 				Introduced in InferKit 0.4.0.
 */
 + (NFKModelLocator)locatorForHub:(NFKHFHub *)hub;

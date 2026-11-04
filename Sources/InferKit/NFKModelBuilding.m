@@ -366,15 +366,15 @@ static NSString *NFKModelNotDownloadedReason(NFKModelDescriptor *descriptor, NFK
 			@"-[NFKHFHub downloadModelSource:progressHandler:completionHandler:], or pass their location.", name];
 }
 
-// The location of a source's files: a model folder of the hub that holds them, else the hub's cache.
+// The location of a source's files: a model folder of the hub, then a Hugging Face cache, then the hub's cache.
 static NSURL * _Nullable NFKModelLocationThroughHub(NFKHFHub *hub, NFKModelSource * _Nullable source)
 {
 	if (!NFKModelSourceDownloadsFiles(source)) {
 		return nil;
 	}
-	NSURL *folderLocation = [hub buildableModelFolderLocationForModelSource:source];
-	if (folderLocation != nil) {
-		return folderLocation;
+	NSURL *readOnlyLocation = [hub buildableReadOnlyLocationForModelSource:source];
+	if (readOnlyLocation != nil) {
+		return readOnlyLocation;
 	}
 	NFKDownloadStatus *status = [hub cacheStatusForModelSource:source];
 	BOOL complete = status.holdsEveryRequiredFile;

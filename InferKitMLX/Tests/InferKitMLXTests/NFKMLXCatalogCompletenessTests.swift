@@ -43,6 +43,15 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
         try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: empty) }
         catalog.locator = NFKModelCatalog.hubCacheLocator(forCacheDirectoryURL: empty)
+        // The locator also reads the model folders and the Hugging Face caches other tools keep, which hold
+        // releases on a developer's machine; the measure here is an empty cache alone.
+        let (folders, caches) = (NFKHFHub.defaultModelFolderURLs, NFKHFHub.defaultHuggingFaceCacheURLs)
+        NFKHFHub.defaultModelFolderURLs = []
+        NFKHFHub.defaultHuggingFaceCacheURLs = []
+        defer {
+            NFKHFHub.defaultModelFolderURLs = folders
+            NFKHFHub.defaultHuggingFaceCacheURLs = caches
+        }
 
         var refused = 0
         for descriptor in descriptors {

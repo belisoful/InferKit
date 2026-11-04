@@ -17,6 +17,7 @@
 @property (nonatomic, strong) NSURL *outsideDir;
 @property (nonatomic, strong) NFKHFHub *hub;
 @property (nonatomic, strong) NFKModelCatalog *catalog;
+@property (nonatomic, copy) NSArray<NSURL *> *savedDefaultHuggingFaceCacheURLs;
 @end
 
 @implementation NFKDownloadRemovalTests
@@ -25,6 +26,9 @@
 {
 	[super setUp];
 	[NFKStubHubProtocol reset];
+	// A status read here must not find a release in the developer's own Hugging Face cache.
+	self.savedDefaultHuggingFaceCacheURLs = NFKHFHub.defaultHuggingFaceCacheURLs;
+	NFKHFHub.defaultHuggingFaceCacheURLs = @[];
 	NSString *name = NSUUID.UUID.UUIDString;
 	self.cacheDir = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[@"NFKDownloadRemovalTests-" stringByAppendingString:name]]];
 	self.outsideDir = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[@"NFKDownloadRemovalOutside-" stringByAppendingString:name]]];
@@ -43,6 +47,7 @@
 {
 	[NSFileManager.defaultManager removeItemAtURL:self.cacheDir error:NULL];
 	[NSFileManager.defaultManager removeItemAtURL:self.outsideDir error:NULL];
+	NFKHFHub.defaultHuggingFaceCacheURLs = self.savedDefaultHuggingFaceCacheURLs;
 	[NFKStubHubProtocol reset];
 	[super tearDown];
 }

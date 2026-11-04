@@ -115,6 +115,8 @@ static long long NFKHFHubDefaultCacheSizeLimitValue = -1;
 static BOOL NFKHFHubDefaultExcludesCacheFromBackupValue = YES;
 static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 static NSArray<NSURL *> *NFKHFHubDefaultModelFolderURLsValue = nil;
+/*! nil until first read, when it becomes the root huggingface_hub reads in this process's environment. */
+static NSArray<NSURL *> *NFKHFHubDefaultHuggingFaceCacheURLsValue = nil;
 
 /*! A cached snapshot eviction may remove. */
 @interface NFKHFHubSnapshot : NSObject
@@ -194,6 +196,7 @@ static NSArray<NSURL *> *NFKHFHubDefaultModelFolderURLsValue = nil;
 @synthesize followsFolderLinksOutOfCache = _followsFolderLinksOutOfCache;
 @synthesize maximumFileByteCount = _maximumFileByteCount;
 @synthesize modelFolderURLs = _modelFolderURLs;
+@synthesize huggingFaceCacheURLs = _huggingFaceCacheURLs;
 
 + (instancetype)hubWithCacheDirectoryURL:(nullable NSURL *)cacheDirectoryURL
 {
@@ -210,6 +213,7 @@ static NSArray<NSURL *> *NFKHFHubDefaultModelFolderURLsValue = nil;
 		_excludesCacheFromBackup = NFKHFHub.defaultExcludesCacheFromBackup;
 		_maximumFileByteCount = -1;
 		_modelFolderURLs = NFKHFHub.defaultModelFolderURLs;
+		_huggingFaceCacheURLs = NFKHFHub.defaultHuggingFaceCacheURLs;
 	}
 	return self;
 }
@@ -332,6 +336,38 @@ static NSArray<NSURL *> *NFKHFHubDefaultModelFolderURLsValue = nil;
 {
 	@synchronized (self) {
 		_modelFolderURLs = [modelFolderURLs copy];
+	}
+}
+
++ (NSArray<NSURL *> *)defaultHuggingFaceCacheURLs
+{
+	@synchronized (NFKHFHub.class) {
+		if (NFKHFHubDefaultHuggingFaceCacheURLsValue == nil) {
+			NFKHFHubDefaultHuggingFaceCacheURLsValue = @[ NFKHFHubHuggingFaceCacheURL(NSProcessInfo.processInfo.environment,
+																					 NSHomeDirectory()) ];
+		}
+		return NFKHFHubDefaultHuggingFaceCacheURLsValue;
+	}
+}
+
++ (void)setDefaultHuggingFaceCacheURLs:(NSArray<NSURL *> *)defaultHuggingFaceCacheURLs
+{
+	@synchronized (NFKHFHub.class) {
+		NFKHFHubDefaultHuggingFaceCacheURLsValue = [defaultHuggingFaceCacheURLs copy];
+	}
+}
+
+- (NSArray<NSURL *> *)huggingFaceCacheURLs
+{
+	@synchronized (self) {
+		return _huggingFaceCacheURLs ?: @[];
+	}
+}
+
+- (void)setHuggingFaceCacheURLs:(NSArray<NSURL *> *)huggingFaceCacheURLs
+{
+	@synchronized (self) {
+		_huggingFaceCacheURLs = [huggingFaceCacheURLs copy];
 	}
 }
 

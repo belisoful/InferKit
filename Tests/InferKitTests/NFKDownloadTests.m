@@ -42,6 +42,7 @@ static NSString * const NFKTestRepo = @"org/model";
 @property (nonatomic, strong) NSData *weights;
 @property (nonatomic, strong) NSData *config;
 @property (nonatomic, copy) NSString *savedDefaultToken;
+@property (nonatomic, copy) NSArray<NSURL *> *savedDefaultHuggingFaceCacheURLs;
 @end
 
 @implementation NFKDownloadTests
@@ -52,6 +53,9 @@ static NSString * const NFKTestRepo = @"org/model";
 	[NFKStubHubProtocol reset];
 	self.savedDefaultToken = NFKHFHub.defaultAccessToken;
 	NFKHFHub.defaultAccessToken = nil;
+	// A status read here must not find a release in the developer's own Hugging Face cache.
+	self.savedDefaultHuggingFaceCacheURLs = NFKHFHub.defaultHuggingFaceCacheURLs;
+	NFKHFHub.defaultHuggingFaceCacheURLs = @[];
 	NSString *name = [@"NFKDownloadTests-" stringByAppendingString:NSUUID.UUID.UUIDString];
 	self.cacheDir = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]];
 	[NSFileManager.defaultManager createDirectoryAtURL:self.cacheDir withIntermediateDirectories:YES attributes:nil error:NULL];
@@ -76,6 +80,7 @@ static NSString * const NFKTestRepo = @"org/model";
 	[NSFileManager.defaultManager removeItemAtURL:self.cacheDir error:NULL];
 	[NSFileManager.defaultManager removeItemAtURL:[NSURL fileURLWithPath:[self.cacheDir.path stringByAppendingString:@"-outside"]] error:NULL];
 	NFKHFHub.defaultAccessToken = self.savedDefaultToken;
+	NFKHFHub.defaultHuggingFaceCacheURLs = self.savedDefaultHuggingFaceCacheURLs;
 	[NFKStubHubProtocol reset];
 	[super tearDown];
 }

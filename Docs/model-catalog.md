@@ -293,10 +293,58 @@ folder for a directory layout and the first required weights file for a file lay
 
 - `downloadStatusForModelSource:` reports a matching folder complete, with the files counted at their
   size on disk and `localURL` in the folder, once the files the source takes from other repositories or
-  URLs are complete in the cache. Otherwise the status is the cache's.
-- The catalog locators read the model folders before the cache (step 5 of the build).
+  URLs are complete in the cache. Otherwise the status is the [Hugging Face caches'](#hugging-face-cache),
+  then the cache's.
+- The catalog locators read the model folders before the Hugging Face caches and the cache (step 5 of the
+  build).
 - A download fetches into the cache, and a removal deletes cache files only. A source found only in a
   model folder yields a removal plan that removes nothing; the folder's files are the user's and stay in
+  place.
+
+### Hugging Face cache
+
+A release that transformers, huggingface_hub, or mlx-lm downloaded is found in their cache through
+`NFKHFHub.huggingFaceCacheURLs`, which starts from the process-wide
+`+[NFKHFHub defaultHuggingFaceCacheURLs]`. Each URL is a root in huggingface_hub's layout:
+
+```
+<root>/models--org--model/refs/main                             <commit>
+<root>/models--org--model/snapshots/<commit>/config.json        → ../../blobs/<hash>
+<root>/models--org--model/snapshots/<commit>/model.safetensors  → ../../blobs/<hash>
+<root>/models--org--model/blobs/<hash>
+```
+
+The default is one root, resolved at its first read as huggingface_hub resolves it:
+
+- `HF_HUB_CACHE`, else `HUGGINGFACE_HUB_CACHE` → that folder.
+- `HF_HOME` → `$HF_HOME/hub`.
+- `XDG_CACHE_HOME` → `$XDG_CACHE_HOME/huggingface/hub`.
+- none of them → `~/.cache/huggingface/hub`.
+
+An empty variable counts as unset, and a leading `~` is the home directory. Setting the default to an
+empty array turns the lookup off for hubs made afterward. The roots are read at each lookup.
+
+A snapshot matches a `huggingface` source (`-huggingFaceCacheLocationForModelSource:`) when:
+
+- its repository folder is `models--` followed by the source's repository with each `/` as `--`,
+  compared without regard to case;
+- it is the source's commit. A revision of 40 hexadecimal digits names the snapshot folder, compared
+  without regard to case. Any other revision is a ref whose commit `refs/<revision>` holds, and a source
+  without a revision reads `refs/main`. A missing ref or snapshot folder is no match;
+- it holds every required file of the source's own repository at the file's path, with its links
+  followed. A link whose blob is missing, as an interrupted download leaves it, counts as absent. Globs,
+  shard indexes, and optional files count as in a model folder.
+
+A `url`, `page`, `system`, or `none` source matches no snapshot. When several roots match, the first in
+order wins. The location is the snapshot folder for a directory layout and, for a file layout, the first
+required weights file at its path in the snapshot, not its blob.
+
+- `downloadStatusForModelSource:` reports a matching snapshot complete, with the files counted at the
+  size of the blobs their links resolve to and `localURL` in the snapshot, under the same rule for files
+  from other repositories or URLs as a model folder. A model folder that matches answers first.
+- The catalog locators read the Hugging Face caches after the model folders and before the cache.
+- The hub never writes into a Hugging Face cache. A download fetches into the cache, and a source found
+  only in a Hugging Face cache yields a removal plan that removes nothing; its snapshot and blobs stay in
   place.
 
 ## File
@@ -690,9 +738,11 @@ model's identifier, or `model@preset`, and the option values an app collected:
    snapshot directory of a directory layout or the first weights file of a file layout, a URL source at
    its downloaded file. It finds a source only when every file it requires is present
    (`downloadStatusForModelSource:` reports it complete). Before the cache it reads the
-   [model folders](#model-folders) of `+[NFKHFHub defaultModelFolderURLs]`. A host that downloads into
-   its own cache sets `hubCacheLocatorForCacheDirectoryURL:`, a host that configures a hub of its own
-   sets `+locatorForHub:` (that hub's model folders, then its cache), and a download store sets its own. A variant whose source
+   [model folders](#model-folders) of `+[NFKHFHub defaultModelFolderURLs]`, then the
+   [Hugging Face caches](#hugging-face-cache) of `+[NFKHFHub defaultHuggingFaceCacheURLs]`. A host that
+   downloads into its own cache sets `hubCacheLocatorForCacheDirectoryURL:`, a host that configures a hub
+   of its own sets `+locatorForHub:` (that hub's model folders, then its Hugging Face caches, then its
+   cache), and a download store sets its own. A variant whose source
    downloads files the locator does not find is refused (`NFKModelCatalogErrorNotDownloaded`); a build
    never runs a model on weights it did not read. Three cases differ:
    - a whole-repository source, with no file list, is located by its snapshot's `config.json` when no

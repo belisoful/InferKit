@@ -105,14 +105,17 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 @interface NFKModelBuildingTests : XCTestCase
 @property (nonatomic) NFKBuildTestBuilder *builder;
 @property (nonatomic) NFKModelCatalog *catalog;
+@property (nonatomic, copy) NSArray<NSURL *> *savedDefaultHuggingFaceCacheURLs;
 @end
 
 @implementation NFKModelBuildingTests
 
 // Each catalog builds against a 64 GiB working set, a 54.4 GiB budget, so no build depends on the memory of
-// the machine that runs the tests.
+// the machine that runs the tests. No locator reads the developer's own Hugging Face cache.
 - (void)setUp
 {
+	self.savedDefaultHuggingFaceCacheURLs = NFKHFHub.defaultHuggingFaceCacheURLs;
+	NFKHFHub.defaultHuggingFaceCacheURLs = @[];
 	self.builder = [[NFKBuildTestBuilder alloc] init];
 	[NFKModelCatalog registerBackendBuilder:self.builder forEngine:NFKBuildTestEngine];
 	self.catalog = [[NFKModelCatalog alloc] init];
@@ -126,6 +129,7 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 {
 	NFKModelCatalog.sharedCatalog.memoryBudget = nil;
 	[NFKModelCatalog registerBackendBuilder:nil forEngine:NFKBuildTestEngine];
+	NFKHFHub.defaultHuggingFaceCacheURLs = self.savedDefaultHuggingFaceCacheURLs;
 }
 
 - (NFKModelMemoryBudget *)generousBudget

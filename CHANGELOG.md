@@ -108,6 +108,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A release in Hugging Face's own cache is found without a download
+
+- `NFKHFHub.huggingFaceCacheURLs` names caches in Hugging Face's layout, the one transformers,
+  huggingface_hub, and mlx-lm download into: `models--owner--name/refs/<branch>` holds a commit, and
+  `models--owner--name/snapshots/<commit>/` holds the files, usually as links into `blobs/`. A new hub
+  starts from the process-wide `+defaultHuggingFaceCacheURLs`, which defaults to the root
+  huggingface_hub reads: `HF_HUB_CACHE`, else `HUGGINGFACE_HUB_CACHE`, else `$HF_HOME/hub`, else
+  `$XDG_CACHE_HOME/huggingface/hub`, else `~/.cache/huggingface/hub`. An empty array turns the lookup
+  off. The hub reads these roots and never writes into them.
+- `-huggingFaceCacheLocationForModelSource:` reports where a root holds a Hugging Face source. The
+  repository folder matches without regard to case. A revision of 40 hexadecimal digits names its
+  snapshot; any other revision, `main` for none, is read from `refs/`, and a missing ref or snapshot is
+  no match. The snapshot holds every required file of the source's own repository with its links
+  followed, so a link whose blob an interrupted download left missing counts as absent. The location
+  is the snapshot for a directory layout and the weights file's path in the snapshot for a file layout.
+- `-downloadStatusForModelSource:` and the catalog locators read the model folders, then the Hugging
+  Face caches in order, then the cache. A matching snapshot reads complete, its files counted at the
+  size of the blobs their links resolve to and its `localURL` in the snapshot, once the files the source
+  takes from other repositories are in the cache. Before, a release another tool had downloaded read
+  absent, and an app downloaded it again into the cache.
+- A removal plans and deletes cache files only. A source found only in a Hugging Face cache yields a
+  plan that removes nothing, and the snapshot and its blobs stay in place.
+- A glob in a model folder no longer matches a link whose target is missing, the same as a listed path.
+
 #### The fitting options keep the widest weights, and a token-by-token decoder stays in memory
 
 - `NFKModelMemoryConstraints.fittingOptions`, and the `NFKModelMemoryFittingOptionsKey` of a build's
