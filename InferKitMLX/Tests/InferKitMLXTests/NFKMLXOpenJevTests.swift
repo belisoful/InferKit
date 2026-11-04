@@ -203,6 +203,94 @@ final class NFKMLXOpenJevTests: XCTestCase {
                                                        precision: .float32))
     }
 
+    // MARK: - Streaming
+
+    /// A tokenizer for the tiny vocabulary: each whitespace-separated word is a hash.
+    private static let tinyTokenizer = NFKMLXDecisionTokenizer { text in
+        text.split(whereSeparator: \.isWhitespace).map { word in
+            word.unicodeScalars.reduce(7) { ($0 * 31 + Int($1.value)) % 500 } + 5
+        }
+    }
+
+    private let state = "Dana was charged twice for order 88213 and wants the money back."
+
+    /// The least budget that holds the tiny base's decoder with only its first `held` layers.
+    private func budget(_ base: URL, holding held: Int) throws -> Int {
+        let stage = try NFKMLXLayerStream.footprint(
+            directory: base, precision: .float32,
+            includes: { NFKMLXHybridLanguage.moduleKey(forReference: $0) != nil },
+            layerOf: { NFKMLXHybridLanguage.layer(ofKey: $0)?.layer })
+        return NFKMLXResidencyBudget.leastBudget(holding: stage.streamedMinimumBytes + stage.layerBytes.prefix(held).reduce(0, +))
+    }
+
+    /// The tiny release's model held whole, and with every layer past the first streamed.
+    private func heldAndStreamed(base: URL, checkpoint: URL) throws -> (held: NFKMLXOpenJev, streamed: NFKMLXOpenJev) {
+        let held = try NFKMLXOpenJev.network(checkpointDirectoryURL: checkpoint, baseDirectoryURL: base,
+                                             precision: .float32, residency: .resident)
+        let streamed = try NFKMLXOpenJev.network(checkpointDirectoryURL: checkpoint, baseDirectoryURL: base,
+                                                 precision: .float32, residency: .streamed,
+                                                 budget: try budget(base, holding: 1))
+        XCTAssertNil(held.decoder.layerStream)
+        XCTAssertEqual(streamed.decoder.layerStream?.layers, [1, 2, 3])
+        return (NFKMLXOpenJev(net: held, tokenizer: Self.tinyTokenizer), NFKMLXOpenJev(net: streamed, tokenizer: Self.tinyTokenizer))
+    }
+
+    func testAStreamedBaseDecidesAsAHeldOneDoesWithItsAdapterInEveryLayer() throws {
+        try requireMLXRuntime()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("openjev-stream-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = root.appendingPathComponent("base")
+        let checkpoint = root.appendingPathComponent("checkpoint")
+        try writeTinyBase(to: base)
+        _ = try writeTinyCheckpoint(to: checkpoint)
+        let (held, streamed) = try heldAndStreamed(base: base, checkpoint: checkpoint)
+
+        for question in [intent, urgency, refund] {
+            XCTAssertEqual(try streamed.logits(state: state, question: question),
+                           try held.logits(state: state, question: question), "\(question.type.rawValue) logits")
+        }
+        // Between passes a streamed projection holds its adapter and leaves its base weight in the release.
+        let adapters = streamed.net.decoder.leafModules().flattened().compactMap { path, module in
+            (module as? NFKMLXLoRALinear).map { (path, $0) }
+        }
+        XCTAssertEqual(adapters.count, 10)
+        for (path, adapter) in adapters {
+            XCTAssertGreaterThan(adapter.loraB.size, 0, path)
+            XCTAssertEqual(adapter.weight.size == 0, !path.hasPrefix("model.layers.0."), path)
+        }
+        let questions = [("intent", intent), ("urgency", urgency), ("refund", refund)]
+        let streamedAnswers = try streamed.decide(state: state, identifiedQuestions: questions)
+        let heldAnswers = try held.decide(state: state, identifiedQuestions: questions)
+        XCTAssertEqual(streamedAnswers.inputTokens, heldAnswers.inputTokens)
+        for (identifier, _) in questions {
+            XCTAssertEqual(streamedAnswers.answers[identifier].map { $0.raw as NSDictionary },
+                           heldAnswers.answers[identifier].map { $0.raw as NSDictionary }, identifier)
+        }
+    }
+
+    func testAFailedReadOfAStreamedBaseFailsTheQuestionAndTheNextQuestionReadsTheBaseAgain() throws {
+        try requireMLXRuntime()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("openjev-failed-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let base = root.appendingPathComponent("base")
+        let checkpoint = root.appendingPathComponent("checkpoint")
+        try writeTinyBase(to: base)
+        _ = try writeTinyCheckpoint(to: checkpoint)
+        let (held, streamed) = try heldAndStreamed(base: base, checkpoint: checkpoint)
+        let expected = try held.logits(state: state, question: intent)
+
+        let file = base.appendingPathComponent("model.safetensors")
+        let original = try Data(contentsOf: file)
+        let start = try XCTUnwrap(NFKMLXSafetensors.entries(inFile: file).values.map(\.start).min())
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: UInt64(start))
+        try handle.close()
+        XCTAssertThrowsError(try streamed.logits(state: state, question: intent), "the truncated base cannot be read")
+        XCTAssertThrowsError(try streamed.decide(state: state, identifiedQuestions: [("intent", intent)]))
+        try original.write(to: file)
+        XCTAssertEqual(try streamed.logits(state: state, question: intent), expected, "the next question reads every layer again")
+    }
+
     // MARK: - Downloading
 
     func testADownloadFetchesTheReleaseThenTheBaseRevisionItNames() throws {
@@ -319,18 +407,11 @@ final class NFKMLXOpenJevTests: XCTestCase {
         return dot / max(sqrt(na * nb), 1e-30)
     }
 
-    // The 9B release does not fit here at float32 (about 36 GB), so it is measured at the precision the
-    // loader runs it at: bfloat16 against bfloat16. Both sides round every layer, so the agreement is
-    // bounded by bfloat16 rather than by the port; the decisions are what must agree.
-    func testTheNineBillionReleaseMatchesTheReferenceAtBFloat16() throws {
-        try requireMLXRuntime()
-        guard let path = config["IK_PARITY_OPEN_JEV_9B_BF16"], let checkpoint = config["IK_VAL_OPEN_JEV_9B"],
-              let base = config["IK_VAL_QWEN3_5_9B"] else {
-            throw XCTSkip("set IK_PARITY_OPEN_JEV_9B_BF16, IK_VAL_OPEN_JEV_9B, and IK_VAL_QWEN3_5_9B")
-        }
-        let arrays = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: path)).arrays
-        let model = try NFKMLXOpenJev.openJev(checkpointDirectoryURL: URL(fileURLWithPath: checkpoint),
-                                              baseDirectoryURL: URL(fileURLWithPath: base))
+    /// Compares a release run at bfloat16 against its bfloat16 record question by question: every
+    /// candidate's tokens, the logits, the probabilities, and the decision. Returns the worst logit and
+    /// probability gaps. Each candidate is one pass, and the probabilities come from the logits.
+    private func compareAtBFloat16(_ name: String, model: NFKMLXOpenJev,
+                                   arrays: [String: MLXArray]) throws -> (logit: Float, probability: Double) {
         var report = [String]()
         var index = 0
         var worstLogit: Float = 0, worstProbability = 0.0
@@ -344,7 +425,7 @@ final class NFKMLXOpenJevTests: XCTestCase {
                 let logits = try model.logits(state: request.state, question: question)
                 let reference = arrays["\(key).logits"]!.asArray(Float.self)
                 let gap = zip(logits, reference).map { abs($0 - $1) }.max() ?? 0
-                let probabilities = try model.distribution(state: request.state, question: question)
+                let probabilities = NFKMLXOpenJev.softmax(logits, temperature: Double(model.configuration.temperature))
                 let referenceProbabilities = arrays["\(key).probabilities"]!.asArray(Float.self).map(Double.init)
                 let probabilityGap = zip(probabilities, referenceProbabilities).map { abs($0 - $1) }.max() ?? 0
                 worstLogit = max(worstLogit, gap)
@@ -356,10 +437,46 @@ final class NFKMLXOpenJevTests: XCTestCase {
                 index += 1
             }
         }
-        print("VALIDATION PARITY open-jev-9b (bfloat16):\n  " + report.joined(separator: "\n  "))
+        print("VALIDATION PARITY \(name) (bfloat16):\n  " + report.joined(separator: "\n  "))
+        return (worstLogit, worstProbability)
+    }
+
+    // The 9B release does not fit here at float32 (about 36 GB), so it is measured at the precision the
+    // loader runs it at: bfloat16 against bfloat16. Both sides round every layer, so the agreement is
+    // bounded by bfloat16 rather than by the port; the decisions are what must agree.
+    func testTheNineBillionReleaseMatchesTheReferenceAtBFloat16() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_OPEN_JEV_9B_BF16"], let checkpoint = config["IK_VAL_OPEN_JEV_9B"],
+              let base = config["IK_VAL_QWEN3_5_9B"] else {
+            throw XCTSkip("set IK_PARITY_OPEN_JEV_9B_BF16, IK_VAL_OPEN_JEV_9B, and IK_VAL_QWEN3_5_9B")
+        }
+        let arrays = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: path)).arrays
+        let model = try NFKMLXOpenJev.openJev(checkpointDirectoryURL: URL(fileURLWithPath: checkpoint),
+                                              baseDirectoryURL: URL(fileURLWithPath: base))
+        let worst = try compareAtBFloat16("open-jev-9b", model: model, arrays: arrays)
         // Measured: logits within 0.14 and probabilities within 0.0037 over the five questions.
-        XCTAssertLessThan(worstLogit, 0.3)
-        XCTAssertLessThan(worstProbability, 0.01)
+        XCTAssertLessThan(worst.logit, 0.3)
+        XCTAssertLessThan(worst.probability, 0.01)
+    }
+
+    // The 27B base (about 52 GB at bfloat16) does not fit the working set here, so the decoder streams
+    // the layers past what fits on every pass. It is measured at the loader's precision against
+    // `run_reference.py open_jev_layerwise`, which runs the loader's own code with the base's layers read
+    // in turn.
+    func testTheTwentySevenBillionReleaseStreamsToTheReferenceAtBFloat16() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_OPEN_JEV_27B"], let checkpoint = config["IK_VAL_OPEN_JEV_27B"],
+              let base = config["IK_VAL_QWEN3_8_27B"] else {
+            throw XCTSkip("set IK_PARITY_OPEN_JEV_27B, IK_VAL_OPEN_JEV_27B, and IK_VAL_QWEN3_8_27B")
+        }
+        let arrays = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: path)).arrays
+        let model = try NFKMLXOpenJev.openJev(checkpointDirectoryURL: URL(fileURLWithPath: checkpoint),
+                                              baseDirectoryURL: URL(fileURLWithPath: base), precision: .checkpoint,
+                                              residency: .automatic)
+        print("VALIDATION open-jev-27b streams \(model.net.decoder.layerStream?.layers.count ?? 0) of 64 layers")
+        let worst = try compareAtBFloat16("open-jev-27b", model: model, arrays: arrays)
+        XCTAssertLessThan(worst.logit, 0.3)
+        XCTAssertLessThan(worst.probability, 0.01)
     }
 
     func testTheTwoBillionReleaseMatchesTheReference() throws {

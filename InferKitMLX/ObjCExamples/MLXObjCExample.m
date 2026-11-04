@@ -763,6 +763,12 @@
 	XCTAssertTrue([NFKMLXPixtral respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
 	XCTAssertTrue([NFKMLXPixtral respondsToSelector:@selector(modelWithDirectoryURL:precision:residency:error:)]);
 	XCTAssertTrue([NFKMLXPixtral instancesRespondToSelector:@selector(streamedLayerCount)]);
+	// The decoders without a key-value cache take the same choice: Qwen3.5 and Qwen3.8 (the 27B streams on a
+	// 32 GB machine) and Codestral Mamba.
+	XCTAssertTrue([NFKMLXHybridLanguage respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXDecoderBackend instancesRespondToSelector:@selector(streamedLayerCount)]);
+	XCTAssertTrue([NFKMLXMamba respondsToSelector:@selector(mambaBackendWithDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXMambaBackend instancesRespondToSelector:@selector(streamedLayerCount)]);
 
 	// A GGUF release — the dominant quantized-model format — builds from one file through the native
 	// reader, which turns its metadata into a configuration, remaps and dequantizes its tensors, and
@@ -1094,6 +1100,15 @@
 	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(openJevWithVariant:revision:cacheDirectoryURL:error:)]);
 	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(openJevWithVariant:revision:cacheDirectoryURL:completionHandler:)]);
 	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:error:)]);
+	// Open-Jev 27B's base (about 52 GB) streams the decoder layers past the working set; the adapter and the
+	// head stay held:
+	//   NFKMLXDecisionBackend *jev = [NFKMLXOpenJev backendWithVariant:NFKMLXOpenJevVariantTwentySevenB revision:nil
+	//                                                cacheDirectoryURL:nil precision:NFKMLXWeightPrecisionCheckpoint
+	//                                                        residency:NFKMLXResidencyAutomatic error:&error];
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:precision:residency:completionHandler:)]);
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(openJevWithCheckpointDirectoryURL:baseDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(backendWithCheckpointDirectoryURL:baseDirectoryURL:precision:residency:error:)]);
 	XCTAssertTrue([NFKMLXOpenJev respondsToSelector:@selector(downloadVariant:revision:cacheDirectoryURL:error:)]);
 	XCTAssertTrue([NFKMLXOpenJev instancesRespondToSelector:@selector(answersForState:questions:error:)]);
 	XCTAssertTrue([NFKMLXOpenJev instancesRespondToSelector:@selector(answerForState:question:error:)]);
@@ -1326,6 +1341,12 @@
 	XCTAssertTrue([NFKMLXNemotronBackend instancesRespondToSelector:@selector(hasDraftModel)]);
 	XCTAssertTrue([NFKMLXNemotronBackend instancesRespondToSelector:@selector(streamedLayerCount)]);
 	XCTAssertTrue([NFKMLXGemma3 instancesRespondToSelector:@selector(hasDraftModel)]);
+	// Qwen3.5 2B or 4B drafts for Qwen3.5 9B or Qwen3.8 27B, whose layers past the working set stream:
+	//   NFKMLXDecoderBackend *qwen = [NFKMLXHybridLanguage backendWithDirectoryURL:dir draftDirectoryURL:smallDir
+	//                                                                    precision:NFKMLXWeightPrecisionCheckpoint
+	//                                                                    residency:NFKMLXResidencyAutomatic error:&error];
+	XCTAssertTrue([NFKMLXHybridLanguage respondsToSelector:@selector(backendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXDecoderBackend instancesRespondToSelector:@selector(hasDraftModel)]);
 
 	NSError *error = nil;
 	id<NFKInferenceBackend> backend =

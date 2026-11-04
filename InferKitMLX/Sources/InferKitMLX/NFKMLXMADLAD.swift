@@ -370,8 +370,7 @@ public final class NFKMLXT5Seq2SeqNet: Module {
                 NFKMLXMADLAD.block(of: key).flatMap { $0.stack == stack ? ($0.layer, $0.name) : nil }
             }
             for index in layers.sorted() {
-                stream.vacate(index, module: blocks[index])
-                placeholders += blocks[index].parameters().flattened().map { ("\(stack).block.\(index).\($0)", $1) }
+                placeholders += stream.vacate(index, module: blocks[index]).map { ("\(stack).block.\(index).\($0)", $1) }
             }
             return stream
         }

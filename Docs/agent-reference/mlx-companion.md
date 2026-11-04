@@ -633,11 +633,14 @@ Streaming:
   once, calling the finalizer at once, where Metal refuses it. A serial `.userInitiated` queue reads the
   next streamed layer while the current one computes, cyclically, so the next pass's first layer is read
   at the end of a pass and held until it starts.
-- A streamed layer's module is built, its parameters replaced with zero-length placeholders before
-  anything evaluates the random initialization (`vacate`), filled through `NFKMLXWeights.apply` for
-  its turn (`install`), and emptied again once its output and the cache arrays it wrote are evaluated
-  (`release`). An unevaluated output is a graph over the layer's weights and would keep them alive.
-  The held-weight apply includes the placeholders, so its coverage check still sees every layer.
+- A streamed layer's module is built, the parameters the release holds replaced with zero-length
+  placeholders before anything evaluates the random initialization (`vacate`), filled through
+  `NFKMLXWeights.apply` for its turn (`install`, non-strict), and emptied again once its output and the
+  cache arrays it wrote are evaluated (`release`). An unevaluated output is a graph over the layer's
+  weights and would keep them alive. The held-weight apply includes the placeholders, so its strict
+  coverage check still sees every layer, and a tensor the release lacks is refused there. A parameter
+  the release does not hold (a LoRA adapter's `lora_a`/`lora_b`) is never emptied: the loader passes it
+  to the held apply as the net already has it (`retaining:` on the hybrid loader).
 - A read failure skips the layer and is sticky (`readFailure`). `NFKMLXGemma3Net.verifyStream()` throws
   it; `NFKMLXGemma3Model.generate` checks after every pass and empties the prompt cache it was writing.
   The non-throwing forward APIs (`hiddenStates`, `logits`) cannot report it themselves.
@@ -714,6 +717,22 @@ Streaming:
   the multimodal backend (`besides:` its towers), and the drafted factory set it. The decoders run
   without a key-value cache, so a failed read leaves nothing to empty, and a draft is verified by one
   pass over the sequence and every proposal (mlx-models-gemma.md, `NFKMLXGemmaBackend`).
+- The decoders without a key-value cache (the Qwen3.5 hybrid, Codestral Mamba, Nemotron-H) stream through
+  the same `run` wrapper: each re-runs the sequence every step, so a pass reads every streamed layer once
+  per generated token, or once per round of proposals with a draft (`NFKMLXPrefillDrafting`).
+  `NFKMLXDecoderBackend`, `NFKMLXMambaBackend`, and `NFKMLXNemotronBackend` check the stream after each pass
+  and clear a failure as they throw it. The hybrid loader converts a streamed layer at `.checkpoint` to
+  the type most of the release carries (`releasedType`), as its whole load does for `A_log` and the
+  recurrence's norm, and both shape the stored depthwise convolution as their whole loads do.
+- Open-Jev builds its network with the adapter in place before the base loads (`adapt()` first), so a
+  streamed layer's projections are `NFKMLXLoRALinear` whose base weight streams and whose adapter stays
+  held. `NFKMLXOpenJev.logits` and `decide` check the stream after each pass. The 27B base, about 52 GB at
+  bfloat16, streams under `.automatic`. Its reference, `run_reference.py open_jev_layerwise`, runs the
+  loader's own `DecisionModel.load` over a meta-device base whose layers are read in turn: PEFT wraps
+  meta layers and leaves the adapter unread in them, so `_place_adapter` places it at float32, as PEFT
+  holds it over a held base, and `_read_adapted_layers_in_turn` reads only the release's tensors (a wrapped
+  projection's as `base_layer.weight`) so the adapter stays held across passes. `OPEN_JEV_CHECK=1` runs the
+  whole load over the same base and requires every recorded tensor to be bit-identical.
 - The reference for a release too large to hold, `run_reference.py dense_layerwise`, reads a Gemma text
   model's non-layer modules as the release builds them (`_read_scaled_text_model`) and reads into each
   layer only the tensors it holds, as `from_pretrained` does for Gemma 4 layers that share keys and

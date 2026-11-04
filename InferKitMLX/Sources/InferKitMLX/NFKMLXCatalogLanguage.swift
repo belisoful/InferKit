@@ -29,7 +29,7 @@ enum NFKMLXCatalogLanguage {
     /// The language models' entries, in the order ``NFKMLXModelDescriptors`` lists them.
     static var entries: [NFKMLXCatalogEntry] {
         languageReleases.map(languageEntry) + [ggufEntry]
-            + [hybridEntry, qwen4ExpEntry] + graniteEntries + [nemotronEntry, nemotron3NanoEntry, mambaEntry]
+            + hybridSizes.map(hybridEntry) + [qwen4ExpEntry] + graniteEntries + [nemotronEntry, nemotron3NanoEntry, mambaEntry]
             + gemma3Releases.map(gemma3Entry) + gemma3nReleases.map(gemma3nEntry) + gemma4Releases.map(gemma4Entry)
             + [gemma4MultimodalEntry]
             + deepSeekReleases.map(deepSeekEntry)
@@ -62,6 +62,12 @@ enum NFKMLXCatalogLanguage {
         for release in gemma3Releases {
             NFKMLXGenerationBackend.registerDirectoryModel(release.name) {
                 try NFKMLXGemma3.backend(directoryURL: $0, precision: .float32, residency: .automatic)
+            }
+        }
+        for size in hybridSizes where size.name != NFKMLXHybridLanguage.modelName {
+            NFKMLXGenerationBackend.registerDirectoryModel(size.name) {
+                try NFKMLXHybridLanguage.backend(directoryURL: $0, precision: .checkpoint, residency: .automatic,
+                                                 budget: NFKMLXResidencyBudget.current(), identifier: size.name)
             }
         }
         NFKMLXGenerationBackend.registerDirectoryModel(NFKMLXNemotronH.nemotron3NanoModelName) {
@@ -324,7 +330,7 @@ extension NFKMLXLayaVariant {
 extension NFKMLXOpenJevVariant {
 
     /// The registry name the variant builds under.
-    fileprivate var registryName: String {
+    var registryName: String {
         "open-jev-" + (repository.split(separator: "/").last.map { String($0.dropFirst("Open-Jev-".count)) } ?? "")
             .lowercased()
     }
@@ -786,22 +792,25 @@ extension NFKMLXCatalogLanguage {
                  source: .hub(repository, revision: revision, files: files))
     }
 
-    fileprivate static var hybridEntry: NFKMLXCatalogEntry {
-        let name = NFKMLXHybridLanguage.modelName
+    /// The Qwen3.5 hybrid releases, one entry each so a smaller one drafts for a larger one: the registry
+    /// name, the display name, the repository, and the revision (nil for the 4B's current one).
+    fileprivate static let hybridSizes: [(name: String, displayName: String, repository: String, revision: String?)] = [
+        ("qwen3.5-2b", "Qwen3.5 2B", NFKMLXOpenJevVariant.twoB.baseRepository, NFKMLXOpenJevVariant.twoB.baseRevision),
+        (NFKMLXHybridLanguage.modelName, "Qwen3.5 4B", "Qwen/Qwen3.5-4B", nil),
+        ("qwen3.5-9b", "Qwen3.5 9B", NFKMLXOpenJevVariant.nineB.baseRepository, NFKMLXOpenJevVariant.nineB.baseRevision),
+        ("qwen3.8-27b", "Qwen3.8 27B", NFKMLXOpenJevVariant.twentySevenB.baseRepository,
+         NFKMLXOpenJevVariant.twentySevenB.baseRevision),
+    ]
+
+    fileprivate static func hybridEntry(_ size: (name: String, displayName: String, repository: String, revision: String?))
+        -> NFKMLXCatalogEntry {
         let files = releaseFiles(required: NFKMLXHybridLanguage.requiredFiles, optional: NFKMLXHybridLanguage.optionalFiles,
                                  weights: NFKMLXHybridLanguage.weightFiles)
         return decoderEntry(
-            name: name, displayName: "Qwen3.5", family: "qwen3.5",
-            summary: "Qwen3.5, Qwen3.6, and Qwen3.8, hybrid linear- and full-attention decoders that write text and call tools.",
-            variants: [
-                familyVariant(name, NFKMLXOpenJevVariant.twoB.baseRepository, displayName: "Qwen3.5 2B",
-                              revision: NFKMLXOpenJevVariant.twoB.baseRevision, files: files),
-                familyVariant(name, "Qwen/Qwen3.5-4B", displayName: "Qwen3.5 4B", isDefault: true, files: files),
-                familyVariant(name, NFKMLXOpenJevVariant.nineB.baseRepository, displayName: "Qwen3.5 9B",
-                              revision: NFKMLXOpenJevVariant.nineB.baseRevision, files: files),
-                familyVariant(name, NFKMLXOpenJevVariant.twentySevenB.baseRepository, displayName: "Qwen3.8 27B",
-                              revision: NFKMLXOpenJevVariant.twentySevenB.baseRevision, files: files),
-            ],
+            name: size.name, displayName: size.displayName, family: "qwen3.5",
+            summary: "\(size.displayName), a hybrid linear- and full-attention decoder that writes text and calls tools.",
+            variants: [familyVariant(size.name, size.repository, displayName: size.displayName, isDefault: true,
+                                     revision: size.revision, files: files)],
             license: .apache2(), readsReasoning: true,
             outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions(),
             residencies: streamedResidencies)
@@ -1397,7 +1406,8 @@ extension NFKMLXCatalogLanguage {
                                 registryName: name,
                                 source: .hub(variant.repository, revision: variant.measuredRevision,
                                              files: checkpoint + baseFiles))],
-            license: .apache2(note: "The adapter reads \(variant.baseRepository) at \(variant.baseRevision), which the download fetches beside it."))
+            license: .apache2(note: "The adapter reads \(variant.baseRepository) at \(variant.baseRevision), which the download fetches beside it."),
+            residencies: streamedResidencies)
     }
 
     /// A pplx-decider release: the fine-tuned backbone, the readout, and the protocol files in one

@@ -203,7 +203,7 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
                 let widens = precision == .float32 && (buffer.dtype == .float16 || buffer.dtype == .bfloat16)
                 return (buffer.name, widens ? array.asType(.float32) : array)
             }
-            try NFKMLXWeights.apply(arrays, to: module)
+            try NFKMLXWeights.apply(arrays, to: module, strict: false)
             return true
         } catch {
             lock.lock()
@@ -217,19 +217,30 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
     /// are evaluated, so nothing the pass keeps still refers to them.
     func release(_ index: Int, from module: Module, after outputs: [MLXArray]) {
         eval(outputs)
-        let empty = placeholders[index] ?? module.parameters().flattened().map { name, _ in
-            (name, MLXArray.zeros([0]))
-        }
-        placeholders[index] = empty
-        module.update(parameters: ModuleParameters.unflattened(empty))
+        module.update(parameters: ModuleParameters.unflattened(empty(index, module: module)))
     }
 
-    /// Replaces a freshly built layer's parameters with empty placeholders, so the random weights its
-    /// initializer described are dropped before anything evaluates them.
-    func vacate(_ index: Int, module: Module) {
-        let empty = module.parameters().flattened().map { name, _ in (name, MLXArray.zeros([0])) }
+    /// Replaces a freshly built layer's parameters the release holds with empty placeholders, so the
+    /// random weights its initializer described are dropped before anything evaluates them, and returns
+    /// those placeholders. A parameter the release does not hold (an adapter's) stays resident.
+    @discardableResult
+    func vacate(_ index: Int, module: Module) -> [(String, MLXArray)] {
+        let placeholders = empty(index, module: module)
+        module.update(parameters: ModuleParameters.unflattened(placeholders))
+        return placeholders
+    }
+
+    /// An empty placeholder for each of layer `index`'s parameters the release holds.
+    private func empty(_ index: Int, module: Module) -> [(String, MLXArray)] {
+        if let cached = placeholders[index] {
+            return cached
+        }
+        let streamed = Set((tensors[index] ?? []).map(\.name))
+        let empty = module.parameters().flattened().compactMap { name, _ in
+            streamed.contains(name) ? (name, MLXArray.zeros([0])) : nil
+        }
         placeholders[index] = empty
-        module.update(parameters: ModuleParameters.unflattened(empty))
+        return empty
     }
 
     /// The read of layer `index`, started now unless it is already running.
@@ -452,8 +463,7 @@ extension NFKMLXLayerStream {
                                    converting: conversion, layerOf: layerOf, shaping: shaping)
         var placeholders = [(String, MLXArray)]()
         for index in streamed.sorted() {
-            stream.vacate(index, module: layers[index])
-            placeholders += layers[index].parameters().flattened().map { ("\(prefix)\(index).\($0)", $1) }
+            placeholders += stream.vacate(index, module: layers[index]).map { ("\(prefix)\(index).\($0)", $1) }
         }
         return (stream, placeholders)
     }

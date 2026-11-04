@@ -4942,14 +4942,11 @@ def run_open_jev(image, checkpoint):
     first candidate carries every hidden state of the text model. `loss.*` is the training loss at the
     released Brier weight 0.1 against fixed soft targets, per record.
     """
-    import json as _json
     import os as _os
     import sys as _sys
     import torch
     _sys.path.insert(0, _os.environ["OPEN_JEV_SOURCE"])
     import jev.model as jev_model
-    from jev.api import compile_request, candidate_prompts, format_response
-    from jev.metrics import softmax
 
     base = _os.environ["OPEN_JEV_BASE"]
     dtype = getattr(torch, _os.environ.get("OPEN_JEV_DTYPE", "float32"))
@@ -4968,11 +4965,24 @@ def run_open_jev(image, checkpoint):
 
     jev_model.AutoModelForImageTextToText, jev_model.AutoTokenizer = _LocalModel, _LocalTokenizer
     model = jev_model.DecisionModel.load(checkpoint, device="cpu")
+    globals()["_extra"] = _open_jev_record(model, checkpoint, hidden_states=dtype == torch.float32)
+    return globals()["_extra"]["r0.logits"].clone()
+
+
+def _open_jev_record(model, checkpoint, hidden_states):
+    """`run_open_jev`'s record from a loaded `jev.model.DecisionModel`: the requests' candidate ids,
+    logits, probabilities, answers, and losses, and with `hidden_states` the first candidate's hidden
+    states."""
+    import json as _json
+    import os as _os
+    import torch
+    from jev.api import compile_request, candidate_prompts, format_response
+    from jev.metrics import softmax
+
     temperature = _json.load(open(_os.path.join(checkpoint, "temperature.json")))["temperature"]
     extra = {"temperature": torch.tensor([float(temperature)])}
     targets = {"choice": lambda n: [1.0 if i == 1 else 0.0 for i in range(n)],
                "score": lambda n: [0.1, 0.7, 0.2][:n], "noul": lambda n: [0.3, 0.7]}
-    first = None
     index = 0
     for state, questions in _OPEN_JEV_REQUESTS:
         records = compile_request(state, questions)
@@ -5001,18 +5011,115 @@ def run_open_jev(image, checkpoint):
             loss = -(target * logits.log_softmax(-1)).sum() + 0.1 * ((logits.softmax(-1) - target) ** 2).sum()
             extra[f"loss.{key}"] = torch.tensor([float(loss)])
             extra[f"loss.{key}.target"] = target
-            if first is None:
-                first = logits.clone()
-                if dtype == torch.float32:
-                    ids = torch.tensor([model.tokenizer(prompts[0])["input_ids"]])
-                    with torch.no_grad():
-                        out = model.backbone(input_ids=ids, output_hidden_states=True, use_cache=False)
-                    for layer, hidden in enumerate(out.hidden_states):
-                        extra[f"hidden.{layer}"] = hidden[0].float().contiguous()
-                    extra["last_hidden"] = out.last_hidden_state[0].float().contiguous().clone()
+            if index == 0 and hidden_states:
+                ids = torch.tensor([model.tokenizer(prompts[0])["input_ids"]])
+                with torch.no_grad():
+                    out = model.backbone(input_ids=ids, output_hidden_states=True, use_cache=False)
+                for layer, hidden in enumerate(out.hidden_states):
+                    extra[f"hidden.{layer}"] = hidden[0].float().contiguous()
+                extra["last_hidden"] = out.last_hidden_state[0].float().contiguous().clone()
             index += 1
+    return extra
+
+
+def run_open_jev_layerwise(image, checkpoint):
+    """`run_open_jev` for a base too large to hold whole (Open-Jev-27B-v1.1 over Qwen3.8-27B, about 54 GB at
+    bfloat16): the loader's own `DecisionModel.load`, with its `from_pretrained` redirected to the base
+    `_dense_layerwise_model` builds on the meta device, each decoder layer read as the forward reaches it
+    (`_read_adapted_layers_in_turn`). PEFT wraps the meta layers and leaves the adapter unread in them, so
+    `_place_adapter` places its tensors as PEFT loads them over a held base. `OPEN_JEV_DTYPE` defaults to
+    bfloat16, the loader's own. `OPEN_JEV_CHECK=1` also runs `run_open_jev` over the same base (one that
+    fits) and raises unless every recorded tensor is bit-identical. The record is `run_open_jev`'s."""
+    import os as _os
+    import sys as _sys
+    import torch
+    _sys.path.insert(0, _os.environ["OPEN_JEV_SOURCE"])
+    import jev.model as jev_model
+
+    base = _os.environ["OPEN_JEV_BASE"]
+    # `run_open_jev`, which the check runs, reads the same variable with float32 as its default.
+    _os.environ["OPEN_JEV_DTYPE"] = _os.environ.get("OPEN_JEV_DTYPE", "bfloat16")
+    dtype = getattr(torch, _os.environ["OPEN_JEV_DTYPE"])
+    real_model, real_tokenizer = jev_model.AutoModelForImageTextToText, jev_model.AutoTokenizer
+    hooked, closers = {}, []
+
+    class _LayerwiseModel:
+        @staticmethod
+        def from_pretrained(model_id, revision=None, torch_dtype=None, **kw):
+            model, _, close = _dense_layerwise_model(base, dtype, read_layers=lambda *args: hooked.update(args=args))
+            closers.append(close)
+            return model
+
+    class _LocalTokenizer:
+        @staticmethod
+        def from_pretrained(model_id, revision=None, **kw):
+            return real_tokenizer.from_pretrained(base, **kw)
+
+    jev_model.AutoModelForImageTextToText, jev_model.AutoTokenizer = _LayerwiseModel, _LocalTokenizer
+    try:
+        model = jev_model.DecisionModel.load(checkpoint, device="cpu")
+        _place_adapter(model.backbone, _os.path.join(checkpoint, "adapter", "adapter_model.safetensors"))
+        _read_adapted_layers_in_turn(*hooked["args"])
+        extra = _open_jev_record(model, checkpoint, hidden_states=dtype == torch.float32)
+    finally:
+        jev_model.AutoModelForImageTextToText, jev_model.AutoTokenizer = real_model, real_tokenizer
+        for close in closers:
+            close()
+    if _os.environ.get("OPEN_JEV_CHECK") == "1":
+        del model
+        run_open_jev(image, checkpoint)
+        whole = globals()["_extra"]
+        if set(whole) != set(extra):
+            raise ValueError(f"the records differ in keys: {sorted(set(whole) ^ set(extra))[:5]}")
+        for key, value in extra.items():
+            if not torch.equal(value, whole[key]):
+                raise ValueError(f"the layer-by-layer {key} differs from a whole load's by up to "
+                                 f"{float((value.double() - whole[key].double()).abs().max())}")
+        print(f"whole-load check: all {len(extra)} recorded tensors are bit-identical")
     globals()["_extra"] = extra
-    return first
+    return extra["r0.logits"].clone()
+
+
+def _place_adapter(peft_model, path):
+    """Places a PEFT adapter in a model PEFT wrapped while its layers were on the meta device, where PEFT's
+    own load leaves every adapter tensor unread: each takes the type PEFT gave its module (float32, as it
+    loads the adapter over a held base) on the CPU, and the adapter must supply every one."""
+    from safetensors.torch import load_file
+
+    held = {name: value for name, value in peft_model.named_parameters() if ".lora_" in name}
+    placed = {}
+    for key, tensor in load_file(path).items():
+        name = key.replace(".lora_A.weight", ".lora_A.default.weight").replace(".lora_B.weight", ".lora_B.default.weight")
+        if name not in held or held[name].shape != tensor.shape:
+            raise ValueError(f"the adapter's {key} {list(tensor.shape)} has no place in the wrapped model")
+        placed[name] = tensor.to(held[name].dtype)
+    if set(placed) != set(held):
+        raise ValueError(f"the adapter leaves {sorted(set(held) - set(placed))[:3]} unset")
+    peft_model.load_state_dict(placed, strict=False, assign=True)
+
+
+def _read_adapted_layers_in_turn(layers, prefix, entries, read, layers_key="layers"):
+    """`_read_layers_in_turn` for layers PEFT has wrapped: a wrapped projection holds its release tensor as
+    `<name>.base_layer.weight`, and only the release's tensors are read in and returned to the meta device,
+    so the adapter stays held across passes. Every tensor a layer holds outside the adapter must be in the
+    release."""
+    for index, layer in enumerate(layers):
+        layer_prefix = f"{prefix}{layers_key}.{index}."
+        held = {name: (layer_prefix + name.replace(".base_layer.", "."), tensor.shape, tensor.dtype)
+                for name, tensor in layer.state_dict().items() if ".lora_" not in name}
+        missing = sorted(key for key, _, _ in held.values() if key not in entries)
+        if missing:
+            raise ValueError(f"the release lacks {missing[:3]}")
+
+        def install(module, args, held=held):
+            module.load_state_dict({name: read(key) for name, (key, _, _) in held.items()}, strict=False, assign=True)
+
+        def vacate(module, args, output, held=held):
+            module.load_state_dict({name: torch.empty(shape, dtype=kind, device="meta")
+                                    for name, (_, shape, kind) in held.items()}, strict=False, assign=True)
+
+        layer.register_forward_pre_hook(install)
+        layer.register_forward_hook(vacate)
 
 
 # The pplx-decider requests: question identifiers sort in the order the questions are asked, and a
@@ -22832,9 +22939,11 @@ def _check_against_whole_load(checkpoint, dtype, ids, out, continuation):
     print(f"whole-load check: logits, {len(pairs) - 1} hidden states, and the continuation are bit-identical")
 
 
-def _dense_layerwise_model(checkpoint, dtype):
+def _dense_layerwise_model(checkpoint, dtype, read_layers=None):
     """A release's dense decoder on the meta device with each layer read as the forward reaches it (see
-    `run_dense_layerwise`). Returns the model, the release's tokenizer, and a `close` for its shards."""
+    `run_dense_layerwise`). Returns the model, the release's tokenizer, and a `close` for its shards.
+    `read_layers` hooks the layers in place of `_read_layers_in_turn`, taking the same arguments."""
+    read_layers = read_layers or _read_layers_in_turn
     from transformers import (AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer,
                               GenerationConfig)
 
@@ -22861,7 +22970,7 @@ def _dense_layerwise_model(checkpoint, dtype):
     prefix = embed_key[: -len("embed_tokens.weight")]
     if hasattr(text_model.embed_tokens, "scalar_embed_scale"):
         _read_scaled_text_model(model, text_model, prefix, entries, read, dtype)
-        _read_layers_in_turn(text_model.layers, prefix, entries, read)
+        read_layers(text_model.layers, prefix, entries, read)
         return model, tokenizer, close
     embed = torch.nn.Embedding(text_model.config.vocab_size, text_model.config.hidden_size,
                                text_model.config.pad_token_id)
@@ -22871,7 +22980,7 @@ def _dense_layerwise_model(checkpoint, dtype):
     model.lm_head.weight = (torch.nn.Parameter(read(head_key), requires_grad=False) if head_key else embed.weight)
     text_model.norm.weight = torch.nn.Parameter(read(prefix + "norm.weight"), requires_grad=False)
     text_model.rotary_emb = type(text_model.rotary_emb)(config=text_model.config)
-    _read_layers_in_turn(text_model.layers, prefix, entries, read)
+    read_layers(text_model.layers, prefix, entries, read)
     return model, tokenizer, close
 
 
@@ -25220,7 +25329,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "gelu_rounding": run_gelu_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "pplx_decider": run_pplx_decider, "pplx_decider_tiny": run_pplx_decider_tiny, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "hymt": run_hymt, "hymt_moe_tiny": run_hymt_moe_tiny, "hymt_beam": run_hymt_beam, "hymt_tokenizer": run_hymt_tokenizer, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "open_jev_layerwise": run_open_jev_layerwise, "pplx_decider": run_pplx_decider, "pplx_decider_tiny": run_pplx_decider_tiny, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "hymt": run_hymt, "hymt_moe_tiny": run_hymt_moe_tiny, "hymt_beam": run_hymt_beam, "hymt_tokenizer": run_hymt_tokenizer, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

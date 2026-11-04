@@ -596,7 +596,9 @@ models.
   of every four layers (a fixed-size state instead of a growing cache) with gated full attention in the
   fourth. At reference parity on the released Qwen3.5-4B, layer by layer; the 27B is accounted for by
   shape against its checkpoint headers. A release serves text through `backend(directoryURL:)`
-  (`qwen3.5`), an `NFKMLXDecoderBackend` that renders the release's chat template.
+  (`qwen3.5-2b`, `qwen3.5` for the 4B, `qwen3.5-9b`, `qwen3.8-27b`), an `NFKMLXDecoderBackend` that renders
+  the release's chat template. A release past the working set streams its later layers on every pass, and
+  a smaller release drafts for a larger one.
 - **`NFKMLXDeepSeek`** — the DeepSeek V4 and V4.1 decoders: multi-head latent attention over a mixture of
   experts, hyper-connections, the compressor and sparse indexer, and the release's fp8 / fp4 block-scaled
   storage decoded exactly. V4.1 adds a shared compressed cache read by layers that own no compressor,

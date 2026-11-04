@@ -33265,8 +33265,69 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "memoryModel" : {
+        "precision" : "precision",
+        "residency" : "residency"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55624744109,
+                "residentBytes" : 55624744109
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8451443757,
+                "residentBytes" : 8451443757
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 55624744109,
+                "residentBytes" : 55624744109
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 111187600013,
+                "residentBytes" : 111187600013
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "answers",
@@ -33296,6 +33357,17 @@
           "valueType" : "json"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "open-jev-27b-v1.1",
       "requirements" : {
         "minimumMemoryBytes" : 70493778124,
@@ -33306,7 +33378,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Open-Jev-27B-v1.1, a LoRA adapter and scoring head over Qwen3.8-27B that answers typed questions about a state.",
@@ -33330,8 +33403,19 @@
                   "checkpoint" : 55624744109,
                   "float32" : 111187600013
                 },
-                "id" : "model",
-                "title" : "model"
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 766546368,
+                  "checkpoint" : 766546368,
+                  "float32" : 1533092736
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 48706393088,
+                  "checkpoint" : 48706393088,
+                  "float32" : 97412786176
+                },
+                "layerCount" : 64,
+                "title" : "decoder"
               }
             ]
           },
@@ -33483,8 +33567,69 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "memoryModel" : {
+        "precision" : "precision",
+        "residency" : "residency"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4558181837,
+                "residentBytes" : 4558181837
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2046908365,
+                "residentBytes" : 2046908365
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4558181837,
+                "residentBytes" : 4558181837
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9106316301,
+                "residentBytes" : 9106316301
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "answers",
@@ -33514,6 +33659,17 @@
           "valueType" : "json"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "open-jev-2b",
       "requirements" : {
         "minimumMemoryBytes" : 10415469569,
@@ -33524,7 +33680,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Open-Jev-2B, a LoRA adapter and scoring head over Qwen3.5-2B that answers typed questions about a state.",
@@ -33548,8 +33705,19 @@
                   "checkpoint" : 4558181837,
                   "float32" : 9106316301
                 },
-                "id" : "model",
-                "title" : "model"
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 117629248,
+                  "checkpoint" : 117629536,
+                  "float32" : 235258496
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 2746527360,
+                  "checkpoint" : 2746532544,
+                  "float32" : 5493054720
+                },
+                "layerCount" : 24,
+                "title" : "decoder"
               }
             ]
           },
@@ -33701,8 +33869,69 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "memoryModel" : {
+        "precision" : "precision",
+        "residency" : "residency"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19329827565,
+                "residentBytes" : 19329827565
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6364325485,
+                "residentBytes" : 6364325485
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 19329827565,
+                "residentBytes" : 19329827565
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 38636028621,
+                "residentBytes" : 38636028621
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "answers",
@@ -33732,6 +33961,17 @@
           "valueType" : "json"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "open-jev-9b",
       "requirements" : {
         "minimumMemoryBytes" : 27793876308,
@@ -33742,7 +33982,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Open-Jev-9B, a LoRA adapter and scoring head over Qwen3.5-9B that answers typed questions about a state.",
@@ -33766,8 +34007,19 @@
                   "checkpoint" : 19329827565,
                   "float32" : 38636028621
                 },
-                "id" : "model",
-                "title" : "model"
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 436814208,
+                  "checkpoint" : 436814528,
+                  "float32" : 873628416
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 13839123456,
+                  "checkpoint" : 13839131136,
+                  "float32" : 27678246912
+                },
+                "layerCount" : 32,
+                "title" : "decoder"
               }
             ]
           },
@@ -44066,10 +44318,499 @@
       ]
     },
     {
-      "displayName" : "Qwen3.5",
+      "displayName" : "Qwen3.5 4B",
       "engine" : "mlx",
       "family" : "qwen3.5",
       "id" : "qwen3.5",
+      "inputModalities" : [
+        "text",
+        "messages"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "draft" : "draftModel",
+        "draftBits" : "draftBits",
+        "precision" : "precision",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "The tools the model may call, each a name, a description, and a JSON Schema of its parameters.",
+          "key" : "tools",
+          "kind" : "json",
+          "stage" : "request",
+          "title" : "Tools"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "hermes",
+              "value" : "hermes"
+            },
+            {
+              "title" : "qwen-xml",
+              "value" : "qwen-xml"
+            },
+            {
+              "title" : "gemma",
+              "value" : "gemma"
+            },
+            {
+              "title" : "harmony",
+              "value" : "harmony"
+            },
+            {
+              "title" : "deepseek",
+              "value" : "deepseek"
+            },
+            {
+              "title" : "mistral",
+              "value" : "mistral"
+            },
+            {
+              "title" : "granite",
+              "value" : "granite"
+            },
+            {
+              "title" : "llama",
+              "value" : "llama"
+            },
+            {
+              "title" : "nemotron",
+              "value" : "nemotron"
+            },
+            {
+              "title" : "none",
+              "value" : "none"
+            }
+          ],
+          "help" : "The syntax the model writes a tool call in. Without it the format comes from the release's chat template.",
+          "key" : "NFKMLXParameterToolCallFormat",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Tool-call format"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Light",
+              "value" : "light"
+            },
+            {
+              "title" : "Moderate",
+              "value" : "moderate"
+            },
+            {
+              "title" : "Deep",
+              "value" : "deep"
+            }
+          ],
+          "help" : "How much the model reasons before it answers, bound to the release chat template's thinking switch.",
+          "key" : "reasoningEffort",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Reasoning effort"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9319737856,
+                "residentBytes" : 9319737856
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2631327104,
+                "residentBytes" : 2631327104
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 9319737856,
+                "residentBytes" : 9319737856
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 18639460352,
+                "residentBytes" : 18639460352
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 13867882688,
+                "residentBytes" : 13867882688
+              },
+              "title" : "Qwen3.5 2B",
+              "value" : "qwen3.5-2b"
+            }
+          ],
+          "group" : "Loading",
+          "help" : "A smaller model of the same family and vocabulary that proposes tokens for speculative decoding. None decodes without one.",
+          "key" : "draftModel",
+          "kind" : "model-reference",
+          "stage" : "load",
+          "title" : "Draft model"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 9319737856,
+                "residentBytes" : 9319737856
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9319737856,
+                "residentBytes" : 9319737856
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9319737856,
+                "residentBytes" : 9319737856
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9319737856,
+                "residentBytes" : 9319737856
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9319737856,
+                "residentBytes" : 9319737856
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9319737856,
+                "residentBytes" : 9319737856
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9319737856,
+                "residentBytes" : 9319737856
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
+          "key" : "draftBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Draft quantization"
+        }
+      ],
+      "outputModalities" : [
+        "text",
+        "tool-calls",
+        "json"
+      ],
+      "outputs" : [
+        {
+          "help" : "The model's reply.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The tools the model called, where a request offers tools.",
+          "key" : "toolCalls",
+          "required" : false,
+          "title" : "Tool calls",
+          "valueType" : "tool-calls"
+        },
+        {
+          "help" : "The assistant turn carrying the tool calls, ready to append to the conversation.",
+          "key" : "assistantMessage",
+          "required" : false,
+          "title" : "Assistant turn",
+          "valueType" : "json"
+        },
+        {
+          "help" : "The reasoning the model shows before its answer.",
+          "key" : "reasoning",
+          "required" : false,
+          "title" : "Reasoning",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "qwen3.5",
+      "requirements" : {
+        "minimumMemoryBytes" : 16017300179,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Qwen3.5 4B, a hybrid linear- and full-attention decoder that writes text and calls tools.",
+      "tasks" : [
+        "text-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Qwen3.5 4B",
+          "downloadBytes" : 9342815919,
+          "id" : "qwen3.5-4b",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 9319730176,
+                  "checkpoint" : 9319737856,
+                  "float32" : 18639460352
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 225847680,
+                  "checkpoint" : 225848000,
+                  "float32" : 451695360
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 7140099072,
+                  "checkpoint" : 7140106752,
+                  "float32" : 14280198144
+                },
+                "layerCount" : 32,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 248320
+          },
+          "minimumMemoryBytes" : 16017300179,
+          "parameterCount" : 4659865088,
+          "peakBytes" : 9319737856,
+          "precision" : "bfloat16",
+          "registryName" : "qwen3.5",
+          "residentBytes" : 9319737856,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 3161,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 12807982,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
+              },
+              {
+                "bytes" : 16710,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6722759,
+                "optional" : true,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 3353259,
+                "optional" : true,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 7756,
+                "optional" : true,
+                "path" : "chat_template.jinja",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 76196,
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+            "repository" : "Qwen/Qwen3.5-4B",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Qwen3.5 2B",
+      "engine" : "mlx",
+      "family" : "qwen3.5",
+      "id" : "qwen3.5-2b",
       "inputModalities" : [
         "text",
         "messages"
@@ -44234,52 +44975,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
-              },
-              "memoryByVariant" : {
-                "qwen3.5-2b" : {
-                  "peakBytes" : 4548144832,
-                  "residentBytes" : 4548144832
-                },
-                "qwen3.5-4b" : {
-                  "peakBytes" : 9319737856,
-                  "residentBytes" : 9319737856
-                },
-                "qwen3.5-9b" : {
-                  "peakBytes" : 19306216416,
-                  "residentBytes" : 19306216416
-                },
-                "qwen3.8-27b" : {
-                  "peakBytes" : 55562855904,
-                  "residentBytes" : 55562855904
-                }
+                "peakBytes" : 4548144832,
+                "residentBytes" : 4548144832
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 2631327104,
-                "residentBytes" : 2631327104
-              },
-              "memoryByVariant" : {
-                "qwen3.5-2b" : {
-                  "peakBytes" : 2036871360,
-                  "residentBytes" : 2036871360
-                },
-                "qwen3.5-4b" : {
-                  "peakBytes" : 2631327104,
-                  "residentBytes" : 2631327104
-                },
-                "qwen3.5-9b" : {
-                  "peakBytes" : 6340714336,
-                  "residentBytes" : 6340714336
-                },
-                "qwen3.8-27b" : {
-                  "peakBytes" : 8389555552,
-                  "residentBytes" : 8389555552
-                }
+                "peakBytes" : 2036871360,
+                "residentBytes" : 2036871360
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -44297,52 +45002,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
-              },
-              "memoryByVariant" : {
-                "qwen3.5-2b" : {
-                  "peakBytes" : 4548144832,
-                  "residentBytes" : 4548144832
-                },
-                "qwen3.5-4b" : {
-                  "peakBytes" : 9319737856,
-                  "residentBytes" : 9319737856
-                },
-                "qwen3.5-9b" : {
-                  "peakBytes" : 19306216416,
-                  "residentBytes" : 19306216416
-                },
-                "qwen3.8-27b" : {
-                  "peakBytes" : 55562855904,
-                  "residentBytes" : 55562855904
-                }
+                "peakBytes" : 4548144832,
+                "residentBytes" : 4548144832
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 18639460352,
-                "residentBytes" : 18639460352
-              },
-              "memoryByVariant" : {
-                "qwen3.5-2b" : {
-                  "peakBytes" : 9096279296,
-                  "residentBytes" : 9096279296
-                },
-                "qwen3.5-4b" : {
-                  "peakBytes" : 18639460352,
-                  "residentBytes" : 18639460352
-                },
-                "qwen3.5-9b" : {
-                  "peakBytes" : 38612417472,
-                  "residentBytes" : 38612417472
-                },
-                "qwen3.8-27b" : {
-                  "peakBytes" : 111125711808,
-                  "residentBytes" : 111125711808
-                }
+                "peakBytes" : 9096279296,
+                "residentBytes" : 9096279296
               },
               "title" : "Float32",
               "value" : "float32"
@@ -44417,7 +45086,7 @@
           "title" : "Precise"
         }
       ],
-      "registryName" : "qwen3.5",
+      "registryName" : "qwen3.5-2b",
       "requirements" : {
         "minimumMemoryBytes" : 10403661328,
         "minimumOS" : {
@@ -44431,7 +45100,7 @@
         "streamed"
       ],
       "standIn" : false,
-      "summary" : "Qwen3.5, Qwen3.6, and Qwen3.8, hybrid linear- and full-attention decoders that write text and call tools.",
+      "summary" : "Qwen3.5 2B, a hybrid linear- and full-attention decoder that writes text and calls tools.",
       "tasks" : [
         "text-generation"
       ],
@@ -44440,7 +45109,7 @@
           "displayName" : "Qwen3.5 2B",
           "downloadBytes" : 4571197320,
           "id" : "qwen3.5-2b",
-          "isDefault" : false,
+          "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
@@ -44472,7 +45141,7 @@
           "parameterCount" : 2274069824,
           "peakBytes" : 4548144832,
           "precision" : "bfloat16",
-          "registryName" : "qwen3.5",
+          "registryName" : "qwen3.5-2b",
           "residentBytes" : 4548144832,
           "source" : {
             "files" : [
@@ -44536,113 +45205,408 @@
             "requiresConversion" : false,
             "revision" : "15852e8c16360a2fea060d615a32b45270f8a8fc"
           }
+        }
+      ]
+    },
+    {
+      "displayName" : "Qwen3.5 9B",
+      "engine" : "mlx",
+      "family" : "qwen3.5",
+      "id" : "qwen3.5-9b",
+      "inputModalities" : [
+        "text",
+        "messages"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
         },
         {
-          "displayName" : "Qwen3.5 4B",
-          "downloadBytes" : 9342815919,
-          "id" : "qwen3.5-4b",
-          "isDefault" : true,
-          "memoryFacts" : {
-            "basis" : "measured",
-            "loadOverheadBytes" : 0,
-            "stages" : [
-              {
-                "bytesByPrecision" : {
-                  "bfloat16" : 9319730176,
-                  "checkpoint" : 9319737856,
-                  "float32" : 18639460352
-                },
-                "id" : "decoder",
-                "largestLayerBytesByPrecision" : {
-                  "bfloat16" : 225847680,
-                  "checkpoint" : 225848000,
-                  "float32" : 451695360
-                },
-                "layerBytesByPrecision" : {
-                  "bfloat16" : 7140099072,
-                  "checkpoint" : 7140106752,
-                  "float32" : 14280198144
-                },
-                "layerCount" : 32,
-                "title" : "decoder"
-              }
-            ],
-            "vocabularySize" : 248320
-          },
-          "minimumMemoryBytes" : 16017300179,
-          "parameterCount" : 4659865088,
-          "peakBytes" : 9319737856,
-          "precision" : "bfloat16",
-          "registryName" : "qwen3.5",
-          "residentBytes" : 9319737856,
-          "source" : {
-            "files" : [
-              {
-                "bytes" : 3161,
-                "optional" : false,
-                "path" : "config.json",
-                "role" : "config"
-              },
-              {
-                "bytes" : 12807982,
-                "optional" : false,
-                "path" : "tokenizer.json",
-                "role" : "tokenizer",
-                "sha256" : "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42"
-              },
-              {
-                "bytes" : 16710,
-                "optional" : false,
-                "path" : "tokenizer_config.json",
-                "role" : "tokenizer"
-              },
-              {
-                "bytes" : 6722759,
-                "optional" : true,
-                "path" : "vocab.json",
-                "role" : "tokenizer"
-              },
-              {
-                "bytes" : 3353259,
-                "optional" : true,
-                "path" : "merges.txt",
-                "role" : "tokenizer"
-              },
-              {
-                "optional" : true,
-                "path" : "generation_config.json",
-                "role" : "config"
-              },
-              {
-                "bytes" : 7756,
-                "optional" : true,
-                "path" : "chat_template.jinja",
-                "role" : "tokenizer"
-              },
-              {
-                "bytes" : 76196,
-                "optional" : true,
-                "path" : "model.safetensors.index.json",
-                "role" : "weights"
-              },
-              {
-                "optional" : true,
-                "path" : "model.safetensors",
-                "role" : "weights"
-              }
-            ],
-            "kind" : "huggingface",
-            "layout" : "directory",
-            "measuredRevision" : "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
-            "repository" : "Qwen/Qwen3.5-4B",
-            "requiresConversion" : false
-          }
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "draft" : "draftModel",
+        "draftBits" : "draftBits",
+        "precision" : "precision",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
         },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "The tools the model may call, each a name, a description, and a JSON Schema of its parameters.",
+          "key" : "tools",
+          "kind" : "json",
+          "stage" : "request",
+          "title" : "Tools"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "hermes",
+              "value" : "hermes"
+            },
+            {
+              "title" : "qwen-xml",
+              "value" : "qwen-xml"
+            },
+            {
+              "title" : "gemma",
+              "value" : "gemma"
+            },
+            {
+              "title" : "harmony",
+              "value" : "harmony"
+            },
+            {
+              "title" : "deepseek",
+              "value" : "deepseek"
+            },
+            {
+              "title" : "mistral",
+              "value" : "mistral"
+            },
+            {
+              "title" : "granite",
+              "value" : "granite"
+            },
+            {
+              "title" : "llama",
+              "value" : "llama"
+            },
+            {
+              "title" : "nemotron",
+              "value" : "nemotron"
+            },
+            {
+              "title" : "none",
+              "value" : "none"
+            }
+          ],
+          "help" : "The syntax the model writes a tool call in. Without it the format comes from the release's chat template.",
+          "key" : "NFKMLXParameterToolCallFormat",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Tool-call format"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Light",
+              "value" : "light"
+            },
+            {
+              "title" : "Moderate",
+              "value" : "moderate"
+            },
+            {
+              "title" : "Deep",
+              "value" : "deep"
+            }
+          ],
+          "help" : "How much the model reasons before it answers, bound to the release chat template's thinking switch.",
+          "key" : "reasoningEffort",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Reasoning effort"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19306216416,
+                "residentBytes" : 19306216416
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6340714336,
+                "residentBytes" : 6340714336
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 19306216416,
+                "residentBytes" : 19306216416
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 38612417472,
+                "residentBytes" : 38612417472
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 23854361248,
+                "residentBytes" : 23854361248
+              },
+              "title" : "Qwen3.5 2B",
+              "value" : "qwen3.5-2b"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 28625954272,
+                "residentBytes" : 28625954272
+              },
+              "title" : "Qwen3.5 4B",
+              "value" : "qwen3.5"
+            }
+          ],
+          "group" : "Loading",
+          "help" : "A smaller model of the same family and vocabulary that proposes tokens for speculative decoding. None decodes without one.",
+          "key" : "draftModel",
+          "kind" : "model-reference",
+          "stage" : "load",
+          "title" : "Draft model"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 19306216416,
+                "residentBytes" : 19306216416
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19306216416,
+                "residentBytes" : 19306216416
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19306216416,
+                "residentBytes" : 19306216416
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19306216416,
+                "residentBytes" : 19306216416
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19306216416,
+                "residentBytes" : 19306216416
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19306216416,
+                "residentBytes" : 19306216416
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19306216416,
+                "residentBytes" : 19306216416
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
+          "key" : "draftBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Draft quantization"
+        }
+      ],
+      "outputModalities" : [
+        "text",
+        "tool-calls",
+        "json"
+      ],
+      "outputs" : [
+        {
+          "help" : "The model's reply.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The tools the model called, where a request offers tools.",
+          "key" : "toolCalls",
+          "required" : false,
+          "title" : "Tool calls",
+          "valueType" : "tool-calls"
+        },
+        {
+          "help" : "The assistant turn carrying the tool calls, ready to append to the conversation.",
+          "key" : "assistantMessage",
+          "required" : false,
+          "title" : "Assistant turn",
+          "valueType" : "json"
+        },
+        {
+          "help" : "The reasoning the model shows before its answer.",
+          "key" : "reasoning",
+          "required" : false,
+          "title" : "Reasoning",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "qwen3.5-9b",
+      "requirements" : {
+        "minimumMemoryBytes" : 27766098485,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Qwen3.5 9B, a hybrid linear- and full-attention decoder that writes text and calls tools.",
+      "tasks" : [
+        "text-generation"
+      ],
+      "variants" : [
         {
           "displayName" : "Qwen3.5 9B",
           "downloadBytes" : 19329302129,
           "id" : "qwen3.5-9b",
-          "isDefault" : false,
+          "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
@@ -44674,7 +45638,7 @@
           "parameterCount" : 9653104368,
           "peakBytes" : 19306216416,
           "precision" : "bfloat16",
-          "registryName" : "qwen3.5",
+          "registryName" : "qwen3.5-9b",
           "residentBytes" : 19306216416,
           "source" : {
             "files" : [
@@ -44738,12 +45702,416 @@
             "requiresConversion" : false,
             "revision" : "c202236235762e1c871ad0ccb60c8ee5ba337b9a"
           }
+        }
+      ]
+    },
+    {
+      "displayName" : "Qwen3.8 27B",
+      "engine" : "mlx",
+      "family" : "qwen3.5",
+      "id" : "qwen3.8-27b",
+      "inputModalities" : [
+        "text",
+        "messages"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
         },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "draft" : "draftModel",
+        "draftBits" : "draftBits",
+        "precision" : "precision",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "The tools the model may call, each a name, a description, and a JSON Schema of its parameters.",
+          "key" : "tools",
+          "kind" : "json",
+          "stage" : "request",
+          "title" : "Tools"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "hermes",
+              "value" : "hermes"
+            },
+            {
+              "title" : "qwen-xml",
+              "value" : "qwen-xml"
+            },
+            {
+              "title" : "gemma",
+              "value" : "gemma"
+            },
+            {
+              "title" : "harmony",
+              "value" : "harmony"
+            },
+            {
+              "title" : "deepseek",
+              "value" : "deepseek"
+            },
+            {
+              "title" : "mistral",
+              "value" : "mistral"
+            },
+            {
+              "title" : "granite",
+              "value" : "granite"
+            },
+            {
+              "title" : "llama",
+              "value" : "llama"
+            },
+            {
+              "title" : "nemotron",
+              "value" : "nemotron"
+            },
+            {
+              "title" : "none",
+              "value" : "none"
+            }
+          ],
+          "help" : "The syntax the model writes a tool call in. Without it the format comes from the release's chat template.",
+          "key" : "NFKMLXParameterToolCallFormat",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Tool-call format"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Light",
+              "value" : "light"
+            },
+            {
+              "title" : "Moderate",
+              "value" : "moderate"
+            },
+            {
+              "title" : "Deep",
+              "value" : "deep"
+            }
+          ],
+          "help" : "How much the model reasons before it answers, bound to the release chat template's thinking switch.",
+          "key" : "reasoningEffort",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Reasoning effort"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55562855904,
+                "residentBytes" : 55562855904
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8389555552,
+                "residentBytes" : 8389555552
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 55562855904,
+                "residentBytes" : 55562855904
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 111125711808,
+                "residentBytes" : 111125711808
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 60111000736,
+                "residentBytes" : 60111000736
+              },
+              "title" : "Qwen3.5 2B",
+              "value" : "qwen3.5-2b"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 64882593760,
+                "residentBytes" : 64882593760
+              },
+              "title" : "Qwen3.5 4B",
+              "value" : "qwen3.5"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 74869072320,
+                "residentBytes" : 74869072320
+              },
+              "title" : "Qwen3.5 9B",
+              "value" : "qwen3.5-9b"
+            }
+          ],
+          "group" : "Loading",
+          "help" : "A smaller model of the same family and vocabulary that proposes tokens for speculative decoding. None decodes without one.",
+          "key" : "draftModel",
+          "kind" : "model-reference",
+          "stage" : "load",
+          "title" : "Draft model"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 55562855904,
+                "residentBytes" : 55562855904
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55562855904,
+                "residentBytes" : 55562855904
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55562855904,
+                "residentBytes" : 55562855904
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55562855904,
+                "residentBytes" : 55562855904
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55562855904,
+                "residentBytes" : 55562855904
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55562855904,
+                "residentBytes" : 55562855904
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55562855904,
+                "residentBytes" : 55562855904
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
+          "key" : "draftBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Draft quantization"
+        }
+      ],
+      "outputModalities" : [
+        "text",
+        "tool-calls",
+        "json"
+      ],
+      "outputs" : [
+        {
+          "help" : "The model's reply.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The tools the model called, where a request offers tools.",
+          "key" : "toolCalls",
+          "required" : false,
+          "title" : "Tool calls",
+          "valueType" : "tool-calls"
+        },
+        {
+          "help" : "The assistant turn carrying the tool calls, ready to append to the conversation.",
+          "key" : "assistantMessage",
+          "required" : false,
+          "title" : "Assistant turn",
+          "valueType" : "json"
+        },
+        {
+          "help" : "The reasoning the model shows before its answer.",
+          "key" : "reasoning",
+          "required" : false,
+          "title" : "Reasoning",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "qwen3.8-27b",
+      "requirements" : {
+        "minimumMemoryBytes" : 70420968471,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Qwen3.8 27B, a hybrid linear- and full-attention decoder that writes text and calls tools.",
+      "tasks" : [
+        "text-generation"
+      ],
+      "variants" : [
         {
           "displayName" : "Qwen3.8 27B",
           "downloadBytes" : 55586035724,
           "id" : "qwen3.8-27b",
-          "isDefault" : false,
+          "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
@@ -44775,7 +46143,7 @@
           "parameterCount" : 27781427952,
           "peakBytes" : 55562855904,
           "precision" : "bfloat16",
-          "registryName" : "qwen3.5",
+          "registryName" : "qwen3.8-27b",
           "residentBytes" : 55562855904,
           "source" : {
             "files" : [

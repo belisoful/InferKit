@@ -20,10 +20,10 @@ import MLX
 /// - the dense and mixture decoders (``NFKMLXLanguage``): residency, precision, a runtime weight
 ///   quantization of 2 to 8 bits at group size 64, a draft model and its bits, and the context length and
 ///   cache settings as generation defaults;
-/// - Gemma 3 and TranslateGemma: residency, precision, a draft model and its bits;
-/// - Gemma 3n, Qwen3.5, Whisper, and Stable Diffusion (each release, and each released adapter merged into
-///   its base): precision;
-/// - Gemma 4, Qwen4-Exp, Granite 4.0-H, and MADLAD-400: residency and precision;
+/// - Gemma 3, TranslateGemma, Qwen3.5, and Nemotron-H: residency, precision, a draft model and its bits;
+/// - Gemma 3n, Whisper, and Stable Diffusion (each release, and each released adapter merged into its
+///   base): precision;
+/// - Gemma 4, Qwen4-Exp, Granite 4.0-H, Codestral Mamba, MADLAD-400, and Open-Jev: residency and precision;
 /// - Qwen3-VL and pplx-decider: residency, precision, and a runtime weight quantization of the decoder;
 /// - DeepSeek V4: residency, and each other value whose key names an ``NFKMLXDeepSeekLoadOptions``
 ///   property, set by key-value coding;
@@ -161,9 +161,20 @@ enum NFKMLXOptionRegistrations {
                                     residency: options.residency)
         }
         registerDirectoryModels(registryNames(families: ["qwen3.5"]),
-                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in
+                                consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
+            url, name, options in
             try NFKMLXHybridLanguage.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
-                                             residency: options.residency)
+                                             residency: options.residency, budget: NFKMLXResidencyBudget.current(),
+                                             identifier: name, draftDirectoryURL: options.draftURL,
+                                             draftBits: options.draftBits(orDefault: 4))
+        }
+        // An Open-Jev model's URL is the hub cache holding the release and its base.
+        for variant in NFKMLXOpenJevVariant.allCases {
+            registerDirectoryModels([variant.registryName],
+                                    consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in
+                try NFKMLXOpenJev.backend(variant: variant, revision: nil, cacheDirectoryURL: url,
+                                          precision: options.precision ?? .checkpoint, residency: options.residency)
+            }
         }
         registerDirectoryModels(registryNames(families: ["qwen4-exp"]),
                                 consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in

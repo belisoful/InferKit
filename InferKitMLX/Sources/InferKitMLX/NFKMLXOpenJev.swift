@@ -276,6 +276,7 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     public func logits(state: Any, question: NFKDecisionQuestion) throws -> [Float] {
         let values = net.logits(candidates: try candidateTokens(state: state, question: question), type: question.type)
         eval(values)
+        try verifyStream()
         return values.asArray(Float.self)
     }
 
@@ -305,10 +306,20 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
             tokens += candidates.reduce(0) { $0 + $1.count }
             let values = net.logits(candidates: candidates, type: question.type)
             eval(values)
+            try verifyStream()
             let probabilities = Self.softmax(values.asArray(Float.self), temperature: Double(configuration.temperature))
             answers[identifier] = Self.answer(question: question, probabilities: probabilities)
         }
         return (answers, tokens)
+    }
+
+    /// Throws a streamed layer's failed read and clears it, so the next question reads the base again.
+    private func verifyStream() throws {
+        guard let stream = net.decoder.layerStream, let failure = stream.readFailure else {
+            return
+        }
+        stream.clearFailure()
+        throw failure
     }
 
     static func validate(_ question: NFKDecisionQuestion) throws {
@@ -361,14 +372,36 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
 
     /// Builds the network over a base directory: the decoder's weights at `precision`, the adapter
     /// from `adapter/adapter_model.safetensors`, and the head from `head.safetensors` (a fine-tune's)
-    /// or `head.pt` (the release's), always at float32.
+    /// or `head.pt` (the release's), always at float32. The base's decoder is held whole.
     public static func network(checkpointDirectoryURL checkpoint: URL, baseDirectoryURL base: URL,
                                precision: NFKMLXWeightPrecision = .checkpoint) throws -> NFKMLXOpenJevNet {
+        try network(checkpointDirectoryURL: checkpoint, baseDirectoryURL: base, precision: precision, residency: .resident)
+    }
+
+    /// ``network(checkpointDirectoryURL:baseDirectoryURL:precision:)`` with the base's decoder held as
+    /// `residency` says. Under ``NFKMLXResidency/automatic`` a base that fits is held whole, and one that
+    /// does not (Qwen3.8-27B at bfloat16, about 52 GB) leaves the layers past the working set in the base,
+    /// read in their turn on every pass (``NFKMLXHybridLanguageNet/layerStream``). The adapter and the
+    /// head stay resident. A streamed network is driven through ``NFKMLXOpenJev``, which checks the
+    /// stream after each pass. Introduced in InferKit 0.4.0.
+    public static func network(checkpointDirectoryURL checkpoint: URL, baseDirectoryURL base: URL,
+                               precision: NFKMLXWeightPrecision, residency: NFKMLXResidency) throws -> NFKMLXOpenJevNet {
+        try network(checkpointDirectoryURL: checkpoint, baseDirectoryURL: base, precision: precision,
+                    residency: residency, budget: NFKMLXResidencyBudget.current())
+    }
+
+    /// ``network(checkpointDirectoryURL:baseDirectoryURL:precision:residency:)`` planned against `budget`.
+    static func network(checkpointDirectoryURL checkpoint: URL, baseDirectoryURL base: URL,
+                        precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                        budget: Int) throws -> NFKMLXOpenJevNet {
         let configuration = try NFKMLXOpenJevConfiguration(checkpointDirectoryURL: checkpoint, baseDirectoryURL: base)
-        try NFKMLXReleaseWeights.verifyFits(inDirectory: base, precision: precision)
         let net = NFKMLXOpenJevNet(configuration)
-        try NFKMLXHybridLanguage.loadWeights(into: net.decoder, fromDirectory: base, precision: precision)
+        // The adapter wraps the projections before the base loads, so a streamed layer's adapter is in
+        // place when its base weights are read in.
         try net.adapt()
+        try NFKMLXHybridLanguage.loadWeights(into: net.decoder, fromDirectory: base, precision: precision,
+                                             residency: residency, budget: budget,
+                                             retaining: { $0.hasSuffix(".lora_a") || $0.hasSuffix(".lora_b") })
         try loadAdapter(into: net, from: checkpoint.appendingPathComponent("adapter/adapter_model.safetensors"))
         try loadHead(into: net, checkpointDirectory: checkpoint)
         return net
@@ -389,7 +422,8 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     }
 
     /// Loads a PEFT adapter. PEFT stores `A` as `[rank, inputs]` and `B` as `[outputs, rank]`; the
-    /// detour here multiplies by their transposes. The adapter takes the decoder's element type.
+    /// detour here multiplies by their transposes. The adapter is held at float32, as PEFT holds it over
+    /// a half-precision base, and each adapted projection's output takes the decoder's element type.
     static func loadAdapter(into net: NFKMLXOpenJevNet, from url: URL) throws {
         let dtype = net.decoder.model.embedTokens.weight.dtype
         let arrays = try NFKMLXWeights.materializedCheckpoint(url: url).arrays
@@ -398,9 +432,12 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
             guard let name = adapterKey(forReference: key) else {
                 throw NFKMLXError.weightsMismatch("the adapter carries \(key), which no adapted projection takes")
             }
-            mapped.append((name, value.transposed().asType(dtype)))
+            mapped.append((name, value.transposed().asType(.float32)))
         }
         try applyPart(mapped, to: net) { $0.hasSuffix(".lora_a") || $0.hasSuffix(".lora_b") }
+        for case let adapted as NFKMLXLoRALinear in net.decoder.leafModules().flattened().map(\.1) {
+            adapted.resultType = dtype
+        }
     }
 
     /// Loads the parameters `part` selects and no others: every one must be supplied, at its shape.
@@ -435,16 +472,35 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     }
 
     /// Builds the model at a chosen precision: `.float32` is what the parity measurements use and what
-    /// a fine-tune needs, at twice the memory.
+    /// a fine-tune needs, at twice the memory. A base that does not fit the working set streams its
+    /// later decoder layers, as ``openJev(checkpointDirectoryURL:baseDirectoryURL:precision:residency:)``
+    /// does under ``NFKMLXResidency/automatic``.
     @objc(openJevWithCheckpointDirectoryURL:baseDirectoryURL:precision:error:)
     public static func openJev(checkpointDirectoryURL: URL, baseDirectoryURL: URL,
                                precision: NFKMLXWeightPrecision) throws -> NFKMLXOpenJev {
+        try openJev(checkpointDirectoryURL: checkpointDirectoryURL, baseDirectoryURL: baseDirectoryURL,
+                    precision: precision, residency: .automatic)
+    }
+
+    /// Builds the model with the base's decoder held as `residency` says
+    /// (``network(checkpointDirectoryURL:baseDirectoryURL:precision:residency:)``). Introduced in
+    /// InferKit 0.4.0.
+    @objc(openJevWithCheckpointDirectoryURL:baseDirectoryURL:precision:residency:error:)
+    public static func openJev(checkpointDirectoryURL: URL, baseDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> NFKMLXOpenJev {
+        try openJev(checkpointDirectoryURL: checkpointDirectoryURL, baseDirectoryURL: baseDirectoryURL,
+                    precision: precision, residency: residency, budget: NFKMLXResidencyBudget.current())
+    }
+
+    /// ``openJev(checkpointDirectoryURL:baseDirectoryURL:precision:residency:)`` planned against `budget`.
+    static func openJev(checkpointDirectoryURL: URL, baseDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                        residency: NFKMLXResidency, budget: Int) throws -> NFKMLXOpenJev {
         guard let tokenizer = tokenizer(inDirectory: baseDirectoryURL) else {
             throw NFKMLXError.unsupportedConfiguration(
                 "the base \(baseDirectoryURL.lastPathComponent) has no readable tokenizer, so no candidate could be scored")
         }
         let net = try network(checkpointDirectoryURL: checkpointDirectoryURL, baseDirectoryURL: baseDirectoryURL,
-                              precision: precision)
+                              precision: precision, residency: residency, budget: budget)
         return NFKMLXOpenJev(net: net, tokenizer: tokenizer)
     }
 
@@ -458,6 +514,16 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     public static func backend(checkpointDirectoryURL: URL, baseDirectoryURL: URL) throws -> NFKMLXDecisionBackend {
         NFKMLXDecisionBackend(model: try openJev(checkpointDirectoryURL: checkpointDirectoryURL,
                                                  baseDirectoryURL: baseDirectoryURL))
+    }
+
+    /// The model as an inference backend, at `precision` with the base's decoder held as `residency`
+    /// says. Introduced in InferKit 0.4.0.
+    @objc(backendWithCheckpointDirectoryURL:baseDirectoryURL:precision:residency:error:)
+    public static func backend(checkpointDirectoryURL: URL, baseDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> NFKMLXDecisionBackend {
+        NFKMLXDecisionBackend(model: try openJev(checkpointDirectoryURL: checkpointDirectoryURL,
+                                                 baseDirectoryURL: baseDirectoryURL, precision: precision,
+                                                 residency: residency))
     }
 
     /// This model as an inference backend.
@@ -538,6 +604,30 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     public static func backend(variant: NFKMLXOpenJevVariant, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXDecisionBackend {
         try NFKMLXBuildHolds.keeping {
             try openJev(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL).makeBackend()
+        }
+    }
+
+    /// Downloads a release and its base (or reads them from the cache) and builds the backend at
+    /// `precision`, with the base's decoder held as `residency` says. Introduced in InferKit 0.4.0.
+    @objc(backendWithVariant:revision:cacheDirectoryURL:precision:residency:error:)
+    public static func backend(variant: NFKMLXOpenJevVariant, revision: String?, cacheDirectoryURL: URL?,
+                               precision: NFKMLXWeightPrecision, residency: NFKMLXResidency) throws -> NFKMLXDecisionBackend {
+        try NFKMLXBuildHolds.keeping {
+            let release = try download(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(checkpointDirectoryURL: release.checkpointDirectoryURL,
+                               baseDirectoryURL: release.baseDirectoryURL, precision: precision, residency: residency)
+        }
+    }
+
+    /// The asynchronous form of ``backend(variant:revision:cacheDirectoryURL:precision:residency:)``.
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithVariant:revision:cacheDirectoryURL:precision:residency:completionHandler:)
+    public static func backend(variant: NFKMLXOpenJevVariant, revision: String?, cacheDirectoryURL: URL?,
+                               precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                               completionHandler: @escaping (NFKMLXDecisionBackend?, Error?) -> Void) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try backend(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                        precision: precision, residency: residency)
         }
     }
 

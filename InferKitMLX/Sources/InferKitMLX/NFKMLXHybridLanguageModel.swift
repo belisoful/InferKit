@@ -646,24 +646,27 @@ public final class NFKMLXHybridLanguage: NSObject {
     /// ``loadWeights(into:fromDirectory:precision:)`` loads it. A streamed layer takes the types a whole
     /// load gives it: at `.checkpoint` every floating tensor takes the type most of the release carries.
     /// Only a caller that checks ``NFKMLXHybridLanguageNet/verifyStream()`` after each pass loads a
-    /// streamed decoder. Introduced in InferKit 0.4.0.
+    /// streamed decoder. A parameter `retaining` names (an adapter's, which the release does not hold)
+    /// keeps the value the net already has, in a streamed layer too. Introduced in InferKit 0.4.0.
     static func loadWeights(into net: NFKMLXHybridLanguageNet, fromDirectory directory: URL,
                             precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                            budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0) throws {
+                            budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0,
+                            retaining retained: (String) -> Bool = { _ in false }) throws {
         let streamed = try streamedLayers(directory: directory, precision: precision, residency: residency,
                                           tied: net.lmHead == nil, budget: budget, reserving: reserved)
+        let kept = net.parameters().flattened().filter { retained($0.0) }
         guard let vacated = try NFKMLXLayerStream.vacating(
             streamed, of: net.model.layers, prefix: "model.layers.", directory: directory, precision: precision,
             converting: precision == .checkpoint ? try releasedType(inDirectory: directory) : nil,
             layerOf: layer(ofKey:), shaping: { name, shape in
                 name.hasSuffix("conv1d.weight") && shape.count == 3 ? [shape[0], shape[2], shape[1]] : shape
             }) else {
-            try loadWeights(into: net, fromDirectory: directory, precision: precision)
+            try loadWeights(into: net, fromDirectory: directory, precision: precision, keeping: { _ in true }, adding: kept)
             return
         }
         try loadWeights(into: net, fromDirectory: directory, precision: precision, keeping: { name in
             NFKMLXLayerStream.layer(ofDecoderName: String(name.dropFirst("model.".count))).map { streamed.contains($0.layer) } != true
-        }, adding: vacated.placeholders)
+        }, adding: vacated.placeholders + kept)
         net.layerStream = vacated.stream
         vacated.stream.prime()
     }
@@ -861,12 +864,61 @@ public final class NFKMLXHybridLanguage: NSObject {
                     budget: NFKMLXResidencyBudget.current())
     }
 
+    /// ``backend(directoryURL:precision:residency:)`` with a smaller release of the same vocabulary
+    /// drafting for it: Qwen3.5 9B drafted by Qwen3.5 2B, for instance.
+    ///
+    /// @discussion A round is one pass of the draft per proposal and one pass of the release over every
+    /// proposal (`NFKMLXGenerationParameterKey.draftTokens` a round, 4 by default, 0 to decode without
+    /// it). At temperature 0 the reply is the release's greedy reply. The draft loads at its release's own
+    /// precision and is quantized to `draftBits` (4 by default; nil keeps it at `precision`), its
+    /// embeddings included, since a draft's precision moves how many proposals are kept and never the
+    /// reply. The release is held as `residency` plans it against what the draft leaves of the working
+    /// set. Introduced in InferKit 0.4.0.
+    public static func backend(directoryURL: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision = .checkpoint,
+                               residency: NFKMLXResidency = .automatic, draftBits: Int? = 4) throws -> NFKMLXDecoderBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: residency,
+                    budget: NFKMLXResidencyBudget.current(), draftDirectoryURL: draftDirectoryURL, draftBits: draftBits)
+    }
+
+    /// The Objective-C entry for a release with a smaller release drafting for it, the draft at 4 bits;
+    /// see ``backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)
+    public static func draftedBackend(directoryURL: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                                      residency: NFKMLXResidency) throws -> NFKMLXDecoderBackend {
+        try backend(directoryURL: directoryURL, draftDirectoryURL: draftDirectoryURL, precision: precision,
+                    residency: residency)
+    }
+
     static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                        budget: Int) throws -> NFKMLXDecoderBackend {
-        let net = makeNet(try configuration(fromHuggingFace: directoryURL.appendingPathComponent("config.json")))
-        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency, budget: budget)
-        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: modelName, modules: [net],
-                                                layerStream: net.layerStream) { net($0) }
+                        budget: Int, identifier: String = modelName, draftDirectoryURL: URL? = nil,
+                        draftBits: Int? = 4) throws -> NFKMLXDecoderBackend {
+        let configuration = try configuration(fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
+        var draft: NFKMLXHybridLanguageNet?
+        if let draftDirectoryURL {
+            let draftNet = makeNet(try self.configuration(fromHuggingFace: draftDirectoryURL.appendingPathComponent("config.json")))
+            guard draftNet.configuration.vocabularySize == configuration.vocabularySize else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the draft's vocabulary has \(draftNet.configuration.vocabularySize) entries where the model's has "
+                    + "\(configuration.vocabularySize); a draft must share the model's vocabulary")
+            }
+            try loadWeights(into: draftNet, fromDirectory: draftDirectoryURL, precision: draftBits == nil ? precision : .checkpoint)
+            if let draftBits {
+                try NFKMLXQuantization.quantize(module: draftNet, bits: draftBits, includeEmbeddings: true)
+                // The weights the quantized ones replace go before the release is planned, which they would
+                // otherwise crowd.
+                eval(draftNet)
+                NFKMLXGPU.clearCache()
+            }
+            draft = draftNet
+        }
+        let draftBytes = draft.map { NFKMLXLanguage.heldBytes(of: $0) } ?? 0
+        let net = makeNet(configuration)
+        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
+                        budget: budget > 0 ? Swift.max(budget - draftBytes, 1) : 0, reserving: draftBytes)
+        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: identifier, modules: [net],
+                                                layerStream: net.layerStream,
+                                                draft: draft.map { draft in { draft($0) } }) { net($0) }
     }
 
 

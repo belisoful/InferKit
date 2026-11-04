@@ -241,8 +241,11 @@ struct NFKMLXLoadProfile {
                                     tasks: [NFKModelTaskTextGeneration])],
         "qwen3.5": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                      defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,
-                                     tasks: [NFKModelTaskTextGeneration])],
+                                     drafts: true, tasks: [NFKModelTaskTextGeneration])],
         // A decision checkpoint runs one pass and decodes nothing, so it declares no context or cache option.
+        "open-jev": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                      defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,
+                                      tasks: [NFKModelTaskDecision])],
         "pplx-decider": [.decoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                   defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true, contextLength: nil,
                                   keyValue: nil, tasks: [NFKModelTaskDecision])],

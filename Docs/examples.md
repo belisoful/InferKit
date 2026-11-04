@@ -196,7 +196,8 @@ let text = try backend.runInference(for: request).text
 
 The Mamba-2 state-space decoder (Codestral-Mamba) loads the same way through
 `NFKMLXMamba.backend(directoryURL:)` (`mambaBackendWithDirectoryURL:error:`); every layer is a selective
-scan rather than attention, so it carries a fixed-size state and runs prefill-only.
+scan rather than attention, so it carries a fixed-size state and runs prefill-only. At float32 (29 GB)
+it streams the blocks past the working set, as `backend(directoryURL:precision:residency:)` chooses.
 
 The Granite 4.0-H hybrid decoder loads through `NFKMLXGraniteHybrid.backend(directoryURL:)`
 (`graniteBackendWithDirectoryURL:error:`); most layers are the Mamba-2 scan and the few its
@@ -233,6 +234,20 @@ let reply = try qwen.runInference(for: NFKInferenceRequest(
 
 `network(directoryURL:)` on either type returns the decoder alone, whose call maps token ids `[1, length]`
 to logits `[1, length, vocabularySize]`.
+
+A Qwen3.5 release that does not fit the working set (Qwen3.8 27B at bfloat16) streams the layers past
+what fits on every pass, as `backend(directoryURL:precision:residency:)` chooses. Qwen3.5 2B, 4B, and 9B
+share the vocabulary of every larger release and draft for it: each round the draft proposes a few tokens
+and one pass of the larger release scores them.
+
+<!-- objc-check: given NSURL *draftDirectory; -->
+```objc
+NFKMLXDecoderBackend *qwen = [NFKMLXHybridLanguage backendWithDirectoryURL:releaseDirectory
+                                                         draftDirectoryURL:draftDirectory
+                                                                 precision:NFKMLXWeightPrecisionCheckpoint
+                                                                 residency:NFKMLXResidencyAutomatic error:&error];
+NSLog(@"%ld layers streamed, drafted: %d", (long)qwen.streamedLayerCount, qwen.hasDraftModel);
+```
 
 Granite Speech 3.3-2b transcribes audio through `NFKMLXGraniteSpeech.backend(directoryURL:)`
 (`graniteSpeechBackendWithDirectoryURL:error:`): a Conformer encoder and a BLIP-2 Q-former projector
@@ -925,7 +940,15 @@ let backend = openJev.makeBackend()        // NFKInputState + NFKInputQuestions 
 Both download through the `NFKHFHub` cache the way Laya does, and both build from local folders too:
 `openJev(directoryURL:)` for the DeBERTa release, `openJev(checkpointDirectoryURL:baseDirectoryURL:)`
 for an Open-Jev `package/checkpoint` folder and its base. Open-Jev loads the base at its own bfloat16 by
-default; `precision: .float32` doubles the memory and is what a fine-tune needs.
+default; `precision: .float32` doubles the memory and is what a fine-tune needs. A base that does not fit
+the working set (the 27B's, about 52 GB) streams the decoder layers past what fits on every pass, its
+adapter and head held; `residency:` on `openJev` and `backend` chooses (`.automatic` by default).
+
+```objc
+NFKMLXDecisionBackend *jev = [NFKMLXOpenJev backendWithVariant:NFKMLXOpenJevVariantTwentySevenB revision:nil
+                                             cacheDirectoryURL:nil precision:NFKMLXWeightPrecisionCheckpoint
+                                                     residency:NFKMLXResidencyAutomatic error:&error];
+```
 
 - **open-jev-deberta** refuses questions that cannot fit in 512 tokens beside the state, and cuts the
   state to 256 tokens or to whatever room the questions leave. The confidence is the largest

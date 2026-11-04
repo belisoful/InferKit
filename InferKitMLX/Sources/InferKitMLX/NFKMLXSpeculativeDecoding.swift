@@ -193,11 +193,13 @@ enum NFKMLXPrefillDrafting {
     /// `count` tokens, one pass of its own over the growing sequence each, and one pass of `target` over the
     /// sequence and every proposal scores them all: the leading proposals it agrees with are kept, with the
     /// target's own token after them, so a round yields up to `count` + 1 tokens for one pass of the target.
-    /// `verify` runs after each pass of the target, and what it throws ends the generation. At temperature 0
-    /// the tokens are the target's greedy tokens.
+    /// `verify` runs after each pass of the target, and what it throws ends the generation. `onToken` sees
+    /// each kept token, and answering false ends the generation. At temperature 0 the tokens are the
+    /// target's greedy tokens.
     static func generate(prompt: [Int], draft: (MLXArray) -> MLXArray, target: (MLXArray) -> MLXArray,
                          verify: () throws -> Void, proposals count: Int, sampling: NFKMLXStepSampling, limit: Int,
-                         seed: UInt64?, stops: Set<Int>, report: inout NFKMLXSpeculativeReport) throws -> [Int] {
+                         seed: UInt64?, stops: Set<Int>, report: inout NFKMLXSpeculativeReport,
+                         onToken: ((Int) -> Bool)? = nil) throws -> [Int] {
         var options = NFKMLXGenerationOptions()
         options.temperature = sampling.temperature
         options.topP = sampling.topP
@@ -243,6 +245,7 @@ enum NFKMLXPrefillDrafting {
                 guard produced.count < limit, !stops.contains(token) else { return produced }
                 produced.append(token)
                 tokens.append(token)
+                if let onToken, !onToken(token) { return produced }
             }
         }
         return produced

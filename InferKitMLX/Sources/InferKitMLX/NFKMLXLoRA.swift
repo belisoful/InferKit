@@ -56,6 +56,12 @@ public final class NFKMLXLoRALinear: Linear, NFKMLXLoRAAdapter {
     /// Introduced in InferKit 0.4.0.
     public var dropout: Float
 
+    /// The type the layer's output is cast to, as PEFT casts a float32 adapter's sum back to the type of
+    /// the base projection's output (`torch_result_dtype`). Nil keeps the type the sum promotes to.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var resultType: DType?
+
     /// Wraps `base`, keeping its weights and adding the detour.
     public init(base: Linear, rank: Int, alpha: Float, dropout: Float = 0) {
         self.dropout = dropout
@@ -68,8 +74,9 @@ public final class NFKMLXLoRALinear: Linear, NFKMLXLoRAAdapter {
     }
 
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
-        super.callAsFunction(x)
+        let sum = super.callAsFunction(x)
             + matmul(matmul(NFKDropout.apply(x, rate: dropout, active: training), loraA), loraB) * scale
+        return resultType.map { sum.asType($0) } ?? sum
     }
 
     /// The equivalent plain `Linear`, with the detour folded into the weights.

@@ -1867,6 +1867,40 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   encodes the empty prompt with the release's text encoder. Before, the catalog listed three pickle
   checkpoints for a conversion and refused the download.
 
+#### Qwen3.5, Codestral Mamba, and Open-Jev stream the layers past the working set
+
+- `NFKMLXHybridLanguage.backend(directoryURL:precision:residency:)` holds the Qwen3.5 decoder as the
+  residency says. Under `.automatic` a release that fits loads whole, and one that does not (Qwen3.8 27B at
+  bfloat16 on a 32 GB machine) holds the first layers that fit and reads the others from the release on
+  every pass. `NFKMLXDecoderBackend` reports `streamedLayerCount` and `streamedBytesPerPass`, and its
+  `modelInfo` names the streamed residency. A failed read fails the request, and the next request reads
+  every layer again.
+- `NFKMLXMamba.backend(directoryURL:precision:residency:)` streams Codestral Mamba's blocks the same way
+  (`NFKMLXMambaBackend.streamedLayerCount`).
+- `NFKMLXOpenJev` builds at a residency (`network`, `openJev`, and `backend` with `precision:residency:`, and
+  the variant download factories). The factories without one plan under `.automatic`, so Open-Jev 27B
+  builds where its 52 GB base does not fit. The adapter and the head stay held, and a streamed layer keeps
+  its adapter between passes. A failed read fails the question, and the next question reads the base again.
+- A layer stream empties only the tensors the release holds, so a parameter the release lacks (an
+  adapter's) stays resident.
+- Open-Jev holds its adapter at float32, and each adapted projection's output takes the decoder's element
+  type, as PEFT holds an adapter over a bfloat16 base. `NFKMLXLoRALinear.resultType` sets that type; nil,
+  the default, keeps the type the sum promotes to.
+- The catalog entries of all three declare the residency and precision options.
+
+#### Qwen3.5 drafts with a smaller Qwen3.5
+
+- The catalog lists the Qwen3.5 releases as entries of their own: `qwen3.5-2b`, `qwen3.5` (4B), `qwen3.5-9b`,
+  and `qwen3.8-27b`. The `qwen3.5` entry is Qwen3.5 4B alone. Each larger release takes the smaller ones as
+  its draft model (`NFKModelLoadOptionDraftModel`, `NFKModelLoadOptionDraftBits`).
+- `NFKMLXHybridLanguage.backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)` builds a
+  drafted backend. The draft loads at its release's precision and is quantized to 4 bits by default, its
+  embeddings included, and the release is planned against what the draft leaves of the working set.
+  `NFKMLXDecoderBackend.hasDraftModel` and `lastSpeculativeReport` describe it, and
+  `NFKMLXGenerationParameterKey.draftTokens` sets the proposals a round (4 by default, 0 to decode without
+  the draft). At temperature 0 the reply is the release's greedy reply. A drafted job reports the reply as
+  it grows.
+
 #### LTX-2.5 decodes through its diffusion decoder and refines in two stages
 
 - `NFKMLXLTX2DiffusionDecoderNet` runs LTX-2.5's diffusion video decoder (`diffusion_decoder/`): four
