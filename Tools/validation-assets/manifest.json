@@ -7323,6 +7323,12 @@
       "command": "qwen3_5_loss --checkpoint /tmp"
     },
     {
+      "key": "IK_PARITY_QWEN3_5_CACHED",
+      "record": "reference/qwen3-5-2b-cached.safetensors",
+      "environment": "qwenimage",
+      "command": "qwen3_5_cached --checkpoint $IK_VAL_QWEN3_5_2B (16 MB)"
+    },
+    {
       "key": "IK_PARITY_GEMMA3_LOSS",
       "record": "reference/gemma3-loss.safetensors",
       "environment": "gemma",

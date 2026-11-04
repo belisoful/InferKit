@@ -197,9 +197,16 @@ final class NFKHybridAttention: Module {
     }
 
     func callAsFunction(_ x: MLXArray, mask: MLXArray?) -> MLXArray {
+        callAsFunction(x, mask: mask, cache: nil, layer: 0)
+    }
+
+    /// The layer over `x` after the positions `cache` holds, its keys and values appended to the cache's
+    /// `layer` slot; without a cache, the positions start at 0.
+    func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: NFKMLXKeyValueCache?, layer: Int) -> MLXArray {
         let c = configuration
         let (batch, length) = (x.shape[0], x.shape[1])
         let width = c.headCount * c.headDimensions
+        let offset = cache?.offset ?? 0
 
         // The projection is viewed as [.., heads, 2 · headDim] and split on the LAST axis, so each
         // head's queries and gate are interleaved. Splitting the flat width into two halves takes the
@@ -229,23 +236,31 @@ final class NFKHybridAttention: Module {
         // Partial rotary: only the leading channels turn, the rest are carried through untouched.
         let turned = c.rotaryDimensions
         if turned > 0 && NFKReferenceRounding.isReduced(queries) {
-            queries = NFKReferenceRounding.rotary(queries, dimensions: turned, base: c.ropeTheta, offset: 0)
-            keys = NFKReferenceRounding.rotary(keys, dimensions: turned, base: c.ropeTheta, offset: 0)
+            queries = NFKReferenceRounding.rotary(queries, dimensions: turned, base: c.ropeTheta, offset: offset)
+            keys = NFKReferenceRounding.rotary(keys, dimensions: turned, base: c.ropeTheta, offset: offset)
         } else if turned > 0 && turned < c.headDimensions {
-            queries = concatenated([rope(queries[.ellipsis, 0 ..< turned], offset: 0),
+            queries = concatenated([rope(queries[.ellipsis, 0 ..< turned], offset: offset),
                                     queries[.ellipsis, turned...]], axis: -1)
-            keys = concatenated([rope(keys[.ellipsis, 0 ..< turned], offset: 0),
+            keys = concatenated([rope(keys[.ellipsis, 0 ..< turned], offset: offset),
                                  keys[.ellipsis, turned...]], axis: -1)
         } else if turned > 0 {
-            queries = rope(queries, offset: 0)
-            keys = rope(keys, offset: 0)
+            queries = rope(queries, offset: offset)
+            keys = rope(keys, offset: offset)
+        }
+        if let cache {
+            (keys, values) = cache.update(layer: layer, keys: keys, values: values)
         }
 
         // A `.checkpoint`-precision load makes this a bf16 module, and the fused attention refuses
         // a float32 mask that does not promote to its own type — invisible at float32.
         let scale = 1 / sqrt(Float(c.headDimensions))
         let attended: MLXArray
-        if c.halfPrecisionAttention == .sdpaMath && NFKReferenceRounding.isReduced(queries) {
+        if cache != nil && NFKMLXHalfPrecision.arithmetic == .fast {
+            // Generation through the cache takes MLX's fused attention, which reads the grouped keys and values
+            // once; the eager form spreads them to every query head on every step.
+            attended = MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale,
+                                                         mask: mask.map { .array($0.asType(queries.dtype)) } ?? .none)
+        } else if c.halfPrecisionAttention == .sdpaMath && NFKReferenceRounding.isReduced(queries) {
             // transformers repeats each key and value head for its group of query heads before the SDPA call.
             let group = c.headCount / c.keyValueHeadCount
             attended = NFKReferenceRounding.mathAttention(
@@ -335,10 +350,17 @@ final class NFKHybridLinearAttention: Module {
     /// strength, returning the float32 read `[batch, length, value heads, value width]`.
     func recurrence(queries: MLXArray, keys: MLXArray, values: MLXArray, decay: MLXArray,
                     write: MLXArray) -> MLXArray {
+        recurrence(queries: queries, keys: keys, values: values, decay: decay, write: write, initialState: nil).read
+    }
+
+    /// The recurrence from `initialState` `[batch, value heads, key width, value width]` (zeros where nil),
+    /// with the state after the last position.
+    func recurrence(queries: MLXArray, keys: MLXArray, values: MLXArray, decay: MLXArray, write: MLXArray,
+                    initialState: MLXArray?) -> (read: MLXArray, state: MLXArray) {
         let c = configuration
         let (batch, length) = (queries.dim(0), queries.dim(1))
-        var state = MLXArray.zeros([batch, c.linearValueHeadCount,
-                                    c.linearKeyHeadDimensions, c.linearValueHeadDimensions])
+        var state = initialState ?? MLXArray.zeros([batch, c.linearValueHeadCount,
+                                                    c.linearKeyHeadDimensions, c.linearValueHeadDimensions])
         var outputs = [MLXArray]()
         outputs.reserveCapacity(length)
         // The reference scales the queries by the key width before the recurrence, once.
@@ -358,13 +380,31 @@ final class NFKHybridLinearAttention: Module {
             state = state + k.expandedDimensions(axis: -1) * correction.expandedDimensions(axis: 2)
             outputs.append((state * q.expandedDimensions(axis: -1)).sum(axis: 2))
         }
-        return stacked(outputs, axis: 1)
+        return (stacked(outputs, axis: 1), state)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
+        callAsFunction(x, cache: nil)
+    }
+
+    /// The layer over `x` after the positions `cache` holds: the convolution reads the cached inputs before
+    /// `x`, and the recurrence starts from the cached state. Both are replaced with the state after `x`. A
+    /// single position runs the recurrence as transformers' cached decode does; more run its chunked rule
+    /// from the cached state.
+    func callAsFunction(_ x: MLXArray, cache: NFKMLXHybridLinearCache?) -> MLXArray {
         let c = configuration
         let (batch, length) = (x.shape[0], x.shape[1])
-        let mixed = convolved(qkvProjection(x))
+        let projected = qkvProjection(x)
+        let mixed: MLXArray
+        if let cache {
+            let history = cache.convolutionInputs ?? MLXArray.zeros([batch, c.linearConvolutionKernel - 1, projected.dim(2)],
+                                                                    dtype: projected.dtype)
+            let joined = concatenated([history, projected], axis: 1)
+            mixed = NFKReferenceRounding.silu(convolution(joined))
+            cache.convolutionInputs = joined[0..., (joined.dim(1) - (c.linearConvolutionKernel - 1))...]
+        } else {
+            mixed = convolved(projected)
+        }
 
         let keyWidth = c.linearKeyHeadCount * c.linearKeyHeadDimensions
         let queries = mixed[0..., 0..., 0 ..< keyWidth]
@@ -386,15 +426,32 @@ final class NFKHybridLinearAttention: Module {
         let group = c.linearValueHeadCount / c.linearKeyHeadCount
         let wide = c.normalizesKeysInFloat32
         let read: MLXArray
-        if wide && NFKReferenceRounding.computesReferenceScans {
-            read = NFKReferenceRounding.torchChunkGatedDeltaRule(
+        if wide && NFKReferenceRounding.computesReferenceScans && (cache?.state == nil || length > 1) {
+            let scanned = NFKReferenceRounding.torchChunkGatedDeltaRule(
                 queries: repeated(queries, count: group, axis: 2), keys: repeated(keys, count: group, axis: 2),
-                values: values, logDecay: logDecay, beta: write).asType(x.dtype)
+                values: values, logDecay: logDecay, beta: write, initialState: cache?.state)
+            read = scanned.read.asType(x.dtype)
+            cache?.state = scanned.state
         } else {
-            read = recurrence(
-                queries: Self.unitNorm(repeated(queries, count: group, axis: 2), widenedFirst: wide),
-                keys: Self.unitNorm(repeated(keys, count: group, axis: 2), widenedFirst: wide),
-                values: values.asType(.float32), decay: exp(logDecay), write: write).asType(x.dtype)
+            let normedQueries = Self.unitNorm(repeated(queries, count: group, axis: 2), widenedFirst: wide)
+            let normedKeys = Self.unitNorm(repeated(keys, count: group, axis: 2), widenedFirst: wide)
+            let decay = exp(logDecay)
+            if NFKMLXGatedDeltaKernel.runs(keyWidth: c.linearKeyHeadDimensions), let cache {
+                let scanned = NFKMLXGatedDeltaKernel.scan(queries: normedQueries, keys: normedKeys,
+                                                          values: values.asType(.float32), decay: decay, write: write,
+                                                          initialState: cache.state)
+                read = scanned.read.asType(x.dtype)
+                cache.state = scanned.state
+            } else if NFKMLXGatedDeltaKernel.runs(keyWidth: c.linearKeyHeadDimensions) {
+                read = NFKMLXGatedDeltaKernel.read(queries: normedQueries, keys: normedKeys,
+                                                   values: values.asType(.float32), decay: decay,
+                                                   write: write).asType(x.dtype)
+            } else {
+                let scanned = recurrence(queries: normedQueries, keys: normedKeys, values: values.asType(.float32),
+                                         decay: decay, write: write, initialState: cache?.state)
+                read = scanned.read.asType(x.dtype)
+                cache?.state = scanned.state
+            }
         }
 
         let gate = gateProjection(x).reshaped([batch, length, c.linearValueHeadCount,
@@ -430,18 +487,59 @@ final class NFKHybridBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray, mask: MLXArray?) -> MLXArray {
+        callAsFunction(x, mask: mask, cache: nil, layer: 0)
+    }
+
+    /// The compiled single-position step of a linear-attention layer, built at its first use.
+    private let compiledStep = NFKHybridCompiledStep()
+
+    /// The layer over `x` after the positions `cache` holds, reading and replacing this layer's slot. Where
+    /// `compiles` is set, a linear-attention layer runs one position whose cache holds a state through its
+    /// compiled step, which fuses the step's elementwise operations; the weights must stay in place, so a
+    /// streamed layer does not compile.
+    func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: NFKMLXHybridCache?, layer: Int,
+                        compiles: Bool = false) -> MLXArray {
+        if compiles, x.dim(1) == 1, linearAttention != nil, let slot = cache?.linear[layer],
+           let convolutionInputs = slot.convolutionInputs, let state = slot.state {
+            let step = compiledStep.step ?? {
+                let made = compile(inputs: [self]) { [unowned self] arrays in
+                    let scratch = NFKMLXHybridLinearCache()
+                    scratch.convolutionInputs = arrays[1]
+                    scratch.state = arrays[2]
+                    let output = self.linearLayer(arrays[0], cache: scratch)
+                    return [output, scratch.convolutionInputs ?? arrays[1], scratch.state ?? arrays[2]]
+                }
+                compiledStep.step = made
+                return made
+            }()
+            let outputs = step([x, convolutionInputs, state])
+            slot.convolutionInputs = outputs[1]
+            slot.state = outputs[2]
+            return outputs[0]
+        }
         let normalized = inputNorm(x)
         let mixed: MLXArray
         if let attention {
-            mixed = attention(normalized, mask: mask)
+            mixed = attention(normalized, mask: mask, cache: cache?.attention, layer: layer)
         } else if let linearAttention {
-            mixed = linearAttention(normalized)
+            mixed = linearAttention(normalized, cache: cache?.linear[layer])
         } else {
             mixed = normalized
         }
         let residual = x + mixed
         return residual + feedForward(postNorm(residual))
     }
+
+    /// A linear-attention layer over `x` through `cache`'s slot.
+    private func linearLayer(_ x: MLXArray, cache: NFKMLXHybridLinearCache?) -> MLXArray {
+        let residual = x + linearAttention!(inputNorm(x), cache: cache)
+        return residual + feedForward(postNorm(residual))
+    }
+}
+
+/// A layer's compiled step, held outside the module's reflected properties.
+final class NFKHybridCompiledStep {
+    var step: (@Sendable ([MLXArray]) -> [MLXArray])?
 }
 
 /// The hybrid decoder, under the `model.language_model.` prefix the releases use.
@@ -500,6 +598,75 @@ public final class NFKMLXHybridLanguageNet: Module {
         return forward(tokens, trace: &trace)
     }
 
+    /// The logits `[batch, vocabularySize]` of the last of `tokens` `[batch, length]`, which follow the
+    /// positions `cache` holds; the cache takes the new positions. Introduced in InferKit 0.4.0.
+    func lastLogits(_ tokens: MLXArray, cache: NFKMLXHybridCache) -> MLXArray {
+        let length = tokens.shape[1]
+        var hidden = model.embedTokens(tokens)
+        let mask: MLXArray? = length > 1
+            ? NFKMLXLanguageNet.causalMask(length, offset: cache.maskCacheLength) : nil
+        for (index, layer) in model.layers.enumerated() {
+            guard let next = NFKMLXLayerStream.run(layerStream, layer: layer, index: index,
+                                                   { layer(hidden, mask: mask, cache: cache, layer: index,
+                                                           compiles: layerStream == nil) },
+                                                   keeping: { [$0] }) else {
+                continue
+            }
+            hidden = next
+        }
+        cache.attention.advance(by: length)
+        let last = model.norm(hidden[0..., (length - 1)...])
+        return (lmHead?(last) ?? model.embedTokens.asLinear(last))[0..., 0]
+    }
+
+    /// Fills `cache` with `prompt` and returns the logits `[vocabularySize]` that follow its last token.
+    ///
+    /// @discussion The prompt runs in passes of at most `limit` tokens, halved while a pass's attention scores,
+    /// four bytes for each head, query, and key it sees, would pass `budget` bytes. A pass shorter than the
+    /// rest of the prompt keeps a whole number of the delta rule's 64-position chunks, so the chunked
+    /// recurrence splits where a single pass would. A failed streamed read or MLX error ends the passes.
+    func prefill(_ prompt: [Int], cache: NFKMLXHybridCache, limit: Int = NFKMLXLanguageNet.defaultPrefillChunk,
+                 budget: Int = NFKMLXLanguageNet.prefillScoreBudget) -> MLXArray {
+        var start = 0
+        var logits: MLXArray
+        repeat {
+            let length = prefillPassLength(cached: cache.maskCacheLength, remaining: prompt.count - start,
+                                           limit: limit, budget: budget)
+            let slice = prompt[start ..< start + length].map { Int32($0) }
+            logits = lastLogits(MLXArray(slice).reshaped([1, length]), cache: cache)
+            start += length
+            if start < prompt.count {
+                eval(logits)                                    // free a pass's activations before the next
+            }
+        } while start < prompt.count && layerStream?.readFailure == nil && !NFKMLXErrorScope.hasFailed
+        return logits[0]
+    }
+
+    /// Generation through a cache of this decoder: a fresh cache under the window and quantization a run sets,
+    /// filled by ``prefill(_:cache:limit:budget:)``, then one token a pass.
+    var cachedGeneration: NFKDecoderCachedGeneration {
+        NFKDecoderCachedGeneration { [self] prompt, window, quantization in
+            let cache = NFKMLXHybridCache(configuration: configuration, window: window, quantization: quantization)
+            let logits = prefill(prompt, cache: cache)
+            return (logits, { token in self.lastLogits(token.reshaped([1, 1]), cache: cache)[0] })
+        }
+    }
+
+    /// The tokens the next prefill pass runs: the smaller of `remaining` and `limit`, halved while the scores
+    /// of its queries over `cached` earlier keys and its own would pass `budget` bytes, then, short of
+    /// `remaining`, rounded down to a multiple of 64 where it holds one. At least one.
+    func prefillPassLength(cached: Int, remaining: Int, limit: Int,
+                           budget: Int = NFKMLXLanguageNet.prefillScoreBudget) -> Int {
+        var length = Swift.min(remaining, limit)
+        while length > 1 && configuration.headCount * length * (cached + length) * 4 > budget {
+            length = (length + 1) / 2
+        }
+        if length < remaining && length >= 64 {
+            length -= length % 64
+        }
+        return length
+    }
+
     /// The state entering the stack, then each layer's output, with the final normalization folded
     /// into the last entry — the convention the reference's `output_hidden_states` uses.
     func hiddenStates(_ tokens: MLXArray, attention: NFKMLXHybridAttention = .causal) -> [MLXArray] {
@@ -549,6 +716,54 @@ public final class NFKMLXHybridLanguageNet: Module {
             trace![trace!.count - 1] = hidden
         }
         return hidden
+    }
+}
+
+/// What a linear-attention layer carries between passes: the convolution's inputs before the next position
+/// and the recurrence's state.
+final class NFKMLXHybridLinearCache {
+    /// `[batch, kernel - 1, qkv width]`, the fused projection's last rows, which the next position's
+    /// convolution reads before its own.
+    var convolutionInputs: MLXArray?
+    /// `[batch, value heads, key width, value width]` in float32, the state after the last position.
+    var state: MLXArray?
+}
+
+/// The caches of one generation over a hybrid decoder, so each pass runs only its new positions: the
+/// full-attention layers' keys and values, and each linear-attention layer's convolution inputs and state.
+///
+/// @discussion The keys and values live in an ``NFKMLXKeyValueCache`` whose slots are the full-attention
+/// layers' indices; its window and quantization apply to them alone. The recurrent state is fixed in size
+/// and holds the whole prefix, so a window bounds what the attention layers read and nothing else.
+final class NFKMLXHybridCache {
+    let attention: NFKMLXKeyValueCache
+    let linear: [NFKMLXHybridLinearCache?]
+    /// The first full-attention layer, whose slot states how many keys a pass attends to.
+    private let firstAttentionLayer: Int?
+
+    init(configuration: NFKMLXHybridConfiguration, window: Int? = nil,
+         quantization: NFKMLXKeyValueCache.Quantization? = nil) {
+        attention = NFKMLXKeyValueCache(layerCount: configuration.layerCount, window: window,
+                                        quantization: quantization)
+        linear = configuration.layerTypes.map { $0 == .linearAttention ? NFKMLXHybridLinearCache() : nil }
+        firstAttentionLayer = configuration.layerTypes.firstIndex(of: .fullAttention)
+    }
+
+    /// The positions the cache has seen.
+    var offset: Int { attention.offset }
+
+    /// How many cached keys a pass of more than one position attends to before its own: what a full-attention
+    /// layer retains, after the trim a window makes before the pass.
+    var maskCacheLength: Int {
+        guard let layer = firstAttentionLayer else { return 0 }
+        let retained = attention.retainedLength(layer: layer)
+        return attention.window.map { Swift.min(retained, $0 - 1) } ?? retained
+    }
+
+    /// The bytes the cached arrays occupy.
+    var allocatedBytes: Int {
+        attention.allocatedBytes
+            + linear.reduce(0) { $0 + ($1?.convolutionInputs?.nbytes ?? 0) + ($1?.state?.nbytes ?? 0) }
     }
 }
 
@@ -843,9 +1058,10 @@ public final class NFKMLXHybridLanguage: NSObject {
     /// A text-generation backend from a Qwen3.5, 3.6, or 3.8 release directory, reading its
     /// `config.json`, the decoder's weights, the tokenizer, and the chat template.
     ///
-    /// @discussion The backend is an ``NFKMLXDecoderBackend``: the decoder carries no key-value cache,
-    /// so each generated token re-runs the sequence. Run inference off the render thread. Introduced
-    /// in InferKit 0.4.0.
+    /// @discussion The backend is an ``NFKMLXDecoderBackend`` over the decoder's cache: the prompt fills it
+    /// in passes, and each generated token then runs alone against the full-attention layers' keys and
+    /// values and the linear-attention layers' recurrent state. Run inference off the render thread.
+    /// Introduced in InferKit 0.4.0.
     public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision) throws
         -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, precision: precision, residency: .automatic)
@@ -892,7 +1108,14 @@ public final class NFKMLXHybridLanguage: NSObject {
 
     static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
                         budget: Int, identifier: String = modelName, draftDirectoryURL: URL? = nil,
-                        draftBits: Int? = 4) throws -> NFKMLXDecoderBackend {
+                        draftBits: Int? = 4, quantizationBits: Int? = nil,
+                        quantizationGroupSize: Int = NFKMLXLoadOptions.defaultQuantizationGroupSize,
+                        generation: NFKMLXGenerationOptions = NFKMLXGenerationOptions()) throws -> NFKMLXDecoderBackend {
+        if quantizationBits != nil && residency == .streamed {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(identifier) holds a quantized decoder resident: a streamed layer is read from the release as "
+                + "stored, which holds no packed weights")
+        }
         let configuration = try configuration(fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
         var draft: NFKMLXHybridLanguageNet?
         if let draftDirectoryURL {
@@ -914,11 +1137,24 @@ public final class NFKMLXHybridLanguage: NSObject {
         }
         let draftBytes = draft.map { NFKMLXLanguage.heldBytes(of: $0) } ?? 0
         let net = makeNet(configuration)
-        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
-                        budget: budget > 0 ? Swift.max(budget - draftBytes, 1) : 0, reserving: draftBytes)
-        return try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: identifier, modules: [net],
-                                                layerStream: net.layerStream,
-                                                draft: draft.map { draft in { draft($0) } }) { net($0) }
+        if let quantizationBits {
+            // Each layer packs as its last tensor arrives, so the stored decoder is never held whole; the
+            // embedding and the output projection pack after, as the catalog's estimate counts them.
+            try loadQuantizedWeights(into: net, fromDirectory: directoryURL, bits: quantizationBits,
+                                     groupSize: quantizationGroupSize, includeEmbeddings: true)
+            try NFKMLXQuantization.quantize(module: net, bits: quantizationBits, groupSize: quantizationGroupSize)
+            eval(net)
+            NFKMLXGPU.clearCache()
+        } else {
+            try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
+                            budget: budget > 0 ? Swift.max(budget - draftBytes, 1) : 0, reserving: draftBytes)
+        }
+        let backend = try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: identifier, modules: [net],
+                                                       layerStream: net.layerStream,
+                                                       draft: draft.map { draft in { draft($0) } },
+                                                       cached: net.cachedGeneration) { net($0) }
+        backend.cacheDefaults = generation
+        return backend
     }
 
 

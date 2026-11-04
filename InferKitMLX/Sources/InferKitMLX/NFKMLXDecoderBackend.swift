@@ -20,11 +20,23 @@ final class NFKDecoderBackendHolder: @unchecked Sendable {
     let logits: (MLXArray) -> MLXArray
     let tokenizer: NFKTokenizer
     let draft: ((MLXArray) -> MLXArray)?
-    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, draft: ((MLXArray) -> MLXArray)? = nil) {
+    let cached: NFKDecoderCachedGeneration?
+    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, draft: ((MLXArray) -> MLXArray)? = nil,
+         cached: NFKDecoderCachedGeneration? = nil) {
         self.logits = logits
         self.tokenizer = tokenizer
         self.draft = draft
+        self.cached = cached
     }
+}
+
+/// Generation over a decoder that keeps its state between passes: `start` fills a fresh cache, bounded by
+/// a window and stored under a quantization where they are set, with the prompt, and returns the logits
+/// `[vocabulary]` after it and the step that runs one more token, a scalar that may be unevaluated, through
+/// the cache and returns the logits after that token.
+struct NFKDecoderCachedGeneration {
+    let start: (_ prompt: [Int], _ window: Int?, _ quantization: NFKMLXKeyValueCache.Quantization?)
+        -> (logits: MLXArray, step: (MLXArray) -> MLXArray)
 }
 
 /// A prefill-only text-generation backend over a decoder whose forward maps token ids to logits.
@@ -62,6 +74,13 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// Introduced in InferKit 0.4.0.
     @objc public var streamedBytesPerPass: Int { layerStream?.bytesPerPass ?? 0 }
 
+    /// Whether generation runs each new token alone through the decoder's cache, where the whole sequence would
+    /// otherwise run again. Introduced in InferKit 0.4.0.
+    @objc public var isCached: Bool { holder.cached != nil }
+
+    /// The context window and key-value cache quantization a run takes where its request sets none.
+    var cacheDefaults = NFKMLXGenerationOptions()
+
     /// Whether generation drafts with a smaller release of the same vocabulary
     /// (``NFKMLXHybridLanguage/backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)``).
     /// Introduced in InferKit 0.4.0.
@@ -72,8 +91,9 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
 
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, identifier: String,
          chatTemplate: String?, stopTokens: Set<Int>, modules: [Module] = [], releaseDirectoryURL: URL? = nil,
-         layerStream: NFKMLXLayerStream? = nil, draft: ((MLXArray) -> MLXArray)? = nil) {
-        self.holder = NFKDecoderBackendHolder(logits: logits, tokenizer: tokenizer, draft: draft)
+         layerStream: NFKMLXLayerStream? = nil, draft: ((MLXArray) -> MLXArray)? = nil,
+         cached: NFKDecoderCachedGeneration? = nil) {
+        self.holder = NFKDecoderBackendHolder(logits: logits, tokenizer: tokenizer, draft: draft, cached: cached)
         self.identifier = identifier
         self.layerStream = layerStream
         self.describedModules = modules
@@ -89,6 +109,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// are the networks `logits` runs, which ``modelInfo`` describes.
     static func release(directoryURL: URL, identifier: String, modules: [Module] = [],
                         layerStream: NFKMLXLayerStream? = nil, draft: ((MLXArray) -> MLXArray)? = nil,
+                        cached: NFKDecoderCachedGeneration? = nil,
                         logits: @escaping (MLXArray) -> MLXArray) throws -> NFKMLXDecoderBackend {
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("\(directoryURL.lastPathComponent) has no readable tokenizer")
@@ -97,7 +118,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
                                     chatTemplate: NFKMLXLanguage.chatTemplate(inDirectory: directoryURL),
                                     stopTokens: stopTokens(tokenizer: tokenizer, directoryURL: directoryURL),
                                     modules: modules, releaseDirectoryURL: directoryURL, layerStream: layerStream,
-                                    draft: draft)
+                                    draft: draft, cached: cached)
     }
 
     /// The tokenizer's end-of-sequence id and every id `generation_config.json` names as one; an
@@ -138,6 +159,11 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         if templateReadsReasoningEffort { keys.insert(NFKParameterReasoningEffort) }
         if hasDraftModel {
             keys.insert(NFKMLXGenerationParameterKey.draftTokens)
+        }
+        if isCached {
+            keys.formUnion([NFKMLXGenerationParameterKey.contextWindow, NFKMLXGenerationParameterKey.cacheQuantizationBits,
+                            NFKMLXGenerationParameterKey.cacheQuantizationGroupSize,
+                            NFKMLXGenerationParameterKey.cacheQuantizationPerChannelKeys])
         }
         return keys
     }
@@ -194,11 +220,16 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             draftTokens = value.intValue
         }
 
+        var cacheOptions = cacheDefaults
+        if isCached {
+            NFKMLXLanguageBackend.applyMLXParameters(from: request, to: &cacheOptions)
+        }
+
         let (promptTokens, format) = try prompt(for: request)
         let decode: ([Int]) -> String = { [holder] in holder.tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reasoningFormat = request.messages != nil ? chatTemplate.flatMap(NFKMLXReasoningFormat.detected(inChatTemplate:)) : nil
         let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                             draftTokens: draftTokens) { limit in
+                                             draftTokens: draftTokens, cacheOptions: cacheOptions) { limit in
             job.map { job in
                 NFKMLXLanguageBackend.partialReporter(job, prompt: promptTokens, limit: limit, format: reasoningFormat,
                                                       callMarkers: NFKMLXToolCalling.templateTools(for: request) != nil ? format?.markers ?? [] : [],
@@ -263,17 +294,43 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         return holder.tokenizer.encode(rendered).map(\.intValue)
     }
 
-    /// Prefill-only generation: the whole growing sequence runs through the decoder each step, or, with
-    /// a draft and `draftTokens` above 0, each round of proposals (``NFKMLXPrefillDrafting``). `onToken`,
-    /// made for the run's token limit, sees each token, and answering false ends the run.
+    /// Generation. With a draft and `draftTokens` above 0, each round of proposals runs the whole sequence
+    /// through the decoder (``NFKMLXPrefillDrafting``). Otherwise a cached decoder fills its cache with the
+    /// prompt and then runs each new token alone, under the window and cache quantization `cacheOptions` set,
+    /// and a decoder without a cache runs the whole growing sequence each step. `onToken`, made for the run's
+    /// token limit, sees each token, and answering false ends the run.
     private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
-                          draftTokens: Int,
+                          draftTokens: Int, cacheOptions: NFKMLXGenerationOptions,
                           onToken makeOnToken: (Int) -> ((Int) -> Bool)?) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
-                                                  contextLength: contextLength, source: identifier)
+                                                  contextLength: contextLength,
+                                                  window: isCached ? cacheOptions.contextWindow : nil, source: identifier)
         let onToken = makeOnToken(limit)
+        if let cached = holder.cached, holder.draft == nil || draftTokens <= 0 {
+            guard limit > 0 else { return ([], limit) }
+            let (logits, step) = cached.start(promptTokens, cacheOptions.contextWindow, cacheOptions.cacheQuantization)
+            // Each pass is built on the previous token before that token is read, so the graph of one pass is
+            // built while the GPU runs the one before it. A run that stops leaves one pass unread.
+            var token = sampling.token(logits, seed: seed, step: 0)
+            asyncEval(token)
+            for index in 0 ..< limit {
+                var following: MLXArray?
+                if index + 1 < limit {
+                    following = sampling.token(step(token), seed: seed, step: index + 1)
+                    asyncEval(following!)
+                }
+                let next = token.item(Int.self)
+                try verifyStream()
+                if stopTokens.contains(next) || NFKMLXErrorScope.hasFailed { break }
+                produced.append(next)
+                if let onToken, !onToken(next) { break }
+                guard let following else { break }
+                token = following
+            }
+            return (produced, limit)
+        }
         if let draft = holder.draft, draftTokens > 0 {
             var report = NFKMLXSpeculativeReport()
             defer { lastSpeculativeReport = report }

@@ -20,7 +20,9 @@ import MLX
 /// - the dense and mixture decoders (``NFKMLXLanguage``): residency, precision, a runtime weight
 ///   quantization of 2 to 8 bits at group size 64, a draft model and its bits, and the context length and
 ///   cache settings as generation defaults;
-/// - Gemma 3, TranslateGemma, Qwen3.5, and Nemotron-H: residency, precision, a draft model and its bits;
+/// - Gemma 3, TranslateGemma, and Nemotron-H: residency, precision, a draft model and its bits;
+/// - Qwen3.5 (and 3.6 and 3.8): residency, precision, a runtime weight quantization of 2 to 8 bits held
+///   resident, a draft model and its bits, and the context length and cache settings as generation defaults;
 /// - Gemma 3n, Whisper, and Stable Diffusion (each release, and each released adapter merged into its
 ///   base): precision;
 /// - Gemma 4, Qwen4-Exp, Granite 4.0-H, Codestral Mamba, MADLAD-400, and Open-Jev: residency and precision;
@@ -162,12 +164,16 @@ enum NFKMLXOptionRegistrations {
                                     residency: options.residency)
         }
         registerDirectoryModels(registryNames(families: ["qwen3.5"]),
-                                consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
+                                consumes: draftKeys.union(quantizationKeys).union(generationKeys)
+                                    .union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
             url, name, options in
             try NFKMLXHybridLanguage.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
                                              residency: options.residency, budget: NFKMLXResidencyBudget.current(),
                                              identifier: name, draftDirectoryURL: options.draftURL,
-                                             draftBits: options.draftBits(orDefault: 4))
+                                             draftBits: options.draftBits(orDefault: 4),
+                                             quantizationBits: options.quantizationBits,
+                                             quantizationGroupSize: options.quantizationGroupSize,
+                                             generation: options.generationOptions())
         }
         // An Open-Jev model's URL is the hub cache holding the release and its base.
         for variant in NFKMLXOpenJevVariant.allCases {

@@ -549,9 +549,34 @@ attention and feed-forward.
   runs token by token, so a 90-token prompt is 90 sequential steps per linear layer; that, not the
   parameter count, dominates a short prompt's cost and a fine-tune's graph. `backend(directoryURL:)`
   (registered `qwen3.5`) serves text through `NFKMLXDecoderBackend`, which Qwen4-Exp (`qwen4-exp`) shares:
-  prefill-only, a message list rendered through the release's chat template, and generation stopping
-  at every id `generation_config.json` names, because an instruct release ends a turn on a marker only
-  that file lists. `NFKMLXQwen4Exp.network(directoryURL:precision:residency:)` returns the bare decoder,
+  a message list rendered through the release's chat template, and generation stopping at every id
+  `generation_config.json` names, because an instruct release ends a turn on a marker only that file lists.
+  Qwen4-Exp is prefill-only. The hybrid decoder generates through `NFKMLXHybridCache`
+  (`NFKMLXDecoderBackend.isCached`): the full-attention layers' keys and values in an
+  `NFKMLXKeyValueCache` whose slots are those layers' indices (the window and the quantization bound them
+  alone; a pass's mask length is read from the first full-attention layer's slot, since layer 0 is a
+  recurrence), and each recurrence layer's last `kernel - 1` fused-projection rows before the convolution
+  and its float32 state. The convolution runs over the cached rows joined to the new ones, unpadded, which
+  is the zero-padded convolution where the rows are zeros. `prefill` runs the prompt in passes
+  (`prefillPassLength`: at most 2048, halved while a pass's scores pass 1 GiB, cut to whole 64-position
+  chunks short of the prompt's end, so the chunked rule splits where one pass would), and `lastLogits`
+  projects only the last position, since a 23K-token prompt's full logits over 248 320 entries are 23 GB.
+  As transformers 5.17's `Qwen3_5GatedDeltaNet` does with a cache, a pass of more than one position (or
+  the first) runs the chunked rule from the cached state (`torchChunkGatedDeltaRule(…initialState:)`, which
+  returns the final state transformers' `output_final_state` gives), and a single cached position runs the
+  per-step rule from it. Under the fast arithmetic both run as `NFKMLXGatedDeltaKernel` (one thread per value
+  channel, its `keyWidth`-float column of the state in registers, at most 256), a single cached position of
+  a recurrence layer runs as one compiled step (`NFKHybridBlock`, `compile(inputs: [self])`, skipped for a
+  streamed layer whose weights move), and an attention layer reads the cache through
+  `MLXFast.scaledDotProductAttention`. Through the cache the float32 2B matches the uncached pass token for
+  token, worst logit cosine 0.9999999999947 over 16 steps after a 201-token prompt
+  (`IK_PARITY_QWEN3_5_CACHED`). The 27B at 4 bits with an 8-bit cache, release build, M1 Max: 13.3 tokens/s
+  decoding after 64 tokens, 8.9 after 23,000, a 23,000-token prefill at 64 tokens/s, peak 17.6 GiB under the
+  standing limits; a debug build decodes at 8. A drafted run keeps `NFKMLXPrefillDrafting`, which re-runs the sequence: drafting
+  through the cache, which would roll the recurrent state back on a rejected proposal, is not built. A
+  quantized load (`quantizationBits`) packs each layer as its last tensor arrives
+  (`loadQuantizedWeights`), then the output projection; it is held resident, since a streamed layer is
+  read as stored. `NFKMLXQwen4Exp.network(directoryURL:precision:residency:)` returns the bare decoder,
   which `backend(directoryURL:precision:residency:)` returned before it built the text backend.
   **Customization ships** at 2B and 4B (`NFKMLXHybridLanguageTraining.swift`):
   `NFKMLXHybridLanguage.fineTune` adapts every attention projection plus the recurrence's `in_proj_qkv`

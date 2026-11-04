@@ -1911,6 +1911,33 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   loads LTX-2 LoRAs in Lightricks' key format. The transformer takes explicit token coordinates
   (`videoCoordinates`), and a LoRA adapter takes a `strength`.
 
+#### Qwen3.5, 3.6, and 3.8 generate through a cache, quantized and windowed from the catalog
+
+- `NFKMLXHybridLanguageNet` keeps a cache between passes: the full-attention layers' keys and values, and
+  each gated delta-rule layer's convolution inputs and recurrent state. The prompt fills it in passes of up
+  to 2048 positions, shortened while a pass's attention scores would pass 1 GiB and cut at whole 64-position
+  chunks of the rule, and each generated token then runs alone. Before, every token ran the whole sequence
+  through every layer again, and a long prompt's pass held its full attention scores and its logits for
+  every position at once.
+- `NFKMLXDecoderBackend.isCached` reports the cached path, and a request sets the window and the cache's
+  quantization through `NFKMLXGenerationParameterKey.contextWindow` and the `cacheQuantization*` keys. A drafted
+  run (`draftTokens` above 0 with a draft model loaded) keeps the drafting path.
+- The `qwen3.5` family's entries (`qwen3.5-2b`, `qwen3.5`, `qwen3.5-9b`, `qwen3.8-27b`) declare
+  `quantizationBits` (8, 6, 5, 4, 3, or 2, each layer packed as its last tensor arrives, then the token
+  embedding and the output projection, and the decoder held resident), `contextLength` (4096 by default, up
+  to the release's 262 144 positions), `cacheBits`, and `cacheGroupSize`, and the memory estimate counts the
+  packed embedding and the attention layers' keys and values for the window. Qwen3.8-27B at 4 bits is
+  estimated at 16.1 GB with a 4K window and 18.1 GB with a 64K window and an 8-bit cache.
+- Under the fast arithmetic the delta rule runs as one Metal kernel (`NFKMLXGatedDeltaKernel`, a thread per
+  value channel holding its column of the state), a single cached position of a recurrence layer runs as one
+  compiled step, and the attention layers read the cache through MLX's fused attention. The cached path of
+  `NFKMLXDecoderBackend` builds each token's pass on the previous token before reading it, so the graph is
+  built while the GPU runs the pass before. Generating Qwen3.5-2B through the cache at float32 gives every
+  greedy token of the uncached pass, with a worst logit cosine of 0.9999999999947 over 16 steps.
+- Measured on an M1 Max in a release build, Qwen3.8-27B at 4 bits with an 8-bit cache decodes 13.3 tokens a
+  second after a 64-token prompt and 8.9 after a 23,000-token one, fills the 23,000-token prompt at 64 tokens
+  a second, and peaks at 17.6 GiB under `NFKMLXGPU.applyStandingLimits()`.
+
 #### Custom functions run on the caller's stream
 
 - Every custom function in InferKitMLX (the PyTorch-exact kernels, the reference scans, the staged batch norm)

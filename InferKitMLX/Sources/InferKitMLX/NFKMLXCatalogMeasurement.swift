@@ -420,6 +420,8 @@ extension NFKMLXCatalogEntry {
 struct NFKMLXFactsRecipe {
     var stageIdentifier = "model"
     var quantizes = false
+    /// Whether a quantization packs the token embedding too, which the measured quantizable elements leave out.
+    var quantizesEmbeddings = false
     var pagesExperts = false
     var streamsLayers = false
     var keyValue: NFKMLXKeyValueRule? = nil
@@ -442,6 +444,7 @@ struct NFKMLXFactsRecipe {
     init(entry: NFKMLXCatalogEntry, profile: NFKMLXLoadProfile?) {
         stageIdentifier = profile?.stageIdentifier ?? "model"
         quantizes = profile?.quantizes ?? false
+        quantizesEmbeddings = profile?.quantizesEmbeddings ?? false
         pagesExperts = profile != nil && entry.residencies.contains(NFKModelResidencyPaged)
         streamsLayers = profile != nil && entry.residencies.contains(NFKModelResidencyStreamed)
         keyValue = profile?.contextLength != nil ? profile?.keyValue : nil
@@ -492,9 +495,13 @@ struct NFKMLXVariantFacts {
                     layerTotal = Self.bytesByPrecision([directory], tensors: [directory.0: layers.totalBytes], opaque: [:])
                 }
             }
-            let quantizable = recipe.quantizes ? split.directories.reduce(Int64(0)) {
+            var quantizable = recipe.quantizes ? split.directories.reduce(Int64(0)) {
                 $0 + (measurement.quantizableElements[$1] ?? 0)
             } : 0
+            if recipe.quantizes && recipe.quantizesEmbeddings, let vocabulary = measurement.geometry?.vocabularySize,
+               let width = measurement.geometry?.hiddenSize, width % NFKMLXLoadOptions.defaultQuantizationGroupSize == 0 {
+                quantizable += Int64(vocabulary) * Int64(width)
+            }
             stages.append(NFKModelStageFacts(identifier: split.identifier, title: split.title,
                                              byteCountByPrecision: bytes, quantizableElementCount: Int(quantizable),
                                              pageableByteCountByPrecision: pageable, layerCount: layerCount,

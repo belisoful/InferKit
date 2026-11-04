@@ -104,6 +104,8 @@ struct NFKMLXLoadProfile {
     var precisionProperty: String? = nil
     /// True where the factory packs the decoder's weights to one of ``bitWidths`` at load.
     var quantizes = false
+    /// True where that packing reaches the token embedding too.
+    var quantizesEmbeddings = false
     /// The default context length of a decoder with a key-value cache, nil for a model without one.
     var contextLength: Int? = nil
     /// How the cache grows, nil where the family's geometry is not modeled.
@@ -129,10 +131,12 @@ struct NFKMLXLoadProfile {
     /// family whose decoder is held to its bfloat16 reference; float32 is the default for the rest.
     static func decoder(precisions: [String] = [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                         defaultPrecision: String = NFKModelPrecisionCheckpoint, quantizes: Bool = false,
+                        quantizesEmbeddings: Bool = false,
                         contextLength: Int? = 4096, keyValue: NFKMLXKeyValueRule? = .dense, drafts: Bool = false,
                         tasks: Set<String> = [NFKModelTaskTextGeneration]) -> NFKMLXLoadProfile {
         NFKMLXLoadProfile(tasks: tasks, precisions: precisions, defaultPrecision: defaultPrecision, quantizes: quantizes,
-                          contextLength: contextLength, keyValue: keyValue, drafts: drafts, stageIdentifier: "decoder")
+                          quantizesEmbeddings: quantizesEmbeddings, contextLength: contextLength, keyValue: keyValue,
+                          drafts: drafts, stageIdentifier: "decoder")
     }
 
     /// A decoder that streams the repeated layers it cannot hold: Gemma 3, Gemma 4, MADLAD-400,
@@ -239,9 +243,13 @@ struct NFKMLXLoadProfile {
         "mamba2": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                     defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,
                                     tasks: [NFKModelTaskTextGeneration])],
-        "qwen3.5": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
-                                     defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,
-                                     drafts: true, tasks: [NFKModelTaskTextGeneration])],
+        // The hybrid decoder caches its full-attention layers' keys and values and each recurrence layer's fixed
+        // state; the window and the cache quantization bound the former. A quantized decoder, its embedding
+        // included, is held resident.
+        "qwen3.5": [.decoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                             defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true, quantizesEmbeddings: true,
+                             contextLength: 4096,
+                             keyValue: .attentionLayers, drafts: true, tasks: [NFKModelTaskTextGeneration])],
         // A decision checkpoint runs one pass and decodes nothing, so it declares no context or cache option.
         "open-jev": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                       defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,

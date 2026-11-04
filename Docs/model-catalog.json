@@ -44386,9 +44386,13 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "cacheBits" : "cacheBits",
+        "cacheGroupSize" : "cacheGroupSize",
+        "contextLength" : "contextLength",
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
       "options" : [
@@ -44523,16 +44527,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 2631327104,
-                "residentBytes" : 2631327104
+                "peakBytes" : 2765544832,
+                "residentBytes" : 2765544832
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -44550,16 +44554,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 18639460352,
-                "residentBytes" : 18639460352
+                "peakBytes" : 18907895808,
+                "residentBytes" : 18907895808
               },
               "title" : "Float32",
               "value" : "float32"
@@ -44577,8 +44581,190 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 13867882688,
-                "residentBytes" : 13867882688
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5090241024,
+                "residentBytes" : 5090241024
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3926583808,
+                "residentBytes" : 3926583808
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3344755200,
+                "residentBytes" : 3344755200
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2762926592,
+                "residentBytes" : 2762926592
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2181097984,
+                "residentBytes" : 2181097984
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1599269376,
+                "residentBytes" : 1599269376
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        },
+        {
+          "default" : 4096,
+          "group" : "Cache",
+          "help" : "The positions the key-value cache holds by default. A request may set a shorter or longer window up to the maximum.",
+          "key" : "contextLength",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "memoryBytesPerUnit" : 32768,
+          "minimum" : 256,
+          "stage" : "load",
+          "step" : 256,
+          "title" : "Context length"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9391041024,
+                "residentBytes" : 9391041024
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9374263808,
+                "residentBytes" : 9374263808
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9365875200,
+                "residentBytes" : 9365875200
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9357486592,
+                "residentBytes" : 9357486592
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9349097984,
+                "residentBytes" : 9349097984
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9340709376,
+                "residentBytes" : 9340709376
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Cache",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
+          "key" : "cacheBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Cache quantization"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
+              },
+              "title" : "32",
+              "value" : 32
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
+              },
+              "title" : "64",
+              "value" : 64
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
+              },
+              "title" : "128",
+              "value" : 128
+            }
+          ],
+          "default" : 64,
+          "group" : "Cache",
+          "help" : "The elements that share one scale and bias in a quantized key-value cache. A request may override it.",
+          "key" : "cacheGroupSize",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Cache group size"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 14052432064,
+                "residentBytes" : 14052432064
               },
               "title" : "Qwen3.5 2B",
               "value" : "qwen3.5-2b"
@@ -44595,56 +44781,56 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
               },
               "title" : "6-bit",
               "value" : 6
             },
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
               },
               "title" : "5-bit",
               "value" : 5
             },
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
               },
               "title" : "4-bit",
               "value" : 4
             },
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
               },
               "title" : "3-bit",
               "value" : 3
             },
             {
               "memory" : {
-                "peakBytes" : 9319737856,
-                "residentBytes" : 9319737856
+                "peakBytes" : 9453955584,
+                "residentBytes" : 9453955584
               },
               "title" : "2-bit",
               "value" : 2
@@ -44710,6 +44896,16 @@
       ],
       "presets" : [
         {
+          "help" : "4-bit weights and an 8-bit key-value cache, the least memory. Both are approximations of the published weights.",
+          "id" : "fast",
+          "loadOptions" : {
+            "cacheBits" : 8,
+            "quantizationBits" : 4
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
           "help" : "Loads the weights at float32, the precision the parity records were measured at.",
           "id" : "precise",
           "loadOptions" : {
@@ -44721,7 +44917,7 @@
       ],
       "registryName" : "qwen3.5",
       "requirements" : {
-        "minimumMemoryBytes" : 16017300179,
+        "minimumMemoryBytes" : 16175203389,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -44745,7 +44941,9 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
+            "keyValueBytesPerToken" : 32768,
             "loadOverheadBytes" : 0,
+            "maximumContextLength" : 262144,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -44765,17 +44963,18 @@
                   "float32" : 14280198144
                 },
                 "layerCount" : 32,
+                "quantizableElements" : 4654628864,
                 "title" : "decoder"
               }
             ],
             "vocabularySize" : 248320
           },
-          "minimumMemoryBytes" : 16017300179,
+          "minimumMemoryBytes" : 16175203389,
           "parameterCount" : 4659865088,
-          "peakBytes" : 9319737856,
+          "peakBytes" : 9453955584,
           "precision" : "bfloat16",
           "registryName" : "qwen3.5",
-          "residentBytes" : 9319737856,
+          "residentBytes" : 9453955584,
           "source" : {
             "files" : [
               {
@@ -44875,7 +45074,11 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "cacheBits" : "cacheBits",
+        "cacheGroupSize" : "cacheGroupSize",
+        "contextLength" : "contextLength",
         "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
       "options" : [
@@ -45010,16 +45213,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 4548144832,
-                "residentBytes" : 4548144832
+                "peakBytes" : 4598476480,
+                "residentBytes" : 4598476480
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 2036871360,
-                "residentBytes" : 2036871360
+                "peakBytes" : 2087203008,
+                "residentBytes" : 2087203008
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -45037,16 +45240,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 4548144832,
-                "residentBytes" : 4548144832
+                "peakBytes" : 4598476480,
+                "residentBytes" : 4598476480
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 9096279296,
-                "residentBytes" : 9096279296
+                "peakBytes" : 9196942592,
+                "residentBytes" : 9196942592
               },
               "title" : "Float32",
               "value" : "float32"
@@ -45059,6 +45262,188 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4598476480,
+                "residentBytes" : 4598476480
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2471055040,
+                "residentBytes" : 2471055040
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1903742656,
+                "residentBytes" : 1903742656
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1620086464,
+                "residentBytes" : 1620086464
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1336430272,
+                "residentBytes" : 1336430272
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1052774080,
+                "residentBytes" : 1052774080
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 769117888,
+                "residentBytes" : 769117888
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        },
+        {
+          "default" : 4096,
+          "group" : "Cache",
+          "help" : "The positions the key-value cache holds by default. A request may set a shorter or longer window up to the maximum.",
+          "key" : "contextLength",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "memoryBytesPerUnit" : 12288,
+          "minimum" : 256,
+          "stage" : "load",
+          "step" : 256,
+          "title" : "Context length"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4598476480,
+                "residentBytes" : 4598476480
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4574883520,
+                "residentBytes" : 4574883520
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4568592064,
+                "residentBytes" : 4568592064
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4565446336,
+                "residentBytes" : 4565446336
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4562300608,
+                "residentBytes" : 4562300608
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4559154880,
+                "residentBytes" : 4559154880
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4556009152,
+                "residentBytes" : 4556009152
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Cache",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
+          "key" : "cacheBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Cache quantization"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4598476480,
+                "residentBytes" : 4598476480
+              },
+              "title" : "32",
+              "value" : 32
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4598476480,
+                "residentBytes" : 4598476480
+              },
+              "title" : "64",
+              "value" : 64
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4598476480,
+                "residentBytes" : 4598476480
+              },
+              "title" : "128",
+              "value" : 128
+            }
+          ],
+          "default" : 64,
+          "group" : "Cache",
+          "help" : "The elements that share one scale and bias in a quantized key-value cache. A request may override it.",
+          "key" : "cacheGroupSize",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Cache group size"
         }
       ],
       "outputModalities" : [
@@ -45112,6 +45497,16 @@
       ],
       "presets" : [
         {
+          "help" : "4-bit weights and an 8-bit key-value cache, the least memory. Both are approximations of the published weights.",
+          "id" : "fast",
+          "loadOptions" : {
+            "cacheBits" : 8,
+            "quantizationBits" : 4
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
           "help" : "Loads the weights at float32, the precision the parity records were measured at.",
           "id" : "precise",
           "loadOptions" : {
@@ -45123,7 +45518,7 @@
       ],
       "registryName" : "qwen3.5-2b",
       "requirements" : {
-        "minimumMemoryBytes" : 10403661328,
+        "minimumMemoryBytes" : 10462875031,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45147,7 +45542,9 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
+            "keyValueBytesPerToken" : 12288,
             "loadOverheadBytes" : 0,
+            "maximumContextLength" : 262144,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -45167,17 +45564,18 @@
                   "float32" : 5493054720
                 },
                 "layerCount" : 24,
+                "quantizableElements" : 2269249536,
                 "title" : "decoder"
               }
             ],
             "vocabularySize" : 248320
           },
-          "minimumMemoryBytes" : 10403661328,
+          "minimumMemoryBytes" : 10462875031,
           "parameterCount" : 2274069824,
-          "peakBytes" : 4548144832,
+          "peakBytes" : 4598476480,
           "precision" : "bfloat16",
           "registryName" : "qwen3.5-2b",
-          "residentBytes" : 4548144832,
+          "residentBytes" : 4598476480,
           "source" : {
             "files" : [
               {
@@ -45277,9 +45675,13 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "cacheBits" : "cacheBits",
+        "cacheGroupSize" : "cacheGroupSize",
+        "contextLength" : "contextLength",
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
       "options" : [
@@ -45414,16 +45816,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 19306216416,
-                "residentBytes" : 19306216416
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 6340714336,
-                "residentBytes" : 6340714336
+                "peakBytes" : 6474932064,
+                "residentBytes" : 6474932064
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -45441,16 +45843,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 19306216416,
-                "residentBytes" : 19306216416
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 38612417472,
-                "residentBytes" : 38612417472
+                "peakBytes" : 38880852928,
+                "residentBytes" : 38880852928
               },
               "title" : "Float32",
               "value" : "float32"
@@ -45468,16 +45870,198 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 23854361248,
-                "residentBytes" : 23854361248
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10521698144,
+                "residentBytes" : 10521698144
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8143368544,
+                "residentBytes" : 8143368544
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6954203744,
+                "residentBytes" : 6954203744
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5765038944,
+                "residentBytes" : 5765038944
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4575874144,
+                "residentBytes" : 4575874144
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3386709344,
+                "residentBytes" : 3386709344
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        },
+        {
+          "default" : 4096,
+          "group" : "Cache",
+          "help" : "The positions the key-value cache holds by default. A request may set a shorter or longer window up to the maximum.",
+          "key" : "contextLength",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "memoryBytesPerUnit" : 32768,
+          "minimum" : 256,
+          "stage" : "load",
+          "step" : 256,
+          "title" : "Context length"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19377519584,
+                "residentBytes" : 19377519584
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19360742368,
+                "residentBytes" : 19360742368
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19352353760,
+                "residentBytes" : 19352353760
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19343965152,
+                "residentBytes" : 19343965152
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19335576544,
+                "residentBytes" : 19335576544
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19327187936,
+                "residentBytes" : 19327187936
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Cache",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
+          "key" : "cacheBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Cache quantization"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
+              },
+              "title" : "32",
+              "value" : 32
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
+              },
+              "title" : "64",
+              "value" : 64
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
+              },
+              "title" : "128",
+              "value" : 128
+            }
+          ],
+          "default" : 64,
+          "group" : "Cache",
+          "help" : "The elements that share one scale and bias in a quantized key-value cache. A request may override it.",
+          "key" : "cacheGroupSize",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Cache group size"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 24038910624,
+                "residentBytes" : 24038910624
               },
               "title" : "Qwen3.5 2B",
               "value" : "qwen3.5-2b"
             },
             {
               "memory" : {
-                "peakBytes" : 28625954272,
-                "residentBytes" : 28625954272
+                "peakBytes" : 28894389728,
+                "residentBytes" : 28894389728
               },
               "title" : "Qwen3.5 4B",
               "value" : "qwen3.5"
@@ -45494,56 +46078,56 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 19306216416,
-                "residentBytes" : 19306216416
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 19306216416,
-                "residentBytes" : 19306216416
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 19306216416,
-                "residentBytes" : 19306216416
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
               },
               "title" : "6-bit",
               "value" : 6
             },
             {
               "memory" : {
-                "peakBytes" : 19306216416,
-                "residentBytes" : 19306216416
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
               },
               "title" : "5-bit",
               "value" : 5
             },
             {
               "memory" : {
-                "peakBytes" : 19306216416,
-                "residentBytes" : 19306216416
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
               },
               "title" : "4-bit",
               "value" : 4
             },
             {
               "memory" : {
-                "peakBytes" : 19306216416,
-                "residentBytes" : 19306216416
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
               },
               "title" : "3-bit",
               "value" : 3
             },
             {
               "memory" : {
-                "peakBytes" : 19306216416,
-                "residentBytes" : 19306216416
+                "peakBytes" : 19440434144,
+                "residentBytes" : 19440434144
               },
               "title" : "2-bit",
               "value" : 2
@@ -45609,6 +46193,16 @@
       ],
       "presets" : [
         {
+          "help" : "4-bit weights and an 8-bit key-value cache, the least memory. Both are approximations of the published weights.",
+          "id" : "fast",
+          "loadOptions" : {
+            "cacheBits" : 8,
+            "quantizationBits" : 4
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
           "help" : "Loads the weights at float32, the precision the parity records were measured at.",
           "id" : "precise",
           "loadOptions" : {
@@ -45620,7 +46214,7 @@
       ],
       "registryName" : "qwen3.5-9b",
       "requirements" : {
-        "minimumMemoryBytes" : 27766098485,
+        "minimumMemoryBytes" : 27924001695,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45644,7 +46238,9 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
+            "keyValueBytesPerToken" : 32768,
             "loadOverheadBytes" : 0,
+            "maximumContextLength" : 262144,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -45664,17 +46260,18 @@
                   "float32" : 27678246912
                 },
                 "layerCount" : 32,
+                "quantizableElements" : 9513318400,
                 "title" : "decoder"
               }
             ],
             "vocabularySize" : 248320
           },
-          "minimumMemoryBytes" : 27766098485,
+          "minimumMemoryBytes" : 27924001695,
           "parameterCount" : 9653104368,
-          "peakBytes" : 19306216416,
+          "peakBytes" : 19440434144,
           "precision" : "bfloat16",
           "registryName" : "qwen3.5-9b",
-          "residentBytes" : 19306216416,
+          "residentBytes" : 19440434144,
           "source" : {
             "files" : [
               {
@@ -45774,9 +46371,13 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "cacheBits" : "cacheBits",
+        "cacheGroupSize" : "cacheGroupSize",
+        "contextLength" : "contextLength",
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
       "options" : [
@@ -45911,16 +46512,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 55562855904,
-                "residentBytes" : 55562855904
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 8389555552,
-                "residentBytes" : 8389555552
+                "peakBytes" : 8657991008,
+                "residentBytes" : 8657991008
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -45938,16 +46539,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 55562855904,
-                "residentBytes" : 55562855904
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 111125711808,
-                "residentBytes" : 111125711808
+                "peakBytes" : 111662582720,
+                "residentBytes" : 111662582720
               },
               "title" : "Float32",
               "value" : "float32"
@@ -45965,24 +46566,206 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 60111000736,
-                "residentBytes" : 60111000736
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 29918742880,
+                "residentBytes" : 29918742880
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 23008729952,
+                "residentBytes" : 23008729952
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19553723488,
+                "residentBytes" : 19553723488
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16098717024,
+                "residentBytes" : 16098717024
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12643710560,
+                "residentBytes" : 12643710560
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9188704096,
+                "residentBytes" : 9188704096
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        },
+        {
+          "default" : 4096,
+          "group" : "Cache",
+          "help" : "The positions the key-value cache holds by default. A request may set a shorter or longer window up to the maximum.",
+          "key" : "contextLength",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "memoryBytesPerUnit" : 65536,
+          "minimum" : 256,
+          "stage" : "load",
+          "step" : 256,
+          "title" : "Context length"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55705462240,
+                "residentBytes" : 55705462240
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55671907808,
+                "residentBytes" : 55671907808
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55655130592,
+                "residentBytes" : 55655130592
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55638353376,
+                "residentBytes" : 55638353376
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55621576160,
+                "residentBytes" : 55621576160
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55604798944,
+                "residentBytes" : 55604798944
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Cache",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
+          "key" : "cacheBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Cache quantization"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
+              },
+              "title" : "32",
+              "value" : 32
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
+              },
+              "title" : "64",
+              "value" : 64
+            },
+            {
+              "memory" : {
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
+              },
+              "title" : "128",
+              "value" : 128
+            }
+          ],
+          "default" : 64,
+          "group" : "Cache",
+          "help" : "The elements that share one scale and bias in a quantized key-value cache. A request may override it.",
+          "key" : "cacheGroupSize",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Cache group size"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 60429767840,
+                "residentBytes" : 60429767840
               },
               "title" : "Qwen3.5 2B",
               "value" : "qwen3.5-2b"
             },
             {
               "memory" : {
-                "peakBytes" : 64882593760,
-                "residentBytes" : 64882593760
+                "peakBytes" : 65285246944,
+                "residentBytes" : 65285246944
               },
               "title" : "Qwen3.5 4B",
               "value" : "qwen3.5"
             },
             {
               "memory" : {
-                "peakBytes" : 74869072320,
-                "residentBytes" : 74869072320
+                "peakBytes" : 75271725504,
+                "residentBytes" : 75271725504
               },
               "title" : "Qwen3.5 9B",
               "value" : "qwen3.5-9b"
@@ -45999,56 +46782,56 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 55562855904,
-                "residentBytes" : 55562855904
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 55562855904,
-                "residentBytes" : 55562855904
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 55562855904,
-                "residentBytes" : 55562855904
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
               },
               "title" : "6-bit",
               "value" : 6
             },
             {
               "memory" : {
-                "peakBytes" : 55562855904,
-                "residentBytes" : 55562855904
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
               },
               "title" : "5-bit",
               "value" : 5
             },
             {
               "memory" : {
-                "peakBytes" : 55562855904,
-                "residentBytes" : 55562855904
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
               },
               "title" : "4-bit",
               "value" : 4
             },
             {
               "memory" : {
-                "peakBytes" : 55562855904,
-                "residentBytes" : 55562855904
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
               },
               "title" : "3-bit",
               "value" : 3
             },
             {
               "memory" : {
-                "peakBytes" : 55562855904,
-                "residentBytes" : 55562855904
+                "peakBytes" : 55831291360,
+                "residentBytes" : 55831291360
               },
               "title" : "2-bit",
               "value" : 2
@@ -46114,6 +46897,16 @@
       ],
       "presets" : [
         {
+          "help" : "4-bit weights and an 8-bit key-value cache, the least memory. Both are approximations of the published weights.",
+          "id" : "fast",
+          "loadOptions" : {
+            "cacheBits" : 8,
+            "quantizationBits" : 4
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
           "help" : "Loads the weights at float32, the precision the parity records were measured at.",
           "id" : "precise",
           "loadOptions" : {
@@ -46125,7 +46918,7 @@
       ],
       "registryName" : "qwen3.8-27b",
       "requirements" : {
-        "minimumMemoryBytes" : 70420968471,
+        "minimumMemoryBytes" : 70736774890,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -46149,7 +46942,9 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
+            "keyValueBytesPerToken" : 65536,
             "loadOverheadBytes" : 0,
+            "maximumContextLength" : 262144,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -46169,17 +46964,18 @@
                   "float32" : 97412786176
                 },
                 "layerCount" : 64,
+                "quantizableElements" : 27640051712,
                 "title" : "decoder"
               }
             ],
             "vocabularySize" : 248320
           },
-          "minimumMemoryBytes" : 70420968471,
+          "minimumMemoryBytes" : 70736774890,
           "parameterCount" : 27781427952,
-          "peakBytes" : 55562855904,
+          "peakBytes" : 55831291360,
           "precision" : "bfloat16",
           "registryName" : "qwen3.8-27b",
-          "residentBytes" : 55562855904,
+          "residentBytes" : 55831291360,
           "source" : {
             "files" : [
               {

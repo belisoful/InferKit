@@ -174,8 +174,25 @@ extension NFKReferenceRounding {
         return [stacked(outputs, axis: 1)]
     }
 
+    /// ``torchChunkGatedDeltaRule(queries:keys:values:logDecay:beta:chunkSize:)`` from `initialState` `[B, H, K, V]`
+    /// (zeros where nil), with the state after the last position, as transformers' rule returns it under
+    /// `output_final_state`: a cached prefill hands that state to the next pass. Not differentiable.
+    static func torchChunkGatedDeltaRule(queries: MLXArray, keys: MLXArray, values: MLXArray, logDecay: MLXArray,
+                                         beta: MLXArray, initialState: MLXArray?, chunkSize: Int = 64)
+        -> (read: MLXArray, state: MLXArray) {
+        chunkGatedDeltaRuleWithState(queries: queries, keys: keys, values: values, logDecay: logDecay, beta: beta,
+                                     initialState: initialState, chunkSize: chunkSize)
+    }
+
     private static func chunkGatedDeltaRule(queries: MLXArray, keys: MLXArray, values: MLXArray, logDecay: MLXArray,
                                             beta: MLXArray, chunkSize: Int) -> MLXArray {
+        chunkGatedDeltaRuleWithState(queries: queries, keys: keys, values: values, logDecay: logDecay, beta: beta,
+                                     initialState: nil, chunkSize: chunkSize).read
+    }
+
+    private static func chunkGatedDeltaRuleWithState(queries: MLXArray, keys: MLXArray, values: MLXArray,
+                                                     logDecay: MLXArray, beta: MLXArray, initialState: MLXArray?,
+                                                     chunkSize: Int) -> (read: MLXArray, state: MLXArray) {
         let (batch, length, heads, keyWidth) = (keys.dim(0), keys.dim(1), keys.dim(2), keys.dim(3))
         let valueWidth = values.dim(3)
         func normalized(_ x: MLXArray) -> MLXArray {
@@ -212,7 +229,7 @@ extension NFKReferenceRounding {
         let decayedQueries = q * growth.expandedDimensions(axis: -1)
         let decayedKeys = k * torchExp(cumulative[.ellipsis, (chunkSize - 1)...] - cumulative).expandedDimensions(axis: -1)
         let chunkDecay = torchExp(cumulative[.ellipsis, chunkSize - 1]).reshaped([batch, heads, chunks, 1, 1])
-        var state = MLXArray.zeros([batch, heads, keyWidth, valueWidth])
+        var state = initialState?.asType(.float32) ?? MLXArray.zeros([batch, heads, keyWidth, valueWidth])
         var outputs = [MLXArray]()
         for chunk in 0 ..< chunks {
             let correction = newValues[0..., 0..., chunk] - matmul(readDecay[0..., 0..., chunk], state, stream: .cpu)
@@ -222,7 +239,7 @@ extension NFKReferenceRounding {
                 + matmul(decayedKeys[0..., 0..., chunk].swappedAxes(-1, -2), correction, stream: .cpu)
         }
         let read = stacked(outputs, axis: 2).reshaped([batch, heads, -1, valueWidth])[0..., 0..., 0 ..< length]
-        return read.transposed(0, 2, 1, 3)
+        return (read.transposed(0, 2, 1, 3), state)
     }
 
     /// `X` with `A X = B` for each unit lower-triangular `A` `[..., n, n]` and `B` `[..., n, m]`, by Accelerate's

@@ -41,19 +41,26 @@ struct NFKMLXStepSampling {
     /// The next token from one row of logits, the random draw seeded with `seed` plus the step where a seed
     /// is set. Without a filter the draw is the one these decoders always made, so a seeded run repeats.
     func next(_ logits: MLXArray, seed: UInt64?, step: Int) -> Int {
+        token(logits, seed: seed, step: step).item(Int.self)
+    }
+
+    /// ``next(_:seed:step:)``'s token as an unevaluated scalar, so a loop can run the next pass on it before
+    /// reading it. A seed takes effect as the draw is built, so tokens built in order draw as
+    /// ``next(_:seed:step:)`` does.
+    func token(_ logits: MLXArray, seed: UInt64?, step: Int) -> MLXArray {
         guard temperature > 0 else {
-            return logits.argMax(axis: -1).item(Int.self)
+            return logits.argMax(axis: -1)
         }
         if let seed {
             MLXRandom.seed(seed &+ UInt64(step))
         }
         guard topP < 1 || topK > 0 else {
-            return MLXRandom.categorical(logits * (1 / temperature)).item(Int.self)
+            return MLXRandom.categorical(logits * (1 / temperature))
         }
         var options = NFKMLXGenerationOptions()
         options.temperature = temperature
         options.topP = topP
         options.topK = topK
-        return MLXRandom.categorical(log(NFKMLXLanguageNet.probabilities(of: logits, options: options))).item(Int.self)
+        return MLXRandom.categorical(log(NFKMLXLanguageNet.probabilities(of: logits, options: options)))
     }
 }
