@@ -462,7 +462,8 @@ final class NFKMLXOpenJevTests: XCTestCase {
     // The 27B base (about 52 GB at bfloat16) does not fit the working set here, so the decoder streams
     // the layers past what fits on every pass. It is measured at the loader's precision against
     // `run_reference.py open_jev_layerwise`, which runs the loader's own code with the base's layers read
-    // in turn.
+    // in turn. The test holds the first eight layers only, about 8.6 GB, so its peak leaves room for other
+    // work on the machine.
     func testTheTwentySevenBillionReleaseStreamsToTheReferenceAtBFloat16() throws {
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_OPEN_JEV_27B"], let checkpoint = config["IK_VAL_OPEN_JEV_27B"],
@@ -470,9 +471,17 @@ final class NFKMLXOpenJevTests: XCTestCase {
             throw XCTSkip("set IK_PARITY_OPEN_JEV_27B, IK_VAL_OPEN_JEV_27B, and IK_VAL_QWEN3_8_27B")
         }
         let arrays = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: path)).arrays
+        let baseURL = URL(fileURLWithPath: base)
+        let stage = try NFKMLXLayerStream.footprint(
+            directory: baseURL, precision: .checkpoint,
+            converting: try NFKMLXHybridLanguage.releasedType(inDirectory: baseURL),
+            includes: { key in NFKMLXHybridLanguage.moduleKey(forReference: key).map { !$0.hasPrefix("lm_head.") } ?? false },
+            layerOf: { NFKMLXHybridLanguage.layer(ofKey: $0)?.layer })
+        let budget = NFKMLXResidencyBudget.leastBudget(holding: stage.streamedMinimumBytes + stage.layerBytes.prefix(8).reduce(0, +))
         let model = try NFKMLXOpenJev.openJev(checkpointDirectoryURL: URL(fileURLWithPath: checkpoint),
-                                              baseDirectoryURL: URL(fileURLWithPath: base), precision: .checkpoint,
-                                              residency: .automatic)
+                                              baseDirectoryURL: baseURL, precision: .checkpoint,
+                                              residency: .streamed, budget: budget)
+        XCTAssertEqual(model.net.decoder.layerStream?.layers.count, 56, "the first eight layers are held")
         print("VALIDATION open-jev-27b streams \(model.net.decoder.layerStream?.layers.count ?? 0) of 64 layers")
         let worst = try compareAtBFloat16("open-jev-27b", model: model, arrays: arrays)
         XCTAssertLessThan(worst.logit, 0.3)
