@@ -99,6 +99,13 @@ extern NSURL *NFKHFHubHuggingFaceCacheURL(NSDictionary<NSString *, NSString *> *
 /*! The SHA-256 of a file as lowercase hexadecimal digits; nil when it cannot be read. */
 - (nullable NSString *)sha256OfFileAtURL:(NSURL *)url;
 
+/*! The JSON header of the safetensors file at url, read from disk without its tensors. Fails with
+	NFKDownloadErrorUnsupportedSource when the bytes are not a safetensors header, and with the file
+	system's error when the file cannot be opened. subject names the file in an error. */
+- (nullable NSDictionary<NSString *, id> *)safetensorsHeaderOfFileAtURL:(NSURL *)url
+																subject:(NSString *)subject
+																  error:(NSError * _Nullable *)outError;
+
 @end
 
 /*! The source and status helpers NFKHFHubDownloads.m implements for the model folders. */

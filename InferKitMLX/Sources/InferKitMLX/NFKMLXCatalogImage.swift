@@ -1790,11 +1790,16 @@ enum NFKMLXCatalogImage {
                                                  cacheDirectoryURL: nil)
         }
 
-        /// The base release in `directoryURL` with the adapter merged in at its trained strength.
-        func backend(directoryURL: URL, precision: NFKMLXWeightPrecision) throws -> any NFKInferenceBackend {
-            try NFKMLXTextToImage.backend(configuration: configuration, directoryURL: directoryURL,
-                                          adapterURL: adapterURL(directoryURL: directoryURL), adapterScale: 1,
-                                          precision: precision)
+        /// The base release in `directoryURL` with the adapter merged in at its trained strength, and
+        /// `adapters` held beside the merged weights.
+        func backend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                     adapters: [(url: URL, strength: Float)] = []) throws -> any NFKInferenceBackend {
+            let model = try NFKMLXSDTextToImageModel(configuration: configuration,
+                                                     files: NFKMLXSDReleaseFiles(directoryURL: directoryURL),
+                                                     precision: precision)
+            try model.mergeAdapter(url: adapterURL(directoryURL: directoryURL), scale: 1)
+            try model.attachAdapters(adapters)
+            return model.makeBackend()
         }
     }
 
@@ -1956,7 +1961,7 @@ enum NFKMLXCatalogImage {
             ? NFKModelPort.input(NFKInputNegativePrompt, title: "Negative prompt",
                                  help: "Not read: the model runs no classifier-free guidance.")
             : negativePromptInput
-        return model(name, displayName, family: "stable-diffusion", summary: summary,
+        var entry = model(name, displayName, family: "stable-diffusion", summary: summary,
                      tasks: [NFKModelTaskTextToImage, NFKModelTaskImageToImage],
                      inputs: [promptInput, negativePrompt,
                               .input(NFKInputImage, title: "Source image",
@@ -1970,8 +1975,24 @@ enum NFKMLXCatalogImage {
                                   guidanceOption(Double(configuration.guidanceScale), help: guidanceHelp),
                                   strengthOption(1, help: "How much of the source image the sampler regenerates. 1 starts from full noise."),
                                   .option(NFKParameterSeed, title: "Seed",
-                                          help: "The seed of the initial noise. A run without one uses a fixed seed.")],
+                                          help: "The seed of the initial noise. A run without one uses a fixed seed."),
+                                  .option(NFKParameterAdapterStrengths, kind: NFKModelOptionKindNumberList,
+                                          title: "Adapter strengths",
+                                          help: "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+                                          minimum: -2, maximum: 2, step: 0.05)],
                      license: license, source: source)
+        entry.adapterBases = [stableDiffusionAdapterBase(configuration)]
+        return entry
+    }
+
+    /// The base a Stable Diffusion configuration's adapters are trained on: SDXL for a release with two text
+    /// towers, else Stable Diffusion 2 or 1 by the width the UNet cross-attends to.
+    static func stableDiffusionAdapterBase(_ configuration: NFKMLXSDTextToImageConfiguration) -> String {
+        if configuration.secondaryTextEncoder != nil {
+            return NFKModelAdapterBaseStableDiffusionXL
+        }
+        return configuration.unet.crossAttentionDimensions == 1024 ? NFKModelAdapterBaseStableDiffusion2
+            : NFKModelAdapterBaseStableDiffusion1
     }
 
     /// The text-to-image generator options, at `steps` and `guidance`.

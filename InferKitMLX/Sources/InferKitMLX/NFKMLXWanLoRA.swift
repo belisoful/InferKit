@@ -274,7 +274,7 @@ public enum NFKMLXWanLoRA {
     // MARK: PEFT metadata
 
     /// A PEFT adapter's scaling, from the `lora_adapter_metadata` diffusers writes.
-    private struct PEFTConfiguration {
+    struct PEFTConfiguration {
         var rank: Int?
         var alpha: Float?
         var rankPattern: [String: Int] = [:]
@@ -290,6 +290,15 @@ public enum NFKMLXWanLoRA {
             return rsLoRA ? a / r.squareRoot() : a / r
         }
 
+        /// ``scaling(_:rank:)`` formed in double precision, as PEFT forms it in Python, or nil where the
+        /// file states no configuration.
+        func preciseScaling(_ path: String, rank stored: Int?) -> Double? {
+            guard let base = alpha.map(Double.init) ?? rank.map(Double.init) else { return nil }
+            let r = Double(Self.patterned(rankPattern, path) ?? rank ?? stored ?? 1)
+            let a = Self.patterned(alphaPattern, path).map(Double.init) ?? base
+            return rsLoRA ? a / r.squareRoot() : a / r
+        }
+
         static func patterned<T>(_ pattern: [String: T], _ path: String) -> T? {
             pattern.first { key, _ in
                 guard let expression = try? NSRegularExpression(pattern: "^(.*\\.)?(\(key))$") else { return false }
@@ -298,7 +307,8 @@ public enum NFKMLXWanLoRA {
         }
     }
 
-    private static func peftConfiguration(_ metadata: [String: String]) throws -> PEFTConfiguration {
+    static func peftConfiguration(_ metadata: [String: String], component: String = "transformer.") throws
+        -> PEFTConfiguration {
         let json: [String: Any]
         if let text = metadata["lora_adapter_metadata"] {
             guard let saved = try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else {
@@ -306,7 +316,7 @@ public enum NFKMLXWanLoRA {
             }
             // diffusers saves the configuration under the component's prefix and reads back those keys alone.
             json = Dictionary(uniqueKeysWithValues: saved.compactMap { key, value in
-                key.hasPrefix("transformer.") ? (String(key.dropFirst("transformer.".count)), value) : nil
+                key.hasPrefix(component) ? (String(key.dropFirst(component.count)), value) : nil
             })
         } else if let text = metadata["lora_config"] {
             // finetrainers writes the PEFT configuration it trained with, unprefixed, under its own key.

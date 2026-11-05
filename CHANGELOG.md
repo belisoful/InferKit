@@ -144,6 +144,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   plan that removes nothing, and the snapshot and its blobs stay in place.
 - A glob in a model folder no longer matches a link whose target is missing, the same as a listed path.
 
+#### LoRA adapters at load, and their inspection
+
+- `NFKModelLoadOptionAdapters` (`adapters`) lists LoRA adapters a catalog model holds beside its weights,
+  each `{NFKModelAdapterPath, NFKModelAdapterStrength}` with strength 1 when absent. A model whose
+  descriptor lists `adapterBases` declares the option; `backendForModelIdentifier:options:error:` builds
+  with it like any other option. A path that is missing, not a safetensors file, or a pickle file
+  (`.bin`, `.pt`, `.pth`, `.ckpt`, `.pkl`) is an invalid option.
+- `NFKParameterAdapterStrengths` sets each loaded adapter's strength for one request, in load order. It
+  is declared with the new option kind `NFKModelOptionKindNumberList`, whose minimum, maximum, and step
+  apply to each element.
+- `NFKModelDescriptor.adapterBases` lists the `NFKModelAdapterBase*` values of the adapters a model takes
+  (`stable-diffusion-1`, `stable-diffusion-2`, `stable-diffusion-xl`, `flux-1`, `stable-diffusion-3`).
+- `NFKModelMemoryModel.adaptersOptionKey` and `adapterStage` add each adapter's tensors, at the adapter
+  stage's precision, to `estimatedMemoryForOptions:memoryBudget:`, under `NFKModelMemoryComponentAdapters`.
+- `-[NFKModelCatalog inspectAdapterAtURL:forModelIdentifier:error:]` and
+  `inspectAdapterInRepository:revision:path:forModelIdentifier:completionHandler:` read an adapter's
+  safetensors header, and no model, into an `NFKModelAdapterReport`: its layout (`peft`, `kohya`,
+  `mlx-lm`), the base it was trained on, its rank, the parts it adapts, its trigger words, its size and
+  SHA-256, and whether the named model, other catalog models, or no model takes it, with an
+  `NFKModelAdapterErrorDomain` reason. The repository form reads the header with range requests and the
+  size and checksum from the Hub's listing; a gated repository fails with
+  `NFKDownloadErrorAuthenticationRequired` without a token that opens it. LoHa, LoKr, and DoRA files and
+  pickle files are reported unsupported.
+
 #### The fitting options keep the widest weights, and a token-by-token decoder stays in memory
 
 - `NFKModelMemoryConstraints.fittingOptions`, and the `NFKModelMemoryFittingOptionsKey` of a build's
@@ -1909,6 +1933,27 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Stable Diffusion holds LoRA adapters beside its weights
+
+- Every Stable Diffusion entry (`stable-diffusion-v1-5`, `stable-diffusion-2-1-base`,
+  `stable-diffusion-xl-base-1.0`, `sdxl-turbo`, `lcm-dreamshaper-v7`, and the fixed adapter entries) takes
+  the `adapters` load option. Each adapter stays unmerged: an adapted layer adds
+  `strength · alpha / rank · up(down(x))` to its own output, as PEFT's unmerged layer does, in the UNet and
+  in both text towers, so adapters stack and a request changes their strengths through
+  `NFKParameterAdapterStrengths` without a reload. A fixed adapter entry holds the adapters over its
+  merged adapter.
+- Two adapters held at their own strengths match diffusers' `load_lora_weights` + `set_adapters` at the
+  reference picture's own 8-bit floor: on SD 1.5 a kohya style adapter over the UNet and the text tower
+  stacked with the LCM-LoRA (image cosine 0.99999889), and on SDXL two kohya adapters, one over both
+  text towers and one over the UNet's residual convolutions, one at a negative strength (0.99999926).
+- `NFKMLXSDLoRA` reads kohya files spelled with the original model's block names
+  (`lora_unet_input_blocks_…`, `middle_block_…`, `output_blocks_…`), which kohya writes for SDXL, and the
+  text towers' keys (`lora_te_`, `lora_te1_`, `lora_te2_`, `text_encoder.`, `text_encoder_2.`). A PEFT file
+  takes its scaling from diffusers' `lora_adapter_metadata`. Before, a file over the original block names
+  was refused, and a merge read no metadata.
+- `+[NFKMLXTextToImage backendWithModel:directoryURL:adapterURLs:strengths:error:]` builds a release with
+  adapters held, from Objective-C; `NFKMLXLoadOptions.adapters()` reads the option.
 
 #### LTX-2.5 renders by Diffusion Fidelity Rendering
 

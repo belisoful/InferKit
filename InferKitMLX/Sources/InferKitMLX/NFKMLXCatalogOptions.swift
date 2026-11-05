@@ -351,10 +351,14 @@ extension NFKMLXLoadProfile {
         if drafting {
             declaration.options += Self.draftOptions(drafts)
         }
+        let adapters = !entry.adapterBases.isEmpty
+        if adapters {
+            declaration.options.append(Self.adaptersOption())
+        }
         declaration.consumes = declaration.options.map(\.key)
         let fixedPrecisions = precision && precisionStage == nil ? [:]
             : stagePrecisions.filter { $0.value != NFKModelPrecisionCheckpoint && $0.key != precisionStage }
-        if residency || precision || quantizes || context || drafting || !fixedPrecisions.isEmpty {
+        if residency || precision || quantizes || context || drafting || adapters || !fixedPrecisions.isEmpty {
             declaration.memory = NFKModelMemoryModel(
                 precisionOptionKey: precision ? NFKModelLoadOptionPrecision : nil,
                 quantizationBitsOptionKey: quantizes ? NFKModelLoadOptionQuantizationBits : nil,
@@ -365,7 +369,8 @@ extension NFKMLXLoadProfile {
                 draftOptionKey: drafting ? NFKModelLoadOptionDraftModel : nil,
                 draftBitsOptionKey: drafting ? NFKModelLoadOptionDraftBits : nil,
                 residencyOptionKey: residency ? NFKModelLoadOptionResidency : nil,
-                cacheStage: nil, draftStage: nil, stagePrecisions: fixedPrecisions, extensions: nil)
+                adaptersOptionKey: adapters ? NFKModelLoadOptionAdapters : nil,
+                cacheStage: nil, draftStage: nil, adapterStage: nil, stagePrecisions: fixedPrecisions, extensions: nil)
         }
         declaration.presets = presets(for: entry, options: declaration.options)
         return declaration
@@ -434,6 +439,13 @@ extension NFKMLXLoadProfile {
                        help: "The elements that share one scale and bias in a quantized key-value cache. A request may override it.",
                        defaultValue: 64, choices: [(32, "32"), (64, "64"), (128, "128")], group: cacheGroup),
         ]
+    }
+
+    /// The adapters held beside the weights, none by default.
+    private static func adaptersOption() -> NFKModelOption {
+        loadOption(NFKModelLoadOptionAdapters, kind: NFKModelOptionKindJSON, title: "Adapters",
+                   help: "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+                   defaultValue: nil)
     }
 
     /// The draft model, none by default, and its weight quantization.

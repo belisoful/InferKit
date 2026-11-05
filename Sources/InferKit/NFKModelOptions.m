@@ -7,6 +7,7 @@
 #import "NFKModelDescriptorPrivate.h"
 #import "NFKModelCatalog.h"
 #import "NFKHardwareProfile.h"
+#import "NFKModelAdapterPrivate.h"
 
 NSString * const NFKModelOptionProblemUnknownKey		= @"unknown-key";
 NSString * const NFKModelOptionProblemWrongType			= @"wrong-type";
@@ -113,7 +114,8 @@ static NSString *NFKModelKindNoun(NSString *kind)
 	NSDictionary<NSString *, NSString *> *nouns = @{
 		NFKModelOptionKindInteger: @"an integer", NFKModelOptionKindNumber: @"a number",
 		NFKModelOptionKindBoolean: @"a boolean", NFKModelOptionKindText: @"a string",
-		NFKModelOptionKindTextList: @"a list of strings", NFKModelOptionKindFileOrFolder: @"a path",
+		NFKModelOptionKindTextList: @"a list of strings", NFKModelOptionKindNumberList: @"a list of numbers",
+		NFKModelOptionKindFileOrFolder: @"a path",
 		NFKModelOptionKindModelReference: @"a model identifier", NFKModelOptionKindChoice: @"one of its choices",
 	};
 	return nouns[kind] ?: @"a JSON value";
@@ -192,6 +194,18 @@ static id _Nullable NFKModelCoerceValue(id value, NSString *kind)
 		}
 		return value;
 	}
+	if ([kind isEqualToString:NFKModelOptionKindNumberList]) {
+		NSArray *elements = [value isKindOfClass:NSArray.class] ? value : @[ value ];
+		NSMutableArray<NSNumber *> *numbers = [NSMutableArray arrayWithCapacity:elements.count];
+		for (id element in elements) {
+			NSNumber *number = NFKModelCoerceValue(element, NFKModelOptionKindNumber);
+			if (number == nil) {
+				return nil;
+			}
+			[numbers addObject:number];
+		}
+		return [numbers copy];
+	}
 	if ([kind isEqualToString:NFKModelOptionKindFileOrFolder]) {
 		if ([value isKindOfClass:NSURL.class] && [value isFileURL]) {
 			return [value path];
@@ -260,6 +274,9 @@ static id _Nullable NFKModelCoerceValue(id value, NSString *kind)
 		return [self problem:NFKModelOptionProblemUnavailable key:key value:value
 					 message:[NSString stringWithFormat:@"\"%@\" is unavailable on this machine. %@", key, optionProblem]];
 	}
+	if ([key isEqualToString:NFKModelLoadOptionAdapters]) {
+		return [self resolveAdapters:value key:key];
+	}
 	if ([option.kind isEqualToString:NFKModelOptionKindChoice]) {
 		return [self resolveChoice:value option:option profile:profile];
 	}
@@ -274,6 +291,9 @@ static id _Nullable NFKModelCoerceValue(id value, NSString *kind)
 	}
 	if ([option.kind isEqualToString:NFKModelOptionKindInteger] || [option.kind isEqualToString:NFKModelOptionKindNumber]) {
 		return [self resolveNumber:coerced option:option];
+	}
+	if ([option.kind isEqualToString:NFKModelOptionKindNumberList]) {
+		return [self resolveNumberList:coerced option:option];
 	}
 	if ([option.kind isEqualToString:NFKModelOptionKindFileOrFolder]
 		&& ![NSFileManager.defaultManager fileExistsAtPath:coerced]) {
@@ -340,6 +360,103 @@ static id _Nullable NFKModelCoerceValue(id value, NSString *kind)
 	}
 	NFKModelOptionResolution *resolution = [[NFKModelOptionResolution alloc] init];
 	resolution.value = choice.value;
+	return resolution;
+}
+
+// The adapters as entries of a path string and a strength, 1 where an entry states none. A pickle file is
+// refused by its extension, without reading it.
+- (NFKModelOptionResolution *)resolveAdapters:(id)value key:(NSString *)key
+{
+	if (![value isKindOfClass:NSArray.class]) {
+		return [self problem:NFKModelOptionProblemWrongType key:key value:value
+					 message:[NSString stringWithFormat:@"\"%@\" takes a list of adapters, each {%@, %@}, and %@ is not one.",
+							  key, NFKModelAdapterPath, NFKModelAdapterStrength, NFKModelOptionValueText(value)]];
+	}
+	NSMutableArray<NSDictionary<NSString *, id> *> *adapters = [NSMutableArray arrayWithCapacity:[value count]];
+	NSUInteger index = 0;
+	for (id entry in value) {
+		NSString *reason = nil;
+		NSDictionary<NSString *, id> *adapter = [self adapterOfEntry:entry reason:&reason];
+		if (adapter == nil) {
+			return [self problem:NFKModelOptionProblemWrongType key:key value:value
+						 message:[NSString stringWithFormat:@"\"%@\" entry %lu %@", key, (unsigned long)index, reason]];
+		}
+		[adapters addObject:adapter];
+		index += 1;
+	}
+	NFKModelOptionResolution *resolution = [[NFKModelOptionResolution alloc] init];
+	resolution.value = [adapters copy];
+	return resolution;
+}
+
+- (nullable NSDictionary<NSString *, id> *)adapterOfEntry:(id)entry reason:(NSString * _Nullable * _Nonnull)reason
+{
+	if (![entry isKindOfClass:NSDictionary.class]) {
+		*reason = [NSString stringWithFormat:@"is %@, not an adapter {%@, %@}.", NFKModelOptionValueText(entry),
+				   NFKModelAdapterPath, NFKModelAdapterStrength];
+		return nil;
+	}
+	id pathValue = entry[NFKModelAdapterPath];
+	NSString *path = [pathValue isKindOfClass:NSURL.class] && [pathValue isFileURL] ? [pathValue path] : pathValue;
+	if (![path isKindOfClass:NSString.class] || path.length == 0) {
+		*reason = [NSString stringWithFormat:@"has no %@.", NFKModelAdapterPath];
+		return nil;
+	}
+	path = path.stringByExpandingTildeInPath;
+	if (NFKModelAdapterIsPicklePath(path)) {
+		*reason = [NSString stringWithFormat:@"names %@, a pickle file, which InferKit does not load. Use the adapter's "
+				   "safetensors file.", NFKModelOptionValueText(path)];
+		return nil;
+	}
+	id strength = entry[NFKModelAdapterStrength] ?: @1;
+	if (![strength isKindOfClass:NSNumber.class] || NFKModelIsBoolean(strength) || !isfinite([strength doubleValue])) {
+		*reason = [NSString stringWithFormat:@"has %@ %@, which is not a finite number.", NFKModelAdapterStrength,
+				   NFKModelOptionValueText(strength)];
+		return nil;
+	}
+	return @{ NFKModelAdapterPath: path, NFKModelAdapterStrength: strength };
+}
+
+- (BOOL)verifyAdaptersInResolvedOptions:(NSDictionary<NSString *, id> *)resolved error:(NSError **)error
+{
+	NSString *key = NFKModelLoadOptionAdapters;
+	id adapters = resolved[key];
+	if (![adapters isKindOfClass:NSArray.class]) {
+		return YES;
+	}
+	for (NSDictionary<NSString *, id> *adapter in adapters) {
+		NSString *path = adapter[NFKModelAdapterPath];
+		NSInteger elements = 0, bytes = 0;
+		NSError *readError = nil;
+		if (NFKModelAdapterTensorTotals(path, &elements, &bytes, &readError)) {
+			continue;
+		}
+		NSString *code = [NSFileManager.defaultManager fileExistsAtPath:path] ? NFKModelOptionProblemWrongType
+			: NFKModelOptionProblemMissingFile;
+		NSString *message = [NSString stringWithFormat:@"\"%@\" names an adapter InferKit cannot read. %@", key,
+							 readError.localizedDescription];
+		NFKModelOptionProblem *problem = [[NFKModelOptionProblem alloc] initWithKey:key code:code message:message value:path];
+		if (error != NULL) {
+			*error = [NSError errorWithDomain:NFKModelCatalogErrorDomain code:NFKModelCatalogErrorInvalidOptions
+									 userInfo:@{ NSLocalizedDescriptionKey: message, NFKModelOptionProblemsKey: @[ problem ],
+												 NSUnderlyingErrorKey: readError }];
+		}
+		return NO;
+	}
+	return YES;
+}
+
+// Each element against the option's minimum, maximum, and step.
+- (NFKModelOptionResolution *)resolveNumberList:(NSArray<NSNumber *> *)numbers option:(NFKModelOption *)option
+{
+	for (NSNumber *number in numbers) {
+		NFKModelOptionResolution *element = [self resolveNumber:number option:option];
+		if (element.problem != nil) {
+			return element;
+		}
+	}
+	NFKModelOptionResolution *resolution = [[NFKModelOptionResolution alloc] init];
+	resolution.value = numbers;
 	return resolution;
 }
 

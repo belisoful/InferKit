@@ -8,6 +8,7 @@
 #import "NFKModelCatalog.h"
 #import "NFKModelOptions.h"
 #import "NFKHardwareProfile.h"
+#import "NFKModelAdapterPrivate.h"
 
 NSString * const NFKModelMemoryBasisMeasured		= @"measured";
 NSString * const NFKModelMemoryBasisStoredDType		= @"stored-dtype";
@@ -20,6 +21,7 @@ NSString * const NFKModelMemoryComponentDraft			= @"draft";
 NSString * const NFKModelMemoryComponentExpertCache		= @"expertCache";
 NSString * const NFKModelMemoryComponentLinearOptions	= @"linearOptions";
 NSString * const NFKModelMemoryComponentLoadOverhead	= @"loadOverhead";
+NSString * const NFKModelMemoryComponentAdapters		= @"adapters";
 
 NSString * const NFKModelMemoryEstimateKey = @"NFKModelMemoryEstimate";
 NSString * const NFKModelMemoryFittingOptionsKey = @"NFKModelMemoryFittingOptions";
@@ -626,14 +628,14 @@ static NSArray<NSString *> *NFKModelMemoryFactsFields(void)
 static NSArray<NSString *> *NFKModelMemoryModelOptionFields(void)
 {
 	return @[ @"precision", @"quantizationBits", @"quantizationGroupSize", @"contextLength",
-			  @"cacheBits", @"cacheGroupSize", @"draft", @"draftBits", @"residency" ];
+			  @"cacheBits", @"cacheGroupSize", @"draft", @"draftBits", @"residency", @"adapters" ];
 }
 
 static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 {
 	return @[ @"precision", @"quantizationBits", @"quantizationGroupSize", @"contextLength", @"cacheBits",
-			  @"cacheGroupSize", @"draft", @"draftBits", @"residency", @"cacheStage", @"draftStage",
-			  @"stagePrecisions" ];
+			  @"cacheGroupSize", @"draft", @"draftBits", @"residency", @"adapters", @"cacheStage", @"draftStage",
+			  @"adapterStage", @"stagePrecisions" ];
 }
 
 @implementation NFKModelMemoryModel
@@ -647,8 +649,10 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 							draftOptionKey:(nullable NSString *)draftOptionKey
 						draftBitsOptionKey:(nullable NSString *)draftBitsOptionKey
 						residencyOptionKey:(nullable NSString *)residencyOptionKey
+						 adaptersOptionKey:(nullable NSString *)adaptersOptionKey
 								cacheStage:(nullable NSString *)cacheStage
 								draftStage:(nullable NSString *)draftStage
+							  adapterStage:(nullable NSString *)adapterStage
 						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
 								extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
@@ -663,8 +667,10 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 		_draftOptionKey = [draftOptionKey copy];
 		_draftBitsOptionKey = [draftBitsOptionKey copy];
 		_residencyOptionKey = [residencyOptionKey copy];
+		_adaptersOptionKey = [adaptersOptionKey copy];
 		_cacheStage = [cacheStage copy];
 		_draftStage = [draftStage copy];
+		_adapterStage = [adapterStage copy];
 		_stagePrecisions = [stagePrecisions copy] ?: @{};
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelMemoryModelFields());
 	}
@@ -678,7 +684,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 							 self.quantizationGroupSizeOptionKey ?: @"", self.contextLengthOptionKey ?: @"",
 							 self.cacheBitsOptionKey ?: @"", self.cacheGroupSizeOptionKey ?: @"",
 							 self.draftOptionKey ?: @"", self.draftBitsOptionKey ?: @"",
-							 self.residencyOptionKey ?: @"" ]) {
+							 self.residencyOptionKey ?: @"", self.adaptersOptionKey ?: @"" ]) {
 		if (key.length > 0 && ![keys containsObject:key]) {
 			[keys addObject:key];
 		}
@@ -705,10 +711,11 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 		}
 		keys[field] = value;
 	}
-	NSString *cacheStage = nil, *draftStage = nil;
+	NSString *cacheStage = nil, *draftStage = nil, *adapterStage = nil;
 	NSDictionary<NSString *, NSString *> *stagePrecisions = nil;
 	if (![reader readString:@"cacheStage" required:NO into:&cacheStage error:error]
 		|| ![reader readString:@"draftStage" required:NO into:&draftStage error:error]
+		|| ![reader readString:@"adapterStage" required:NO into:&adapterStage error:error]
 		|| ![reader readStringDictionary:@"stagePrecisions" into:&stagePrecisions error:error]) {
 		return nil;
 	}
@@ -717,7 +724,8 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 							 contextLengthOptionKey:keys[@"contextLength"] cacheBitsOptionKey:keys[@"cacheBits"]
 							cacheGroupSizeOptionKey:keys[@"cacheGroupSize"] draftOptionKey:keys[@"draft"]
 								 draftBitsOptionKey:keys[@"draftBits"] residencyOptionKey:keys[@"residency"]
-										 cacheStage:cacheStage draftStage:draftStage stagePrecisions:stagePrecisions
+								  adaptersOptionKey:keys[@"adapters"] cacheStage:cacheStage draftStage:draftStage
+									   adapterStage:adapterStage stagePrecisions:stagePrecisions
 										 extensions:[reader extensionsWithoutFields:NFKModelMemoryModelFields()]];
 }
 
@@ -733,8 +741,10 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 	dictionary[@"draft"] = self.draftOptionKey;
 	dictionary[@"draftBits"] = self.draftBitsOptionKey;
 	dictionary[@"residency"] = self.residencyOptionKey;
+	dictionary[@"adapters"] = self.adaptersOptionKey;
 	dictionary[@"cacheStage"] = self.cacheStage;
 	dictionary[@"draftStage"] = self.draftStage;
+	dictionary[@"adapterStage"] = self.adapterStage;
 	if (self.stagePrecisions.count > 0) {
 		dictionary[@"stagePrecisions"] = self.stagePrecisions;
 	}
@@ -1569,8 +1579,8 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 							 catalog:(NFKModelCatalog *)catalog;
 @end
 
-// One stage of a combination: its weights at the stage's precision after any quantization, and the
-// cache, draft, and linear-option bytes the cache stage holds beside them.
+// One stage of a combination: its weights at the stage's precision after any quantization, the cache,
+// draft, and linear-option bytes the cache stage holds beside them, and the adapters the adapter stage holds.
 @interface NFKModelStageLoad : NSObject
 @property (nonatomic, copy) NSString *identifier;
 @property (nonatomic) NSInteger weights;
@@ -1580,14 +1590,16 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 @property (nonatomic) NSInteger layerTotal;
 @property (nonatomic, copy, nullable) NSNumber *widenedWeights;
 @property (nonatomic) NSInteger extra;
+@property (nonatomic) NSInteger adapters;
 @end
 
 @implementation NFKModelStageLoad
 
 - (NFKModelStageFootprint *)footprint
 {
-	NSInteger bytes = self.weights + self.extra;
-	NSNumber *widened = self.widenedWeights != nil ? @(self.widenedWeights.integerValue + self.extra) : nil;
+	NSInteger beside = self.extra + self.adapters;
+	NSInteger bytes = self.weights + beside;
+	NSNumber *widened = self.widenedWeights != nil ? @(self.widenedWeights.integerValue + beside) : nil;
 	return [[NFKModelStageFootprint alloc] initWithByteCount:bytes pageableByteCount:MIN(self.pageable, self.weights)
 											widenedByteCount:widened layerByteCounts:[self layerByteCounts]];
 }
@@ -1658,6 +1670,8 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 		NFKModelStageLoad *load = [[NFKModelStageLoad alloc] init];
 		load.identifier = variant.identifier;
 		load.weights = variant.residentByteCount.integerValue;
+		[self addAdaptersOfOptions:resolved toLoad:load precision:[self declaredPrecisionOfVariant:variant options:resolved]
+						components:components];
 		loads = @[ load ];
 		overhead = MAX(0, (variant.peakByteCount ?: variant.residentByteCount).integerValue - load.weights);
 		basis = NFKModelMemoryBasisDeclared;
@@ -1694,7 +1708,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 		stageBytes[loads[index].identifier] = @(held);
 		if (plan.holdsStagesResident) {
 			resident += held;
-			heldWeights += held - loads[index].extra;
+			heldWeights += held - loads[index].extra - loads[index].adapters;
 		} else if (held > largestHeld) {
 			largestHeld = held;
 			largestIndex = (NSInteger)index;
@@ -1706,11 +1720,14 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	if (!plan.holdsStagesResident && largestIndex >= 0) {
 		NFKModelStageLoad *largest = loads[(NSUInteger)largestIndex];
 		resident = largestHeld + (plan.pagesExperts ? plan.expertCacheByteCount : 0);
-		heldWeights = largestHeld - largest.extra;
+		heldWeights = largestHeld - largest.extra - largest.adapters;
 		if (largest.extra == 0 && extras > 0) {
 			components[NFKModelMemoryComponentKeyValueCache] = @0;
 			components[NFKModelMemoryComponentDraft] = @0;
 			components[NFKModelMemoryComponentLinearOptions] = @0;
+		}
+		if (largest.adapters == 0 && components[NFKModelMemoryComponentAdapters] != nil) {
+			components[NFKModelMemoryComponentAdapters] = @0;
 		}
 		if (plan.pagesExperts) {
 			components[NFKModelMemoryComponentExpertCache] = @(plan.expertCacheByteCount);
@@ -1787,7 +1804,58 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	components[NFKModelMemoryComponentDraft] = @(draft);
 	components[NFKModelMemoryComponentLinearOptions] = @(linear);
 	loads[cacheIndex].extra = keyValue + draft + linear;
+	NSUInteger adapterIndex = [self indexOfStage:model.adapterStage inLoads:loads];
+	NSString *adapterPrecision = model.stagePrecisions[facts.stages[adapterIndex].identifier] ?: precision
+		?: NFKModelPrecisionCheckpoint;
+	[self addAdaptersOfOptions:resolved toLoad:loads[adapterIndex]
+					 precision:NFKModelConcretePrecision(adapterPrecision, variant.precision) components:components];
 	return loads;
+}
+
+// The index of the load of the stage with the identifier, else the last load's.
+- (NSUInteger)indexOfStage:(nullable NSString *)identifier inLoads:(NSArray<NFKModelStageLoad *> *)loads
+{
+	for (NSUInteger index = 0; index < loads.count; index += 1) {
+		if ([loads[index].identifier isEqualToString:identifier ?: @""]) {
+			return index;
+		}
+	}
+	return loads.count - 1;
+}
+
+// The precision a variant without memory facts loads at: the precision option's, else the checkpoint's.
+- (nullable NSString *)declaredPrecisionOfVariant:(NFKModelVariant *)variant options:(NSDictionary<NSString *, id> *)resolved
+{
+	id precisionValue = [self memoryOptionValue:self.memoryModel.precisionOptionKey in:resolved];
+	NSString *precision = [precisionValue isKindOfClass:NSString.class] ? precisionValue : NFKModelPrecisionCheckpoint;
+	return NFKModelConcretePrecision(precision, variant.precision);
+}
+
+// Puts the adapters the options list on the load: each adapter's elements at the element size of
+// precision, or at their stored size where the core does not size precision. An adapter that cannot be
+// read adds nothing; the public estimate refuses it before estimating.
+- (void)addAdaptersOfOptions:(NSDictionary<NSString *, id> *)resolved
+					  toLoad:(NFKModelStageLoad *)load
+				   precision:(nullable NSString *)precision
+				  components:(NSMutableDictionary<NSString *, NSNumber *> *)components
+{
+	NSString *key = self.memoryModel.adaptersOptionKey;
+	if (key == nil) {
+		return;
+	}
+	id adapters = resolved[key];
+	double elementBytes = NFKModelElementByteCount(precision);
+	NSInteger total = 0;
+	for (id adapter in [adapters isKindOfClass:NSArray.class] ? adapters : @[]) {
+		id path = [adapter isKindOfClass:NSDictionary.class] ? adapter[NFKModelAdapterPath] : nil;
+		NSInteger elements = 0, stored = 0;
+		if (![path isKindOfClass:NSString.class] || !NFKModelAdapterTensorTotals(path, &elements, &stored, NULL)) {
+			continue;
+		}
+		total += elementBytes > 0 ? (NSInteger)llround((double)elements * elementBytes) : stored;
+	}
+	load.adapters = total;
+	components[NFKModelMemoryComponentAdapters] = @(total);
 }
 
 - (NFKModelStageLoad *)loadOfStage:(NFKModelStageFacts *)stage
@@ -2475,7 +2543,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	NFKModelCatalog *catalog = NFKModelCatalog.sharedCatalog;
 	NSDictionary<NSString *, id> *resolved = [self resolvedOptions:options stage:NFKModelOptionStageLoad catalog:catalog
 														   profile:nil error:error];
-	if (resolved == nil) {
+	if (resolved == nil || ![self verifyAdaptersInResolvedOptions:resolved error:error]) {
 		return nil;
 	}
 	return [self estimateForResolvedOptions:resolved memoryBudget:budget catalog:catalog];
@@ -2671,8 +2739,8 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 												   inputs:self.inputs outputs:self.outputs options:options variants:variants
 												  license:self.license requirements:self.requirements
 											  residencies:self.residencies memoryModel:self.memoryModel presets:self.presets
-											   modelTypes:self.modelTypes standIn:self.isStandIn introducedVersion:self.introducedVersion
-											   extensions:self.extensions];
+											   modelTypes:self.modelTypes adapterBases:self.adapterBases standIn:self.isStandIn
+										introducedVersion:self.introducedVersion extensions:self.extensions];
 }
 
 - (NFKModelOption *)option:(NFKModelOption *)option withMemoryBytesPerUnit:(NSNumber *)perUnit

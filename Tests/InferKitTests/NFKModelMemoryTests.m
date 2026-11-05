@@ -85,7 +85,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																	  cacheBitsOptionKey:NFKModelLoadOptionCacheBits
 																 cacheGroupSizeOptionKey:nil draftOptionKey:nil
 																	  draftBitsOptionKey:nil residencyOptionKey:nil
-																			  cacheStage:nil draftStage:nil
+																			  adaptersOptionKey:nil cacheStage:nil draftStage:nil adapterStage:nil
 																		 stagePrecisions:nil extensions:nil];
 	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.decoder" displayName:@"Test Decoder" family:@"test"
 												  summary:nil engine:NFKModelEnginePlugin registryName:nil
@@ -125,7 +125,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																	  cacheBitsOptionKey:nil cacheGroupSizeOptionKey:nil
 																		  draftOptionKey:nil draftBitsOptionKey:nil
 																	  residencyOptionKey:NFKModelLoadOptionResidency
-																			  cacheStage:nil draftStage:nil
+																			  adaptersOptionKey:nil cacheStage:nil draftStage:nil adapterStage:nil
 																		 stagePrecisions:nil extensions:nil];
 	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.moe" displayName:nil family:@"test" summary:nil
 												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
@@ -165,7 +165,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																	  cacheBitsOptionKey:nil cacheGroupSizeOptionKey:nil
 																		  draftOptionKey:nil draftBitsOptionKey:nil
 																	  residencyOptionKey:NFKModelLoadOptionResidency
-																			  cacheStage:nil draftStage:nil
+																			  adaptersOptionKey:nil cacheStage:nil draftStage:nil adapterStage:nil
 																		 stagePrecisions:nil extensions:nil];
 	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.hybrid" displayName:nil family:@"test" summary:nil
 												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
@@ -406,7 +406,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																  contextLengthOptionKey:nil cacheBitsOptionKey:nil
 																 cacheGroupSizeOptionKey:nil draftOptionKey:nil
 																	  draftBitsOptionKey:nil residencyOptionKey:nil
-																			  cacheStage:nil draftStage:nil
+																			  adaptersOptionKey:nil cacheStage:nil draftStage:nil adapterStage:nil
 																		 stagePrecisions:nil extensions:nil];
 	NFKModelDescriptor *descriptor = [[NFKModelDescriptor alloc] initWithIdentifier:@"test.image" displayName:nil
 																			 family:@"test" summary:nil
@@ -513,7 +513,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																	 cacheGroupSizeOptionKey:nil
 																			  draftOptionKey:NFKModelLoadOptionDraftModel
 																		  draftBitsOptionKey:nil residencyOptionKey:nil
-																				  cacheStage:nil draftStage:nil
+																				  adaptersOptionKey:nil cacheStage:nil draftStage:nil adapterStage:nil
 																			 stagePrecisions:nil extensions:nil];
 	return [[NFKModelDescriptor alloc] initWithIdentifier:decoder.identifier displayName:nil family:decoder.family
 												  summary:nil engine:decoder.engine registryName:nil providerClassName:nil
@@ -659,8 +659,8 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																 cacheGroupSizeOptionKey:nil draftOptionKey:nil
 																	  draftBitsOptionKey:nil
 																	  residencyOptionKey:NFKModelLoadOptionResidency
-																			  cacheStage:nil draftStage:nil
-																		 stagePrecisions:nil extensions:nil];
+																	   adaptersOptionKey:nil cacheStage:nil draftStage:nil
+																			adapterStage:nil stagePrecisions:nil extensions:nil];
 	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.fitting" displayName:nil family:@"test" summary:nil
 												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
 													tasks:@[ task ] inputModalities:nil outputModalities:nil inputs:nil
@@ -842,7 +842,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																 cacheGroupSizeOptionKey:NFKModelLoadOptionCacheGroupSize
 																		  draftOptionKey:nil draftBitsOptionKey:nil
 																	  residencyOptionKey:NFKModelLoadOptionResidency
-																			  cacheStage:nil draftStage:nil
+																			  adaptersOptionKey:nil cacheStage:nil draftStage:nil adapterStage:nil
 																		 stagePrecisions:nil extensions:nil];
 	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.many" displayName:nil family:@"test" summary:nil
 												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
@@ -1252,6 +1252,158 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	NFKModelResidencyPlan *unknown = [NFKModelResidencyPlan planForStages:stages residency:NFKModelResidencyStaged
 																   budget:0 error:NULL];
 	XCTAssertEqual(unknown.widenedStageIndexes.count, 0u);
+}
+
+
+#pragma mark Adapters
+
+- (void)testAMemoryModelRoundTripsItsAdaptersFields
+{
+	NSDictionary *dictionary = @{ @"precision": @"precision", @"adapters": NFKModelLoadOptionAdapters,
+								  @"adapterStage": @"unet" };
+	NFKModelMemoryModel *model = [NFKModelMemoryModel memoryModelWithDictionary:dictionary error:NULL];
+	XCTAssertEqualObjects(model.adaptersOptionKey, NFKModelLoadOptionAdapters);
+	XCTAssertEqualObjects(model.adapterStage, @"unet");
+	XCTAssertEqualObjects(model.dictionaryRepresentation, dictionary);
+	XCTAssertEqualObjects(model.optionKeys, (@[ @"precision", NFKModelLoadOptionAdapters ]));
+}
+
+// A safetensors file of float32 zeros, one tensor per shape.
+- (NSString *)adapterFileWithShapes:(NSArray<NSArray<NSNumber *> *> *)shapes
+{
+	NSMutableDictionary *header = [NSMutableDictionary dictionary];
+	NSUInteger offset = 0;
+	for (NSUInteger index = 0; index < shapes.count; index += 1) {
+		NSUInteger elements = 1;
+		for (NSNumber *dimension in shapes[index]) {
+			elements *= dimension.unsignedIntegerValue;
+		}
+		NSString *name = [NSString stringWithFormat:@"lora_unet_block_%lu.lora_down.weight", (unsigned long)index];
+		header[name] = @{ @"dtype": @"F32", @"shape": shapes[index], @"data_offsets": @[ @(offset), @(offset + elements * 4) ] };
+		offset += elements * 4;
+	}
+	NSData *json = [NSJSONSerialization dataWithJSONObject:header options:0 error:NULL];
+	uint64_t length = CFSwapInt64HostToLittle(json.length);
+	NSMutableData *data = [NSMutableData dataWithBytes:&length length:8];
+	[data appendData:json];
+	[data increaseLengthBy:offset];
+	NSString *directory = [NSTemporaryDirectory() stringByAppendingPathComponent:
+						   [@"NFKModelMemoryTests-" stringByAppendingString:NSUUID.UUID.UUIDString]];
+	[NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:NULL];
+	NSString *path = [directory stringByAppendingPathComponent:@"style.safetensors"];
+	XCTAssertTrue([data writeToFile:path atomically:YES]);
+	return path;
+}
+
+// A text encoder of 1,000,000 bytes and a UNet of 4,000,000 bytes stored at bfloat16, whose adapters run
+// beside the UNet.
+- (NFKModelDescriptor *)diffusionModelWithAdapterStage:(nullable NSString *)adapterStage
+{
+	NFKModelStageFacts *encoder = [[NFKModelStageFacts alloc] initWithIdentifier:@"text_encoder" title:nil
+															byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @1000000 }
+														 quantizableElementCount:0 pageableByteCountByPrecision:nil layerCount:0
+												largestLayerByteCountByPrecision:nil layerByteCountByPrecision:nil
+																widenedPrecision:nil extensions:nil];
+	NFKModelStageFacts *unet = [[NFKModelStageFacts alloc] initWithIdentifier:@"unet" title:nil
+														 byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @4000000 }
+													  quantizableElementCount:0 pageableByteCountByPrecision:nil layerCount:0
+											 largestLayerByteCountByPrecision:nil layerByteCountByPrecision:nil
+															 widenedPrecision:nil extensions:nil];
+	NFKModelStageFacts *decoder = [[NFKModelStageFacts alloc] initWithIdentifier:@"vae" title:nil
+															byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @500000 }
+														 quantizableElementCount:0 pageableByteCountByPrecision:nil layerCount:0
+												largestLayerByteCountByPrecision:nil layerByteCountByPrecision:nil
+																widenedPrecision:nil extensions:nil];
+	NFKModelMemoryFacts *facts = [[NFKModelMemoryFacts alloc] initWithStages:@[ encoder, unet, decoder ]
+												   keyValueByteCountPerToken:nil boundedKeyValueByteCount:nil
+														maximumContextLength:nil vocabularySize:nil loadOverheadByteCount:0
+																	   basis:nil extensions:nil];
+	NFKModelVariant *variant = [[NFKModelVariant alloc] initWithIdentifier:@"base" displayName:nil isDefault:YES
+															  registryName:nil source:nil downloadByteCount:nil
+														 residentByteCount:nil peakByteCount:nil parameterCount:nil
+																 precision:NFKModelPrecisionBFloat16 minimumMemoryByteCount:nil
+																   license:nil memoryFacts:facts extensions:nil];
+	NSArray<NFKModelOption *> *options = @[
+		[self loadOptionWithKey:NFKModelLoadOptionPrecision kind:NFKModelOptionKindChoice title:@"Precision"
+				   defaultValue:NFKModelPrecisionCheckpoint
+						choices:@[ [self choice:NFKModelPrecisionCheckpoint title:@"Checkpoint"],
+								   [self choice:NFKModelPrecisionFloat32 title:@"Float32"] ]
+						minimum:nil maximum:nil step:nil],
+		[self loadOptionWithKey:NFKModelLoadOptionAdapters kind:NFKModelOptionKindJSON title:@"Adapters" defaultValue:@[]
+						choices:nil minimum:nil maximum:nil step:nil],
+	];
+	NFKModelMemoryModel *model = [[NFKModelMemoryModel alloc] initWithPrecisionOptionKey:NFKModelLoadOptionPrecision
+															   quantizationBitsOptionKey:nil quantizationGroupSizeOptionKey:nil
+																  contextLengthOptionKey:nil cacheBitsOptionKey:nil
+																 cacheGroupSizeOptionKey:nil draftOptionKey:nil
+																	  draftBitsOptionKey:nil residencyOptionKey:nil
+																	   adaptersOptionKey:NFKModelLoadOptionAdapters
+																			  cacheStage:nil draftStage:nil
+																			adapterStage:adapterStage stagePrecisions:nil
+																			  extensions:nil];
+	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.diffusion" displayName:nil family:@"test" summary:nil
+												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
+													tasks:nil inputModalities:nil outputModalities:nil inputs:nil outputs:nil
+												  options:options variants:@[ variant ] license:nil requirements:nil
+											  residencies:@[ NFKModelResidencyResident ] memoryModel:model presets:nil
+												  standIn:NO introducedVersion:nil extensions:nil];
+}
+
+- (void)testAdaptersAddTheirElementsAtTheAdapterStagesPrecision
+{
+	NFKModelDescriptor *model = [self diffusionModelWithAdapterStage:@"unet"];
+	NSString *path = [self adapterFileWithShapes:@[ @[ @8, @768 ], @[ @320, @8 ] ]];
+	NSInteger elements = 8 * 768 + 320 * 8;
+	NFKModelMemoryEstimate *bare = [self estimateOf:model options:@{}];
+	XCTAssertEqualObjects(bare.components[NFKModelMemoryComponentAdapters], @0);
+	NSArray *adapters = @[ @{ NFKModelAdapterPath: path, NFKModelAdapterStrength: @0.8 } ];
+	NFKModelMemoryEstimate *checkpoint = [self estimateOf:model options:@{ NFKModelLoadOptionAdapters: adapters }];
+	XCTAssertEqual(checkpoint.residentByteCount - bare.residentByteCount, elements * 2);
+	XCTAssertEqual(checkpoint.peakByteCount - bare.peakByteCount, elements * 2);
+	XCTAssertEqualObjects(checkpoint.components[NFKModelMemoryComponentAdapters], @(elements * 2));
+	XCTAssertEqualObjects(checkpoint.stageByteCounts[@"unet"], @(4000000 + elements * 2));
+	XCTAssertEqualObjects(checkpoint.stageByteCounts[@"vae"], @500000);
+	NSArray *twice = [adapters arrayByAddingObjectsFromArray:adapters];
+	NFKModelMemoryEstimate *wide = [self estimateOf:model options:@{ NFKModelLoadOptionAdapters: twice,
+																	 NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32 }];
+	XCTAssertEqualObjects(wide.components[NFKModelMemoryComponentAdapters], @(2 * elements * 4));
+}
+
+- (void)testAdaptersRunBesideTheLastStageWithoutAnAdapterStage
+{
+	NFKModelDescriptor *model = [self diffusionModelWithAdapterStage:nil];
+	NSString *path = [self adapterFileWithShapes:@[ @[ @4, @100 ] ]];
+	NFKModelMemoryEstimate *estimate = [self estimateOf:model options:@{ NFKModelLoadOptionAdapters: @[ @{ NFKModelAdapterPath: path } ] }];
+	XCTAssertEqualObjects(estimate.stageByteCounts[@"vae"], @(500000 + 400 * 2));
+}
+
+- (void)testAnUnreadableAdapterFailsTheEstimateAsAnInvalidOption
+{
+	NFKModelDescriptor *model = [self diffusionModelWithAdapterStage:@"unet"];
+	NSString *missing = [NSTemporaryDirectory() stringByAppendingPathComponent:
+						 [NSUUID.UUID.UUIDString stringByAppendingString:@".safetensors"]];
+	NSError *error = nil;
+	XCTAssertNil([model estimatedMemoryForOptions:@{ NFKModelLoadOptionAdapters: @[ @{ NFKModelAdapterPath: missing } ] }
+											error:&error]);
+	XCTAssertEqualObjects(error.domain, NFKModelCatalogErrorDomain);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorInvalidOptions);
+	NFKModelOptionProblem *problem = [error.userInfo[NFKModelOptionProblemsKey] firstObject];
+	XCTAssertEqualObjects(problem.code, NFKModelOptionProblemMissingFile);
+	NSString *notSafetensors = [NSTemporaryDirectory() stringByAppendingPathComponent:
+								[NSUUID.UUID.UUIDString stringByAppendingString:@".safetensors"]];
+	XCTAssertTrue([[NSData dataWithBytes:"not a header" length:12] writeToFile:notSafetensors atomically:YES]);
+	XCTAssertNil([model estimatedMemoryForOptions:@{ NFKModelLoadOptionAdapters: @[ @{ NFKModelAdapterPath: notSafetensors } ] }
+											error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorInvalidOptions);
+}
+
+- (void)testTheAdaptersOptionIsNotAChoiceTheConstraintsVary
+{
+	NFKModelDescriptor *model = [self diffusionModelWithAdapterStage:@"unet"];
+	NFKModelMemoryConstraints *constraints = [model constraintsForMemoryBudget:[NFKModelMemoryBudget
+																			   budgetWithWorkingSetByteCount:16 * NFKTestGiB]];
+	XCTAssertNotNil([constraints constraintForOptionKey:NFKModelLoadOptionPrecision]);
+	XCTAssertNil([constraints constraintForOptionKey:NFKModelLoadOptionAdapters]);
 }
 
 @end

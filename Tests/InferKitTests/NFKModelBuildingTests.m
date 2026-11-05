@@ -175,7 +175,7 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 																  contextLengthOptionKey:NFKModelLoadOptionContextLength
 																	  cacheBitsOptionKey:nil cacheGroupSizeOptionKey:nil
 																		  draftOptionKey:nil draftBitsOptionKey:nil
-																	  residencyOptionKey:nil cacheStage:nil draftStage:nil
+																	  residencyOptionKey:nil adaptersOptionKey:nil cacheStage:nil draftStage:nil adapterStage:nil
 																		 stagePrecisions:nil extensions:nil];
 	NFKModelPreset *fast = [[NFKModelPreset alloc] initWithIdentifier:@"fast" title:@"Fast" help:nil baseModelIdentifier:nil
 														  loadOptions:nil requestDefaults:@{ @"steps": @4 } suggested:YES
@@ -384,7 +384,7 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 																	  cacheBitsOptionKey:nil cacheGroupSizeOptionKey:nil
 																		  draftOptionKey:nil draftBitsOptionKey:nil
 																	  residencyOptionKey:NFKModelLoadOptionResidency
-																			  cacheStage:nil draftStage:nil
+																			  adaptersOptionKey:nil cacheStage:nil draftStage:nil adapterStage:nil
 																		 stagePrecisions:nil extensions:nil];
 	return [[NFKModelDescriptor alloc] initWithIdentifier:@"pageable.model" displayName:nil family:@"test" summary:nil
 												   engine:NFKBuildTestEngine registryName:nil providerClassName:nil

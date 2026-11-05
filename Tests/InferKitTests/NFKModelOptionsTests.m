@@ -67,7 +67,7 @@
 																	  cacheBitsOptionKey:nil cacheGroupSizeOptionKey:nil
 																		  draftOptionKey:NFKModelLoadOptionDraftModel
 																	  draftBitsOptionKey:nil residencyOptionKey:nil
-																			  cacheStage:nil draftStage:nil
+																			  adaptersOptionKey:nil cacheStage:nil draftStage:nil adapterStage:nil
 																		 stagePrecisions:nil extensions:nil];
 	NSArray *variants = @[ [NFKModelVariant variantWithIdentifier:@"small" displayName:@"Small"],
 						   [NFKModelVariant variantWithIdentifier:@"large" displayName:@"Large"] ];
@@ -314,6 +314,87 @@
 									   constraintForChoiceValue:@"turbo"];
 	XCTAssertEqual(turbo.status, NFKModelChoiceStatusRuledOut);
 	XCTAssertEqualObjects(turbo.reason, @"Turbo is unavailable here. This needs the made-up-feature feature.");
+}
+
+
+#pragma mark Adapters and number lists
+
+// An image model with an adapters load option and a number-list request option.
+- (NFKModelDescriptor *)adapterModel
+{
+	NSArray<NFKModelOption *> *options = @[
+		[self optionWithKey:NFKModelLoadOptionAdapters kind:NFKModelOptionKindJSON stage:NFKModelOptionStageLoad
+			   defaultValue:@[] choices:nil minimum:nil maximum:nil step:nil],
+		[self optionWithKey:NFKParameterAdapterStrengths kind:NFKModelOptionKindNumberList stage:NFKModelOptionStageRequest
+			   defaultValue:nil choices:nil minimum:@-2 maximum:@2 step:nil],
+	];
+	return [[NFKModelDescriptor alloc] initWithIdentifier:@"example.image" displayName:nil family:@"example" summary:nil
+												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
+													tasks:nil inputModalities:nil outputModalities:nil inputs:nil outputs:nil
+												  options:options variants:nil license:nil requirements:nil residencies:nil
+										   standIn:NO introducedVersion:nil extensions:nil];
+}
+
+- (nullable NSString *)adapterProblemCodeFor:(id)value
+{
+	return [[self adapterModel] problemsWithOptions:@{ NFKModelLoadOptionAdapters: value } stage:nil].firstObject.code;
+}
+
+- (void)testAdaptersResolveToPathsAndStrengthsWithStrengthOneWhenAbsent
+{
+	NSError *error = nil;
+	NSArray *adapters = @[ @{ NFKModelAdapterPath: @"/adapters/watercolor.safetensors" },
+						   @{ NFKModelAdapterPath: [NSURL fileURLWithPath:@"/adapters/ink.safetensors"],
+							  NFKModelAdapterStrength: @0.5 } ];
+	NSDictionary *resolved = [[self adapterModel] resolvedOptions:@{ NFKModelLoadOptionAdapters: adapters }
+															stage:NFKModelOptionStageLoad error:&error];
+	XCTAssertNotNil(resolved, @"%@", error);
+	NSArray *expected = @[ @{ NFKModelAdapterPath: @"/adapters/watercolor.safetensors", NFKModelAdapterStrength: @1 },
+						   @{ NFKModelAdapterPath: @"/adapters/ink.safetensors", NFKModelAdapterStrength: @0.5 } ];
+	XCTAssertEqualObjects(resolved[NFKModelLoadOptionAdapters], expected);
+	NSDictionary *none = [[self adapterModel] resolvedOptions:@{ NFKModelLoadOptionAdapters: @[] }
+														stage:NFKModelOptionStageLoad error:&error];
+	XCTAssertEqualObjects(none[NFKModelLoadOptionAdapters], @[]);
+}
+
+- (void)testAdaptersRefuseAPickleFileAMissingPathAndANonNumberStrength
+{
+	XCTAssertEqualObjects([self adapterProblemCodeFor:@{ NFKModelAdapterPath: @"/a.safetensors" }],
+						  NFKModelOptionProblemWrongType, @"a dictionary is not a list");
+	XCTAssertEqualObjects([self adapterProblemCodeFor:@[ @{ NFKModelAdapterStrength: @1 } ]], NFKModelOptionProblemWrongType);
+	XCTAssertEqualObjects([self adapterProblemCodeFor:@[ @{ NFKModelAdapterPath: @"" } ]], NFKModelOptionProblemWrongType);
+	XCTAssertEqualObjects([self adapterProblemCodeFor:(@[ @{ NFKModelAdapterPath: @"/a.safetensors",
+															 NFKModelAdapterStrength: @"strong" } ])],
+						  NFKModelOptionProblemWrongType);
+	XCTAssertEqualObjects([self adapterProblemCodeFor:(@[ @{ NFKModelAdapterPath: @"/a.safetensors",
+															 NFKModelAdapterStrength: @(INFINITY) } ])],
+						  NFKModelOptionProblemWrongType);
+	NSError *error = nil;
+	NSDictionary *pickle = @{ NFKModelLoadOptionAdapters: @[ @{ NFKModelAdapterPath: @"/adapters/style.ckpt" } ] };
+	XCTAssertNil([[self adapterModel] resolvedOptions:pickle stage:NFKModelOptionStageLoad error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorInvalidOptions);
+	XCTAssertEqualObjects(error.localizedDescription,
+						  @"\"adapters\" entry 0 names \"/adapters/style.ckpt\", a pickle file, which InferKit does not "
+						  "load. Use the adapter's safetensors file.");
+}
+
+- (void)testANumberListAppliesItsBoundsToEachElement
+{
+	NFKModelDescriptor *model = [self adapterModel];
+	NSError *error = nil;
+	NSDictionary *resolved = [model resolvedOptions:@{ NFKParameterAdapterStrengths: @[ @0.5, @-1 ] }
+											  stage:NFKModelOptionStageRequest error:&error];
+	XCTAssertEqualObjects(resolved[NFKParameterAdapterStrengths], (@[ @0.5, @-1 ]), @"%@", error);
+	NSArray<NFKModelOptionProblem *> *above = [model problemsWithOptions:@{ NFKParameterAdapterStrengths: @[ @3 ] }
+																   stage:NFKModelOptionStageRequest];
+	XCTAssertEqualObjects(above.firstObject.code, NFKModelOptionProblemAboveMaximum);
+	NSArray<NFKModelOptionProblem *> *text = [model problemsWithOptions:@{ NFKParameterAdapterStrengths: @[ @"x" ] }
+																  stage:NFKModelOptionStageRequest];
+	XCTAssertEqualObjects(text.firstObject.code, NFKModelOptionProblemWrongType);
+	XCTAssertEqualObjects(text.firstObject.message, @"\"adapterStrengths\" takes a list of numbers, and [\"x\"] is not one.");
+	XCTAssertNil([model resolvedOptions:@{ NFKParameterAdapterStrengths: @[ @3 ] } stage:NFKModelOptionStageRequest
+								  error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorInvalidOptions);
 }
 
 @end

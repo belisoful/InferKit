@@ -704,6 +704,9 @@ NS_ASSUME_NONNULL_BEGIN
 	A resolver matches a repository's config.json against them (NFKModelResolver.h). Empty for a model
 	whose loader takes no such configuration. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy) NSArray<NSString *> *modelTypes;
+/*! The bases of the adapters the model takes through NFKModelLoadOptionAdapters, NFKModelAdapterBase*
+	strings. Empty for a model that takes no adapters. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *adapterBases;
 /*! The model's releases. */
 @property (nonatomic, readonly, copy) NSArray<NFKModelVariant *> *variants;
 /*! The variant whose isDefault is YES, else the first variant, else nil. */
@@ -743,11 +746,37 @@ NS_ASSUME_NONNULL_BEGIN
 					   memoryModel:(nullable NFKModelMemoryModel *)memoryModel
 						   presets:(nullable NSArray<NFKModelPreset *> *)presets
 						modelTypes:(nullable NSArray<NSString *> *)modelTypes
+					  adapterBases:(nullable NSArray<NSString *> *)adapterBases
 						   standIn:(BOOL)standIn
 				 introducedVersion:(nullable NSString *)introducedVersion
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
 
-/*! A descriptor with every field but modelTypes, which is empty. */
+/*! A descriptor with every field but adapterBases, which is empty. */
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+							family:(NSString *)family
+						   summary:(nullable NSString *)summary
+							engine:(NSString *)engine
+					  registryName:(nullable NSString *)registryName
+				 providerClassName:(nullable NSString *)providerClassName
+							 tasks:(nullable NSArray<NSString *> *)tasks
+				   inputModalities:(nullable NSArray<NSString *> *)inputModalities
+				  outputModalities:(nullable NSArray<NSString *> *)outputModalities
+							inputs:(nullable NSArray<NFKModelPort *> *)inputs
+						   outputs:(nullable NSArray<NFKModelPort *> *)outputs
+						   options:(nullable NSArray<NFKModelOption *> *)options
+						  variants:(nullable NSArray<NFKModelVariant *> *)variants
+						   license:(nullable NFKModelLicense *)license
+					  requirements:(nullable NFKModelRequirements *)requirements
+					   residencies:(nullable NSArray<NSString *> *)residencies
+					   memoryModel:(nullable NFKModelMemoryModel *)memoryModel
+						   presets:(nullable NSArray<NFKModelPreset *> *)presets
+						modelTypes:(nullable NSArray<NSString *> *)modelTypes
+						   standIn:(BOOL)standIn
+				 introducedVersion:(nullable NSString *)introducedVersion
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions;
+
+/*! A descriptor with every field but modelTypes and adapterBases, which are empty. */
 - (instancetype)initWithIdentifier:(NSString *)identifier
 					   displayName:(nullable NSString *)displayName
 							family:(NSString *)family

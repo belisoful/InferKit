@@ -193,24 +193,53 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   every released tower: SD 1.5 0.9999999999986,
   SD 2.1 0.9999999999841, SDXL primary 0.9999999999986, SDXL secondary 0.9999999999257 (pooled
   0.9999999999820).
-- `NFKMLXSDLoRA` — released Stable Diffusion adapters merged into `NFKMLXSDUNet`: the LCM-LoRA and
-  SDXL-Lightning distillations, and fine-tunes published in the same layouts. Two key layouts: kohya
-  over diffusers module names (`lora_unet_<path with underscores>`, `.lora_down.weight` /
-  `.lora_up.weight` / a scalar `.alpha`) and PEFT (`unet.<path>`, `.lora_A.weight` /
-  `.lora_B.weight`, no alpha tensor, so the strength is 1; an alpha in the file's metadata is not
-  read). A kohya file over the original model's block names (`lora_unet_input_blocks_…`) is not
-  translated and is refused. The underscore spelling is ambiguous against module names that also
-  carry underscores (`to_out_0`, `ff_net_0_proj`, `time_emb_proj`), so the reader never splits a
-  key: it spells every linear and convolution of the UNet the kohya way (`diffusersPath`, the
-  inverse of `remapUNetKey`, then dots to underscores) and looks the file's targets up. A
+- `NFKMLXSDLoRA` — released Stable Diffusion adapters, merged into `NFKMLXSDUNet` or held unmerged
+  beside the UNet's and the text towers' weights: the LCM-LoRA and SDXL-Lightning distillations, and
+  the style and subject fine-tunes people train. Three key layouts: kohya over diffusers module names
+  (`lora_unet_<path with underscores>`, `.lora_down.weight` / `.lora_up.weight` / a scalar `.alpha`),
+  kohya over the original model's block names (`lora_unet_input_blocks_<n>_<m>_…`,
+  `middle_block_<m>`, `output_blocks_<n>_<m>`, which kohya writes for SDXL),
+  and PEFT (`unet.<path>`, `.lora_A.weight` / `.lora_B.weight`, or the older `.lora.down/.up.weight`).
+  A PEFT file's scaling is `lora_alpha / r` from diffusers' `lora_adapter_metadata` (prefix `unet.`,
+  `text_encoder.`, `text_encoder_2.`) where it is recorded, else 1. The text towers' keys are
+  `lora_te_` / `lora_te1_` / `lora_te2_` (kohya) and `text_encoder.` / `text_encoder_2.` (PEFT) over the
+  `transformers` CLIP names. LoHa (`hada_`), LoKr (`lokr_`), and DoRA keys are refused by name. The
+  underscore spelling is ambiguous against module names that also carry underscores (`to_out_0`,
+  `ff_net_0_proj`, `time_emb_proj`), so the reader never splits a key: it spells every linear and
+  convolution of the model each way an adapter may (`diffusersPath`, the inverse of `remapUNetKey`;
+  dots to underscores; and `originalPath`, the original block name) and looks the file's targets up.
+  The original names number the input blocks `1 + l·(P+1) + j` for level `l`'s layer `j` (`.0` the
+  residual block, `.1` the transformer), the downsamplers `(l+1)·(P+1)` (`.0.op`), the middle block
+  `.0` / `.1` / `.2`, and the output blocks `u·(P+1) + j` with the upsampler after the transformer where
+  the level attends (`.2.conv`, else `.1.conv`); inside a residual block `in_layers.2` is `conv1`,
+  `out_layers.3` `conv2`, `emb_layers.1` `time_emb_proj`, and `skip_connection` `conv_shortcut`;
+  `time_embed.0/2`, `label_emb.0.0/2`, `input_blocks.0.0`, and `out.2` are the time and addition
+  embeddings and the outer convolutions. A
   convolution target stores `lora_down` as `[rank, in, kH, kW]` and `lora_up` as `[out, rank, 1,
   1]`; the delta is `up · down` over the rank axis, reshaped to `[out, in, kH, kW]` and transposed
   to the module's `[out, kH, kW, in]`. A 1×1 kernel on a linear target (`proj_in` under
   `use_linear_projection`) reshapes to the matrix. The strength is `scale · alpha / rank`; the
-  product forms in float32 and takes the weight's type, which is diffusers' `fuse_lora`. A file that
-  also carries text-tower keys (`lora_te…`, `text_encoder…`) is refused unless the caller passes
+  product forms in float32 and takes the weight's type, which is diffusers' `fuse_lora`. A merge
+  reaches the UNet alone: a file that also carries text-tower keys is refused unless the caller passes
   `ignoringTextEncoderKeys: true`, and the report then counts the keys left alone; a UNet key that
-  names no layer is refused before any weight changes. The LCM-LoRA for SD 1.5 adapts 278 targets
+  names no layer is refused before any weight changes. Held unmerged (`attach`, through
+  `NFKMLXSDTextToImageModel.attachAdapters` and the `adapters` load option), each targeted layer becomes
+  an `NFKMLXAdaptedLinear` / `NFKMLXAdaptedConv2d` that keeps the replaced layer (so `NFKLinear`'s and
+  `NFKConv2d`'s half-precision rounding stays) and adds `strength · scaling · up(down(x))` per adapter,
+  as PEFT's unmerged layer does; a convolution's down kernel runs at the base convolution's stride and
+  padding. CLIP's fused `in_proj_weight` takes the query, key, and value adapters as three part detours
+  (`NFKCLIPAttention.projectionDetours`). The detours hold their arrays at the weight's type. A run's
+  strengths ride a task-local (`NFKMLXAdapterRun.strengths`) set from `NFKParameterAdapterStrengths` in
+  the encode and every denoising step, so two runs in flight read their own; strength 0 skips the
+  detour. An adapter for a tower the release lacks, or for a layer it lacks, is refused before any layer
+  changes. Held adapters are measured stacked against diffusers' `load_lora_weights` + `set_adapters`
+  over 4 steps at 32×32 latents (`IK_PARITY_SD15_ADAPTERS_T2I`, `IK_PARITY_SDXL_ADAPTERS_T2I`). SD 1.5,
+  the Monet adapter (UNet and text tower) at 0.8 with the LCM-LoRA at 0.6 over 542 layers: first
+  prediction cosine 0.99999999991, image 0.99999889 against the reference picture's own 8-bit floor of
+  0.99999889. SDXL, Detail Tweaker XL (both text towers and the UNet) at −0.5 with the IKEA adapter
+  (UNet, resnet convolutions included) at 0.7 over 1774 layers: first prediction 0.99999999989, image
+  0.99999926 against a floor of 0.99999927. The same records at strength 0 give first-prediction
+  cosines of 0.74 and 0.80, so the comparison reads the adapters. The LCM-LoRA for SD 1.5 adapts 278 targets
   (attention, feed-forward, projections, resnet convolutions, time projections), the SDXL adapters
   788. `NFKMLXSDSampler` / `withSampler` give an adapter the sampler it was distilled for: `.lcm`
   runs `NFKLCMScheduler` at 4 steps, guidance 1; `.ddimTrailing` counts DDIM down from the end of

@@ -1007,8 +1007,9 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 												 variants:descriptor.variants license:descriptor.license
 											 requirements:descriptor.requirements residencies:descriptor.residencies
 											  memoryModel:descriptor.memoryModel presets:descriptor.presets
-											   modelTypes:descriptor.modelTypes standIn:descriptor.isStandIn
-										introducedVersion:descriptor.introducedVersion extensions:extensions];
+											   modelTypes:descriptor.modelTypes adapterBases:descriptor.adapterBases
+												  standIn:descriptor.isStandIn introducedVersion:descriptor.introducedVersion
+											   extensions:extensions];
 }
 
 #pragma mark Core ML package route

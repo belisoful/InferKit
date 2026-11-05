@@ -352,8 +352,9 @@ final class InferKitSwiftExamples: XCTestCase {
                                               quantizationGroupSizeOptionKey: nil,
                                               contextLengthOptionKey: NFKModelLoadOptionContextLength,
                                               cacheBitsOptionKey: nil, cacheGroupSizeOptionKey: nil, draftOptionKey: nil,
-                                              draftBitsOptionKey: nil, residencyOptionKey: nil, cacheStage: nil,
-                                              draftStage: nil, stagePrecisions: nil, extensions: nil)
+                                              draftBitsOptionKey: nil, residencyOptionKey: nil, adaptersOptionKey: nil,
+                                              cacheStage: nil, draftStage: nil, adapterStage: nil,
+                                              stagePrecisions: nil, extensions: nil)
         let chat = NFKModelDescriptor(identifier: "example.chat", displayName: nil, family: "example", summary: nil,
                                       engine: NFKModelEnginePlugin, registryName: nil, providerClassName: nil,
                                       tasks: nil, inputModalities: nil, outputModalities: nil, inputs: nil,

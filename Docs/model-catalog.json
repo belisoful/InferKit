@@ -20841,6 +20841,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-1"
+      ],
       "displayName" : "Hyper-SD 1.5 unified",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -20889,6 +20892,7 @@
         "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -20949,6 +20953,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -20975,6 +20989,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -21144,6 +21166,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-1"
+      ],
       "displayName" : "Hyper-SD 1.5 4-step",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -21192,6 +21217,7 @@
         "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -21252,6 +21278,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -21278,6 +21314,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -21447,6 +21491,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-1"
+      ],
       "displayName" : "Hyper-SD 1.5 8-step CFG",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -21495,6 +21542,7 @@
         "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -21555,6 +21603,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -21581,6 +21639,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -21759,6 +21825,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-xl"
+      ],
       "displayName" : "Hyper-SDXL unified",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -21807,6 +21876,7 @@
         "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -21867,6 +21937,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -21893,6 +21973,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -22101,6 +22189,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-xl"
+      ],
       "displayName" : "Hyper-SDXL 4-step",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -22149,6 +22240,7 @@
         "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -22209,6 +22301,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -22235,6 +22337,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -22443,6 +22553,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-xl"
+      ],
       "displayName" : "Hyper-SDXL 8-step CFG",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -22491,6 +22604,7 @@
         "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -22551,6 +22665,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -22577,6 +22701,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -24264,6 +24396,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-1"
+      ],
       "displayName" : "LCM Dreamshaper v7",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -24313,6 +24448,7 @@
         "url" : "https://huggingface.co/SimianLuo/LCM_Dreamshaper_v7"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -24373,6 +24509,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -24399,6 +24545,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -24554,6 +24708,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-1"
+      ],
       "displayName" : "Stable Diffusion 1.5 with LCM-LoRA",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -24602,6 +24759,7 @@
         "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -24662,6 +24820,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -24688,6 +24856,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -58426,6 +58602,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-xl"
+      ],
       "displayName" : "SDXL-Lightning 4-step",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -58474,6 +58653,7 @@
         "url" : "https://huggingface.co/ByteDance/SDXL-Lightning/blob/main/LICENSE.md"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -58534,6 +58714,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -58560,6 +58750,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -58768,6 +58966,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-xl"
+      ],
       "displayName" : "SDXL-Turbo",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -58816,6 +59017,7 @@
         "url" : "https://stability.ai/community-license-agreement"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -58876,6 +59078,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -58909,6 +59121,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -63839,6 +64059,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-2"
+      ],
       "displayName" : "Stable Diffusion 2.1 base",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -63887,6 +64110,7 @@
         "url" : "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -63947,6 +64171,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -63973,6 +64207,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -64106,6 +64348,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-1"
+      ],
       "displayName" : "Stable Diffusion 1.5",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -64154,6 +64399,7 @@
         "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -64214,6 +64460,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -64247,6 +64503,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -64417,6 +64681,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "stable-diffusion-xl"
+      ],
       "displayName" : "SDXL base 1.0",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -64465,6 +64732,7 @@
         "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -64525,6 +64793,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -64551,6 +64829,14 @@
           "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [

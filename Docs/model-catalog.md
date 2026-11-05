@@ -121,12 +121,13 @@ lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend`
 | `memoryModel` | [memory model](#memory-model) | no | Which options change the model's memory. |
 | `presets` | array of [preset](#presets) | no | Named sets of load options and request defaults. |
 | `modelTypes` | array of string | no | The `model_type` values of the Hugging Face `config.json` files the model's loader reads, such as `"qwen3"`. A [resolver](#resolving-a-repository) matches a repository against them. Empty when absent. |
+| `adapterBases` | array of string | no | The [adapter bases](#adapters) of the LoRA adapters the model takes through the `adapters` load option. Empty when absent. |
 | `standIn` | boolean | no | True for a reference or test stand-in a user interface hides. False when absent. |
 | `introducedVersion` | string | no | The InferKit version that introduced the model, such as `"0.4.0"`. |
 
 A writer always writes `id`, `displayName`, `family`, `engine`, the arrays (empty when there is
-nothing in them), `requirements`, and `standIn`. It writes `presets` and `modelTypes` only when there
-are some.
+nothing in them), `requirements`, and `standIn`. It writes `presets`, `modelTypes`, and `adapterBases`
+only when there are some.
 
 A descriptor with more than one variant derives a load option under `variant`
 (`NFKModelLoadOptionVariant`): a choice of its variants' identifiers, the default variant by default.
@@ -465,8 +466,10 @@ option. The variant comes from the `variant` option.
 | `draft` | string | The model-reference option whose value is the draft model's identifier. |
 | `draftBits` | string | The option whose value is the bits the draft model's weights are quantized to. |
 | `residency` | string | The option whose value is a [residency](#residencies). The model's only residency when absent, else `automatic`. |
+| `adapters` | string | The option whose value lists the [adapters](#adapters) the model holds beside its weights. |
 | `cacheStage` | string | The stage that holds the key-value cache and the draft model. The last stage when absent. |
 | `draftStage` | string | The stage of this model a draft for another model loads. Every stage when absent. |
+| `adapterStage` | string | The stage whose weights the adapters run beside. The last stage when absent. |
 | `stagePrecisions` | object of string | The precision of each stage the precision option does not change, keyed by stage. |
 
 ### The estimate
@@ -486,6 +489,9 @@ their defaults, and computes per stage, at precision p, with e(p) the bytes of o
   above.
 - **Linear options**, on the cache stage: each integer option with `memoryBytesPerUnit`, its value
   times that figure. The context length counts here only when the facts state no per-position cache.
+- **Adapters**, on the adapter stage: each adapter's tensor elements, read from its safetensors header,
+  times e(p) at the stage's precision; a precision with no element size counts the file's stored
+  bytes.
 
 The residency then decides what the model holds once loaded:
 
@@ -506,7 +512,7 @@ basis `"unknown"`. An estimate that does not fit says why:
 
 An estimate's dictionary holds `residentBytes`, `peakBytes`, `minimumWorkingSetBytes`,
 `requestedResidency`, `residency`, `components` (`weights`, `keyValueCache`, `draft` (the draft's weights and cache), `expertCache`,
-`linearOptions`, and `loadOverhead`, which sum to the resident bytes with the overhead aside),
+`linearOptions`, `adapters` where the memory model names the option, and `loadOverhead`, which sum to the resident bytes with the overhead aside),
 `stageBytes`, `options`, `budget`, `fits`, `reason`, and `basis`.
 
 ### The budget
@@ -1051,6 +1057,7 @@ The keys an engine's load options share, so an app configures every engine the s
 | `draftBits` | `NFKModelLoadOptionDraftBits` | The bits of the draft model's weights. |
 | `computeUnits` | `NFKModelLoadOptionComputeUnits` | The Core ML compute units, an `MLComputeUnits` value. |
 | `ignoreMemoryBudget` | `NFKModelLoadOptionIgnoreMemoryBudget` | YES builds a combination the memory estimate says does not fit. |
+| `adapters` | `NFKModelLoadOptionAdapters` | The [adapters](#adapters) held beside the weights: an array of `{path, strength}`. |
 
 ### Option kinds
 
@@ -1062,6 +1069,7 @@ The keys an engine's load options share, so an app configures every engine the s
 | `choice` | `NFKModelOptionKindChoice` | One of the option's choices. |
 | `text` | `NFKModelOptionKindText` | A string. |
 | `text-list` | `NFKModelOptionKindTextList` | A list of strings. |
+| `number-list` | `NFKModelOptionKindNumberList` | A list of numbers, each within the option's minimum and maximum. |
 | `json` | `NFKModelOptionKindJSON` | Any JSON value. |
 | `file-or-folder` | `NFKModelOptionKindFileOrFolder` | A path to a file or a folder. |
 | `model-reference` | `NFKModelOptionKindModelReference` | The identifier of another model in the catalog. |
@@ -1099,6 +1107,45 @@ The keys an engine's load options share, so an app configures every engine the s
 | `file` | `NFKModelSourceLayoutFile` | One file. |
 | `directory` | `NFKModelSourceLayoutDirectory` | A directory of files. |
 | `none` | `NFKModelSourceLayoutNone` | No files of its own. |
+
+## Adapters
+
+A model whose descriptor lists `adapterBases` takes LoRA adapters at load through the `adapters` option
+(`NFKModelLoadOptionAdapters`): an array of `{path, strength}` (`NFKModelAdapterPath`,
+`NFKModelAdapterStrength`), each path a safetensors file and the strength 1 when absent. The model holds
+the adapters beside its weights in order, so they stack, and a request sets each one's strength through
+`adapterStrengths` (`NFKParameterAdapterStrengths`), a number list in the same order; a request without it
+runs the strengths set at load. A path that is missing, not a safetensors file, or a pickle file
+(`.bin`, `.pt`, `.pth`, `.ckpt`, `.pkl`) is an invalid option.
+
+| Base | Constant | Adapters trained on |
+|---|---|---|
+| `stable-diffusion-1` | `NFKModelAdapterBaseStableDiffusion1` | Stable Diffusion 1.x and its fine-tunes |
+| `stable-diffusion-2` | `NFKModelAdapterBaseStableDiffusion2` | Stable Diffusion 2.x |
+| `stable-diffusion-xl` | `NFKModelAdapterBaseStableDiffusionXL` | SDXL and its distillations |
+| `flux-1` | `NFKModelAdapterBaseFlux1` | FLUX.1 |
+| `stable-diffusion-3` | `NFKModelAdapterBaseStableDiffusion3` | Stable Diffusion 3.x |
+
+`-[NFKModelCatalog inspectAdapterAtURL:forModelIdentifier:error:]` reads an adapter without loading a model:
+the safetensors header and metadata, and an `adapter_config.json` beside the file. The repository form,
+`inspectAdapterInRepository:revision:path:forModelIdentifier:completionHandler:`, reads the header with
+range requests and the file's size and SHA-256 from the Hub's listing; a gated repository the hub's token
+does not open fails with `NFKDownloadErrorAuthenticationRequired`. The `NFKModelAdapterReport` holds:
+
+- `layout`: `kohya` (`lora_unet_…`, `lora_te…` with `lora_down` / `lora_up` / `alpha`), `peft` (`unet.…`,
+  `text_encoder.…`, `transformer.…`, `base_model.model.…` with `lora_A` / `lora_B`), or `mlx-lm` (`lora_a` /
+  `lora_b`);
+- `base`: from the width the UNet cross-attends to (768, 1024, 2048), a second text tower, the text tower's
+  width, or the metadata's `ss_base_model_version` and `modelspec.architecture`, the shapes deciding when
+  they disagree;
+- `rank`, the most common; `targets` (`unet`, `text_encoder`, `text_encoder_2`, `transformer`, `decoder`);
+  `triggerWords`, from `modelspec.trigger_phrase`, else the five most frequent `ss_tag_frequency` tags;
+  `tensorByteCount`, `fileByteCount`, and `sha256`;
+- `fit`: `fits` when the named model's `adapterBases` holds the base, `fits-other-models` when other models'
+  do (`fittingModelIdentifiers`), and `unsupported` otherwise, with an error in `NFKModelAdapterErrorDomain`:
+  `NFKModelAdapterErrorPickle` (refused unread), `NFKModelAdapterErrorUnknownLayout` (LoHa, LoKr, DoRA, or no
+  LoRA keys), `NFKModelAdapterErrorUnknownBase`, or `NFKModelAdapterErrorNoModel`. A file that cannot be read
+  returns `NFKModelAdapterErrorUnreadable` in place of a report.
 
 ## Errors
 

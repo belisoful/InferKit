@@ -23,8 +23,9 @@ import MLX
 /// - Gemma 3, TranslateGemma, and Nemotron-H: residency, precision, a draft model and its bits;
 /// - Qwen3.5 (and 3.6 and 3.8): residency, precision, a runtime weight quantization of 2 to 8 bits held
 ///   resident, a draft model and its bits, and the context length and cache settings as generation defaults;
-/// - Gemma 3n, Whisper, and Stable Diffusion (each release, and each released adapter merged into its
-///   base): precision;
+/// - Gemma 3n and Whisper: precision;
+/// - Stable Diffusion (each release, and each released adapter merged into its base): precision, and the
+///   adapters held beside its weights;
 /// - Gemma 4, Qwen4-Exp, Granite 4.0-H, Codestral Mamba, MADLAD-400, and Open-Jev: residency and precision;
 /// - Qwen3-VL and pplx-decider: residency, precision, and a runtime weight quantization of the decoder;
 /// - DeepSeek V4: residency, and each other value whose key names an ``NFKMLXDeepSeekLoadOptions``
@@ -287,17 +288,19 @@ enum NFKMLXOptionRegistrations {
             let offered: [String: DType] = NFKMLXCatalogImage.float16StableDiffusionReleases.contains(model)
                 ? [NFKModelPrecisionFloat16: .float16] : [:]
             registerDirectoryModels([NFKMLXCatalogImage.stableDiffusionName(model)],
-                                    consumes: [NFKModelLoadOptionPrecision]) { url, name, options in
+                                    consumes: [NFKModelLoadOptionPrecision, NFKModelLoadOptionAdapters]) { url, name, options in
                 let cast = try options.cast(of: name, offering: offered, reading: [NFKModelPrecisionFloat32])
                 return try NFKMLXTextToImage.backend(configuration: NFKMLXStableDiffusionRelease(model).configuration,
                                                      directoryURL: url, precision: options.precision ?? .checkpoint,
-                                                     castingTo: cast)
+                                                     castingTo: cast, adapters: options.adapters())
             }
         }
         for adapter in NFKMLXCatalogImage.stableDiffusionAdapters {
-            registerDirectoryModels([adapter.name], consumes: [NFKModelLoadOptionPrecision]) { url, name, options in
+            registerDirectoryModels([adapter.name],
+                                    consumes: [NFKModelLoadOptionPrecision, NFKModelLoadOptionAdapters]) { url, name, options in
                 _ = try options.cast(of: name, offering: [:], reading: [NFKModelPrecisionFloat32])
-                return try adapter.backend(directoryURL: url, precision: options.precision ?? .checkpoint)
+                return try adapter.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
+                                           adapters: options.adapters())
             }
         }
         let residency: Set<String> = [NFKModelLoadOptionResidency]

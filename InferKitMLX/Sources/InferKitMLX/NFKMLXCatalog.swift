@@ -100,6 +100,9 @@ struct NFKMLXCatalogEntry {
     var standIn = false
     /// The `model_type` values of the configurations the entry's loader reads.
     var modelTypes: [String] = []
+    /// The `NFKModelAdapterBase*` values of the adapters the entry takes at load, empty for none. A
+    /// non-empty list declares the `NFKModelLoadOptionAdapters` option (``NFKMLXLoadProfile``).
+    var adapterBases: [String] = []
     var introducedVersion: String? = "0.4.0"
     /// The load profile in place of the family's, from ``NFKMLXLoadProfile/familyProfiles``.
     /// ``NFKMLXLoadProfile/plain`` declares no load options.
@@ -145,6 +148,9 @@ struct NFKMLXCatalogEntry {
         }
         if !modelTypes.isEmpty {
             dictionary["modelTypes"] = modelTypes
+        }
+        if !adapterBases.isEmpty {
+            dictionary["adapterBases"] = adapterBases
         }
         return dictionary
     }

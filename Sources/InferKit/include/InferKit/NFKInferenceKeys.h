@@ -91,6 +91,10 @@ extern NSString * const NFKParameterSteps;
 extern NSString * const NFKParameterGuidanceScale;
 /*! The image-to-image denoising strength, 0 to 1 (NSNumber). */
 extern NSString * const NFKParameterStrength;
+/*! Each loaded adapter's strength for this request (NSArray of NSNumber), in the order of the
+	NFKModelLoadOptionAdapters load option. A request without it runs at the strengths set at load.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterAdapterStrengths;
 /*! The output width in pixels (NSNumber). */
 extern NSString * const NFKParameterWidth;
 /*! The output height in pixels (NSNumber). */

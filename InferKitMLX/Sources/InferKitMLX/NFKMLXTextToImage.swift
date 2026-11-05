@@ -305,9 +305,42 @@ public final class NFKMLXTextToImage: NSObject {
     /// release whose autoencoder sets `force_upcast` decodes at float32 from the converted weights, as
     /// diffusers' SDXL pipelines do.
     static func backend(configuration: NFKMLXSDTextToImageConfiguration, directoryURL: URL,
-                        precision: NFKMLXWeightPrecision, castingTo dtype: DType?) throws -> any NFKInferenceBackend {
-        try NFKMLXSDTextToImageModel(configuration: configuration, files: NFKMLXSDReleaseFiles(directoryURL: directoryURL),
-                                     precision: precision, castingTo: dtype).makeBackend()
+                        precision: NFKMLXWeightPrecision, castingTo dtype: DType?,
+                        adapters: [(url: URL, strength: Float)] = []) throws -> any NFKInferenceBackend {
+        let model = try NFKMLXSDTextToImageModel(configuration: configuration,
+                                                 files: NFKMLXSDReleaseFiles(directoryURL: directoryURL),
+                                                 precision: precision, castingTo: dtype)
+        try model.attachAdapters(adapters)
+        return model.makeBackend()
+    }
+
+    /// Builds a text-to-image backend from a release directory with released LoRAs held beside its weights.
+    ///
+    /// @discussion Each adapter reaches the UNet and, where it adapts them, the text towers, in the kohya or
+    /// PEFT layouts ``NFKMLXSDLoRA`` reads. The adapters stay unmerged: they stack in order, and a request
+    /// sets each one's strength through `NFKParameterAdapterStrengths`, an array in the order of
+    /// `adapterURLs`, without touching a weight. A request without it runs each adapter at its strength
+    /// here. The release loads as published.
+    ///
+    /// - Parameters:
+    ///   - model: the release's architecture.
+    ///   - directoryURL: the release directory, laid out as diffusers publishes it.
+    ///   - adapterURLs: the adapters' safetensors files.
+    ///   - strengths: one strength per adapter; 1 runs an adapter as trained.
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the counts differ, and
+    ///   `NFKMLXError.loRANotApplicable` when an adapter does not fit the release.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithModel:directoryURL:adapterURLs:strengths:error:)
+    public static func backend(model: NFKMLXStableDiffusionModel, directoryURL: URL, adapterURLs: [URL],
+                               strengths: [NSNumber]) throws -> any NFKInferenceBackend {
+        guard adapterURLs.count == strengths.count else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(adapterURLs.count) adapters take \(adapterURLs.count) strengths, not \(strengths.count)")
+        }
+        return try backend(configuration: NFKMLXStableDiffusionRelease(model).configuration, directoryURL: directoryURL,
+                           precision: .checkpoint, castingTo: nil,
+                           adapters: zip(adapterURLs, strengths).map { ($0, $1.floatValue) })
     }
 
     /// Builds a text-to-image backend from a downloaded release directory, choosing the release by
@@ -416,6 +449,9 @@ final class NFKMLXSDTextToImageModel {
     var imageAdapter: NFKMLXIPAdapter?
     var imageAdapterScale: Float = 1
 
+    /// The context key carrying a run's adapter strengths.
+    static let adapterStrengthsKey = "adapterStrengths"
+
     /// Loads an IP-Adapter onto the pipeline's UNet. A run then reads a per-request image embedding and
     /// blends its image-conditioned attention into every cross-attention.
     func attachImageAdapter(url: URL, scale: Float) throws {
@@ -427,6 +463,40 @@ final class NFKMLXSDTextToImageModel {
     @discardableResult
     func mergeAdapter(url: URL, scale: Float) throws -> NFKMLXSDLoRA.Report {
         try NFKMLXSDLoRA.merge(adapterURL: url, into: pipeline.unet, scale: scale)
+    }
+
+    /// The strengths the adapters held unmerged were loaded at, in load order.
+    private(set) var adapterStrengths: [Float] = []
+
+    /// Holds released LoRAs beside the UNet's and the text towers' weights, after any already held. A run
+    /// gives each its strength through `NFKParameterAdapterStrengths`, else the strength it is loaded at.
+    @discardableResult
+    func attachAdapters(_ adapters: [(url: URL, strength: Float)]) throws -> NFKMLXSDLoRA.AttachReport {
+        let offset = adapterStrengths.count
+        let report = try NFKMLXSDLoRA.attach(adapters, startingAt: offset, unet: pipeline.unet, textEncoder: textEncoder,
+                                             secondaryTextEncoder: secondaryTextEncoder)
+        adapterStrengths += adapters.map(\.strength)
+        return report
+    }
+
+    /// The strengths a request gives the held adapters: its `NFKParameterAdapterStrengths` over the loaded
+    /// strengths, or nil for a model that holds none.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the parameter is not an array of numbers or
+    ///   names more adapters than the model holds.
+    func adapterStrengths(for request: NFKInferenceRequest) throws -> [Float]? {
+        guard !adapterStrengths.isEmpty else { return nil }
+        guard let given = request.parameter(forKey: NFKParameterAdapterStrengths) else { return adapterStrengths }
+        guard let numbers = given as? [NSNumber], numbers.count <= adapterStrengths.count else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(NFKParameterAdapterStrengths) takes an array of at most \(adapterStrengths.count) numbers, one "
+                + "per adapter in load order")
+        }
+        var strengths = adapterStrengths
+        for (index, number) in numbers.enumerated() {
+            strengths[index] = number.floatValue
+        }
+        return strengths
     }
 
     /// The draws a consistency sampler re-noises with, in place of its seeded stream, for reproducing a
@@ -536,7 +606,8 @@ final class NFKMLXSDTextToImageModel {
             scheduler: makeScheduler(),
             encodedInputKeys: NFKMLXTextToImage.encodedInputKeys(readsImageEmbedding: imageAdapter != nil),
             encodedParameterKeys: NFKMLXTextToImage.encodedParameterKeys
-                .union(configuration.sampler == .tcd ? [NFKMLXTextToImageParameterKey.trajectoryConsistencyEta] : []),
+                .union(configuration.sampler == .tcd ? [NFKMLXTextToImageParameterKey.trajectoryConsistencyEta] : [])
+                .union(adapterStrengths.isEmpty ? [] : [NFKParameterAdapterStrengths]),
             schedulerForRequest: { request in holder.model.scheduler(for: request) },
             encode: { request, image, _ in try holder.model.encode(request: request, image: image) },
             denoise: { latent, timestep, context, guidance in
@@ -569,12 +640,20 @@ final class NFKMLXSDTextToImageModel {
     // The diffusion backend works with unbatched `[h, w, c]` latents, so the tensors it holds are 3-D;
     // the networks run batched, and the batch dimension is added and dropped at those calls.
     func encode(request: NFKInferenceRequest, image: MLXArray?) throws -> NFKDiffusionContext {
-        let conditional = embedding(of: request.prompt ?? "")
-        let unconditional = configuration.zerosForEmptyNegativePrompt && request.negativePrompt == nil
-            ? NFKSDTextEmbedding(hidden: MLXArray.zeros(like: conditional.hidden),
-                                 pooled: conditional.pooled.map { MLXArray.zeros(like: $0) })
-            : embedding(of: request.negativePrompt ?? "")
+        let strengths = try adapterStrengths(for: request)
+        let (conditional, unconditional) = NFKMLXAdapterRun.$strengths.withValue(strengths) {
+            let conditional = embedding(of: request.prompt ?? "")
+            let unconditional = configuration.zerosForEmptyNegativePrompt && request.negativePrompt == nil
+                ? NFKSDTextEmbedding(hidden: MLXArray.zeros(like: conditional.hidden),
+                                     pooled: conditional.pooled.map { MLXArray.zeros(like: $0) })
+                : embedding(of: request.negativePrompt ?? "")
+            return (conditional, unconditional)
+        }
         var conditioning = ["context": conditional.hidden, "uncontext": unconditional.hidden]
+        // The run's strengths ride the context, so every step of this run reads them.
+        if let strengths {
+            conditioning[Self.adapterStrengthsKey] = MLXArray(strengths)
+        }
         if let pooled = conditional.pooled, let unpooled = unconditional.pooled {
             conditioning["pooled"] = pooled
             conditioning["unpooled"] = unpooled
@@ -625,7 +704,10 @@ final class NFKMLXSDTextToImageModel {
     /// one batch of two, which makes classifier-free guidance one forward pass.
     func denoise(_ latent: MLXArray, _ timestep: NFKDiffusionTimestep,
                  _ context: NFKDiffusionContext, _ guidanceScale: Float) -> MLXArray {
-        let prediction = branchPredictions(latent, timestep, context, guidanceScale)
+        let strengths = context.conditioning[Self.adapterStrengthsKey]?.asArray(Float.self)
+        let prediction = NFKMLXAdapterRun.$strengths.withValue(strengths) {
+            branchPredictions(latent, timestep, context, guidanceScale)
+        }
         guard runsClassifierFreeGuidance(context, guidanceScale) else {
             return prediction.reshaped(latent.shape).asType(latent.dtype)
         }

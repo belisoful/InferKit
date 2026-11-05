@@ -859,6 +859,11 @@ def run_sd_text_to_image(image, checkpoint):
     sampler re-noised with, so the port can run from the reference's randomness end to end. A UNet
     with `time_cond_proj_dim` (an LCM distillation) conditions on the guidance scale and runs no
     classifier-free guidance, which the pipeline decides on its own.
+
+    IK_SD_ADAPTERS holds released LoRAs beside the weights, unmerged, as `path=strength` pairs joined by
+    `;`: each loads through `load_lora_weights` under its own adapter name, reaching the UNet and the
+    text towers it adapts, and `set_adapters` gives each its strength, which is the arrangement
+    `NFKMLXSDLoRA.attach` holds. The record carries `adapter_strengths` in load order.
     """
     import json
     import os
@@ -907,6 +912,13 @@ def run_sd_text_to_image(image, checkpoint):
                                    adapter_name="adapter")
         pipeline.fuse_lora(lora_scale=lora_scale, adapter_names=["adapter"])
         pipeline.unload_lora_weights()
+    held = [entry.rsplit("=", 1) for entry in os.environ.get("IK_SD_ADAPTERS", "").split(";") if entry]
+    for index, (path, _) in enumerate(held):
+        pipeline.load_lora_weights(os.path.dirname(path), weight_name=os.path.basename(path),
+                                   adapter_name=f"held{index}")
+    if held:
+        pipeline.set_adapters([f"held{index}" for index in range(len(held))],
+                              adapter_weights=[float(strength) for _, strength in held])
 
     # The consistency samplers re-noise every non-final step with a fresh draw; the record carries the
     # draws so the port reproduces the run.
@@ -979,6 +991,8 @@ def run_sd_text_to_image(image, checkpoint):
                                       dtype=torch.float32)}
     if noises:
         extra["noises"] = torch.stack(noises)
+    if held:
+        extra["adapter_strengths"] = torch.tensor([float(strength) for _, strength in held], dtype=torch.float32)
     if len(branches) == steps and len(guided_predictions) == steps:
         extra["branches"] = torch.stack(branches)                 # [steps, 1 or 2, side, side, C]
         extra["guided_predictions"] = torch.stack(guided_predictions)

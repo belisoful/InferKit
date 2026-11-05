@@ -55,6 +55,9 @@ extern NSString * const NFKModelMemoryComponentExpertCache;
 extern NSString * const NFKModelMemoryComponentLinearOptions;
 /*! The bytes a load holds beyond the resident figure for a moment. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelMemoryComponentLoadOverhead;
+/*! The adapters NFKModelLoadOptionAdapters loads beside the weights. Present for a memory model with an
+	adaptersOptionKey. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelMemoryComponentAdapters;
 
 /*! The userInfo key of an NFKModelCatalogErrorDoesNotFit error: the NFKModelMemoryEstimate that did
 	not fit. Introduced in InferKit 0.4.0. */
@@ -341,9 +344,12 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 				  quantization.
 				- residencyOptionKey: how the stages are held. Absent, the descriptor's only residency, or
 				  NFKModelResidencyAutomatic.
+				- adaptersOptionKey: the adapters loaded beside the weights, as NFKModelLoadOptionAdapters
+				  lists them. Each adds its tensors' elements at the adapter stage's precision.
 				cacheStage names the stage that holds the key-value cache and the draft model, the last
 				stage when nil. draftStage names the stage of this model a draft for another model loads,
-				every stage when nil. Introduced in InferKit 0.4.0.
+				every stage when nil. adapterStage names the stage whose weights the adapters run beside,
+				the last stage when nil. Introduced in InferKit 0.4.0.
 */
 @interface NFKModelMemoryModel : NSObject <NSCopying>
 
@@ -356,10 +362,14 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 @property (nonatomic, readonly, copy, nullable) NSString *draftOptionKey;
 @property (nonatomic, readonly, copy, nullable) NSString *draftBitsOptionKey;
 @property (nonatomic, readonly, copy, nullable) NSString *residencyOptionKey;
+/*! The option whose value lists the adapters, NFKModelLoadOptionAdapters. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *adaptersOptionKey;
 /*! The stage that holds the key-value cache and the draft model. The last stage when nil. */
 @property (nonatomic, readonly, copy, nullable) NSString *cacheStage;
 /*! The stage a draft of this model loads. Every stage when nil. */
 @property (nonatomic, readonly, copy, nullable) NSString *draftStage;
+/*! The stage whose weights the adapters run beside. The last stage when nil. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *adapterStage;
 /*! The precision of each stage the precision option does not change, keyed by stage identifier. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, NSString *> *stagePrecisions;
 /*! The fields of the model's dictionary this version does not read, written back as they came. */
@@ -375,8 +385,10 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 							draftOptionKey:(nullable NSString *)draftOptionKey
 						draftBitsOptionKey:(nullable NSString *)draftBitsOptionKey
 						residencyOptionKey:(nullable NSString *)residencyOptionKey
+						 adaptersOptionKey:(nullable NSString *)adaptersOptionKey
 								cacheStage:(nullable NSString *)cacheStage
 								draftStage:(nullable NSString *)draftStage
+							  adapterStage:(nullable NSString *)adapterStage
 						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
 								extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
 
@@ -385,7 +397,7 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 
 /*! Reads a memory model from its dictionary, whose fields are precision, quantizationBits,
 	quantizationGroupSize, contextLength, cacheBits, cacheGroupSize, draft, draftBits, residency,
-	cacheStage, draftStage, and stagePrecisions. Returns nil and sets error when a field has the wrong
+	adapters, cacheStage, draftStage, adapterStage, and stagePrecisions. Returns nil and sets error when a field has the wrong
 	type. */
 + (nullable instancetype)memoryModelWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 /*! The memory model as its dictionary. */

@@ -217,6 +217,9 @@ extern NSString * const NFKModelOptionKindChoice;
 extern NSString * const NFKModelOptionKindText;
 /*! A list of strings. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelOptionKindTextList;
+/*! A list of numbers (NSArray of NSNumber). The option's minimum, maximum, and step apply to each
+	element. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelOptionKindNumberList;
 /*! Any JSON value. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelOptionKindJSON;
 /*! A path to a file or a folder on disk. Introduced in InferKit 0.4.0. */
@@ -321,6 +324,56 @@ extern NSString * const NFKModelLoadOptionComputeUnits;
 /*! YES builds the backend even where the memory estimate does not fit the catalog's memoryBudget. An
 	app sets it only when its user asks. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelLoadOptionIgnoreMemoryBudget;
+/*! The adapters the model loads beside its weights (NSArray of NSDictionary), each entry
+	{NFKModelAdapterPath, NFKModelAdapterStrength}. An entry without a strength loads at 1. An empty array
+	loads no adapters. A descriptor's adapterBases lists the bases its adapters were trained on.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionAdapters;
+
+#pragma mark Adapter entries
+
+/*! An adapter entry's file path (NSString): a safetensors file. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterPath;
+/*! An adapter entry's strength (NSNumber), the scale of the adapter's update; 1 when absent.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterStrength;
+
+#pragma mark Adapter bases
+
+/*! Adapters trained on Stable Diffusion 1.x. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterBaseStableDiffusion1;
+/*! Adapters trained on Stable Diffusion 2.x. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterBaseStableDiffusion2;
+/*! Adapters trained on Stable Diffusion XL. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterBaseStableDiffusionXL;
+/*! Adapters trained on Stable Diffusion 3. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterBaseStableDiffusion3;
+/*! Adapters trained on FLUX.1. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterBaseFlux1;
+
+#pragma mark Adapter layouts
+
+/*! Tensor names in the PEFT and diffusers layout: lora_A and lora_B, or lora.down and lora.up.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterLayoutPEFT;
+/*! Tensor names in the kohya layout: lora_down, lora_up, and alpha under lora_unet_ and lora_te
+	prefixes. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterLayoutKohya;
+/*! Tensor names in the mlx-lm layout: lora_a and lora_b. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterLayoutMLXLM;
+
+#pragma mark Adapter targets
+
+/*! A diffusion UNet. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterTargetUNet;
+/*! The first text encoder. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterTargetTextEncoder;
+/*! The second text encoder of a model with two. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterTargetTextEncoder2;
+/*! A diffusion transformer. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterTargetTransformer;
+/*! A language model's decoder. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelAdapterTargetDecoder;
 
 #pragma mark Key types
 

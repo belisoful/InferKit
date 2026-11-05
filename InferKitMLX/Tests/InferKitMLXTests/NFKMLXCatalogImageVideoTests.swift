@@ -151,16 +151,20 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
                     parameters: NFKMLXQwenImageGenerator.backendParameterKeys, outputs: [NFKOutputImage])
     }
 
+    // An entry declares the adapter strengths for a load that holds adapters; a backend built without one
+    // does not read them.
     func testTheStableDiffusionReleasesDeclareTheirBackendsKeys() {
         for model in NFKMLXCatalogImage.stableDiffusionReleases {
             let backend = NFKMLXBackend(model: model)
             assertPorts(NFKMLXCatalogImage.stableDiffusionName(model), inputs: backend.supportedInputKeys,
-                        parameters: backend.supportedParameterKeys, outputs: backend.supportedOutputKeys)
+                        parameters: backend.supportedParameterKeys.union([NFKParameterAdapterStrengths]),
+                        outputs: backend.supportedOutputKeys)
         }
         for adapter in NFKMLXCatalogImage.stableDiffusionAdapters {
             let backend = NFKMLXBackend(model: adapter.base)
             assertPorts(adapter.name, inputs: backend.supportedInputKeys,
-                        parameters: backend.supportedParameterKeys, outputs: backend.supportedOutputKeys)
+                        parameters: backend.supportedParameterKeys.union([NFKParameterAdapterStrengths]),
+                        outputs: backend.supportedOutputKeys)
         }
     }
 

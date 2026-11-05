@@ -113,6 +113,34 @@ public struct NFKMLXLoadOptions: @unchecked Sendable {
             "\(model) loads as published\(loads); precision \(name) has no parity check for it")
     }
 
+    /// The adapters the options list under `NFKModelLoadOptionAdapters`, in order, each a file and the
+    /// strength it loads at (1 where the entry names none); empty when the options list none.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the value is not an array of entries that each
+    ///   name a path.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public func adapters() throws -> [(url: URL, strength: Float)] {
+        guard let value = values[NFKModelLoadOptionAdapters] else { return [] }
+        guard let entries = value as? [Any] else {
+            throw NFKMLXError.unsupportedConfiguration("\(NFKModelLoadOptionAdapters) is not an array of adapters")
+        }
+        return try entries.map { entry in
+            guard let entry = entry as? [String: Any] else {
+                throw NFKMLXError.unsupportedConfiguration("an entry of \(NFKModelLoadOptionAdapters) is not a dictionary")
+            }
+            let url: URL
+            switch entry[NFKModelAdapterPath] {
+            case let path as String where !path.isEmpty: url = URL(fileURLWithPath: path)
+            case let fileURL as URL: url = fileURL
+            default:
+                throw NFKMLXError.unsupportedConfiguration("an entry of \(NFKModelLoadOptionAdapters) names no path")
+            }
+            let strength = (entry[NFKModelAdapterStrength] as? NSNumber)?.floatValue ?? 1
+            return (url, strength)
+        }
+    }
+
     /// The bits a runtime weight quantization packs each weight into, or nil for none (absent or 0).
     /// Introduced in InferKit 0.4.0.
     public var quantizationBits: Int? {

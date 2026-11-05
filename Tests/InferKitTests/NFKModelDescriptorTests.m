@@ -456,7 +456,8 @@
 		NFKInputAudio, NFKInputAudios, NFKInputMessages, NFKInputLyrics, NFKInputState, NFKInputQuestions,
 	];
 	NSArray<NSString *> *parameters = @[
-		NFKParameterSeed, NFKParameterSteps, NFKParameterGuidanceScale, NFKParameterStrength, NFKParameterWidth,
+		NFKParameterSeed, NFKParameterSteps, NFKParameterGuidanceScale, NFKParameterStrength,
+		NFKParameterAdapterStrengths, NFKParameterWidth,
 		NFKParameterHeight, NFKParameterTools, NFKParameterMCPServers, NFKParameterSkills, NFKParameterJSONSchema,
 		NFKParameterOutputFormat, NFKParameterChoices, NFKParameterVideoFrameCount, NFKParameterAudioOutput,
 		NFKParameterSampleCount, NFKParameterFrameCount, NFKParameterFramesPerSecond, NFKParameterDurationSeconds,
@@ -477,7 +478,7 @@
 		NFKOutputClassifications, NFKOutputSegments, NFKOutputMIDI, NFKOutputBeats, NFKOutputTempo,
 		NFKOutputAnswers, NFKOutputReasoning, NFKOutputUsage,
 	];
-	XCTAssertEqual(inputs.count + parameters.count + outputs.count, (NSUInteger)91);
+	XCTAssertEqual(inputs.count + parameters.count + outputs.count, (NSUInteger)92);
 	for (NSString *key in [inputs arrayByAddingObjectsFromArray:parameters]) {
 		XCTAssertNotNil(NFKModelValueTypeForKey(key), @"%@ has no value type", key);
 	}
@@ -583,6 +584,38 @@
 	XCTAssertEqual(first.hash, second.hash);
 	XCTAssertEqual([first copy], first);
 	XCTAssertNotEqualObjects(first, [self descriptorWithVariants:nil]);
+}
+
+
+#pragma mark Adapter bases
+
+- (void)testAdapterBasesRoundTripThroughTheDictionary
+{
+	NSDictionary *model = @{ @"id": @"sd", @"family": @"stable-diffusion", @"engine": NFKModelEngineMLX,
+							 @"adapterBases": @[ NFKModelAdapterBaseStableDiffusion1 ] };
+	NSError *error = nil;
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:model error:&error];
+	XCTAssertEqualObjects(descriptor.adapterBases, @[ NFKModelAdapterBaseStableDiffusion1 ], @"%@", error);
+	XCTAssertNil(descriptor.extensions[@"adapterBases"]);
+	XCTAssertEqualObjects(descriptor.dictionaryRepresentation[@"adapterBases"], @[ NFKModelAdapterBaseStableDiffusion1 ]);
+	NFKModelDescriptor *copied = [NFKModelDescriptor descriptorWithDictionary:descriptor.dictionaryRepresentation error:&error];
+	XCTAssertEqualObjects(copied, descriptor);
+}
+
+- (void)testADescriptorWithoutAdapterBasesWritesNone
+{
+	NSDictionary *model = @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEngineMLX };
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:model error:NULL];
+	XCTAssertEqualObjects(descriptor.adapterBases, @[]);
+	XCTAssertNil(descriptor.dictionaryRepresentation[@"adapterBases"]);
+}
+
+- (void)testMalformedAdapterBasesAreRefused
+{
+	NSDictionary *model = @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEngineMLX, @"adapterBases": @"flux-1" };
+	NSError *error = nil;
+	XCTAssertNil([NFKModelDescriptor descriptorWithDictionary:model error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedDescriptor);
 }
 
 @end

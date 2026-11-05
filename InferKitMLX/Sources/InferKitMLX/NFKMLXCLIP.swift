@@ -83,6 +83,8 @@ final class NFKCLIPAttention: Module {
     @ModuleInfo(key: "in_proj_bias") var inProjBias: MLXArray
     @ModuleInfo(key: "out_proj") var outProj: Linear
     private let heads: Int
+    /// The detours of adapters held beside the query, key, and value parts of the fused projection.
+    let projectionDetours = NFKMLXFusedDetours(parts: 3)
 
     init(dimensions: Int, heads: Int) {
         self.heads = heads
@@ -101,7 +103,10 @@ final class NFKCLIPAttention: Module {
             ? (x.asType(.float32).matmul(inProjWeight.asType(.float32).transposed(1, 0))
                 + inProjBias.asType(.float32)).asType(x.dtype)
             : x.matmul(inProjWeight.transposed(1, 0)) + inProjBias               // [B, L, 3D]
-        let parts = split(projected, parts: 3, axis: -1)
+        var parts = split(projected, parts: 3, axis: -1)
+        if !projectionDetours.isEmpty {
+            parts = projectionDetours.adding(to: parts, input: x)
+        }
         let shaped = { (t: MLXArray) in
             t.reshaped([batch, tokens, self.heads, headDim]).transposed(0, 2, 1, 3)
                 .reshaped([batch * self.heads, tokens, headDim])

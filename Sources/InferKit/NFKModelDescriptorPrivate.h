@@ -126,6 +126,10 @@ typedef id _Nullable (^NFKModelElementReader)(id element, NSString *path, NSErro
 												   profile:(nullable NFKHardwareProfile *)profile
 													 error:(NSError **)error;
 
+/*! YES when every adapter the resolved NFKModelLoadOptionAdapters lists reads as a safetensors file. NO
+	with an NFKModelCatalogErrorInvalidOptions error naming the first that does not. */
+- (BOOL)verifyAdaptersInResolvedOptions:(NSDictionary<NSString *, id> *)resolved error:(NSError **)error;
+
 @end
 
 @interface NFKModelDescriptor (NFKModelMemoryInternal)

@@ -558,6 +558,36 @@
       "note": "SDXL-Lightning four-step adapter (ByteDance/SDXL-Lightning, openrail++): 788 kohya-layout targets over the SDXL UNet, float16. Merged into the SDXL_BASE release by NFKMLXSDLoRA and sampled with DDIM at trailing spacing over 4 steps with no guidance (NFKMLXSDTextToImageConfiguration.sdxlLightning). Measured end to end against diffusers with the adapter fused and DDIM trailing on both sides (sd_text_to_image with IK_SD_LORA, IK_SD_SPACING=trailing, IK_SD_STEPS=4, IK_SD_GUIDANCE=0 -> IK_PARITY_SDXL_LIGHTNING_T2I). The two- and eight-step adapters share the layout."
     },
     {
+      "key": "LORA_SD15_MONET",
+      "file": "lora/sd15-monet/monet_style_lora.safetensors",
+      "bytes": 37876496,
+      "url": "https://huggingface.co/neonforestmist/sd15-monet-lora/resolve/b3078d418319cdd2c8896f36687f7bc22548bfbe/monet_style_lora.safetensors",
+      "config": [
+        "IK_VAL_LORA_SD15_MONET"
+      ],
+      "note": "A Monet style adapter for Stable Diffusion 1.5 (neonforestmist/sd15-monet-lora, creativeml-openrail-m), kohya layout over the UNet and the CLIP text tower. Held unmerged beside the SD15 release at strength 0.8 and stacked with LCM_LORA_SD15 at 0.6 (NFKMLXAdaptedLinear, NFKMLXAdaptedConv2d). Measured end to end against diffusers' load_lora_weights + set_adapters (run_reference.py sd_text_to_image under the diffusers env with IK_SD_ADAPTERS='<monet>=0.8;<lcm-lora>=0.6', IK_SD_STEPS=4, IK_SD_SIZE=32 -> IK_PARITY_SD15_ADAPTERS_T2I)."
+    },
+    {
+      "key": "LORA_SDXL_DETAIL",
+      "file": "lora/sdxl-detail-tweaker/add-detail-xl.safetensors",
+      "bytes": 228452344,
+      "url": "https://huggingface.co/AiWise/Detail-Tweaker-XL_v1/resolve/f5cfc8ed1826c618387f5c702cb107cedfbb9595/add-detail-xl.safetensors",
+      "config": [
+        "IK_VAL_LORA_SDXL_DETAIL"
+      ],
+      "note": "Detail Tweaker XL (AiWise/Detail-Tweaker-XL_v1, creativeml-openrail-m), a kohya SDXL adapter named with the original model's block numbers, over both text towers and the UNet. Held unmerged beside the SDXL_BASE release at strength -0.5 and stacked with LORA_SDXL_IKEA at 0.7 (sd_text_to_image with IK_SD_ADAPTERS='<detail>=-0.5;<ikea>=0.7', IK_SD_STEPS=4, IK_SD_SIZE=32 -> IK_PARITY_SDXL_ADAPTERS_T2I)."
+    },
+    {
+      "key": "LORA_SDXL_IKEA",
+      "file": "lora/sdxl-ikea-instructions/ikea_instructions_xl_v1_5.safetensors",
+      "bytes": 185697368,
+      "url": "https://huggingface.co/ostris/ikea-instructions-lora-sdxl/resolve/2d52c237188a9d16a543ffc5808a44664f39fa4e/ikea_instructions_xl_v1_5.safetensors",
+      "config": [
+        "IK_VAL_LORA_SDXL_IKEA"
+      ],
+      "note": "IKEA instructions style (ostris/ikea-instructions-lora-sdxl, license other), a kohya SDXL adapter over the UNet residual blocks' convolutions as well as its attention. The second adapter of the IK_PARITY_SDXL_ADAPTERS_T2I stack, at strength 0.7."
+    },
+    {
       "key": "HYPER_SD15_4STEP_LORA",
       "file": "hyper-sd/Hyper-SD15-4steps-lora.safetensors",
       "bytes": 269127064,

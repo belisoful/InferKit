@@ -493,7 +493,7 @@ static NSURL * _Nullable NFKModelLocationThroughHub(NFKHFHub *hub, NFKModelSourc
 	[given addEntriesFromDictionary:options ?: @{}];
 	NFKHardwareProfile *profile = NFKHardwareProfile.currentProfile;
 	NSDictionary<NSString *, id> *resolved = [self resolveOptions:given descriptor:descriptor profile:profile error:error];
-	if (resolved == nil) {
+	if (resolved == nil || ![descriptor verifyAdaptersInResolvedOptions:resolved error:error]) {
 		return nil;
 	}
 	NSString *problem = [descriptor.requirements problemForHardwareProfile:profile];

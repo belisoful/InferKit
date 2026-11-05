@@ -108,8 +108,16 @@ static NSDictionary<NSString *, id> *NFKServedToolOptionSchema(NFKModelOption *o
 		schema[@"type"] = @"array";
 		schema[@"items"] = @{ @"type": @"string" };
 	}
-	schema[@"minimum"] = option.minimum;
-	schema[@"maximum"] = option.maximum;
+	if ([kind isEqualToString:NFKModelOptionKindNumberList]) {
+		NSMutableDictionary<NSString *, id> *items = [NSMutableDictionary dictionaryWithObject:@"number" forKey:@"type"];
+		items[@"minimum"] = option.minimum;
+		items[@"maximum"] = option.maximum;
+		schema[@"type"] = @"array";
+		schema[@"items"] = items;
+	} else {
+		schema[@"minimum"] = option.minimum;
+		schema[@"maximum"] = option.maximum;
+	}
 	schema[@"default"] = presetDefault ?: option.defaultValue;
 	schema[@"title"] = option.title;
 	schema[@"description"] = option.help;

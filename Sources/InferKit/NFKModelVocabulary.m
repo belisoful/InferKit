@@ -109,6 +109,26 @@ NSString * const NFKModelLoadOptionDraftModel			= @"draftModel";
 NSString * const NFKModelLoadOptionDraftBits			= @"draftBits";
 NSString * const NFKModelLoadOptionComputeUnits			= @"computeUnits";
 NSString * const NFKModelLoadOptionIgnoreMemoryBudget	= @"ignoreMemoryBudget";
+NSString * const NFKModelLoadOptionAdapters				= @"adapters";
+
+NSString * const NFKModelAdapterPath				= @"path";
+NSString * const NFKModelAdapterStrength			= @"strength";
+
+NSString * const NFKModelAdapterBaseStableDiffusion1	= @"stable-diffusion-1";
+NSString * const NFKModelAdapterBaseStableDiffusion2	= @"stable-diffusion-2";
+NSString * const NFKModelAdapterBaseStableDiffusionXL	= @"stable-diffusion-xl";
+NSString * const NFKModelAdapterBaseStableDiffusion3	= @"stable-diffusion-3";
+NSString * const NFKModelAdapterBaseFlux1				= @"flux-1";
+
+NSString * const NFKModelAdapterLayoutPEFT			= @"peft";
+NSString * const NFKModelAdapterLayoutKohya			= @"kohya";
+NSString * const NFKModelAdapterLayoutMLXLM			= @"mlx-lm";
+
+NSString * const NFKModelAdapterTargetUNet			= @"unet";
+NSString * const NFKModelAdapterTargetTextEncoder	= @"text_encoder";
+NSString * const NFKModelAdapterTargetTextEncoder2	= @"text_encoder_2";
+NSString * const NFKModelAdapterTargetTransformer	= @"transformer";
+NSString * const NFKModelAdapterTargetDecoder		= @"decoder";
 
 NSString * const NFKModelOptionKindBoolean			= @"boolean";
 NSString * const NFKModelOptionKindInteger			= @"integer";
@@ -116,6 +136,7 @@ NSString * const NFKModelOptionKindNumber			= @"number";
 NSString * const NFKModelOptionKindChoice			= @"choice";
 NSString * const NFKModelOptionKindText				= @"text";
 NSString * const NFKModelOptionKindTextList			= @"text-list";
+NSString * const NFKModelOptionKindNumberList		= @"number-list";
 NSString * const NFKModelOptionKindJSON				= @"json";
 NSString * const NFKModelOptionKindFileOrFolder		= @"file-or-folder";
 NSString * const NFKModelOptionKindModelReference	= @"model-reference";
@@ -167,6 +188,7 @@ static NSDictionary<NSString *, NSString *> *NFKRequestKeyValueTypes(void)
 			NFKParameterSteps:						NFKModelValueTypeInteger,
 			NFKParameterGuidanceScale:				NFKModelValueTypeNumber,
 			NFKParameterStrength:					NFKModelValueTypeNumber,
+			NFKParameterAdapterStrengths:			NFKModelValueTypeJSON,
 			NFKParameterWidth:						NFKModelValueTypeInteger,
 			NFKParameterHeight:						NFKModelValueTypeInteger,
 			NFKParameterTools:						NFKModelValueTypeJSON,
