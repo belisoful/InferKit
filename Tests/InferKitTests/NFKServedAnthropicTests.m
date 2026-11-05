@@ -603,6 +603,75 @@
 
 #pragma mark Errors
 
+/*! A prompt the model's context or window cannot hold, as a backend reports it. */
+- (NSError *)contextExceeded
+{
+	return [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_InferenceContextExceeded
+						   userInfo:@{ NSLocalizedDescriptionKey: @"served's prompt holds 2048 tokens, which fills its 1024-token window",
+									   NFKErrorPromptTokenCountKey: @2048, NFKErrorContextLimitKey: @1024 }];
+}
+
+- (id)JSONIn:(NSString *)text
+{
+	return text != nil ? [NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL] : nil;
+}
+
+- (void)testAPromptPastTheContextIsRefusedAsEachAPIRefusesIt
+{
+	NFKAnthropicRouteBackend *backend = [[NFKAnthropicRouteBackend alloc] init];
+	NSError *exceeded = [self contextExceeded];
+	backend.reply = ^NFKInferenceResult *(NFKInferenceRequest *request, NSError **error) {
+		*error = exceeded;
+		return nil;
+	};
+	NFKAnthropicRouteStreamingBackend *streaming = [[NFKAnthropicRouteStreamingBackend alloc] init];
+	streaming.partials = @[];
+	streaming.finalError = exceeded;
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"served": backend, @"streamed": streaming }];
+	NSDictionary *messages = @{ @"model": @"served", @"max_tokens": @16, @"messages": @[ @{ @"role": @"user", @"content": @"Long." } ] };
+	NSString *anthropic = @"prompt is too long: 2048 tokens > 1024 maximum";
+
+	NSInteger status = 0;
+	NSDictionary *reply = [self postMessages:messages server:server status:&status];
+	XCTAssertEqual(status, 400, @"%@", reply);
+	XCTAssertEqualObjects(reply[@"error"][@"type"], @"invalid_request_error");
+	XCTAssertEqualObjects(reply[@"error"][@"message"], anthropic, @"the text Claude Code reads to compact");
+
+	NSMutableDictionary *streamed = [messages mutableCopy];
+	streamed[@"model"] = @"streamed";
+	streamed[@"stream"] = @YES;
+	reply = [self JSONIn:[self send:@"POST" path:@"/v1/messages" body:streamed headers:nil server:server status:&status]];
+	XCTAssertEqual(status, 400, @"a stream refused before its first event answers with the status: %@", reply);
+	XCTAssertEqualObjects(reply[@"error"][@"message"], anthropic);
+
+	reply = [self JSONIn:[self send:@"POST" path:@"/v1/chat/completions"
+							  body:@{ @"model": @"served", @"messages": @[ @{ @"role": @"user", @"content": @"Long." } ] }
+						   headers:nil server:server status:&status]];
+	XCTAssertEqual(status, 400, @"%@", reply);
+	XCTAssertEqualObjects(reply[@"error"][@"code"], @"context_length_exceeded");
+	XCTAssertEqualObjects(reply[@"error"][@"type"], @"invalid_request_error");
+
+	reply = [self JSONIn:[self send:@"POST" path:@"/v1/responses" body:@{ @"model": @"served", @"input": @"Long." }
+						   headers:nil server:server status:&status]];
+	XCTAssertEqual(status, 400, @"%@", reply);
+	XCTAssertEqualObjects(reply[@"error"][@"code"], @"context_length_exceeded");
+
+	reply = [self JSONIn:[self send:@"POST" path:@"/v1beta/models/served:generateContent"
+							  body:@{ @"contents": @[ @{ @"role": @"user", @"parts": @[ @{ @"text": @"Long." } ] } ] }
+						   headers:nil server:server status:&status]];
+	XCTAssertEqual(status, 400, @"%@", reply);
+	XCTAssertEqualObjects(reply[@"error"][@"status"], @"INVALID_ARGUMENT");
+
+	NFKRemoteBackend *client = [NFKRemoteBackend backendWithEndpointURL:
+		[NSURL URLWithString:[NSString stringWithFormat:@"http://localhost:%u/v1/chat/completions", (unsigned)server.listeningPort]]];
+	client.modelName = @"served";
+	NSError *error = nil;
+	XCTAssertNil([client runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Long." }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceContextExceeded, @"a client reads the served code: %@", error);
+	XCTAssertEqualObjects(error.userInfo[NFKErrorPromptTokenCountKey], @2048);
+	XCTAssertEqualObjects(error.userInfo[NFKErrorContextLimitKey], @1024);
+}
+
 - (void)testErrorsTakeAnthropicsShapeAndStatus
 {
 	NFKAnthropicRouteBackend *backend = [[NFKAnthropicRouteBackend alloc] init];

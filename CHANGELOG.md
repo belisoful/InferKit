@@ -108,6 +108,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A prompt past the context is refused in each API's words
+
+- `kNFKError_InferenceContextExceeded` states that a prompt does not fit the model's context or the window a load
+  or request sets, with the prompt's tokens under `NFKErrorPromptTokenCountKey` and the limit under
+  `NFKErrorContextLimitKey`.
+- The served routes answer it with 400: the Messages route as `invalid_request_error` "prompt is too long: N
+  tokens > W maximum", which Claude Code reads to compact its conversation; the chat and Responses routes with
+  `code: "context_length_exceeded"`; the Gemini route as `INVALID_ARGUMENT`. `NFKRemoteTransport` reads the
+  code and both counts back from an InferKit server.
+
 #### The served Messages route takes system messages in the conversation
 
 - `POST /v1/messages` and `/v1/messages/count_tokens` accept a message whose role is `system`, its content a
@@ -1933,6 +1943,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### A decoder refuses a prompt that fills its window
+
+- A prompt that fills the window a decoder's cache keeps (the `contextLength` load option, or a request's
+  `NFKMLXGenerationParameterKey.contextWindow`) is refused before it runs, with `kNFKError_InferenceContextExceeded`,
+  as one that fills the trained context is. Before, the cache dropped the prompt's first positions, such as a
+  system prompt and its tools, and nothing told the caller. A reply that runs past the window still keeps the
+  latest positions.
 
 #### FLUX.1 holds LoRA adapters beside its transformer
 

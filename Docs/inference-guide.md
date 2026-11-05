@@ -73,7 +73,9 @@ A failure is an `NSError` in `NFKInferenceErrorDomain`, and the code says what t
 `kNFKError_InferenceMissingInput` (a key is absent), `kNFKError_InferenceUnsupported` (the engine
 cannot take this request as written), `kNFKError_InferenceRefused` (the engine declined the content,
 so retrying gives the same answer), `kNFKError_InferenceRateLimited` (back off and try later),
-`kNFKError_RemoteUnreachable` (nothing answered), and `kNFKError_InferenceBackendFailure` for the
+`kNFKError_InferenceContextExceeded` (the prompt fills the model's context or the run's window, with the
+prompt's tokens under `NFKErrorPromptTokenCountKey` and the limit under `NFKErrorContextLimitKey`: shorten
+it), `kNFKError_RemoteUnreachable` (nothing answered), and `kNFKError_InferenceBackendFailure` for the
 rest. An engine that wraps another framework keeps the original error under `NSUnderlyingErrorKey`.
 
 A backend states what it acts on. `supportedParameterKeys` and `supportedInputKeys` are optional

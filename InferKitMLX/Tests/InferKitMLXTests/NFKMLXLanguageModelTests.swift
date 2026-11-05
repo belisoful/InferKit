@@ -445,7 +445,12 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertEqual(try NFKMLXContextRoom.bounded(4, promptTokens: 10, contextLength: 16, source: "m"), 4)
         XCTAssertEqual(try NFKMLXContextRoom.bounded(256, promptTokens: 10, contextLength: nil, source: "m"), 256)
         XCTAssertThrowsError(try NFKMLXContextRoom.bounded(1, promptTokens: 16, contextLength: 16, source: "m")) { error in
-            XCTAssertTrue("\(error)".contains("16 tokens") && "\(error)".contains("16-token context"), "\(error)")
+            let error = error as NSError
+            XCTAssertEqual(error.domain, NFKInferenceErrorDomain)
+            XCTAssertEqual(error.code, NFKInferenceError.error_InferenceContextExceeded.rawValue)
+            XCTAssertEqual(error.userInfo[NFKErrorPromptTokenCountKey] as? Int, 16)
+            XCTAssertEqual(error.userInfo[NFKErrorContextLimitKey] as? Int, 16)
+            XCTAssertTrue(error.localizedDescription.contains("16-token context"), error.localizedDescription)
         }
 
         try requireMLXRuntime()
@@ -460,19 +465,36 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         let result = try backend.runInference(for: request)
         XCTAssertEqual((result.output(forKey: NFKOutputUsage) as? [String: Int])?[NFKUsageOutputTokens], 2)
         XCTAssertEqual(result.output(forKey: NFKOutputFinishReason) as? String, NFKFinishReasonLength)
+        // A request's window that the prompt fills is refused before the prompt runs, rather than losing its start.
+        let windowed = NFKInferenceRequest(inputs: [NFKInputPrompt: "hello hello"],
+                                           parameters: [NFKParameterMaxTokens: 4,
+                                                        NFKMLXGenerationParameterKey.contextWindow: prompt])
+        XCTAssertThrowsError(try backend.runInference(for: windowed)) { error in
+            let error = error as NSError
+            XCTAssertEqual(error.code, NFKInferenceError.error_InferenceContextExceeded.rawValue)
+            XCTAssertEqual(error.userInfo[NFKErrorContextLimitKey] as? Int, prompt)
+        }
         configuration.maximumPositions = prompt
         let full = NFKMLXLanguageBackend(net: NFKMLXLanguage.makeNet(configuration), tokenizer: tokenizer, identifier: "tiny")
         XCTAssertThrowsError(try full.runInference(for: request))
     }
 
     /// A run whose request and options set no limit runs to the room its context leaves, or its cache
-    /// window's where the prompt leaves the window room. A release that states no context stops at 256.
+    /// window's; a prompt that fills its window is refused. A release that states no context stops at 256.
     func testAnUnsetLimitRunsToTheRoomTheContextLeaves() throws {
         XCTAssertEqual(try NFKMLXContextRoom.bounded(nil, promptTokens: 10, contextLength: 40_960, source: "m"), 40_950)
         XCTAssertEqual(try NFKMLXContextRoom.bounded(nil, promptTokens: 10, contextLength: 40_960, window: 4_096, source: "m"),
                        4_086)
-        XCTAssertEqual(try NFKMLXContextRoom.bounded(nil, promptTokens: 5_000, contextLength: 40_960, window: 4_096,
-                                                     source: "m"), 35_960, "a prompt past its window runs to the context")
+        XCTAssertThrowsError(try NFKMLXContextRoom.bounded(nil, promptTokens: 5_000, contextLength: 40_960, window: 4_096,
+                                                           source: "m"), "a prompt past its window is refused") { error in
+            let error = error as NSError
+            XCTAssertEqual(error.code, NFKInferenceError.error_InferenceContextExceeded.rawValue)
+            XCTAssertEqual(error.userInfo[NFKErrorPromptTokenCountKey] as? Int, 5_000)
+            XCTAssertEqual(error.userInfo[NFKErrorContextLimitKey] as? Int, 4_096)
+            XCTAssertTrue(error.localizedDescription.contains("4096-token window"), error.localizedDescription)
+        }
+        XCTAssertThrowsError(try NFKMLXContextRoom.bounded(16, promptTokens: 4_096, contextLength: nil, window: 4_096,
+                                                           source: "m"), "a prompt that fills its window is refused")
         XCTAssertEqual(try NFKMLXContextRoom.bounded(nil, promptTokens: 10, contextLength: nil, source: "m"),
                        NFKMLXContextRoom.unstatedContextLimit)
         XCTAssertEqual(try NFKMLXContextRoom.bounded(256, promptTokens: 10, contextLength: 40_960, window: 64, source: "m"), 256,

@@ -689,11 +689,19 @@ static NSError * _Nullable NFKServedAnthropicBlockTypeError(id block, NSString *
 	return types[@(status)] ?: (status >= 500 ? @"api_error" : @"invalid_request_error");
 }
 
+// A prompt that does not fit takes the API's own wording, which Claude Code reads to compact its conversation.
 + (NSDictionary<NSString *, id> *)errorObjectForError:(NSError *)error status:(NSInteger)status
 {
 	NSMutableDictionary<NSString *, id> *detail = [[NFKInferenceWireCoding JSONObjectForError:error][@"error"] mutableCopy];
 	[detail removeObjectForKey:@"code"];
 	detail[@"type"] = [self errorTypeForStatus:status];
+	NSNumber *tokens = error.userInfo[NFKErrorPromptTokenCountKey];
+	NSNumber *limit = error.userInfo[NFKErrorContextLimitKey];
+	if ([error.domain isEqualToString:NFKInferenceErrorDomain] && error.code == kNFKError_InferenceContextExceeded
+		&& [tokens isKindOfClass:NSNumber.class] && [limit isKindOfClass:NSNumber.class]) {
+		detail[@"message"] = [NSString stringWithFormat:@"prompt is too long: %ld tokens > %ld maximum",
+							  (long)tokens.integerValue, (long)limit.integerValue];
+	}
 	return @{ @"type": @"error", @"error": detail };
 }
 

@@ -582,7 +582,25 @@ NFKInferenceResult *NFKResultWithFinishReason(NFKInferenceResult *result, id val
 	if (retryAfter != nil) {
 		userInfo[NFKRemoteErrorRetryAfterKey] = retryAfter;
 	}
+	if (code == kNFKError_InferenceContextExceeded) {
+		[userInfo addEntriesFromDictionary:[self servedContextCountsInData:data]];
+	}
 	return [NSError errorWithDomain:NFKInferenceErrorDomain code:code userInfo:userInfo];
+}
+
+/*! The prompt's tokens and the limit an InferKit server's refusal of a prompt past the context carries. */
++ (NSDictionary<NSString *, NSNumber *> *)servedContextCountsInData:(nullable NSData *)data
+{
+	id body = data.length > 0 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+	NSDictionary *error = [body isKindOfClass:NSDictionary.class] && [body[@"error"] isKindOfClass:NSDictionary.class] ? body[@"error"] : nil;
+	NSDictionary *served = [error[@"inferkit_user_info"] isKindOfClass:NSDictionary.class] ? error[@"inferkit_user_info"] : nil;
+	NSMutableDictionary<NSString *, NSNumber *> *counts = [NSMutableDictionary dictionary];
+	for (NSString *key in @[ NFKErrorPromptTokenCountKey, NFKErrorContextLimitKey ]) {
+		if ([served[key] isKindOfClass:NSNumber.class]) {
+			counts[key] = served[key];
+		}
+	}
+	return counts;
 }
 
 // Back off (429, 402, 529), change the request (400, 413, 422), or fix the configuration (the rest).
@@ -606,7 +624,7 @@ NFKInferenceResult *NFKResultWithFinishReason(NFKInferenceResult *result, id val
 	NSDictionary *error = [body isKindOfClass:NSDictionary.class] && [body[@"error"] isKindOfClass:NSDictionary.class] ? body[@"error"] : nil;
 	NSNumber *code = [error[@"inferkit_code"] isKindOfClass:NSNumber.class] ? error[@"inferkit_code"] : nil;
 	if (![error[@"inferkit_domain"] isEqual:NFKInferenceErrorDomain] || code.integerValue < kNFKError_InferenceNotReady
-		|| code.integerValue > kNFKError_InferenceRateLimited) {
+		|| code.integerValue > kNFKError_InferenceContextExceeded) {
 		return 0;
 	}
 	return (NFKInferenceError)code.integerValue;

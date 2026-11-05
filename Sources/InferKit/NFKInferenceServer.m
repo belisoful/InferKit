@@ -3800,6 +3800,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 														@(kNFKError_InferenceUnsupported): @400,
 														@(kNFKError_InferenceRefused): @400,
 														@(kNFKError_InferenceRateLimited): @429,
+														@(kNFKError_InferenceContextExceeded): @400,
 														@(kNFKError_RemoteUnreachable): @502 };
 	return statuses[@(error.code)].integerValue ?: 500;
 }

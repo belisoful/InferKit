@@ -710,6 +710,8 @@ static NSError * _Nullable NFKServedResponsesItemTypeError(id item, NSString *pa
 	NSString *code = @"server_error";
 	if ([error.domain isEqualToString:NFKInferenceErrorDomain] && error.code == kNFKError_InferenceRateLimited) {
 		code = @"rate_limit_exceeded";
+	} else if ([error.domain isEqualToString:NFKInferenceErrorDomain] && error.code == kNFKError_InferenceContextExceeded) {
+		code = @"context_length_exceeded";
 	} else if ([error.domain isEqualToString:NFKInferenceErrorDomain]
 			   && (error.code == kNFKError_InferenceMissingInput || error.code == kNFKError_InferenceUnsupported || error.code == kNFKError_InferenceRefused)) {
 		code = @"invalid_prompt";

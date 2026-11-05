@@ -1777,6 +1777,7 @@ static AVAudioPCMBuffer * _Nullable NFKWirePCMBufferCopyingList(AVAudioFormat *f
 		case kNFKError_InferenceMissingInput:
 		case kNFKError_InferenceUnsupported:
 		case kNFKError_InferenceRefused:
+		case kNFKError_InferenceContextExceeded:
 			return @"invalid_request_error";
 		case kNFKError_InferenceRateLimited:
 			return @"rate_limit_error";
@@ -1793,7 +1794,8 @@ static AVAudioPCMBuffer * _Nullable NFKWirePCMBufferCopyingList(AVAudioFormat *f
 													 @(kNFKError_InferenceUnsupported): @"unsupported",
 													 @(kNFKError_RemoteUnreachable): @"upstream_unreachable",
 													 @(kNFKError_InferenceRefused): @"refused",
-													 @(kNFKError_InferenceRateLimited): @"rate_limited" };
+													 @(kNFKError_InferenceRateLimited): @"rate_limited",
+													 @(kNFKError_InferenceContextExceeded): @"context_length_exceeded" };
 	return names[@(code)];
 }
 

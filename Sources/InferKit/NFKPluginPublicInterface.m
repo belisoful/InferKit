@@ -34,6 +34,8 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKCapabilityOpticalFlow,
 	(const void *)&NFKCapabilityTranslation,
 	(const void *)&NFKInferenceErrorDomain,
+	(const void *)&NFKErrorPromptTokenCountKey,
+	(const void *)&NFKErrorContextLimitKey,
 	(const void *)&NFKGeminiOutputEnvironmentIdentifier,
 	(const void *)&NFKHFHubDefaultRevision,
 	(const void *)&NFKHFHubUnlimitedCacheSize,

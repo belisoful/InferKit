@@ -1781,6 +1781,12 @@ code is in its own file and reaches the server through `NFKInferenceServerPrivat
   `inferkit_code` beside the message so `NFKRemoteTransport.servedCodeInData:` reads the exact code.
   The route refusal, 405, an unknown `/v1/messages/*` path, and a body that is not JSON take the same
   shape. Responses keeps the chat route's OpenAI error body.
+- A prompt past the context (`kNFKError_InferenceContextExceeded`, with `NFKErrorPromptTokenCountKey` and
+  `NFKErrorContextLimitKey`) is 400 on every route, each in its API's words: Messages `invalid_request_error`
+  "prompt is too long: N tokens > W maximum", the text Claude Code reads before it compacts its conversation;
+  chat and Responses `code: "context_length_exceeded"`; Gemini `INVALID_ARGUMENT`. The MLX decoders refuse
+  before prefill, so a streamed request answers with the status before any event. `NFKRemoteTransport` keeps
+  the two counts from an InferKit server's `inferkit_user_info`.
 - Keys: on the Messages routes only, `x-api-key` is a second place for the key (Bearer is tried first),
   since Claude Code sends `ANTHROPIC_API_KEY` there; `anthropic-version` and `anthropic-beta` are
   accepted and ignored.

@@ -34,7 +34,20 @@ typedef NS_ENUM(NSInteger, NFKInferenceError) {
 		so a caller backs off rather than changing it. When the engine names a reset time it rides in
 		userInfo under the engine's own key. Introduced in InferKit 0.4.0. */
 	kNFKError_InferenceRateLimited		= 7,
+	/*! The prompt does not fit the context the model runs with: its trained context, or the window a load
+		option or the request sets. userInfo carries the prompt's tokens under NFKErrorPromptTokenCountKey and
+		the limit under NFKErrorContextLimitKey. The request is the problem, so sending it again produces the
+		same answer; a caller shortens the prompt, as a client compacts its conversation. Introduced in
+		InferKit 0.4.0. */
+	kNFKError_InferenceContextExceeded	= 8,
 };
+
+/*! The prompt's tokens (NSNumber) in a kNFKError_InferenceContextExceeded error. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKErrorPromptTokenCountKey;
+
+/*! The tokens the context or window holds (NSNumber) in a kNFKError_InferenceContextExceeded error.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKErrorContextLimitKey;
 
 NS_ASSUME_NONNULL_END
 
