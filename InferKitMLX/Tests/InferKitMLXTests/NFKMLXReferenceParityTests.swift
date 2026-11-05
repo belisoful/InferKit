@@ -13391,7 +13391,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     /// arithmetic.
     private func verifyTextToImage(_ name: String, _ configuration: NFKMLXSDTextToImageConfiguration,
                                    record: String, directory key: String,
-                                   adapter adapterKey: String? = nil, held heldKeys: [String] = []) throws {
+                                   adapter adapterKey: String? = nil, held heldKeys: [String] = [],
+                                   firstPredictionBar: Double? = nil) throws {
         try requireMLXRuntime()
         // `IK_DIAG_<key>` in this process's environment names a record for this run alone, ahead of the
         // stored key, so a diagnostic record runs without touching the shared configuration.
@@ -13402,6 +13403,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let settings = try XCTUnwrap(arrays["settings"]).asArray(Float.self)
         let reference = try XCTUnwrap(arrays["output"])          // [height, width, 3] in 0...1
         let (steps, side, guidance) = (Int(settings[0]), Int(settings[1]), settings[2])
+        XCTAssertTrue(firstPredictionBar == nil || (arrays["context"] != nil && arrays["first_prediction"] != nil),
+                      "a first-prediction bar reads the record's context and first prediction")
 
         let model = try NFKMLXSDTextToImageModel(
             configuration: configuration,
@@ -13462,6 +13465,9 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                 let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
                                         expected.reshaped([-1]).asArray(Float.self).map(Double.init))
                 print("VALIDATION PARITY \(name)-text-to-image: first prediction cosine \(similarity)")
+                if let firstPredictionBar {
+                    XCTAssertGreaterThan(similarity, firstPredictionBar, "the first guided prediction matches the reference")
+                }
                 if !heldStrengths.isEmpty {
                     // The control: the same model with every held adapter at strength 0 is the base model,
                     // which the record must tell apart from the adapted one.
@@ -13580,7 +13586,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     func testSD15HeldAdaptersTextToImageMatchesTheReference() throws {
         try verifyTextToImage("sd15-adapters", .stableDiffusion15, record: "IK_PARITY_SD15_ADAPTERS_T2I",
                               directory: "IK_VAL_SD15_DIR",
-                              held: ["IK_VAL_LORA_SD15_MONET", "IK_VAL_LCM_LORA_SD15"])
+                              held: ["IK_VAL_LORA_SD15_MONET", "IK_VAL_LCM_LORA_SD15"], firstPredictionBar: 0.9999999998)
     }
 
     // Two kohya SDXL adapters named with the original model's block numbers, one over both text towers and
@@ -13588,7 +13594,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     func testSDXLHeldAdaptersTextToImageMatchesTheReference() throws {
         try verifyTextToImage("sdxl-adapters", .sdxl, record: "IK_PARITY_SDXL_ADAPTERS_T2I",
                               directory: "IK_VAL_SDXL_BASE_DIR",
-                              held: ["IK_VAL_LORA_SDXL_DETAIL", "IK_VAL_LORA_SDXL_IKEA"])
+                              held: ["IK_VAL_LORA_SDXL_DETAIL", "IK_VAL_LORA_SDXL_IKEA"], firstPredictionBar: 0.9999999998)
     }
 
     // SDXL-Lightning's four-step adapter merged into the SDXL base UNet, DDIM counted down from the end
