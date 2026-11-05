@@ -1000,13 +1000,19 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
     /// window is conditioned on the text before it. Introduced in InferKit 0.4.0.
     @objc public var transcribesWholeRecording: Bool = false
 
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    var adapterStrengths: [Float] = []
+
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { identifier }
 
-    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    /// The request parameters the backend reads, with `NFKParameterAdapterStrengths` where the model holds
+    /// adapters. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        transcribesWholeRecording ? [NFKMLXGenerationParameterKey.timestamps, NFKParameterSourceLanguage, NFKMLXGenerationParameterKey.speechTask]
-                                  : [NFKMLXGenerationParameterKey.timestamps]
+        let keys: Set<String> = transcribesWholeRecording
+            ? [NFKMLXGenerationParameterKey.timestamps, NFKParameterSourceLanguage, NFKMLXGenerationParameterKey.speechTask]
+            : [NFKMLXGenerationParameterKey.timestamps]
+        return adapterStrengths.isEmpty ? keys : keys.union([NFKParameterAdapterStrengths])
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -1046,6 +1052,15 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
 
     private func run(_ request: NFKInferenceRequest,
                      observer: ((_ fraction: Double, _ partial: NFKInferenceResult) -> Bool)?) throws -> NFKInferenceResult {
+        // The held adapters read the run's strengths as each pass builds its graph; a job's detached task
+        // reaches them here too.
+        let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
+        return try NFKMLXAdapterRun.$strengths.withValue(strengths) { try runAtStrengths(request, observer: observer) }
+    }
+
+    private func runAtStrengths(_ request: NFKInferenceRequest,
+                                observer: ((_ fraction: Double, _ partial: NFKInferenceResult) -> Bool)?) throws
+        -> NFKInferenceResult {
         guard let (samples, sampleRate) = Self.audio(from: request) else {
             throw NFKMLXError.unsupportedInput
         }
@@ -1276,16 +1291,18 @@ public final class NFKMLXWhisper: NSObject {
     /// - A file is the weights, with the tokenizer read beside it when both files are there.
     /// - nil builds random weights without a tokenizer.
     static func catalogBackend(variant: NFKMLXWhisperVariant, location: URL?, weightsDownload: URL?, repository: String? = nil,
-                               precision: NFKMLXWeightPrecision, identifier: String) throws -> any NFKInferenceBackend {
+                               precision: NFKMLXWeightPrecision, identifier: String,
+                               adapters: [(url: URL, strength: Float)] = []) throws -> any NFKInferenceBackend {
         try catalogBackend(configuration: catalogConfiguration(for: variant), location: location,
-                           weightsDownload: weightsDownload, repository: repository, precision: precision, identifier: identifier)
+                           weightsDownload: weightsDownload, repository: repository, precision: precision, identifier: identifier,
+                           adapters: adapters)
     }
 
     /// Builds a catalog backend of `configuration`, as ``catalogBackend(variant:location:weightsDownload:precision:identifier:)``
     /// builds a released size.
     static func catalogBackend(configuration base: NFKMLXWhisperConfiguration, location: URL?, weightsDownload: URL?,
                                repository: String? = nil, precision: NFKMLXWeightPrecision,
-                               identifier: String) throws -> NFKMLXWhisperBackend {
+                               identifier: String, adapters: [(url: URL, strength: Float)] = []) throws -> NFKMLXWhisperBackend {
         var directory: URL?
         var weights: URL?
         if let location {
@@ -1303,11 +1320,13 @@ public final class NFKMLXWhisper: NSObject {
         if let weights {
             try loadWeights(into: net, from: weights, precision: precision)
         }
+        let strengths = try NFKMLXDecoderAdapters.hold(adapters, in: net, modulePath: adapterModulePath)
         let holder = NFKMLXWhisperHolder(net)
         let backend = NFKMLXWhisperBackend(net: holder.net, tokenizer: tokenizer, identifier: identifier,
                                            languages: directory.flatMap { languageTable(in: $0, for: holder.net) })
         backend.emitsTimestamps = true
         backend.transcribesWholeRecording = true
+        backend.adapterStrengths = strengths
         return backend
     }
 
@@ -1511,6 +1530,11 @@ public final class NFKMLXWhisper: NSObject {
     /// `mlp.0`, `embed_positions` for `positional_embedding`) without changing a single tensor, so a
     /// checkpoint exported from it is the same model under different keys. The mapping is asserted by
     /// renaming a real checkpoint into this form and getting the identical transcription back.
+    /// The port's module path of a layer a transformers adapter names: ``huggingFaceKey(_:)`` of its weight.
+    static func adapterModulePath(_ path: String) -> String? {
+        huggingFaceKey(path + ".weight").map { String($0.dropLast(".weight".count)) }
+    }
+
     static func huggingFaceKey(_ key: String) -> String? {
         if key == "proj_out.weight" { return nil }             // the tied embedding, stored twice
         var name = key

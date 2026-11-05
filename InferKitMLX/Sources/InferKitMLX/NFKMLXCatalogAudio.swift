@@ -184,35 +184,39 @@ extension NFKMLXCatalogAudio {
 
     static var whisper: [NFKMLXCatalogEntry] {
         whisperReleases.map { release in
-            model(release.name, displayName: "Whisper \(release.release)", family: "whisper",
-                  summary: "OpenAI's multilingual speech recognizer, an encoder-decoder transformer over a log-mel spectrogram.",
-                  tasks: [NFKModelTaskTranscription],
-                  inputs: [audioInput("A WAV recording of speech.")],
-                  outputs: [.output(NFKOutputText, required: true, title: "Transcript",
-                                    help: "The transcript of the whole recording, window after window."),
-                            .output(NFKOutputSegments, title: "Segments",
-                                    help: "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on."),
-                            .output(NFKOutputLanguage, title: "Language",
-                                    help: "The language the speech is in, as given or as the model detected it from the first 30 seconds.")],
-                  parameters: [.option(NFKMLXGenerationParameterKey.timestamps, kind: NFKModelOptionKindBoolean, title: "Timestamps",
-                                       help: "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
-                                       defaultValue: true),
-                               .option(NFKParameterSourceLanguage, kind: NFKModelOptionKindChoice, title: "Language",
-                                       help: "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
-                                       choices: NFKMLXWhisper.languageCodes(for: release.variant).map { ($0, $0) }),
-                               .option(NFKMLXGenerationParameterKey.speechTask, kind: NFKModelOptionKindChoice, title: "Task",
-                                       help: "Transcribes the speech in its own language, or translates it into English text.",
-                                       defaultValue: NFKMLXWhisper.transcribeTask,
-                                       choices: [(NFKMLXWhisper.transcribeTask, "Transcribe"), (NFKMLXWhisper.translateTask, "Translate to English")])],
-                  license: .mit(url: "https://github.com/openai/whisper/blob/main/LICENSE",
-                                note: "The tokenizer files come from the release's Hugging Face repository, under the same license."),
-                  release: release.release,
-                  source: .hub(release.repository, revision: release.revision,
-                               files: NFKMLXWhisper.tokenizerFiles.map { NFKModelFile(path: $0, role: NFKModelFileRoleTokenizer) }
-                                   + [NFKModelFile(path: URL(string: release.url)?.lastPathComponent ?? release.release, byteCount: nil,
-                                                   sha256: nil, role: NFKModelFileRoleWeights, optional: false, repository: nil,
-                                                   revision: nil, url: URL(string: release.url), extensions: nil)]),
-                  precision: "float16")
+            var entry = model(release.name, displayName: "Whisper \(release.release)", family: "whisper",
+                              summary: "OpenAI's multilingual speech recognizer, an encoder-decoder transformer over a log-mel spectrogram.",
+                              tasks: [NFKModelTaskTranscription],
+                              inputs: [audioInput("A WAV recording of speech.")],
+                              outputs: [.output(NFKOutputText, required: true, title: "Transcript",
+                                                help: "The transcript of the whole recording, window after window."),
+                                        .output(NFKOutputSegments, title: "Segments",
+                                                help: "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on."),
+                                        .output(NFKOutputLanguage, title: "Language",
+                                                help: "The language the speech is in, as given or as the model detected it from the first 30 seconds.")],
+                              parameters: [.option(NFKMLXGenerationParameterKey.timestamps, kind: NFKModelOptionKindBoolean, title: "Timestamps",
+                                                   help: "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+                                                   defaultValue: true),
+                                           .option(NFKParameterSourceLanguage, kind: NFKModelOptionKindChoice, title: "Language",
+                                                   help: "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
+                                                   choices: NFKMLXWhisper.languageCodes(for: release.variant).map { ($0, $0) }),
+                                           .option(NFKMLXGenerationParameterKey.speechTask, kind: NFKModelOptionKindChoice, title: "Task",
+                                                   help: "Transcribes the speech in its own language, or translates it into English text.",
+                                                   defaultValue: NFKMLXWhisper.transcribeTask,
+                                                   choices: [(NFKMLXWhisper.transcribeTask, "Transcribe"), (NFKMLXWhisper.translateTask, "Translate to English")]),
+                                           .adapterStrengths],
+                              license: .mit(url: "https://github.com/openai/whisper/blob/main/LICENSE",
+                                            note: "The tokenizer files come from the release's Hugging Face repository, under the same license."),
+                              release: release.release,
+                              source: .hub(release.repository, revision: release.revision,
+                                           files: NFKMLXWhisper.tokenizerFiles.map { NFKModelFile(path: $0, role: NFKModelFileRoleTokenizer) }
+                                               + [NFKModelFile(path: URL(string: release.url)?.lastPathComponent ?? release.release, byteCount: nil,
+                                                               sha256: nil, role: NFKModelFileRoleWeights, optional: false, repository: nil,
+                                                               revision: nil, url: URL(string: release.url), extensions: nil)]),
+                              precision: "float16")
+            // An adapter trained with transformers names the release's repository as its base.
+            entry.adapterBases = [release.repository]
+            return entry
         }
     }
 

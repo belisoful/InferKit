@@ -4497,6 +4497,73 @@ def run_qwen3_adapters(image, checkpoint):
     return logits.contiguous()
 
 
+def run_whisper_adapters(image, checkpoint):
+    """Whisper with released LoRA adapters active together, each at its own strength, through PEFT.
+
+    `--checkpoint` is the release's transformers DIRECTORY (`openai/whisper-small`). `IK_WHISPER_ADAPTERS` lists
+    the adapters as `<adapter_model.safetensors path>=<strength>` joined by `;`, each with its
+    `adapter_config.json` beside it, and they are activated and scaled as `run_qwen3_adapters` does. The clip is
+    `run_whisper`'s harmonic sweep; the record carries transformers' log-mel `[frames, mels]`, which the port
+    reads as given so the comparison is of the network, and the decoder's logits over the transcribe prompt and
+    16 tokens the adapted model picks greedily among the text tokens (below `<|endoftext|>`), so no decoding rule
+    stands between the two sides. `base_output` holds the same positions' logits with every adapter at scale 0, so
+    the adapters' own change to the logits compares apart from the base network's distance. The model runs at
+    float32.
+    """
+    import torch
+    from peft import PeftModel
+    from peft.tuners.lora import LoraLayer
+    from transformers import WhisperFeatureExtractor, WhisperForConditionalGeneration, WhisperTokenizer
+
+    entries = [entry.rsplit("=", 1) for entry in os.environ["IK_WHISPER_ADAPTERS"].split(";") if entry]
+    directories = [os.path.dirname(path) for path, _ in entries]
+    strengths = [float(strength) for _, strength in entries]
+    extractor = WhisperFeatureExtractor.from_pretrained(checkpoint)
+    tokenizer = WhisperTokenizer.from_pretrained(checkpoint)
+    base = WhisperForConditionalGeneration.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    model = PeftModel.from_pretrained(base, directories[0], adapter_name="adapter0")
+    for index, directory in enumerate(directories[1:], start=1):
+        model.load_adapter(directory, adapter_name=f"adapter{index}")
+    names = [f"adapter{index}" for index in range(len(directories))]
+    model.base_model.set_adapter(names)
+    for module in model.modules():
+        if isinstance(module, LoraLayer):
+            for name, strength in zip(names, strengths):
+                if name in module.scaling:
+                    module.set_scale(name, strength)
+    model.eval()
+
+    rate, seconds = 16000, 4.0
+    time = np.arange(int(rate * seconds), dtype=np.float32) / rate
+    generator = np.random.default_rng(29)
+    sweep = sum(0.3 / (h + 1) * np.sin(2 * np.pi * (140 + 40 * time) * (h + 1) * time) for h in range(4))
+    wave = np.where(time < 3.0, sweep, 0.05 * generator.standard_normal(time.shape)).astype(np.float32)
+    mel = extractor(wave, sampling_rate=rate, return_tensors="pt").input_features      # [1, mels, frames]
+    tokens = tokenizer.convert_tokens_to_ids(["<|startoftranscript|>", "<|en|>", "<|transcribe|>", "<|notimestamps|>"])
+    text_tokens = tokenizer.convert_tokens_to_ids("<|endoftext|>")
+    # The adapters live in the base model's layers. PEFT's sequence-to-sequence wrapper hands the decoder an
+    # input_ids beside decoder_input_ids, which Whisper's decoder refuses, so the base model runs directly.
+    whisper = model.get_base_model()
+    with torch.no_grad():
+        for _ in range(16):
+            step = whisper(input_features=mel, decoder_input_ids=torch.tensor([tokens])).logits[0, -1]
+            tokens.append(int(torch.argmax(step[:text_tokens])))
+        logits = whisper(input_features=mel, decoder_input_ids=torch.tensor([tokens])).logits[0]
+        for module in model.modules():
+            if isinstance(module, LoraLayer):
+                for name in names:
+                    if name in module.scaling:
+                        module.set_scale(name, 0.0)
+        base = whisper(input_features=mel, decoder_input_ids=torch.tensor([tokens])).logits[0]
+    globals()["_extra"] = {
+        "base_output": base.contiguous(),
+        "mel": mel[0].transpose(0, 1).contiguous(),
+        "tokens": torch.tensor(tokens, dtype=torch.int32),
+        "strengths": torch.tensor(strengths, dtype=torch.float32),
+    }
+    return logits.contiguous()
+
+
 def run_mlx_quantized_release(image, checkpoint):
     """A decoder mlx_lm released affine-quantized, run by transformers on its weights dequantized.
 
@@ -25429,7 +25496,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_adapters": run_qwen3_adapters, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "style_transfer_training": run_style_transfer_training, "adain_training": run_adain_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "qwen3_5_cached": run_qwen3_5_cached, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_adapters": run_qwen3_adapters, "whisper_adapters": run_whisper_adapters, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "style_transfer_training": run_style_transfer_training, "adain_training": run_adain_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "qwen3_5_cached": run_qwen3_5_cached, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,

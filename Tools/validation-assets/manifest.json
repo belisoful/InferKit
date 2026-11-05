@@ -608,6 +608,26 @@
       "note": "An accuracy-recovery adapter for Qwen3-0.6B (codelion/Qwen3-0.6B-accuracy-recovery-lora, apache-2.0), PEFT layout over every attention and feed-forward projection, rank 64, lora_alpha 128; its adapter_config.json (898 B, same revision) sits beside it. The second adapter of the IK_PARITY_QWEN3_ADAPTERS stack, at strength 0.5."
     },
     {
+      "key": "LORA_WHISPER_SMALL_HADRA",
+      "file": "lora/whisper-small-hadra/adapter_model.safetensors",
+      "bytes": 103862440,
+      "url": "https://huggingface.co/algerian-nlp/Hadra-ASR-whisper-small/resolve/7a9a5af0d50bf3a0710f8a1d47622e67b7210def/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_WHISPER_SMALL_HADRA"
+      ],
+      "note": "An Algerian Arabic adapter for Whisper small (algerian-nlp/Hadra-ASR-whisper-small, MIT), PEFT layout over the query, key, value, and output projections and both feed-forward layers of the encoder and decoder, cross-attention included, rank 64; its adapter_config.json (1,261 B, same revision) sits beside it. Its layer names are transformers' and the port reads them through NFKMLXWhisper.adapterModulePath. Held at strength 0.7 and stacked with LORA_WHISPER_SMALL_IGBO at 0.6, measured against PEFT on transformers' log-mel at float32 (run_reference.py whisper_adapters under the ltxtrain env with IK_WHISPER_ADAPTERS='<hadra>=0.7;<igbo>=0.6' on WHISPER_SMALL_HF -> IK_PARITY_WHISPER_ADAPTERS)."
+    },
+    {
+      "key": "LORA_WHISPER_SMALL_IGBO",
+      "file": "lora/whisper-small-igbo/adapter_model.safetensors",
+      "bytes": 14176064,
+      "url": "https://huggingface.co/theelvace/whisper-small-igbo/resolve/44922e988879a8a8c3c6d2a11b53861eb9790593/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_WHISPER_SMALL_IGBO"
+      ],
+      "note": "An Igbo adapter for Whisper small (theelvace/whisper-small-igbo, MIT), PEFT layout over the query and value projections, rank 32; its adapter_config.json (977 B, same revision) sits beside it. The second adapter of the IK_PARITY_WHISPER_ADAPTERS stack, at strength 0.6."
+    },
+    {
       "key": "HYPER_SD15_4STEP_LORA",
       "file": "hyper-sd/Hyper-SD15-4steps-lora.safetensors",
       "bytes": 269127064,
@@ -1777,6 +1797,29 @@
   },
   "releases_comment": "A diffusion release is a directory of files rather than one checkpoint, so it is fetched whole and used in place — the port's `NFKMLXSDReleaseFiles(directoryURL:)` reads the released tree directly, and no conversion step applies. `text_encoder` and `vae` files a release publishes in half precision load through `NFKMLXWeightPrecision.float32`, which is the precision the parity records were measured at.",
   "releases": [
+    {
+      "key": "WHISPER_SMALL_HF",
+      "directory": "whisper-small-hf",
+      "repo": "openai/whisper-small",
+      "revision": "973afd24965f72e36ca33b3055d56a652f456b4d",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "preprocessor_config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt",
+        "normalizer.json",
+        "added_tokens.json",
+        "special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_WHISPER_SMALL_HF": ""
+      },
+      "note": "Whisper small (Apache-2.0) in its transformers layout, 967 MB float32, which the whisper_adapters oracle loads under PEFT. The port reads the same weights from IK_VAL_WHISPER_SMALL."
+    },
     {
       "key": "MAMBA_CODESTRAL",
       "repo": "mistralai/Mamba-Codestral-7B-v0.1",

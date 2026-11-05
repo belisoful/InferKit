@@ -6681,6 +6681,63 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                        "the backend writes the reference's continuation")
     }
 
+    // Two released whisper-small adapters held beside the weights at their own strengths, one over the attention
+    // and feed-forward projections and one over the query and value projections, against PEFT's adapters active
+    // together at those strengths, at float32. The port reads transformers' log-mel as given and the record's
+    // tokens, so the decoder's logits at every position compare the network and its adapters alone.
+    func testWhisperHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_WHISPER_ADAPTERS"], let weights = config["IK_VAL_WHISPER_SMALL"],
+              let hadra = config["IK_VAL_LORA_WHISPER_SMALL_HADRA"],
+              let igbo = config["IK_VAL_LORA_WHISPER_SMALL_IGBO"] else {
+            throw XCTSkip("set IK_PARITY_WHISPER_ADAPTERS, IK_VAL_WHISPER_SMALL, IK_VAL_LORA_WHISPER_SMALL_HADRA, and "
+                          + "IK_VAL_LORA_WHISPER_SMALL_IGBO")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let mel = try XCTUnwrap(arrays["mel"])                      // [frames, mels]
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        let reference = try XCTUnwrap(arrays["output"])
+        let adapters = [URL(fileURLWithPath: hadra), URL(fileURLWithPath: igbo)]
+        XCTAssertEqual(strengths.count, adapters.count, "the record holds one strength per adapter")
+
+        let net = NFKMLXWhisperNet(NFKMLXWhisper.configuration(for: .small))
+        try NFKMLXWhisper.loadWeights(into: net, from: URL(fileURLWithPath: weights), precision: .float32)
+        try NFKMLXDecoderAdapters.hold(zip(adapters, strengths).map { (url: $0, strength: $1) }, in: net,
+                                       modulePath: NFKMLXWhisper.adapterModulePath)
+        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+        func logits(at run: [Float]) -> MLXArray {
+            let logits = NFKMLXAdapterRun.$strengths.withValue(run) {
+                net.decoder(MLXArray(tokens).reshaped([1, tokens.count]), audio: net.encoder(mel.expandedDimensions(axis: 0)))[0]
+            }
+            eval(logits)
+            return logits
+        }
+        let adapted = logits(at: strengths)
+        XCTAssertEqual(adapted.shape, reference.shape)
+        let similarity = cosine(adapted.reshaped([-1]).asArray(Float.self).map(Double.init), theirs)
+        let worst = abs(adapted - reference).max().item(Float.self)
+        print("VALIDATION PARITY whisper-adapters: \(tokens.count) positions at strengths \(strengths), "
+              + "logit cosine \(similarity), worst |difference| \(worst)")
+        XCTAssertEqual(adapted.argMax(axis: -1).asArray(Int32.self), reference.argMax(axis: -1).asArray(Int32.self),
+                       "every position predicts the reference's token")
+        let base = logits(at: strengths.map { _ in 0 })
+        let control = cosine(base.reshaped([-1]).asArray(Float.self).map(Double.init), theirs)
+        print("VALIDATION PARITY whisper-adapters: control at strength 0: logit cosine \(control)")
+        XCTAssertLessThan(control, similarity, "the record tells the adapted model from the base")
+        // The port follows openai-whisper's arithmetic, so its base logits sit a float32 distance from transformers';
+        // the adapters' own change to the logits is compared apart from it.
+        let referenceBase = try XCTUnwrap(arrays["base_output"])
+        let baseSimilarity = cosine(base.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                    referenceBase.reshaped([-1]).asArray(Float.self).map(Double.init))
+        let change = cosine((adapted - base).reshaped([-1]).asArray(Float.self).map(Double.init),
+                            (reference - referenceBase).reshaped([-1]).asArray(Float.self).map(Double.init))
+        print("VALIDATION PARITY whisper-adapters: base network logit cosine \(baseSimilarity); the adapters' change to "
+              + "the logits, cosine \(change)")
+        XCTAssertGreaterThan(similarity, 0.9999999)
+        XCTAssertGreaterThan(change, 0.9999999)
+    }
+
     // MARK: Qwen3-Embedding
 
     // The retrieval task the embedding record is measured on, declared identically to the oracle's so

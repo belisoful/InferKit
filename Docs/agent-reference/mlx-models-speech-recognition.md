@@ -114,6 +114,19 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   optimizer is transformers' `Trainer` default, bias-corrected AdamW with no weight decay, at 1e-4.
   `NFKMLXLoRA.merge(into:)` writes one ordinary checkpoint the backend loads
   (`NFKMLXWhisperTrainingTests.testAnAdaptedRunMergesBackToAnOrdinaryCheckpoint`).
+  **Held adapters (2026-11-05).** `NFKMLXWhisper.catalogBackend` holds the `adapters` load option through
+  `NFKMLXDecoderAdapters.hold(_:in:modulePath:)` with `NFKMLXWhisper.adapterModulePath`, which reads a
+  transformers layer name as `huggingFaceKey(_:)` reads its weight; `proj_out` maps to nothing and is refused.
+  The backend sets the run's strengths inside `run`, which a job's detached task also calls. Transformers
+  scales the query after `q_proj` and openai-whisper splits the scale over the query and the key, both after
+  the projection, so an adapter's product lands before the scale on both sides. Parity
+  (`testWhisperHeldAdaptersMatchTheReference`, `run_reference.py whisper_adapters`, `IK_PARITY_WHISPER_ADAPTERS`):
+  `algerian-nlp/Hadra-ASR-whisper-small` (rank 64 over q/k/v/out and fc1/fc2) at 0.7 and
+  `theelvace/whisper-small-igbo` (rank 32 over q/v) at 0.6, the port reading transformers' log-mel and the
+  record's 20 tokens. The port's base network sits at a logit cosine of 0.99999997 from transformers' on that
+  sequence, since it follows openai-whisper's arithmetic; adapted, 0.99999997 (worst difference 0.0064); the
+  adapters' change to the logits against PEFT's, 0.99999995; at strength 0 the adapted record reads 0.25278.
+  `yuweiiizz/whisper-small-taiwanese-lora` is an AdaLoRA (`lora_E`, `peft_type` ADALORA) and is refused.
 - `NFKMLXParakeet` / `NFKMLXParakeetNet` / `NFKMLXParakeetBackend` (`@objc`) — **Parakeet-TDT 0.6B v2**
   (NVIDIA NeMo, CC-by-4.0), a second on-device speech recognizer beside Whisper and the fast one: a
   **FastConformer** encoder — the NeMo mel front end (128 mels, 25 ms / 10 ms, a 512-point transform,

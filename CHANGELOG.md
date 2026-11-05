@@ -1934,6 +1934,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Whisper holds LoRA adapters beside its weights
+
+- Every Whisper entry takes the `adapters` load option, lists its repository (`openai/whisper-small`, …) under
+  `adapterBases`, and declares `NFKParameterAdapterStrengths`. A PEFT adapter trained with transformers names
+  transformers' modules, and the port, which names them as openai-whisper does, reads each layer under its own
+  name: `model.encoder.layers.N.self_attn.q_proj` is `encoder.blocks.N.attn.query`, and `encoder_attn` is the
+  decoder's cross-attention. The tied output projection takes no adapter.
+- Two released whisper-small adapters held at 0.7 and 0.6, one over every attention and feed-forward projection
+  and one over the query and value projections, change the decoder's logits as PEFT's change them, at a cosine
+  of 0.99999995, on transformers' own log-mel.
+- A held adapter whose configuration names another PEFT type, or whose file holds an AdaLoRA's singular values
+  (`lora_E`), is refused with that reason.
+
 #### The language decoders hold LoRA adapters beside their weights
 
 - The dense and mixture decoders (`qwen3`, `qwen3-moe`, `qwen2-moe`, `mixtral`, `gpt-oss`, `mistral`) and the

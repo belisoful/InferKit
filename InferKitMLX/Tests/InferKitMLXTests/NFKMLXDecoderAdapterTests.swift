@@ -181,6 +181,8 @@ final class NFKMLXDecoderAdapterTests: XCTestCase {
                                             configuration: ["r": 4, "lora_alpha": 8])),
             ("an mlx-lm DoRA", try adapter([path: halves(27, inputs: 64, outputs: 64)], layout: .mlxLM,
                                            configuration: ["fine_tune_type": "dora", "lora_parameters": ["scale": 1.0]])),
+            ("an AdaLoRA", try adapter([path: halves(43, inputs: 64, outputs: 64)], layout: .peft,
+                                       configuration: ["peft_type": "ADALORA", "r": 4, "lora_alpha": 8])),
         ]
         for (reason, file) in refused {
             XCTAssertThrowsError(try NFKMLXDecoderAdapters.hold([(good, 1), (file, 1)], in: net), reason)
@@ -205,6 +207,43 @@ final class NFKMLXDecoderAdapterTests: XCTestCase {
         }
         XCTAssertEqual(try XCTUnwrap(descriptors["smollm2-135m-instruct-gguf"]).adapterBases, [],
                        "a GGUF decoder reads no adapter file")
+    }
+
+    // A transformers Whisper adapter names transformers' modules; the port names them as OpenAI does.
+    func testAWhisperAdapterReachesTheLayersItsTransformersNamesMean() throws {
+        try requireMLXRuntime()
+        var configuration = NFKMLXWhisperConfiguration()
+        configuration.nAudioState = 32
+        configuration.nAudioHead = 2
+        configuration.nAudioLayer = 1
+        configuration.nVocab = 50
+        configuration.nTextState = 32
+        configuration.nTextHead = 2
+        configuration.nTextLayer = 1
+        configuration.nTextCtx = 16
+        let net = NFKMLXWhisperNet(configuration)
+        eval(net)
+        let query = halves(33, inputs: 32, outputs: 32)
+        let file = try adapter(["model.encoder.layers.0.self_attn.q_proj": query,
+                                "model.decoder.layers.0.encoder_attn.v_proj": halves(35, inputs: 32, outputs: 32),
+                                "model.decoder.layers.0.fc1": halves(37, inputs: 32, outputs: 128)],
+                               layout: .peft, configuration: ["r": 4, "lora_alpha": 8])
+        let layers = { Dictionary(net.leafModules().flattened(), uniquingKeysWith: { first, _ in first }) }
+        let x = MLXRandom.normal([1, 3, 32], key: MLXRandom.key(39))
+        let before = (layers()["encoder.blocks.0.attn.query"] as! Linear)(x)
+        eval(before)
+        try NFKMLXDecoderAdapters.hold([(file, 1)], in: net, modulePath: NFKMLXWhisper.adapterModulePath)
+        for path in ["encoder.blocks.0.attn.query", "decoder.blocks.0.cross_attn.value", "decoder.blocks.0.mlp.0"] {
+            XCTAssertTrue(layers()[path] is NFKMLXAdaptedLinear, path)
+        }
+        let detour = matmul(matmul(x, query.down.transposed(1, 0)), query.up.transposed(1, 0)) * 2
+        XCTAssertLessThan(worst((layers()["encoder.blocks.0.attn.query"] as! Linear)(x), before + detour), 1e-5)
+
+        let tied = try adapter(["proj_out": halves(41, inputs: 32, outputs: 50)], layout: .peft,
+                               configuration: ["r": 4, "lora_alpha": 8])
+        XCTAssertThrowsError(try NFKMLXDecoderAdapters.hold([(tied, 1)], in: NFKMLXWhisperNet(configuration),
+                                                            modulePath: NFKMLXWhisper.adapterModulePath),
+                             "the output projection is the tied embedding, which the port holds once")
     }
 
     func testAKeptPromptCacheServesOnlyTheStrengthsItWasComputedAt() {

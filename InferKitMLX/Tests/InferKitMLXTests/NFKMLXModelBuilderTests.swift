@@ -313,7 +313,8 @@ final class NFKMLXModelBuilderTests: XCTestCase {
         XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "flux.1-dev"), [NFKModelLoadOptionResidency])
         XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "wan"),
                        [NFKModelLoadOptionPrecision, NFKModelLoadOptionResidency])
-        XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "whisper-base"), [NFKModelLoadOptionPrecision])
+        XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "whisper-base"),
+                       [NFKModelLoadOptionPrecision, NFKModelLoadOptionAdapters])
         XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "stable-diffusion-v1-5"),
                        [NFKModelLoadOptionPrecision, NFKModelLoadOptionAdapters])
         XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "lcm-lora-sdv1-5"),

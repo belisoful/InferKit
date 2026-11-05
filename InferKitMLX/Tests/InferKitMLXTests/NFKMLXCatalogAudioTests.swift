@@ -172,7 +172,7 @@ final class NFKMLXCatalogAudioTests: XCTestCase {
         for release in NFKMLXCatalogAudio.whisperReleases {
             assertPorts(try entry(release.name), inputs: [NFKInputAudio], outputs: [NFKOutputText, NFKOutputSegments, NFKOutputLanguage],
                         parameters: [NFKMLXGenerationParameterKey.timestamps, NFKParameterSourceLanguage,
-                                     NFKMLXGenerationParameterKey.speechTask])
+                                     NFKMLXGenerationParameterKey.speechTask, NFKParameterAdapterStrengths])
         }
         assertPorts(try entry(NFKMLXFastSpeech2.voiceModelName), inputs: NFKMLXFastSpeech2.voiceInputKeys,
                     outputs: [NFKOutputAudio], parameters: [])
@@ -258,10 +258,14 @@ final class NFKMLXCatalogAudioTests: XCTestCase {
     func testEachSmallRandomWeightBackendDeclaresItsEntrysPortsAndOptions() throws {
         try requireMLXRuntime()
         NFKMLXReferenceModels.registerAll()
+        // A Whisper entry declares the adapter strengths for a load that holds adapters; a backend built
+        // without one does not read them.
         for name in Self.randomWeightNames {
             let backend = try NFKMLXModelRegistry.backend(named: name, weightsURL: nil)
+            let reads = backend.supportedParameterKeys ?? []
             assertPorts(try entry(name), inputs: backend.supportedInputKeys ?? [],
-                        outputs: backend.supportedOutputKeys ?? [], parameters: backend.supportedParameterKeys ?? [])
+                        outputs: backend.supportedOutputKeys ?? [],
+                        parameters: name.hasPrefix("whisper") ? reads.union([NFKParameterAdapterStrengths]) : reads)
         }
     }
 }

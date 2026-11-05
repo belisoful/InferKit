@@ -77796,6 +77796,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "openai/whisper-base"
+      ],
       "displayName" : "Whisper base",
       "engine" : "mlx",
       "family" : "whisper",
@@ -77822,6 +77825,7 @@
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -78257,6 +78261,16 @@
           "title" : "Task"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -78282,6 +78296,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -78402,6 +78424,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "openai/whisper-large"
+      ],
       "displayName" : "Whisper large-v1",
       "engine" : "mlx",
       "family" : "whisper",
@@ -78428,6 +78453,7 @@
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -78863,6 +78889,16 @@
           "title" : "Task"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -78888,6 +78924,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -79008,6 +79052,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "openai/whisper-large-v2"
+      ],
       "displayName" : "Whisper large-v2",
       "engine" : "mlx",
       "family" : "whisper",
@@ -79034,6 +79081,7 @@
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -79469,6 +79517,16 @@
           "title" : "Task"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -79494,6 +79552,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -79614,6 +79680,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "openai/whisper-large-v3"
+      ],
       "displayName" : "Whisper large-v3",
       "engine" : "mlx",
       "family" : "whisper",
@@ -79640,6 +79709,7 @@
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -80079,6 +80149,16 @@
           "title" : "Task"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -80104,6 +80184,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -80224,6 +80312,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "openai/whisper-large-v3-turbo"
+      ],
       "displayName" : "Whisper large-v3-turbo",
       "engine" : "mlx",
       "family" : "whisper",
@@ -80250,6 +80341,7 @@
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -80689,6 +80781,16 @@
           "title" : "Task"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -80714,6 +80816,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -80834,6 +80944,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "openai/whisper-medium"
+      ],
       "displayName" : "Whisper medium",
       "engine" : "mlx",
       "family" : "whisper",
@@ -80860,6 +80973,7 @@
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -81295,6 +81409,16 @@
           "title" : "Task"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -81320,6 +81444,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -81440,6 +81572,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "openai/whisper-small"
+      ],
       "displayName" : "Whisper small",
       "engine" : "mlx",
       "family" : "whisper",
@@ -81466,6 +81601,7 @@
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -81901,6 +82037,16 @@
           "title" : "Task"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -81926,6 +82072,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -82046,6 +82200,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "openai/whisper-tiny"
+      ],
       "displayName" : "Whisper tiny",
       "engine" : "mlx",
       "family" : "whisper",
@@ -82072,6 +82229,7 @@
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "options" : [
@@ -82507,6 +82665,16 @@
           "title" : "Task"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -82532,6 +82700,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [

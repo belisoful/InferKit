@@ -24,7 +24,8 @@ import MLX
 /// - Qwen3.5 (and 3.6 and 3.8): residency, precision, a runtime weight quantization of 2 to 8 bits held
 ///   resident, a draft model and its bits, the context length and cache settings as generation defaults,
 ///   and the adapters held beside its weights;
-/// - Gemma 3n and Whisper: precision;
+/// - Gemma 3n: precision;
+/// - Whisper: precision, and the adapters held beside its weights;
 /// - Stable Diffusion (each release, and each released adapter merged into its base): precision, and the
 ///   adapters held beside its weights;
 /// - Gemma 4, Qwen4-Exp, Granite 4.0-H, Codestral Mamba, MADLAD-400, and Open-Jev: residency and precision;
@@ -436,10 +437,11 @@ enum NFKMLXOptionRegistrations {
             }
             let release = NFKMLXCatalogAudio.whisperRelease(named: name)
             let download = release.flatMap { URL(string: $0.url) }
-            NFKMLXModelRegistry.register(name: name, consumes: [NFKModelLoadOptionPrecision]) { location, options in
+            NFKMLXModelRegistry.register(name: name, consumes: [NFKModelLoadOptionPrecision, NFKModelLoadOptionAdapters]) {
+                location, options in
                 try NFKMLXWhisper.catalogBackend(variant: variant, location: location, weightsDownload: download,
                                                  repository: release?.repository, precision: options.precision ?? .checkpoint,
-                                                 identifier: name)
+                                                 identifier: name, adapters: options.adapters())
             }
         }
     }
