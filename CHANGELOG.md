@@ -2078,6 +2078,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   type, as PEFT holds an adapter over a bfloat16 base. `NFKMLXLoRALinear.resultType` sets that type; nil,
   the default, keeps the type the sum promotes to.
 - The catalog entries of all three declare the residency and precision options.
+- Measured against layer-by-layer references that equal a whole load bit for bit: Qwen3.5-9B at float32
+  with 23 of 32 layers streamed (logit cosine 0.99999999999711, greedy 16/16), Qwen3.8-27B at bfloat16 with
+  49 of 64 streamed (logits 0.99998287 against the bfloat16 reference, greedy 16/16), Codestral Mamba 7B at
+  float32 with 27 of 64 blocks streamed (logits 0.99999999999894, greedy 12/12), and Open-Jev 27B at
+  bfloat16 with 56 of 64 streamed (every question decides as the loader does, logits within 0.0634).
 
 #### Qwen3.5 drafts with a smaller Qwen3.5
 

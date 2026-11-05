@@ -420,7 +420,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   Qwen3.5 text model (`NFKMLXHybridLanguageNet`, `normalizedHidden` skips the output projection, which is
   never built) reads it, and a float32 `Linear(H, 1)` reads the last token. The adapter is rank 8,
   α 16, over `q_proj`/`k_proj`/`v_proj`/`o_proj` and `in_proj_qkv`/`out_proj`, loaded into
-  `NFKMLXLoRALinear` (PEFT's `A`/`B` transposed) at the decoder's element type; the head is `head.pt`
+  `NFKMLXLoRALinear` (PEFT's `A`/`B` transposed) at float32, as PEFT holds an adapter over a bfloat16
+  base, with each adapted projection's output cast to the decoder's element type
+  (`NFKMLXLoRALinear.resultType`); the head is `head.pt`
   (the native torch reader) or a fine-tune's `head.safetensors`. It needs the base at the revision
   `model.json` pins; the download fetches that revision, and the shards from its index.
   **The tokenizer:** Qwen3.5's `Split` regex is Qwen2's with `\p{M}` inside letter runs, plus an NFC
@@ -435,7 +437,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   **The 9B release** does not fit at float32 (about 36 GB). It is checked structurally (160 adapter
   tensors and 426 base parameters against the local safetensors headers, 0 mismatched) and end to end
   at bfloat16 against the loader at bfloat16, its own precision: tokens exact, every question decides
-  the same, logits within 0.14, probabilities within 0.0037. Both sides round every layer, so that bound
+  the same, logits within 0.143, probabilities within 0.0033. Both sides round every layer, so that bound
   is bfloat16's, not the port's; the float32 2B measurement is what carries the arithmetic.
   The bfloat16 run builds only the text model (12.89 GiB of layers and 1.89 GiB of embeddings; the tied
   output projection and the vision tower are never built). Its xctest process peaked at about 16 GB
@@ -444,9 +446,19 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   took about 32 min (2026-09-24), and the cold read from `/Volumes/InferKit Models` is not measured.
   **The 27B release** (`-27B-v1.1`) is the same recipe over `Qwen/Qwen3.8-27B` at `1d4bf0f2`, a
   `qwen3_5` model (64 layers, 48 recurrent and 16 attention, hidden 5120). Its base is about 54 GB. The
-  model store holds it at `InferKit/Qwen3.8-27B`, and no test loads it: the structure test reads the 62 MB adapter package (`OPEN_JEV_27B`) and the
+  model store holds it at `InferKit/Qwen3.8-27B`. The structure test reads the 62 MB adapter package (`OPEN_JEV_27B`) and the
   base's `config.json` and shard-header shapes (`IK_CONFIG_QWEN3_8`, `IK_SHAPES_QWEN3_8`, both
   byte-identical to that revision): 320 adapter tensors and 850 base parameters, 0 mismatched.
+  The base streams the decoder layers past the working set (`residency:` on `openJev` and `backend`,
+  `.automatic` by default), with the adapter and the head held: the adapter wraps the projections before
+  the base loads, and a streamed layer leaves only the release's tensors in the release between passes.
+  Its reference is `run_reference.py open_jev_layerwise`: the loader's own `DecisionModel.load` over a
+  meta-device base whose layers are read in turn (`_read_adapted_layers_in_turn`), with the adapter placed
+  at float32 as PEFT loads it over a held base (`_place_adapter`); `OPEN_JEV_CHECK=1` on the 9B equals the
+  whole loader in all 41 recorded tensors. At bfloat16 against it, with 8 layers held and 56 streamed:
+  tokens exact, every question decides the same, logits within 0.0634, probabilities within 0.0041. The
+  test holds 8 layers, about 8.6 GB, and peaks at about 11 GB; planned against the whole working set the
+  load holds 16.3 GB.
   Qwen3.8's tokenizer adds seven audio and TTS tokens (ids 248070–248076) to Qwen3.5's; the vocabulary,
   merges, and pre-tokenizer are the same. Its chat template injects a reasoning-effort system turn
   unless `enable_thinking` is false; the loader passes false, and that rendering is byte-identical to

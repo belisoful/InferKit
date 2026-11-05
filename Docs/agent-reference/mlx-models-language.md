@@ -529,10 +529,9 @@ attention and feed-forward.
   attention only. Above 4B the float32 load does not fit beside its optimizer state.
 - `NFKMLXHybridLanguage` — the hybrid decoder Qwen3.5, Qwen3.6, and **Qwen3.8** are built from
   (`Qwen3_5ForConditionalGeneration`), at reference parity on the released Qwen3.5-4B (logit
-  cosine 0.9999999999962, every one of the 33 hidden states exact layer by layer). 4B is the smallest
-  release of the family and the only one that fits here; Qwen3.8-27B is the same architecture at
-  ~54 GB, so it is covered structurally (851 parameters, 0 mismatched) and its numerics rest on the
-  4B measurement rather than on a run of its own.
+  cosine 0.9999999999962, every one of the 33 hidden states exact layer by layer). Qwen3.5-9B at float32
+  and Qwen3.8-27B (about 54 GB at bfloat16) do not fit whole here; each streams its later layers and is
+  measured against a layer-by-layer reference, below.
   The per-layer isolation harness found three defects a shape check could not:
   the family normalizes with `x · (1 + w)` where the dense Qwen3 stack and Gemma 4 both scale by
   the weight directly — two conventions from the same vendor, indistinguishable by shape, different in
@@ -552,8 +551,7 @@ attention and feed-forward.
   `partial_rotary_factor` 0.25 turns only 64 of each head's 256 channels. Beside the 4B measurement,
   `NFKMLXHybridLanguageTests` checks every one of the 27B decoder's 851 parameters against that
   checkpoint's own safetensors headers, name by name and shape by shape — read with HTTP range
-  requests, about a megabyte instead of 54 GB — with zero missing and zero mismatched, which is what
-  carries the 4B result across to the size that cannot be run. The converse is asserted too, so the parts deliberately absent are named rather
+  requests, about a megabyte instead of 54 GB — with zero missing and zero mismatched. The converse is asserted too, so the parts deliberately absent are named rather
   than overlooked: 333 tensors are the vision tower and 15 the multi-token-prediction head, and
   851 + 333 + 15 is the checkpoint's full 1199. A small configuration also runs end to end, and the
   recurrence is checked to be causal (appending tokens cannot change an earlier token's output).
@@ -572,7 +570,7 @@ attention and feed-forward.
   core's `qwen35` pre-tokenization, which the text backend now selects from their regex. The recurrence
   runs token by token, so a 90-token prompt is 90 sequential steps per linear layer; that, not the
   parameter count, dominates a short prompt's cost and a fine-tune's graph. `backend(directoryURL:)`
-  (registered `qwen3.5`) serves text through `NFKMLXDecoderBackend`, which Qwen4-Exp (`qwen4-exp`) shares:
+  (registered `qwen3.5-2b`, `qwen3.5` for the 4B, `qwen3.5-9b`, and `qwen3.8-27b`) serves text through `NFKMLXDecoderBackend`, which Qwen4-Exp (`qwen4-exp`) shares:
   a message list rendered through the release's chat template, and generation stopping at every id
   `generation_config.json` names, because an instruct release ends a turn on a marker only that file lists.
   Qwen4-Exp is prefill-only. The hybrid decoder generates through `NFKMLXHybridCache`
@@ -602,6 +600,20 @@ attention and feed-forward.
   (`loadQuantizedWeights`), then the output projection; it is held resident, since a streamed layer is
   read as stored. `NFKMLXQwen4Exp.network(directoryURL:precision:residency:)` returns the bare decoder,
   which `backend(directoryURL:precision:residency:)` returned before it built the text backend.
+  **Streamed releases.** `backend(directoryURL:precision:residency:)` holds the first layers that fit the
+  working set and reads the others from the release on every pass (`NFKMLXHybridLanguageNet.layerStream`).
+  A streamed layer at `.checkpoint` takes the type most of the release carries, as the whole load gives
+  `A_log` and the recurrence's norm. The reference is `run_reference.py dense_layerwise`, which builds
+  transformers' model on the meta device and reads each layer as the forward reaches it; on the 4B its
+  logits, 33 hidden states, and greedy continuation equal a whole load's bit for bit.
+  - Qwen3.5-9B at float32: 23 of 32 layers streamed, 9.94 GB a pass, 29 s a pass; worst hidden state
+    0.99999999999486 (entering layer 17), logits 0.99999999999711, argmax 5/5, greedy 16/16.
+  - Qwen3.8-27B at bfloat16 against the bfloat16 reference: 49 of 64 layers streamed, 37.3 GB a pass,
+    24 s a pass; worst hidden state 0.99992071, logits 0.99998287, argmax 5/5, greedy 16/16.
+  **Drafts.** Each release is a catalog entry of its own, and a smaller one drafts for a larger
+  (`backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)`, the draft quantized to 4
+  bits with its embeddings). Qwen3.5-9B with half its layers streamed (19 of 32), drafted by the 2B,
+  keeps its greedy reply in 4 rounds, 12 of 14 proposals kept.
   **Customization ships** at 2B and 4B (`NFKMLXHybridLanguageTraining.swift`):
   `NFKMLXHybridLanguage.fineTune` adapts every attention projection plus the recurrence's `in_proj_qkv`
   and `out_proj` with LoRA, the target set of the adapter released for this decoder (Open-Jev on
@@ -1411,8 +1423,12 @@ attention and feed-forward.
   the weights' type, and hands the float32 scan output to the gated norm, which multiplies by its
   weight in float32 and rounds once at `out_proj`, as the reference does. The first four blocks of the
   release, cut by `Tools/validation-assets/truncate.py` (1.4 GB), match transformers at float32 in every
-  state, the worst at 0.9999999999993643 and the logits at 0.9999999999989192; the 7B whole never fit
-  float32 here. At bf16 each block on the reference's own input reads at most 0.0010 of the
+  state, the worst at 0.9999999999993643 and the logits at 0.9999999999989192. The 7B at float32 (29 GB)
+  streams the blocks past the working set (`backend(directoryURL:precision:residency:)`), against
+  `run_reference.py mamba2_layerwise`, whose block-by-block run equals a whole load bit for bit: 27 of 64
+  blocks streamed, 5.92 GB a pass, 83.1 GB read in 50 s; worst block state 0.99999999999708 (after block
+  32), logits 0.99999999999894, greedy 12/12. transformers 4.57's `Mamba2Model` records each state after
+  its block, so `hidden.i` is block i's output and the last entry follows `norm_f`. At bf16 each block on the reference's own input reads at most 0.0010 of the
   reference's bf16-versus-float32 distance. In the reference arithmetic the mixer runs transformers'
   chunked scan itself (`NFKReferenceRounding.torchMamba2ChunkScan`), equal to torch's bit for bit.
 - `NFKMLXGraniteHybrid` / `NFKMLXGraniteHybridNet` / `NFKMLXGraniteBackend` (`@objc`) — the Granite 4.0-H

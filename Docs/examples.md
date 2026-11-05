@@ -238,7 +238,8 @@ to logits `[1, length, vocabularySize]`.
 A Qwen3.5 release that does not fit the working set (Qwen3.8 27B at bfloat16) streams the layers past
 what fits on every pass, as `backend(directoryURL:precision:residency:)` chooses. Qwen3.5 2B, 4B, and 9B
 share the vocabulary of every larger release and draft for it: each round the draft proposes a few tokens
-and one pass of the larger release scores them.
+and one pass of the larger release scores them. Measured on the 9B streamed beside the 2B at 4 bits: its
+greedy reply in 4 rounds, 12 of 14 proposals kept.
 
 <!-- objc-check: given NSURL *draftDirectory; -->
 ```objc

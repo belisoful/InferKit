@@ -594,8 +594,8 @@ models.
   text through `backend(directoryURL:)` (`qwen4-exp`).
 - **`NFKMLXHybridLanguage`** — the Qwen3.5 / 3.6 / 3.8 decoder: a gated delta-rule recurrence in three
   of every four layers (a fixed-size state instead of a growing cache) with gated full attention in the
-  fourth. At reference parity on the released Qwen3.5-4B, layer by layer; the 27B is accounted for by
-  shape against its checkpoint headers. A release serves text through `backend(directoryURL:)`
+  fourth. At reference parity on the released Qwen3.5-4B, layer by layer, and on Qwen3.5-9B at float32 and
+  Qwen3.8-27B at bfloat16 with their later layers streamed. A release serves text through `backend(directoryURL:)`
   (`qwen3.5-2b`, `qwen3.5` for the 4B, `qwen3.5-9b`, `qwen3.8-27b`), an `NFKMLXDecoderBackend` that renders
   the release's chat template. A release past the working set streams its later layers on every pass, and
   a smaller release drafts for a larger one.
