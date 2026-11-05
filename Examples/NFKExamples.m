@@ -1612,6 +1612,35 @@
 	XCTAssertEqualObjects(upscaler.inputModalities, (@[ NFKModelValueTypeImage ]));
 }
 
+- (void)testExampleRankingATasksModelsByPublishedScores
+{
+	NSString *json = @"{ \"schemaVersion\": 2, \"kind\": \"inferkit.model-catalog\", \"models\": ["
+		"{ \"id\": \"example.asr-large\", \"family\": \"example\", \"engine\": \"plugin\", \"tasks\": [\"transcription\"],"
+		"\"qualityScores\": [{ \"task\": \"transcription\", \"benchmark\": \"open-asr-leaderboard\", \"snapshot\": \"example\","
+		"\"metric\": \"WER\", \"value\": 6.5, \"higherIsBetter\": false, \"source\": \"https://example.com/asr\" }] },"
+		"{ \"id\": \"example.asr-small\", \"family\": \"example\", \"engine\": \"plugin\", \"tasks\": [\"transcription\"],"
+		"\"qualityScores\": [{ \"task\": \"transcription\", \"benchmark\": \"open-asr-leaderboard\", \"snapshot\": \"example\","
+		"\"metric\": \"WER\", \"value\": 9.1, \"higherIsBetter\": false, \"source\": \"https://example.com/asr\" }] } ] }";
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	NSError *error = nil;
+	XCTAssertTrue([catalog addDescriptorsFromManifestData:[json dataUsingEncoding:NSUTF8StringEncoding] error:&error],
+				  @"%@", error);
+
+	NSMutableArray<NSString *> *lines = [NSMutableArray array];
+	for (NFKModelQualityRanking *ranking in [catalog qualityRankingsForTask:NFKModelTaskTranscription]) {
+		NFKModelQualityScore *score = ranking.score;               // the Open ASR Leaderboard's average WER
+		NSString *line = [NSString stringWithFormat:@"#%ld of %ld: %@ %.2f %@", (long)ranking.rank,
+						  (long)ranking.rankedCount, ranking.modelIdentifier, score.value, score.metric];
+		NSURL *source = score.sourceURL;                           // where the score is published
+		XCTAssertNotNil(source);
+		[lines addObject:line];
+	}
+	XCTAssertEqualObjects(lines, (@[ @"#1 of 2: example.asr-large 6.50 WER", @"#2 of 2: example.asr-small 9.10 WER" ]));
+	NFKModelQualityRanking *small = [catalog qualityRankingForModelIdentifier:@"example.asr-small"
+																		 task:NFKModelTaskTranscription];
+	XCTAssertEqual(small.rank, 2);
+}
+
 - (void)testExampleAPackageListsItsDescriptors
 {
 	[NFKModelCatalog registerProviderClassName:@"ExampleModelDescriptors"];

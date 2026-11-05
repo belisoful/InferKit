@@ -39,6 +39,7 @@ NSString * const NFKModelValueTypeStructured		= @"structured";
 // The tasks a capability already names keep the capability's string, so a task resolves through
 // NFKDynamicBackend as it is.
 NSString * const NFKModelTaskTextGeneration			= @"text-generation";
+NSString * const NFKModelTaskCodeGeneration			= @"code-generation";
 NSString * const NFKModelTaskVisionQuestionAnswering = @"vision-question-answering";
 NSString * const NFKModelTaskTranscription			= @"transcription";
 NSString * const NFKModelTaskTranslation			= @"translation";

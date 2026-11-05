@@ -139,10 +139,10 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
 `Tests/`, and `Examples/` found that one instance.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 2026 tests
-   (2026-11-05): the Objective-C `- (void)test` methods under `Tests/` (1908) and in
-   `Examples/NFKExamples.m` (62, the `InferKitExamples` target), plus the `func test` methods in
-   `SwiftExamples/` (56).
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 2040 tests
+   (2026-11-05): the Objective-C `- (void)test` methods under `Tests/` (1920) and in
+   `Examples/NFKExamples.m` (63, the `InferKitExamples` target), plus the `func test` methods in
+   `SwiftExamples/` (57).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
    through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64`.
    A tvOS destination does not resolve here and that is not the same as tvOS being unbuildable.
@@ -215,7 +215,7 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 3238 — the model and API suite
+   xcodebuild test -scheme InferKitMLXTests        …    # 3244 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  159 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   67 — the Objective-C ones
    ```

@@ -294,6 +294,20 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
   manifest stating 1e12 would hang the estimate. It is the only such count in the schema; the option
   combinations already stop at 4096, and the other numbers enter arithmetic only. Data that does not
   parse keeps the parser's error as `NSUnderlyingErrorKey` and its debug description in the message.
+- **Quality scores are published figures, ranked by computation** (`NFKModelQuality.h`, added
+  2026-11-05). The decisions:
+  - A score is read from its source, never measured here, and it carries that source's URL and the day
+    it was read. A score is entered only from a page that was fetched and shows the number.
+  - A score belongs to the release measured, at its own precision: it names its variant, or none for the
+    default, and a quantized variant does not inherit it.
+  - The benchmark identifier is `benchmark@snapshot`. Scores of different snapshots never compare, because a
+    benchmark's questions and its leaderboard change. A ranking takes the snapshot the most of a task's
+    models report (the later on a tie) and leaves out a model without a score there.
+  - One reference benchmark per task (`+referenceBenchmarkForTask:`), the developer's choice: MMLU-Pro,
+    LiveCodeBench, the Open ASR Leaderboard's average WER, FLORES-200 chrF++, GenEval, and TTS Arena.
+    Coding is its own task (`code-generation`). A decoder lists it when a coding score exists.
+  - A resolved descriptor (`NFKModelResolver`) is another release, so it carries no scores.
+  - The MLX table is `NFKMLXCatalogQuality.swift`; `mlx-companion.md` describes refreshing it.
 - `descriptorWithIdentifier:derivedFromBackend:` reads the optional `supportedInputKeys`,
   `supportedParameterKeys`, and `supportedOutputKeys` (the last added to `NFKInferenceBackend` with
   the catalog), sorts each, and types each key from the table. The family is the backend's

@@ -91,6 +91,9 @@ extern NSString * const NFKModelValueTypeStructured;
 /*! Writing text from a prompt or a conversation. Equal to NFKCapabilityTextGeneration. Introduced in
 	InferKit 0.4.0. */
 extern NSString * const NFKModelTaskTextGeneration;
+/*! Writing and completing program code. A decoder lists it beside NFKModelTaskTextGeneration when its
+	code is measured apart from its prose. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelTaskCodeGeneration;
 /*! Answering a question about an image or a clip. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelTaskVisionQuestionAnswering;
 /*! Turning speech into text. Equal to NFKCapabilityTranscription. Introduced in InferKit 0.4.0. */

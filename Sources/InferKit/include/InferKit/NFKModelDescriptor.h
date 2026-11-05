@@ -17,6 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 @class NFKModelMemoryFigure;
 @class NFKModelMemoryModel;
 @class NFKModelPreset;
+@class NFKModelQualityScore;
 @class NFKModelRequirements;
 
 /*!
@@ -707,6 +708,10 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The bases of the adapters the model takes through NFKModelLoadOptionAdapters, NFKModelAdapterBase*
 	strings. Empty for a model that takes no adapters. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy) NSArray<NSString *> *adapterBases;
+/*! The published benchmark scores of the model's releases (NFKModelQuality.h). Each score names a task
+	the descriptor lists and a variant it has, or no variant for the default one. Introduced in InferKit
+	0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NFKModelQualityScore *> *qualityScores;
 /*! The model's releases. */
 @property (nonatomic, readonly, copy) NSArray<NFKModelVariant *> *variants;
 /*! The variant whose isDefault is YES, else the first variant, else nil. */
@@ -747,11 +752,38 @@ NS_ASSUME_NONNULL_BEGIN
 						   presets:(nullable NSArray<NFKModelPreset *> *)presets
 						modelTypes:(nullable NSArray<NSString *> *)modelTypes
 					  adapterBases:(nullable NSArray<NSString *> *)adapterBases
+					 qualityScores:(nullable NSArray<NFKModelQualityScore *> *)qualityScores
 						   standIn:(BOOL)standIn
 				 introducedVersion:(nullable NSString *)introducedVersion
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
 
-/*! A descriptor with every field but adapterBases, which is empty. */
+/*! A descriptor with every field but qualityScores, which is empty. */
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+							family:(NSString *)family
+						   summary:(nullable NSString *)summary
+							engine:(NSString *)engine
+					  registryName:(nullable NSString *)registryName
+				 providerClassName:(nullable NSString *)providerClassName
+							 tasks:(nullable NSArray<NSString *> *)tasks
+				   inputModalities:(nullable NSArray<NSString *> *)inputModalities
+				  outputModalities:(nullable NSArray<NSString *> *)outputModalities
+							inputs:(nullable NSArray<NFKModelPort *> *)inputs
+						   outputs:(nullable NSArray<NFKModelPort *> *)outputs
+						   options:(nullable NSArray<NFKModelOption *> *)options
+						  variants:(nullable NSArray<NFKModelVariant *> *)variants
+						   license:(nullable NFKModelLicense *)license
+					  requirements:(nullable NFKModelRequirements *)requirements
+					   residencies:(nullable NSArray<NSString *> *)residencies
+					   memoryModel:(nullable NFKModelMemoryModel *)memoryModel
+						   presets:(nullable NSArray<NFKModelPreset *> *)presets
+						modelTypes:(nullable NSArray<NSString *> *)modelTypes
+					  adapterBases:(nullable NSArray<NSString *> *)adapterBases
+						   standIn:(BOOL)standIn
+				 introducedVersion:(nullable NSString *)introducedVersion
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions;
+
+/*! A descriptor with every field but adapterBases and qualityScores, which are empty. */
 - (instancetype)initWithIdentifier:(NSString *)identifier
 					   displayName:(nullable NSString *)displayName
 							family:(NSString *)family
@@ -776,7 +808,7 @@ NS_ASSUME_NONNULL_BEGIN
 				 introducedVersion:(nullable NSString *)introducedVersion
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions;
 
-/*! A descriptor with every field but modelTypes and adapterBases, which are empty. */
+/*! A descriptor with every field but modelTypes, adapterBases, and qualityScores, which are empty. */
 - (instancetype)initWithIdentifier:(NSString *)identifier
 					   displayName:(nullable NSString *)displayName
 							family:(NSString *)family
@@ -838,7 +870,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! Reads a descriptor from its manifest dictionary. Returns nil and sets error when id, family, or
 	engine is missing, a field or a nested value is malformed, or two inputs, outputs, or options share
-	a key, or two variants or presets share an id. */
+	a key, or two variants or presets share an id. A quality score fails it when the score's task is not
+	among the tasks, its variant is not among the variants, or another score of the same variant shares
+	its task and benchmark identifier. */
 + (nullable instancetype)descriptorWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
 /*! The descriptor as its manifest dictionary, every nested value included, with the extensions
@@ -847,6 +881,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! The variant with the identifier, or nil. */
 - (nullable NFKModelVariant *)variantWithIdentifier:(NSString *)identifier;
+
+/*! The scores of one variant, nil for the default variant. A score that names no variant belongs to the
+	default variant. Introduced in InferKit 0.4.0. */
+- (NSArray<NFKModelQualityScore *> *)qualityScoresForVariant:(nullable NSString *)variantIdentifier;
 
 /*! The declared option with the key, else the derived variant option when the key is
 	NFKModelLoadOptionVariant, else nil. Introduced in InferKit 0.4.0. */

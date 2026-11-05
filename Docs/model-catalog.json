@@ -1509,6 +1509,19 @@
           "valueType" : "text"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "open-asr-leaderboard",
+          "higherIsBetter" : false,
+          "metric" : "average WER",
+          "note" : "The mean of the leaderboard's nine default English test sets, which leave out LibriSpeech from 2026-11-02.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "2026-11-02",
+          "source" : "https://huggingface.co/spaces/hf-audio/open_asr_leaderboard",
+          "task" : "transcription",
+          "value" : 8.3499999999999996
+        }
+      ],
       "registryName" : "canary-1b-v2",
       "requirements" : {
         "minimumMemoryBytes" : 12534029855,
@@ -9113,6 +9126,19 @@
           "valueType" : "image"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "1024 by 1024; SANA report, Tables 7 and 10.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2410.10629",
+          "task" : "text-to-image",
+          "value" : 0.67000000000000004
+        }
+      ],
       "registryName" : "flux.1-dev",
       "requirements" : {
         "minimumMemoryBytes" : 33253633222,
@@ -9386,6 +9412,19 @@
           "required" : true,
           "title" : "Image",
           "valueType" : "image"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "1024 by 1024; SANA report, Tables 7 and 10.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2410.10629",
+          "task" : "text-to-image",
+          "value" : 0.70999999999999996
         }
       ],
       "registryName" : "flux.1-schnell",
@@ -11495,6 +11534,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned, zero-shot; Gemma 3 report, Table 6.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2503.19786",
+          "task" : "text-generation",
+          "value" : 60.600000000000001
+        }
+      ],
       "registryName" : "gemma-3-12b-it",
       "requirements" : {
         "minimumMemoryBytes" : 33728961619,
@@ -11806,6 +11858,19 @@
           },
           "suggested" : true,
           "title" : "Precise"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned, zero-shot; Gemma 3 report, Table 6.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2503.19786",
+          "task" : "text-generation",
+          "value" : 14.699999999999999
         }
       ],
       "registryName" : "gemma-3-1b-it",
@@ -12437,6 +12502,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned, zero-shot; Gemma 3 report, Table 6.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2503.19786",
+          "task" : "text-generation",
+          "value" : 67.5
+        }
+      ],
       "registryName" : "gemma-3-27b-it",
       "requirements" : {
         "minimumMemoryBytes" : 69599741855,
@@ -12750,6 +12828,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned, zero-shot; Gemma 3 report, Table 6.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2503.19786",
+          "task" : "text-generation",
+          "value" : 43.600000000000001
+        }
+      ],
       "registryName" : "gemma-3-4b-it",
       "requirements" : {
         "minimumMemoryBytes" : 15170736753,
@@ -13022,6 +13113,30 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned, zero-shot.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/google/gemma-3n-E2B-it",
+          "task" : "text-generation",
+          "value" : 40.5
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "Zero-shot; the card states no problem window.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v5",
+          "source" : "https://huggingface.co/google/gemma-3n-E2B-it",
+          "task" : "code-generation",
+          "value" : 18.600000000000001
+        }
+      ],
       "registryName" : "gemma-3n-e2b-it",
       "requirements" : {
         "minimumMemoryBytes" : 17851580989,
@@ -13039,7 +13154,8 @@
       "tasks" : [
         "text-generation",
         "vision-question-answering",
-        "transcription"
+        "transcription",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -13273,6 +13389,30 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned, zero-shot.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/google/gemma-3n-E4B-it",
+          "task" : "text-generation",
+          "value" : 50.600000000000001
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "Zero-shot; the card states no problem window.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v5",
+          "source" : "https://huggingface.co/google/gemma-3n-E4B-it",
+          "task" : "code-generation",
+          "value" : 25.699999999999999
+        }
+      ],
       "registryName" : "gemma-3n-e4b-it",
       "requirements" : {
         "minimumMemoryBytes" : 23523439624,
@@ -13290,7 +13430,8 @@
       "tasks" : [
         "text-generation",
         "vision-question-answering",
-        "transcription"
+        "transcription",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -13692,6 +13833,30 @@
           "valueType" : "text"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned; the card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/google/gemma-4-12B-it",
+          "task" : "text-generation",
+          "value" : 77.200000000000003
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "The card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v6",
+          "source" : "https://huggingface.co/google/gemma-4-12B-it",
+          "task" : "code-generation",
+          "value" : 72
+        }
+      ],
       "registryName" : "gemma-4-12b-it",
       "requirements" : {
         "minimumMemoryBytes" : 61333986109,
@@ -13708,7 +13873,8 @@
       "standIn" : false,
       "summary" : "Gemma 4 12B IT, a dense Gemma 4 decoder that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -14017,6 +14183,30 @@
           "valueType" : "text"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned; the card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/google/gemma-4-26B-A4B-it",
+          "task" : "text-generation",
+          "value" : 82.599999999999994
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "The card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v6",
+          "source" : "https://huggingface.co/google/gemma-4-26B-A4B-it",
+          "task" : "code-generation",
+          "value" : 77.099999999999994
+        }
+      ],
       "registryName" : "gemma-4-26b-a4b-it",
       "requirements" : {
         "minimumMemoryBytes" : 126492602495,
@@ -14033,7 +14223,8 @@
       "standIn" : false,
       "summary" : "Gemma 4 26B-A4B IT, a mixture-of-experts Gemma 4 decoder that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -14463,6 +14654,30 @@
           "valueType" : "text"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned; the card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/google/gemma-4-31B-it",
+          "task" : "text-generation",
+          "value" : 85.200000000000003
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "The card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v6",
+          "source" : "https://huggingface.co/google/gemma-4-31B-it",
+          "task" : "code-generation",
+          "value" : 80
+        }
+      ],
       "registryName" : "gemma-4-31b-it",
       "requirements" : {
         "minimumMemoryBytes" : 152220379765,
@@ -14479,7 +14694,8 @@
       "standIn" : false,
       "summary" : "Gemma 4 31B IT, a dense Gemma 4 decoder that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -14812,6 +15028,30 @@
           "valueType" : "text"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned; the card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/google/gemma-4-E2B-it",
+          "task" : "text-generation",
+          "value" : 60
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "The card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v6",
+          "source" : "https://huggingface.co/google/gemma-4-E2B-it",
+          "task" : "code-generation",
+          "value" : 44
+        }
+      ],
       "registryName" : "gemma-4-e2b-it",
       "requirements" : {
         "minimumMemoryBytes" : 29161980250,
@@ -14828,7 +15068,8 @@
       "standIn" : false,
       "summary" : "Gemma 4 E2B IT, a dense Gemma 4 decoder that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -15249,6 +15490,30 @@
           "valueType" : "text"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Instruction-tuned; the card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/google/gemma-4-E4B-it",
+          "task" : "text-generation",
+          "value" : 69.400000000000006
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "The card does not state the thinking mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v6",
+          "source" : "https://huggingface.co/google/gemma-4-E4B-it",
+          "task" : "code-generation",
+          "value" : 52
+        }
+      ],
       "registryName" : "gemma-4-e4b-it",
       "requirements" : {
         "minimumMemoryBytes" : 42681878786,
@@ -15265,7 +15530,8 @@
       "standIn" : false,
       "summary" : "Gemma 4 E4B IT, a dense Gemma 4 decoder that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -16316,6 +16582,19 @@
           "title" : "Fast"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Medium reasoning effort, the release's default; measured by TIGER-Lab.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/spaces/TIGER-Lab/MMLU-Pro",
+          "task" : "text-generation",
+          "value" : 73.140000000000001
+        }
+      ],
       "registryName" : "gpt-oss-20b",
       "requirements" : {
         "minimumMemoryBytes" : 21479480772,
@@ -16626,6 +16905,19 @@
           "required" : false,
           "title" : "Finish reason",
           "valueType" : "text"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "5-shot, chain of thought.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/ibm-granite/granite-4.0-h-1b",
+          "task" : "text-generation",
+          "value" : 32.859999999999999
         }
       ],
       "registryName" : "granite-4.0-h",
@@ -16963,6 +17255,19 @@
           "required" : false,
           "title" : "Finish reason",
           "valueType" : "text"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "5-shot, chain of thought.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/ibm-granite/granite-4.0-h-tiny",
+          "task" : "text-generation",
+          "value" : 44.939999999999998
         }
       ],
       "registryName" : "granite-4.0-h-tiny",
@@ -22436,6 +22741,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "Hyper-SDXL's 4-step configuration at 1024 by 1024; SenseFlow paper, Table 4.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2506.00523",
+          "task" : "text-to-image",
+          "value" : 0.53979999999999995
+        }
+      ],
       "registryName" : "hyper-sdxl-4steps-lora",
       "requirements" : {
         "minimumMemoryBytes" : 14337599233,
@@ -23388,6 +23706,19 @@
           "required" : true,
           "title" : "Audio",
           "valueType" : "audio"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "tts-arena",
+          "higherIsBetter" : true,
+          "metric" : "Elo",
+          "note" : "Kokoro v1.0, 1033 votes; the arena refits every rating as votes arrive.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v2-2026-11-05",
+          "source" : "https://huggingface.co/spaces/TTS-AGI/TTS-Arena-V2",
+          "task" : "speech-synthesis",
+          "value" : 1465
         }
       ],
       "registryName" : "kokoro-82m",
@@ -29526,6 +29857,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "5-shot, chain of thought; published as 0.663.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/mistralai/Mistral-Small-24B-Instruct-2501",
+          "task" : "text-generation",
+          "value" : 66.299999999999997
+        }
+      ],
       "registryName" : "mistral-small-24b-instruct-2501",
       "requirements" : {
         "minimumMemoryBytes" : 61306896866,
@@ -30351,6 +30695,19 @@
           },
           "suggested" : true,
           "title" : "Precise"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Measured by TIGER-Lab.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/spaces/TIGER-Lab/MMLU-Pro",
+          "task" : "text-generation",
+          "value" : 43.270000000000003
         }
       ],
       "registryName" : "mixtral-8x7b-instruct",
@@ -32530,6 +32887,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "Reasoning on; the version and window are those of NVIDIA's reproduction guide the card links.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v5-2407-2412",
+          "source" : "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-9B-v2",
+          "task" : "code-generation",
+          "value" : 71.099999999999994
+        }
+      ],
       "registryName" : "nemotron-nano-2",
       "requirements" : {
         "minimumMemoryBytes" : 25966378768,
@@ -32546,7 +32916,8 @@
       "standIn" : false,
       "summary" : "NVIDIA Nemotron Nano 2, a hybrid Mamba-2, attention, and MLP decoder that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -32747,6 +33118,19 @@
           "valueType" : "text"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "flores-200",
+          "higherIsBetter" : true,
+          "metric" : "chrF++",
+          "note" : "The average over English to 201 languages, 201 languages to English, and 200 sampled pairs without English; NLLB report, Table 41, row \"dense distilled 615M\".",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "devtest-602",
+          "source" : "https://arxiv.org/abs/2207.04672",
+          "task" : "translation",
+          "value" : 44.600000000000001
+        }
+      ],
       "registryName" : "nllb-200",
       "requirements" : {
         "minimumMemoryBytes" : 5789312770,
@@ -32939,6 +33323,19 @@
           "required" : true,
           "title" : "Translation",
           "valueType" : "text"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "flores-200",
+          "higherIsBetter" : true,
+          "metric" : "chrF++",
+          "note" : "The average over English to 201 languages, 201 languages to English, and 200 sampled pairs without English; NLLB report, Table 41, row \"dense baseline 1.3B\".",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "devtest-602",
+          "source" : "https://arxiv.org/abs/2207.04672",
+          "task" : "translation",
+          "value" : 46.399999999999999
         }
       ],
       "registryName" : "nllb-200-1.3b",
@@ -33326,6 +33723,19 @@
           "required" : true,
           "title" : "Translation",
           "valueType" : "text"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "flores-200",
+          "higherIsBetter" : true,
+          "metric" : "chrF++",
+          "note" : "The average over English to 201 languages, 201 languages to English, and 200 sampled pairs without English; NLLB report, Table 41, row \"dense distilled 1.3B\".",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "devtest-602",
+          "source" : "https://arxiv.org/abs/2207.04672",
+          "task" : "translation",
+          "value" : 46.899999999999999
         }
       ],
       "registryName" : "nllb-200-distilled-1.3b",
@@ -35544,6 +35954,19 @@
           "required" : true,
           "title" : "Tokens",
           "valueType" : "segments"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "open-asr-leaderboard",
+          "higherIsBetter" : false,
+          "metric" : "average WER",
+          "note" : "The mean of the leaderboard's nine default English test sets, which leave out LibriSpeech from 2026-11-02.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "2026-11-02",
+          "source" : "https://huggingface.co/spaces/hf-audio/open_asr_leaderboard",
+          "task" : "transcription",
+          "value" : 6.9100000000000001
         }
       ],
       "registryName" : "parakeet-tdt",
@@ -38651,6 +39074,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "Thinking mode, the release's default; Qwen3 report.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v5-2410-2502",
+          "source" : "https://arxiv.org/abs/2505.09388",
+          "task" : "code-generation",
+          "value" : 12.300000000000001
+        }
+      ],
       "registryName" : "qwen3-0.6b",
       "requirements" : {
         "minimumMemoryBytes" : 4642416038,
@@ -38667,7 +39103,8 @@
       "standIn" : false,
       "summary" : "Qwen3 0.6B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -39568,6 +40005,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "Thinking mode, the release's default; Qwen3 report.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v5-2410-2502",
+          "source" : "https://arxiv.org/abs/2505.09388",
+          "task" : "code-generation",
+          "value" : 33.200000000000003
+        }
+      ],
       "registryName" : "qwen3-1.7b",
       "requirements" : {
         "minimumMemoryBytes" : 10386128415,
@@ -39584,7 +40034,8 @@
       "standIn" : false,
       "summary" : "Qwen3 1.7B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -40500,6 +40951,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "Thinking mode, the release's default; Qwen3 report.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v5-2410-2502",
+          "source" : "https://arxiv.org/abs/2505.09388",
+          "task" : "code-generation",
+          "value" : 63.5
+        }
+      ],
       "registryName" : "qwen3-14b",
       "requirements" : {
         "minimumMemoryBytes" : 40591376866,
@@ -40516,7 +40980,8 @@
       "standIn" : false,
       "summary" : "Qwen3 14B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -41329,6 +41794,30 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Thinking mode, the release's default; reported by Qwen to TIGER-Lab.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/spaces/TIGER-Lab/MMLU-Pro",
+          "task" : "text-generation",
+          "value" : 78.5
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "Thinking mode, the release's default; Qwen3 report.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v5-2410-2502",
+          "source" : "https://arxiv.org/abs/2505.09388",
+          "task" : "code-generation",
+          "value" : 62.600000000000001
+        }
+      ],
       "registryName" : "qwen3-30b-a3b",
       "requirements" : {
         "minimumMemoryBytes" : 77366900857,
@@ -41345,7 +41834,8 @@
       "standIn" : false,
       "summary" : "Qwen3 30B-A3B, a mixture-of-experts decoder that writes text, calls tools, and follows a JSON Schema.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -42263,6 +42753,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "Thinking mode, the release's default; Qwen3 report.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v5-2410-2502",
+          "source" : "https://arxiv.org/abs/2505.09388",
+          "task" : "code-generation",
+          "value" : 65.700000000000003
+        }
+      ],
       "registryName" : "qwen3-32b",
       "requirements" : {
         "minimumMemoryBytes" : 83403477233,
@@ -42279,7 +42782,8 @@
       "standIn" : false,
       "summary" : "Qwen3 32B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -43187,6 +43691,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "Thinking mode, the release's default; Qwen3 report.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v5-2410-2502",
+          "source" : "https://arxiv.org/abs/2505.09388",
+          "task" : "code-generation",
+          "value" : 54.200000000000003
+        }
+      ],
       "registryName" : "qwen3-4b",
       "requirements" : {
         "minimumMemoryBytes" : 15228097958,
@@ -43203,7 +43720,8 @@
       "standIn" : false,
       "summary" : "Qwen3 4B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -45377,6 +45895,30 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "The card does not label the mode; the release thinks by default.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/Qwen/Qwen3.5-4B",
+          "task" : "text-generation",
+          "value" : 79.099999999999994
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "The card does not label the mode; the release thinks by default.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v6",
+          "source" : "https://huggingface.co/Qwen/Qwen3.5-4B",
+          "task" : "code-generation",
+          "value" : 55.799999999999997
+        }
+      ],
       "registryName" : "qwen3.5",
       "requirements" : {
         "minimumMemoryBytes" : 16175203389,
@@ -45393,7 +45935,8 @@
       "standIn" : false,
       "summary" : "Qwen3.5 4B, a hybrid linear- and full-attention decoder that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -45998,6 +46541,19 @@
           },
           "suggested" : true,
           "title" : "Precise"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "Non-thinking mode, the release's default.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/Qwen/Qwen3.5-2B",
+          "task" : "text-generation",
+          "value" : 55.299999999999997
         }
       ],
       "registryName" : "qwen3.5-2b",
@@ -46718,6 +47274,30 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "mmlu-pro",
+          "higherIsBetter" : true,
+          "metric" : "accuracy",
+          "note" : "The card does not label the mode; the release thinks by default.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://huggingface.co/Qwen/Qwen3.5-9B",
+          "task" : "text-generation",
+          "value" : 82.5
+        },
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "The card does not label the mode; the release thinks by default.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v6",
+          "source" : "https://huggingface.co/Qwen/Qwen3.5-9B",
+          "task" : "code-generation",
+          "value" : 65.599999999999994
+        }
+      ],
       "registryName" : "qwen3.5-9b",
       "requirements" : {
         "minimumMemoryBytes" : 27924001695,
@@ -46734,7 +47314,8 @@
       "standIn" : false,
       "summary" : "Qwen3.5 9B, a hybrid linear- and full-attention decoder that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -47444,6 +48025,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "The card does not label the mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v6",
+          "source" : "https://huggingface.co/Qwen/Qwen3.8-27B",
+          "task" : "code-generation",
+          "value" : 90.299999999999997
+        }
+      ],
       "registryName" : "qwen3.8-27b",
       "requirements" : {
         "minimumMemoryBytes" : 70736774890,
@@ -47460,7 +48054,8 @@
       "standIn" : false,
       "summary" : "Qwen3.8 27B, a hybrid linear- and full-attention decoder that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -47811,6 +48406,19 @@
           "valueType" : "text"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "livecodebench",
+          "higherIsBetter" : true,
+          "metric" : "pass@1",
+          "note" : "The card does not label the mode.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v6",
+          "source" : "https://huggingface.co/Qwen/Qwen3.8-Flash-Next",
+          "task" : "code-generation",
+          "value" : 91.900000000000006
+        }
+      ],
       "registryName" : "qwen4-exp",
       "requirements" : {
         "minimumMemoryBytes" : 428582271088,
@@ -47827,7 +48435,8 @@
       "standIn" : false,
       "summary" : "Qwen3.8-Flash-Next, a sparse mixture-of-experts decoder with hyper-connections that writes text and calls tools.",
       "tasks" : [
-        "text-generation"
+        "text-generation",
+        "code-generation"
       ],
       "variants" : [
         {
@@ -56285,6 +56894,19 @@
           "title" : "Fast"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "1024 by 1024, 20 steps; SANA report, Tables 7 and 10.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2410.10629",
+          "task" : "text-to-image",
+          "value" : 0.64000000000000001
+        }
+      ],
       "registryName" : "sana",
       "requirements" : {
         "minimumMemoryBytes" : 17355688057,
@@ -56571,6 +57193,19 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "1024 by 1024, 20 steps; SANA report, Tables 7 and 10.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2410.10629",
+          "task" : "text-to-image",
+          "value" : 0.66000000000000003
         }
       ],
       "registryName" : "sana-1600m",
@@ -57224,6 +57859,19 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "40 steps, 1024 by 1024; scale-wise distillation paper, Table 3.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2503.16397",
+          "task" : "text-to-image",
+          "value" : 0.68999999999999995
         }
       ],
       "registryName" : "sd3",
@@ -58374,6 +59022,19 @@
           "title" : "Fast"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "28 steps, 1024 by 1024; scale-wise distillation paper, Table 3.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2503.16397",
+          "task" : "text-to-image",
+          "value" : 0.69999999999999996
+        }
+      ],
       "registryName" : "sd3.5-large",
       "requirements" : {
         "minimumMemoryBytes" : 24615067723,
@@ -58731,6 +59392,19 @@
           "required" : true,
           "title" : "Image",
           "valueType" : "image"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "4 steps, 1024 by 1024; scale-wise distillation paper, Table 3.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2503.16397",
+          "task" : "text-to-image",
+          "value" : 0.69999999999999996
         }
       ],
       "registryName" : "sd3.5-large-turbo",
@@ -59504,6 +60178,19 @@
           },
           "suggested" : true,
           "title" : "Precise"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "Stable Diffusion 3 report, Table 5.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2403.03206",
+          "task" : "text-to-image",
+          "value" : 0.55000000000000004
         }
       ],
       "registryName" : "sdxl-turbo",
@@ -64897,6 +65584,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "Measured by GenEval's authors; GenEval paper, Table 2.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2310.11513",
+          "task" : "text-to-image",
+          "value" : 0.42999999999999999
+        }
+      ],
       "registryName" : "stable-diffusion-v1-5",
       "requirements" : {
         "minimumMemoryBytes" : 10035157280,
@@ -65221,6 +65921,19 @@
           },
           "suggested" : true,
           "title" : "Precise"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "The base model without the refiner, measured by GenEval's authors; GenEval paper, Table 2.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2310.11513",
+          "task" : "text-to-image",
+          "value" : 0.55000000000000004
         }
       ],
       "registryName" : "stable-diffusion-xl-base-1.0",
@@ -73711,6 +74424,19 @@
           "valueType" : "text"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "open-asr-leaderboard",
+          "higherIsBetter" : false,
+          "metric" : "average WER",
+          "note" : "The mean of the leaderboard's nine default English test sets, which leave out LibriSpeech from 2026-11-02.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "2026-11-02",
+          "source" : "https://huggingface.co/spaces/hf-audio/open_asr_leaderboard",
+          "task" : "transcription",
+          "value" : 8.2899999999999991
+        }
+      ],
       "registryName" : "voxtral-mini-3b",
       "requirements" : {
         "minimumMemoryBytes" : 16060411182,
@@ -80276,6 +81002,19 @@
           "title" : "Precise"
         }
       ],
+      "qualityScores" : [
+        {
+          "benchmark" : "open-asr-leaderboard",
+          "higherIsBetter" : false,
+          "metric" : "average WER",
+          "note" : "The mean of the leaderboard's nine default English test sets, which leave out LibriSpeech from 2026-11-02.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "2026-11-02",
+          "source" : "https://huggingface.co/spaces/hf-audio/open_asr_leaderboard",
+          "task" : "transcription",
+          "value" : 8.1799999999999997
+        }
+      ],
       "registryName" : "whisper-large-v3",
       "requirements" : {
         "minimumMemoryBytes" : 7264403800,
@@ -80906,6 +81645,19 @@
           },
           "suggested" : true,
           "title" : "Precise"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "open-asr-leaderboard",
+          "higherIsBetter" : false,
+          "metric" : "average WER",
+          "note" : "The mean of the leaderboard's nine default English test sets, which leave out LibriSpeech from 2026-11-02.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "2026-11-02",
+          "source" : "https://huggingface.co/spaces/hf-audio/open_asr_leaderboard",
+          "task" : "transcription",
+          "value" : 8.6799999999999997
         }
       ],
       "registryName" : "whisper-large-v3-turbo",
@@ -86583,6 +87335,19 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        }
+      ],
+      "qualityScores" : [
+        {
+          "benchmark" : "geneval",
+          "higherIsBetter" : true,
+          "metric" : "overall",
+          "note" : "Z-Image report, Table 9.",
+          "retrieved" : "2026-11-05",
+          "snapshot" : "v1",
+          "source" : "https://arxiv.org/abs/2511.22699",
+          "task" : "text-to-image",
+          "value" : 0.81999999999999995
         }
       ],
       "registryName" : "z-image",

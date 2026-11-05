@@ -149,6 +149,11 @@ garbled, or looping output.
 - ``NFKDefaultedBackend``
 - ``NFKModelPreset``
 
+### Quality
+
+- ``NFKModelQualityScore``
+- ``NFKModelQualityRanking``
+
 ### Memory
 
 - ``NFKModelMemoryBudget``

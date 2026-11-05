@@ -1461,7 +1461,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	return @[ @"id", @"displayName", @"family", @"summary", @"engine", @"registryName", @"providerClass", @"tasks",
 			  @"inputModalities", @"outputModalities", @"inputs", @"outputs", @"options", @"variants",
 			  @"license", @"requirements", @"residencies", @"memoryModel", @"presets", @"modelTypes",
-			  @"adapterBases", @"standIn", @"introducedVersion" ];
+			  @"adapterBases", @"qualityScores", @"standIn", @"introducedVersion" ];
 }
 
 @interface NFKModelDescriptor ()
@@ -1491,6 +1491,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 						   presets:(nullable NSArray<NFKModelPreset *> *)presets
 						modelTypes:(nullable NSArray<NSString *> *)modelTypes
 					  adapterBases:(nullable NSArray<NSString *> *)adapterBases
+					 qualityScores:(nullable NSArray<NFKModelQualityScore *> *)qualityScores
 						   standIn:(BOOL)standIn
 				 introducedVersion:(nullable NSString *)introducedVersion
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions
@@ -1518,12 +1519,47 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		_presets = [presets copy] ?: @[];
 		_modelTypes = [modelTypes copy] ?: @[];
 		_adapterBases = [adapterBases copy] ?: @[];
+		_qualityScores = [qualityScores copy] ?: @[];
 		_standIn = standIn;
 		_introducedVersion = [introducedVersion copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelDescriptorFields());
 		_derivedVariantOption = [self makeDerivedVariantOption];
 	}
 	return self;
+}
+
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+							family:(NSString *)family
+						   summary:(nullable NSString *)summary
+							engine:(NSString *)engine
+					  registryName:(nullable NSString *)registryName
+				 providerClassName:(nullable NSString *)providerClassName
+							 tasks:(nullable NSArray<NSString *> *)tasks
+				   inputModalities:(nullable NSArray<NSString *> *)inputModalities
+				  outputModalities:(nullable NSArray<NSString *> *)outputModalities
+							inputs:(nullable NSArray<NFKModelPort *> *)inputs
+						   outputs:(nullable NSArray<NFKModelPort *> *)outputs
+						   options:(nullable NSArray<NFKModelOption *> *)options
+						  variants:(nullable NSArray<NFKModelVariant *> *)variants
+						   license:(nullable NFKModelLicense *)license
+					  requirements:(nullable NFKModelRequirements *)requirements
+					   residencies:(nullable NSArray<NSString *> *)residencies
+					   memoryModel:(nullable NFKModelMemoryModel *)memoryModel
+						   presets:(nullable NSArray<NFKModelPreset *> *)presets
+						modelTypes:(nullable NSArray<NSString *> *)modelTypes
+					  adapterBases:(nullable NSArray<NSString *> *)adapterBases
+						   standIn:(BOOL)standIn
+				 introducedVersion:(nullable NSString *)introducedVersion
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithIdentifier:identifier displayName:displayName family:family summary:summary engine:engine
+					   registryName:registryName providerClassName:providerClassName tasks:tasks
+					inputModalities:inputModalities outputModalities:outputModalities inputs:inputs outputs:outputs
+							options:options variants:variants license:license requirements:requirements
+						residencies:residencies memoryModel:memoryModel presets:presets modelTypes:modelTypes
+					   adapterBases:adapterBases qualityScores:nil standIn:standIn introducedVersion:introducedVersion
+						 extensions:extensions];
 }
 
 - (instancetype)initWithIdentifier:(NSString *)identifier
@@ -1745,7 +1781,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	NSString *registryName = nil, *providerClassName = nil, *introducedVersion = nil;
 	NSArray<NSString *> *tasks = nil, *inputModalities = nil, *outputModalities = nil, *residencies = nil;
 	NSArray<NSString *> *modelTypes = nil, *adapterBases = nil;
-	NSArray *inputs = nil, *outputs = nil, *options = nil, *variants = nil, *presets = nil;
+	NSArray *inputs = nil, *outputs = nil, *options = nil, *variants = nil, *presets = nil, *qualityScores = nil;
 	id license = nil, requirements = nil, memoryModel = nil;
 	BOOL standIn = NO;
 	NFKModelElementReader inputReader = ^id (id element, NSString *elementPath, NSError **elementError) {
@@ -1772,6 +1808,9 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	NFKModelElementReader presetReader = ^id (id element, NSString *elementPath, NSError **elementError) {
 		return [NFKModelPreset presetFromObject:element path:elementPath error:elementError];
 	};
+	NFKModelElementReader scoreReader = ^id (id element, NSString *elementPath, NSError **elementError) {
+		return [NFKModelQualityScore scoreFromObject:element path:elementPath error:elementError];
+	};
 	if (reader == nil
 		|| ![reader readString:@"id" required:YES into:&identifier error:error]
 		|| ![reader readString:@"displayName" required:NO into:&displayName error:error]
@@ -1794,13 +1833,15 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		|| ![reader readObjects:@"presets" withReader:presetReader into:&presets error:error]
 		|| ![reader readStringArray:@"modelTypes" into:&modelTypes error:error]
 		|| ![reader readStringArray:@"adapterBases" into:&adapterBases error:error]
+		|| ![reader readObjects:@"qualityScores" withReader:scoreReader into:&qualityScores error:error]
 		|| ![reader readBoolean:@"standIn" into:&standIn error:error]
 		|| ![reader readString:@"introducedVersion" required:NO into:&introducedVersion error:error]
 		|| ![reader requireUniqueElements:inputs ofField:@"inputs" keyPath:@"key" name:@"key" error:error]
 		|| ![reader requireUniqueElements:outputs ofField:@"outputs" keyPath:@"key" name:@"key" error:error]
 		|| ![reader requireUniqueElements:options ofField:@"options" keyPath:@"key" name:@"key" error:error]
 		|| ![reader requireUniqueElements:variants ofField:@"variants" keyPath:@"identifier" name:@"id" error:error]
-		|| ![reader requireUniqueElements:presets ofField:@"presets" keyPath:@"identifier" name:@"id" error:error]) {
+		|| ![reader requireUniqueElements:presets ofField:@"presets" keyPath:@"identifier" name:@"id" error:error]
+		|| ![self reader:reader acceptsScores:qualityScores tasks:tasks variants:variants error:error]) {
 		return nil;
 	}
 	return [[self alloc] initWithIdentifier:identifier displayName:displayName family:family summary:summary
@@ -1809,18 +1850,58 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 									 inputs:inputs outputs:outputs options:options variants:variants
 									license:license requirements:requirements residencies:residencies
 								memoryModel:memoryModel presets:presets modelTypes:modelTypes
-							   adapterBases:adapterBases standIn:standIn introducedVersion:introducedVersion
+							   adapterBases:adapterBases qualityScores:qualityScores standIn:standIn
+						  introducedVersion:introducedVersion
 								 extensions:[reader extensionsWithoutFields:NFKModelDescriptorFields()]];
 }
 
-- (nullable NFKModelVariant *)defaultVariant
+// Fails on a score whose task the descriptor does not list, whose variant it does not have, or that repeats
+// another score's variant, task, and benchmark identifier.
++ (BOOL)reader:(NFKModelFieldReader *)reader
+ acceptsScores:(nullable NSArray<NFKModelQualityScore *> *)scores
+		 tasks:(nullable NSArray<NSString *> *)tasks
+	  variants:(nullable NSArray<NFKModelVariant *> *)variants
+		 error:(NSError **)error
 {
-	for (NFKModelVariant *variant in self.variants) {
+	NSArray<NSString *> *variantIdentifiers = [variants valueForKey:@"identifier"] ?: @[];
+	NSString *defaultIdentifier = [self defaultVariantAmong:variants].identifier;
+	NSMutableSet<NSString *> *seen = [NSMutableSet set];
+	NSUInteger index = 0;
+	for (NFKModelQualityScore *score in scores) {
+		NSString *field = [NSString stringWithFormat:@"qualityScores[%lu]", (unsigned long)index];
+		if (![tasks containsObject:score.task]) {
+			return [reader failField:field reason:[NSString stringWithFormat:@"names task \"%@\", which tasks does not list",
+												   score.task] error:error];
+		}
+		if (score.variantIdentifier != nil && ![variantIdentifiers containsObject:score.variantIdentifier]) {
+			return [reader failField:field reason:[NSString stringWithFormat:@"names variant \"%@\", which variants does not hold",
+												   score.variantIdentifier] error:error];
+		}
+		NSString *key = [NSString stringWithFormat:@"%@ %@ %@", score.variantIdentifier ?: defaultIdentifier ?: @"",
+						 score.task, score.benchmarkIdentifier];
+		if ([seen containsObject:key]) {
+			return [reader failField:field reason:[NSString stringWithFormat:@"repeats the %@ score of %@ on the same variant",
+												   score.benchmarkIdentifier, score.task] error:error];
+		}
+		[seen addObject:key];
+		index += 1;
+	}
+	return YES;
+}
+
++ (nullable NFKModelVariant *)defaultVariantAmong:(nullable NSArray<NFKModelVariant *> *)variants
+{
+	for (NFKModelVariant *variant in variants) {
 		if (variant.isDefault) {
 			return variant;
 		}
 	}
-	return self.variants.firstObject;
+	return variants.firstObject;
+}
+
+- (nullable NFKModelVariant *)defaultVariant
+{
+	return [NFKModelDescriptor defaultVariantAmong:self.variants];
 }
 
 - (nullable NFKModelVariant *)variantWithIdentifier:(NSString *)identifier
@@ -1831,6 +1912,20 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		}
 	}
 	return nil;
+}
+
+- (NSArray<NFKModelQualityScore *> *)qualityScoresForVariant:(nullable NSString *)variantIdentifier
+{
+	NSString *defaultIdentifier = self.defaultVariant.identifier;
+	NSString *requested = variantIdentifier ?: defaultIdentifier;
+	NSMutableArray<NFKModelQualityScore *> *scores = [NSMutableArray array];
+	for (NFKModelQualityScore *score in self.qualityScores) {
+		NSString *measured = score.variantIdentifier ?: defaultIdentifier;
+		if (measured == requested || [measured isEqualToString:requested]) {
+			[scores addObject:score];
+		}
+	}
+	return [scores copy];
 }
 
 - (nullable NFKModelLicense *)licenseForVariant:(NFKModelVariant *)variant
@@ -1867,6 +1962,9 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	}
 	if (self.adapterBases.count > 0) {
 		dictionary[@"adapterBases"] = self.adapterBases;
+	}
+	if (self.qualityScores.count > 0) {
+		dictionary[@"qualityScores"] = NFKModelDictionariesOf(self.qualityScores);
 	}
 	dictionary[@"standIn"] = @(self.isStandIn);
 	dictionary[@"introducedVersion"] = self.introducedVersion;

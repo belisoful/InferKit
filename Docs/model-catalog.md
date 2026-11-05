@@ -122,12 +122,13 @@ lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend`
 | `presets` | array of [preset](#presets) | no | Named sets of load options and request defaults. |
 | `modelTypes` | array of string | no | The `model_type` values of the Hugging Face `config.json` files the model's loader reads, such as `"qwen3"`. A [resolver](#resolving-a-repository) matches a repository against them. Empty when absent. |
 | `adapterBases` | array of string | no | The [adapter bases](#adapters) of the LoRA adapters the model takes through the `adapters` load option. Empty when absent. |
+| `qualityScores` | array of [quality score](#quality-scores) | no | The published benchmark scores of the model's releases. Empty when absent. |
 | `standIn` | boolean | no | True for a reference or test stand-in a user interface hides. False when absent. |
 | `introducedVersion` | string | no | The InferKit version that introduced the model, such as `"0.4.0"`. |
 
 A writer always writes `id`, `displayName`, `family`, `engine`, the arrays (empty when there is
-nothing in them), `requirements`, and `standIn`. It writes `presets`, `modelTypes`, and `adapterBases`
-only when there are some.
+nothing in them), `requirements`, and `standIn`. It writes `presets`, `modelTypes`, `adapterBases`, and
+`qualityScores` only when there are some.
 
 A descriptor with more than one variant derives a load option under `variant`
 (`NFKModelLoadOptionVariant`): a choice of its variants' identifiers, the default variant by default.
@@ -961,6 +962,7 @@ resolves through `+[NFKDynamicBackend backendForCapability:error:]` as it is.
 | String | Constant | The task |
 |---|---|---|
 | `text-generation` | `NFKModelTaskTextGeneration` | Writing text from a prompt or a conversation. |
+| `code-generation` | `NFKModelTaskCodeGeneration` | Writing and completing program code. A decoder lists it after `text-generation` when its code is measured apart from its prose. |
 | `vision-question-answering` | `NFKModelTaskVisionQuestionAnswering` | Answering a question about an image or a clip. |
 | `transcription` | `NFKModelTaskTranscription` | Turning speech into text. |
 | `translation` | `NFKModelTaskTranslation` | Turning text from one language into another. |
@@ -1152,6 +1154,50 @@ does not open fails with `NFKDownloadErrorAuthenticationRequired`. The `NFKModel
   `NFKModelAdapterErrorPickle` (refused unread), `NFKModelAdapterErrorUnknownLayout` (LoHa, LoKr, DoRA, or no
   LoRA keys), `NFKModelAdapterErrorUnknownBase`, or `NFKModelAdapterErrorNoModel`. A file that cannot be read
   returns `NFKModelAdapterErrorUnreadable` in place of a report.
+
+## Quality scores
+
+`NFKModelQualityScore` (`NFKModelQuality.h`). One published score of one release on one benchmark.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `task` | string | yes | The [task](#tasks) the benchmark measures. The model lists it among its `tasks`. |
+| `benchmark` | string | yes | The benchmark, such as `"mmlu-pro"`. |
+| `snapshot` | string | yes | The benchmark's version or leaderboard date, such as `"v6"` or `"2026-10"`. |
+| `metric` | string | yes | The measure the value is in, for a user interface, such as `"accuracy"`, `"WER"`, or `"Elo"`. |
+| `value` | number | yes | The score as published. A percentage is written as published, such as `69.6`. |
+| `higherIsBetter` | boolean | no | True when a larger value is better. True when absent. |
+| `variant` | string | no | The [variant](#variant) the score measures. The default variant when absent. |
+| `source` | string | yes | The URL of the report, model card, or leaderboard that publishes the score. |
+| `retrieved` | string | no | The day the score was read from its source, `YYYY-MM-DD`. |
+| `note` | string | no | A sentence on how the score was measured. |
+
+A score belongs to the release that was measured, at the precision that release ships. Another variant,
+a quantized one included, has only the scores that name it. Two scores compare when their `benchmark`
+and `snapshot` are equal (`benchmarkIdentifier`, `"benchmark@snapshot"`). A model is malformed when a
+score names a task it does not list or a variant it does not have, or when two scores of one variant share
+a task and a benchmark identifier.
+
+`-[NFKModelCatalog qualityRankingsForTask:]` ranks the visible models of a task on the task's reference
+benchmark (`+referenceBenchmarkForTask:`), best first, using each model's default variant:
+
+| Task | Reference benchmark | Constant | Metric |
+|---|---|---|---|
+| `text-generation` | `mmlu-pro` | `NFKModelBenchmarkMMLUPro` | accuracy |
+| `code-generation` | `livecodebench` | `NFKModelBenchmarkLiveCodeBench` | pass@1 |
+| `transcription` | `open-asr-leaderboard` | `NFKModelBenchmarkOpenASRLeaderboard` | average WER, lower is better |
+| `translation` | `flores-200` | `NFKModelBenchmarkFLORES200` | chrF++ |
+| `text-to-image` | `geneval` | `NFKModelBenchmarkGenEval` | overall |
+| `speech-synthesis` | `tts-arena` | `NFKModelBenchmarkTTSArena` | Elo |
+
+- The ranking compares on one snapshot: the one the most of the task's scored models report, the later
+  snapshot on a tie. A model without a score at that snapshot is left out.
+- Equal scores share a rank, and the next rank skips past them. Models with equal scores order by
+  identifier.
+- Each `NFKModelQualityRanking` carries the `rank`, the `rankedCount`, and the `score` the rank was
+  computed from, so a user interface shows the score and its source beside the rank.
+- `qualityRankingForModelIdentifier:task:` is one model's ranking, nil when the ranking leaves it out.
+- A task without a reference benchmark has no ranking.
 
 ## Errors
 

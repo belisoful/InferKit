@@ -108,6 +108,22 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Published benchmark scores and a computed quality rank
+
+- `NFKModelQualityScore` (`NFKModelQuality.h`) is one published score of one release on one benchmark: its
+  task, benchmark, snapshot, metric, value, direction, the variant it measures, its source URL, and the day
+  it was read. A descriptor carries them as `qualityScores` (manifest field `qualityScores`), and
+  `qualityScoresForVariant:` returns one variant's. A score that names no variant belongs to the default
+  variant. A quantized variant has only the scores that name it.
+- `-[NFKModelCatalog qualityRankingsForTask:]` ranks the visible models of a task on its reference benchmark,
+  best first, using each model's default variant and the snapshot the most of them report.
+  `qualityRankingForModelIdentifier:task:` is one model's `NFKModelQualityRanking`: its rank, the count
+  ranked, and the score the rank was computed from.
+- The reference benchmarks (`+referenceBenchmarkForTask:`): MMLU-Pro for text generation, LiveCodeBench for
+  code generation, the Open ASR Leaderboard's average WER for transcription, FLORES-200 chrF++ for
+  translation, GenEval for text-to-image, and TTS Arena for speech synthesis.
+- `NFKModelTaskCodeGeneration` (`code-generation`) is a task of its own.
+
 #### A prompt past the context is refused in each API's words
 
 - `kNFKError_InferenceContextExceeded` states that a prompt does not fit the model's context or the window a load
@@ -1943,6 +1959,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Published benchmark scores for the catalog's models
+
+- The catalog's descriptors carry the published score of each model on its task's reference benchmark
+  (`NFKModelQualityScore`), each with its source and the day it was read:
+  - MMLU-Pro: 20 language decoders.
+  - LiveCodeBench: 18, ranked on v6.
+  - The Open ASR Leaderboard: 5 recognizers.
+  - FLORES-200 chrF++: the 3 NLLB releases.
+  - GenEval: 12 image generators.
+  - TTS Arena: Kokoro.
+- `-[NFKModelCatalog qualityRankingsForTask:]` ranks them. A decoder with a LiveCodeBench score lists
+  `code-generation` after its own tasks.
 
 #### A decoder refuses a prompt that fills its window
 

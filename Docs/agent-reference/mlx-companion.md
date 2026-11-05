@@ -928,6 +928,47 @@ The completeness rules (`NFKMLXCatalogCompletenessTests`, no MLX runtime):
 - Every Hugging Face or URL source has `downloadBytes > 0`, except the sources the test lists by
   `model/variant` with the reason they are not sized.
 
+### Published quality scores
+
+`NFKMLXCatalogQuality.swift` holds the published score of each entry on its task's reference benchmark
+(`NFKModelQuality.h`, `core-runtime-notes.md`). `modelDescriptors()` applies it before measuring, so a
+repository-matching template, which describes another release, carries none. An entry with a
+`code-generation` score lists that task after its own.
+
+The table as read on 2026-11-05:
+
+- MMLU-Pro `v1`: 20 decoders, from their cards, the Gemma 3 report, and the TIGER-Lab leaderboard. The
+  setting differs by source and stays in each record's note. A release scores in its default mode:
+  Qwen3.5-2B in non-thinking, gpt-oss-20b at medium effort.
+- LiveCodeBench: `v6` (9 decoders) ranks. The Qwen3 sizes carry `v5-2410-2502`, Gemma 3n `v5`, and
+  Nemotron Nano 2 `v5-2407-2412`, which do not rank against `v6`.
+- Open ASR Leaderboard `2026-11-02`: five recognizers. That day the leaderboard took LibriSpeech out of
+  its default average, so older figures do not compare.
+- FLORES-200 `devtest-602` chrF++: the three NLLB releases of the NLLB report's Table 41, the only
+  published FLORES-200 chrF++ averages among the translators.
+- GenEval `v1`: 12 image generators.
+- TTS Arena `v2-2026-11-05`: Kokoro only.
+
+Left out, each because the published figure measures another release:
+
+- Chatterbox's arena rating measures Resemble's hosted service.
+- The GenEval figure labeled SD 2.1 measures the 768 model. The SD3 Medium figure measures the
+  report's 512 research checkpoint. The Z-Image base figure may measure a pre-release checkpoint.
+- Nemotron Nano 2's only MMLU-Pro figure comes from another paper's baseline row.
+- The Gemma 3 report gives two disagreeing, unversioned LiveCodeBench figures per size.
+- Base-model tables (DeepSeek V4.1, Qwen3, Qwen3.8) do not score the instruction-tuned release.
+- The MADLAD-400 (chrF), SMaLL-100 and M2M-100 (spBLEU), and OPUS-MT (en-de chrF) figures use another
+  metric or another FLORES version.
+
+To refresh a benchmark:
+
+1. Read each source page again; never take a figure from a search snippet.
+2. Put a changed leaderboard figure under a new snapshot.
+3. Update `retrieved`.
+4. Regenerate `Docs/model-catalog.json`.
+
+`NFKMLXCatalogQualityTests` pins each task's leader.
+
 ## Unload, reload, and load measurement
 
 The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `peakByteCount`

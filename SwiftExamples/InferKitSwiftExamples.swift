@@ -334,6 +334,24 @@ final class InferKitSwiftExamples: XCTestCase {
     }
 
     // Memory estimates, constraints, and model names from Swift.
+    // The quality category imports as qualityRankings(forTask:) and qualityRanking(forModelIdentifier:task:).
+    func testExampleRankingByPublishedScoresFromSwift() throws {
+        let score = NFKModelQualityScore(task: NFKModelTaskTextGeneration, benchmark: NFKModelBenchmarkMMLUPro,
+                                         snapshot: "example", metric: "accuracy", value: 61.5, higherIsBetter: true,
+                                         variantIdentifier: nil, sourceURL: URL(string: "https://example.com/report")!,
+                                         retrievedDate: "2026-11-05", note: nil, extensions: nil)
+        var model = ["id": "example.decoder", "family": "example", "engine": NFKModelEnginePlugin] as [String: Any]
+        model["tasks"] = [NFKModelTaskTextGeneration]
+        model["qualityScores"] = [score.dictionaryRepresentation()]
+        let catalog = NFKModelCatalog()
+        catalog.addDescriptor(try NFKModelDescriptor(dictionary: model))
+        let rankings = catalog.qualityRankings(forTask: NFKModelTaskTextGeneration)
+        XCTAssertEqual(rankings.map(\.modelIdentifier), ["example.decoder"])
+        XCTAssertEqual(rankings.first?.score.value, 61.5)
+        XCTAssertEqual(catalog.qualityRanking(forModelIdentifier: "example.decoder", task: NFKModelTaskTextGeneration)?.rank, 1)
+        XCTAssertEqual(NFKModelCatalog.referenceBenchmark(forTask: NFKModelTaskCodeGeneration), NFKModelBenchmarkLiveCodeBench)
+    }
+
     func testExampleModelMemoryFromSwift() throws {
         let decoder = NFKModelStageFacts(identifier: "decoder",
                                          byteCountByPrecision: [NFKModelPrecisionCheckpoint: 2_000_000_000])

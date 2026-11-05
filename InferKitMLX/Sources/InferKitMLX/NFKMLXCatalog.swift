@@ -41,7 +41,7 @@ public final class NFKMLXModelDescriptors: NSObject, NFKModelDescriptorProvider 
     /// A model whose entry states no least memory takes the least of its variants' derived figures.
     /// Introduced in InferKit 0.4.0.
     public static func modelDescriptors() -> [NFKModelDescriptor] {
-        let measured = entries.map { $0.measured() }
+        let measured = entries.map { NFKMLXCatalogQuality.scored($0).measured() }
         let drafts = NFKMLXCatalogEntry.draftChoices(measured)
         let descriptors = measured.compactMap { entry -> NFKModelDescriptor? in
             do {
@@ -103,6 +103,8 @@ struct NFKMLXCatalogEntry {
     /// The `NFKModelAdapterBase*` values of the adapters the entry takes at load, empty for none. A
     /// non-empty list declares the `NFKModelLoadOptionAdapters` option (``NFKMLXLoadProfile``).
     var adapterBases: [String] = []
+    /// The published benchmark scores of the entry's releases. ``NFKMLXCatalogQuality/scored(_:)`` sets them.
+    var qualityScores: [NFKModelQualityScore] = []
     var introducedVersion: String? = "0.4.0"
     /// The load profile in place of the family's, from ``NFKMLXLoadProfile/familyProfiles``.
     /// ``NFKMLXLoadProfile/plain`` declares no load options.
@@ -151,6 +153,9 @@ struct NFKMLXCatalogEntry {
         }
         if !adapterBases.isEmpty {
             dictionary["adapterBases"] = adapterBases
+        }
+        if !qualityScores.isEmpty {
+            dictionary["qualityScores"] = qualityScores.map { $0.dictionaryRepresentation() }
         }
         return dictionary
     }

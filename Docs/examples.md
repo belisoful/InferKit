@@ -6000,6 +6000,22 @@ for (NFKModelDescriptor *model in [NFKModelCatalog.sharedCatalog descriptorsForT
 A field the catalog does not know stays in `extensions` and is written back by
 `manifestDataWithError:`, so a manifest from a newer writer survives a pass through an older reader.
 
+A descriptor carries the published benchmark scores of its releases. The catalog ranks a task's models on
+the task's reference benchmark, using each model's default variant, and hands back the score beside the
+rank so a list shows both:
+
+```objc
+for (NFKModelQualityRanking *ranking in [NFKModelCatalog.sharedCatalog qualityRankingsForTask:NFKModelTaskTranscription]) {
+    NFKModelQualityScore *score = ranking.score;               // the Open ASR Leaderboard's average WER
+    NSString *line = [NSString stringWithFormat:@"#%ld of %ld: %@ %.2f %@", (long)ranking.rank,
+                      (long)ranking.rankedCount, ranking.modelIdentifier, score.value, score.metric];
+    NSURL *source = score.sourceURL;                           // where the score is published
+}
+NFKModelQualityRanking *turbo =
+    [NFKModelCatalog.sharedCatalog qualityRankingForModelIdentifier:@"whisper-large-v3-turbo"
+                                                               task:NFKModelTaskTranscription];  // nil when unscored
+```
+
 A variant's `source` is what `NFKHFHub` plans, downloads, reports on, and removes, so an app fetches
 every catalog model the same way. A source that needs a converter fails with
 `NFKDownloadErrorRequiresConversion`; one of kind `system` or `none` holds no files and completes at
