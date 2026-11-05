@@ -1711,8 +1711,15 @@ code is in its own file and reaches the server through `NFKInferenceServerPrivat
   `messageForToolCallIdentifier:name:result:` for each answer, so a tool_result's `is_error` and images
   ride under `NFKMessageMetadataKey`). A tool answer's name is found from the call earlier in the same
   request; an answer to a call the request does not carry is 400, as both providers refuse it.
-- Messages: `system` (a string or text blocks joined by a blank line) becomes the first turn. A user
-  turn's `tool_result` blocks become tool turns ahead of its text. `thinking` and `redacted_thinking`
+- Messages: `system` (a string or text blocks joined by a blank line) becomes the first turn. A message
+  whose role is `system` (Claude Code 2.1.314 sends its environment section as one, after the user turns)
+  adds its text to that first turn, after the field and in message order: Gemma 3's and Pixtral's templates
+  raise on a system turn anywhere but first, and the MLX template runner executes `raise_exception`. Its
+  blocks are text only (`cache_control` ignored); a request with no user or assistant turn is 400.
+  Adjacent user turns of text alone combine, joined by a blank line, as the API combines consecutive
+  turns; tool turns between them keep them apart. `context_management` and `thinking.display` are
+  declared fields that are read and not applied. A user turn's `tool_result` blocks become tool turns
+  ahead of its text. `thinking` and `redacted_thinking`
   blocks are dropped: their signatures verify only at Anthropic. Server tools (a `type` and no
   `input_schema`) are not offered. `tool_choice` `auto`/`any`/`none` pass on as the chat route's
   `tool_choice` (`auto`/`required`/`none`), and `disable_parallel_tool_use` as `parallel_tool_calls: false`.

@@ -310,6 +310,51 @@
 	XCTAssertNil([backend.lastRequest parameterForKey:NFKParameterReasoningEffort]);
 }
 
+- (void)testASystemMessageFoldsIntoTheSystemPromptAndUserTurnsCombine
+{
+	NFKAnthropicRouteBackend *backend = [[NFKAnthropicRouteBackend alloc] init];
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"served": backend }];
+	NSDictionary *environment = @{ @"role": @"system", @"content": @[ @{ @"type": @"text", @"text": @"The working directory is /tmp.",
+																		  @"cache_control": @{ @"type": @"ephemeral" } } ] };
+	NSDictionary *body = @{ @"model": @"served", @"max_tokens": @16, @"system": @"Be brief.",
+							@"thinking": @{ @"type": @"adaptive", @"display": @"summarized" }, @"output_config": @{ @"effort": @"low" },
+							@"context_management": @{ @"edits": @[ @{ @"type": @"clear_tool_uses_20250919" } ] },
+							@"messages": @[ @{ @"role": @"user", @"content": @"Context first." },
+											@{ @"role": @"user", @"content": @"Say hi." }, environment,
+											@{ @"role": @"system", @"content": @"Prefer short words." } ] };
+	NSInteger status = 0;
+	NSDictionary *reply = [self postMessages:body server:server status:&status];
+	XCTAssertEqual(status, 200, @"%@", reply);
+
+	NFKInferenceRequest *received = backend.lastRequest;
+	NSString *system = @"Be brief.\n\nThe working directory is /tmp.\n\nPrefer short words.";
+	XCTAssertEqualObjects(received.messages, (@[ @{ @"role": @"system", @"content": system },
+												  @{ @"role": @"user", @"content": @"Context first.\n\nSay hi." } ]));
+	XCTAssertEqualObjects([received parameterForKey:NFKParameterReasoningEffort], NFKReasoningEffortLight);
+	XCTAssertNil([received parameterForKey:@"context_management"], @"context management is read and not applied");
+	XCTAssertNil([received parameterForKey:@"thinking"]);
+}
+
+- (void)testASystemMessageHoldsTextOnly
+{
+	NFKAnthropicRouteBackend *backend = [[NFKAnthropicRouteBackend alloc] init];
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"served": backend }];
+	NSDictionary *image = @{ @"type": @"image", @"source": @{ @"type": @"base64", @"media_type": @"image/png",
+															   @"data": [self base64PNGWidth:2 height:2] } };
+	NSInteger status = 0;
+	NSDictionary *reply = [self postMessages:@{ @"model": @"served", @"max_tokens": @16,
+												 @"messages": @[ @{ @"role": @"user", @"content": @"Hi." },
+																 @{ @"role": @"system", @"content": @[ image ] } ] }
+									  server:server status:&status];
+	XCTAssertEqual(status, 400, @"%@", reply);
+	XCTAssertTrue([reply[@"error"][@"message"] containsString:@"messages[1].content[0]"], @"%@", reply);
+
+	reply = [self postMessages:@{ @"model": @"served", @"max_tokens": @16,
+								  @"messages": @[ @{ @"role": @"system", @"content": @"Only instructions." } ] }
+						server:server status:&status];
+	XCTAssertEqual(status, 400, @"a conversation needs a user or assistant turn: %@", reply);
+}
+
 #pragma mark Replies
 
 - (void)testAReplyIsAMessageWithItsUsageAndStopReason

@@ -108,6 +108,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### The served Messages route takes system messages in the conversation
+
+- `POST /v1/messages` and `/v1/messages/count_tokens` accept a message whose role is `system`, its content a
+  string or text blocks. Its text joins the system prompt after the `system` field, in the order the
+  messages carry it, since a chat template may take a system message only first. A block of any other type
+  is 400, and a conversation of system messages alone is 400. Before, every system message was 400, which
+  refused each request Claude Code 2.1.314 sends.
+- Adjacent user turns that carry text alone combine into one turn, their texts separated by a blank line,
+  as the Messages API combines them. A chat template that requires alternating roles refused two in a row.
+- `context_management` is read and not applied: the conversation the request carries is the one the model
+  sees. `thinking.display` is read and not applied: the reply's thinking blocks carry the whole reasoning.
+
 #### A release in Hugging Face's own cache is found without a download
 
 - `NFKHFHub.huggingFaceCacheURLs` names caches in Hugging Face's layout, the one transformers,

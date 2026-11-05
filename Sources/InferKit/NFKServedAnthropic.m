@@ -44,7 +44,8 @@ static NSDictionary<NSString *, NSString *> *NFKServedAnthropicFields(void)
 	return @{ @"model": @"string", @"messages": @"array", @"system": @"string|array", @"max_tokens": @"integer",
 			  @"temperature": @"number", @"top_p": @"number", @"top_k": @"integer", @"stop_sequences": @"array",
 			  @"stream": @"boolean", @"tools": @"array", @"tool_choice": @"object", @"thinking": @"object",
-			  @"output_config": @"object", @"metadata": @"object", @"service_tier": @"string", @"mcp_servers": @"array" };
+			  @"output_config": @"object", @"metadata": @"object", @"service_tier": @"string", @"mcp_servers": @"array",
+			  @"context_management": @"object" };
 }
 
 /*! The refusal of a Messages body's nested fields of the wrong type, or nil. */
@@ -52,7 +53,8 @@ static NSError * _Nullable NFKServedAnthropicNestedTypeError(NSDictionary *body)
 {
 	NSError *error = NFKServedFieldTypeError(body[@"tool_choice"], @{ @"type": @"string", @"name": @"string",
 																	  @"disable_parallel_tool_use": @"boolean" }, @"tool_choice");
-	error = error ?: NFKServedFieldTypeError(body[@"thinking"], @{ @"type": @"string", @"budget_tokens": @"integer" }, @"thinking");
+	error = error ?: NFKServedFieldTypeError(body[@"thinking"], @{ @"type": @"string", @"budget_tokens": @"integer",
+																   @"display": @"string" }, @"thinking");
 	error = error ?: NFKServedFieldTypeError(body[@"output_config"], @{ @"effort": @"string", @"format": @"object" }, @"output_config");
 	NSArray *sequences = [body[@"stop_sequences"] isKindOfClass:NSArray.class] ? body[@"stop_sequences"] : @[];
 	for (NSUInteger index = 0; error == nil && index < sequences.count; index++) {
@@ -190,17 +192,37 @@ static NSError * _Nullable NFKServedAnthropicBlockTypeError(id block, NSString *
 		return nil;
 	}
 	NSMutableArray<NSDictionary *> *messages = [NSMutableArray array];
+	NSMutableArray<NSString *> *systemTexts = [NSMutableArray array];
 	NSString *system = [self systemTextOf:body[@"system"]];
 	if (system.length > 0) {
-		[messages addObject:@{ @"role": @"system", @"content": system }];
+		[systemTexts addObject:system];
 	}
 	NSMutableArray *images = [NSMutableArray array];
 	NSMutableArray *documents = [NSMutableArray array];
 	NSMutableDictionary<NSString *, NSString *> *toolNames = [NSMutableDictionary dictionary];
-	for (NSDictionary *message in wireMessages) {
+	for (NSUInteger index = 0; index < wireMessages.count; index++) {
+		NSDictionary *message = wireMessages[index];
+		if ([message isKindOfClass:NSDictionary.class] && [message[@"role"] isEqual:@"system"]) {
+			NSString *text = [self textOfSystemMessage:message index:index error:outError];
+			if (text == nil) {
+				return nil;
+			}
+			if (text.length > 0) {
+				[systemTexts addObject:text];
+			}
+			continue;
+		}
 		if (![self readMessage:message into:messages images:images documents:documents toolNames:toolNames error:outError]) {
 			return nil;
 		}
+	}
+	if (messages.count == 0) {
+		[NFKServedOpenAI setError:outError code:kNFKError_InferenceMissingInput reason:@"the request carries no user or assistant messages"];
+		return nil;
+	}
+	[self combineConsecutiveUserTurns:messages];
+	if (systemTexts.count > 0) {
+		[messages insertObject:@{ @"role": @"system", @"content": [systemTexts componentsJoinedByString:@"\n\n"] } atIndex:0];
 	}
 	NSString *forced = nil;
 	NSDictionary *parameters = [self parametersFromBody:body forcedToolName:&forced error:outError];
@@ -246,6 +268,61 @@ static NSError * _Nullable NFKServedAnthropicBlockTypeError(id block, NSString *
 	return [texts componentsJoinedByString:@"\n\n"];
 }
 
+/*! The text of a message whose role is system: its string content, or its text blocks joined by a blank line.
+	@discussion A chat template may take a system message only first, so the request folds each one into the
+	system prompt, after the system field, in the order the messages carry them. A block's cache_control is
+	ignored, as it is everywhere on this route. A block of any other type is refused. */
++ (nullable NSString *)textOfSystemMessage:(NSDictionary *)message index:(NSUInteger)index error:(NSError * _Nullable *)outError
+{
+	id content = message[@"content"];
+	if ([content isKindOfClass:NSString.class]) {
+		return content;
+	}
+	if (![content isKindOfClass:NSArray.class]) {
+		[NFKServedOpenAI setError:outError code:kNFKError_InferenceMissingInput reason:@"a system message's content is neither text nor blocks"];
+		return nil;
+	}
+	NSMutableArray<NSString *> *texts = [NSMutableArray array];
+	for (NSUInteger block = 0; block < [content count]; block++) {
+		NSString *path = [NSString stringWithFormat:@"messages[%lu].content[%lu]", (unsigned long)index, (unsigned long)block];
+		NSError *typeError = NFKServedFieldTypeError(content[block], @{ @"type": @"string", @"text": @"string" }, path);
+		if (typeError != nil) {
+			if (outError != NULL) {
+				*outError = typeError;
+			}
+			return nil;
+		}
+		if (![content[block][@"type"] isEqual:@"text"] || ![content[block][@"text"] isKindOfClass:NSString.class]) {
+			[NFKServedOpenAI setError:outError code:kNFKError_InferenceUnsupported
+							   reason:[NSString stringWithFormat:@"%@ must be a text block: a system message holds text only", path]];
+			return nil;
+		}
+		[texts addObject:content[block][@"text"]];
+	}
+	return [texts componentsJoinedByString:@"\n\n"];
+}
+
+/*! Joins each run of adjacent user turns that carry text alone into one turn, their texts separated by a blank
+	line, as the Messages API combines consecutive user turns. A chat template that requires alternating roles
+	refuses two user turns in a row. */
++ (void)combineConsecutiveUserTurns:(NSMutableArray<NSDictionary *> *)messages
+{
+	for (NSUInteger index = messages.count; index > 1; index--) {
+		NSDictionary *earlier = messages[index - 2];
+		NSDictionary *later = messages[index - 1];
+		if ([self isPlainUserTurn:earlier] && [self isPlainUserTurn:later]) {
+			NSString *joined = [NSString stringWithFormat:@"%@\n\n%@", earlier[@"content"], later[@"content"]];
+			messages[index - 2] = @{ @"role": @"user", @"content": joined };
+			[messages removeObjectAtIndex:index - 1];
+		}
+	}
+}
+
++ (BOOL)isPlainUserTurn:(NSDictionary *)message
+{
+	return message.count == 2 && [message[@"role"] isEqual:@"user"] && [message[@"content"] isKindOfClass:NSString.class];
+}
+
 // A user turn's tool_result blocks become tool turns ahead of the turn's own text, the order the API
 // requires them in; an assistant turn's tool_use blocks become its tool_calls. Thinking blocks carry
 // a signature only Anthropic can verify, so they are not replayed to the hosted backend.
@@ -259,7 +336,7 @@ static NSError * _Nullable NFKServedAnthropicBlockTypeError(id block, NSString *
 	NSString *role = [message isKindOfClass:NSDictionary.class] && [message[@"role"] isKindOfClass:NSString.class] ? message[@"role"] : nil;
 	if (![role isEqualToString:@"user"] && ![role isEqualToString:@"assistant"]) {
 		return [NFKServedOpenAI setError:outError code:kNFKError_InferenceMissingInput
-								  reason:@"a message must be an object whose role is user or assistant"];
+								  reason:@"a message must be an object whose role is user, assistant, or system"];
 	}
 	id content = message[@"content"];
 	if ([content isKindOfClass:NSString.class]) {
@@ -417,7 +494,7 @@ static NSError * _Nullable NFKServedAnthropicBlockTypeError(id block, NSString *
 	NSMutableDictionary<NSString *, id> *parameters = [NSMutableDictionary dictionary];
 	NSSet<NSString *> *consumed = [NSSet setWithArray:@[ @"model", @"messages", @"system", @"max_tokens", @"temperature", @"top_p",
 														 @"top_k", @"stop_sequences", @"tools", @"tool_choice", @"thinking",
-														 @"output_config", @"stream", @"metadata" ]];
+														 @"output_config", @"stream", @"metadata", @"context_management" ]];
 	for (NSString *key in body) {
 		if (![consumed containsObject:key]) {
 			parameters[key] = body[key];
