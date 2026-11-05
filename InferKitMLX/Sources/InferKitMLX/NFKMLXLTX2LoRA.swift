@@ -19,6 +19,10 @@ import MLXNN
 /// ``NFKMLXLoRALinear`` over a float base or an ``NFKMLXQuantizedLoRALinear`` over a quantized one, so the base
 /// weights stay as loaded and ``setStrength(_:in:)`` turns the adapter off at 0.
 ///
+/// The halves are held at the type the transformer computes in, and a float layer's sum is cast back to it, as
+/// peft holds an adapter at its base layer's type and casts its sum to the base output's type. A streamed block
+/// takes its adapters too: they stay resident while the stream reads the block's own weights in their turn.
+///
 /// Introduced in InferKit 0.4.0.
 public enum NFKMLXLTX2LoRA {
 
@@ -50,6 +54,9 @@ public enum NFKMLXLTX2LoRA {
 
     /// Adapts every module `arrays` names and loads its `A` and `B`, at `strength`. Returns how many layers it
     /// adapted.
+    ///
+    /// - Throws: `NFKMLXError.loRANotApplicable` when a module is not a linear layer of the transformer, is
+    ///   already adapted, or its halves do not fit its weight.
     @discardableResult
     public static func apply(_ arrays: [String: MLXArray], to transformer: NFKMLXLTX2TransformerNet,
                              strength: Float = 1) throws -> Int {
@@ -66,28 +73,58 @@ public enum NFKMLXLTX2LoRA {
         guard Set(downs.keys) == Set(ups.keys), !downs.isEmpty else {
             throw NFKMLXError.unsupportedConfiguration("the LoRA names no complete lora_A / lora_B pair")
         }
-        var adapted = 0
-        let byRank = Dictionary(grouping: downs.keys) { downs[$0]!.dim(0) }
-        for (rank, paths) in byRank {
-            let wanted = Set(paths)
-            for alpha in Set(paths.map { alphas[$0] ?? Float(rank) }) {
-                adapted += try NFKMLXLoRA.apply(to: transformer, rank: rank, alpha: alpha) { path, _ in
-                    wanted.contains(path) && (alphas[path] ?? Float(rank)) == alpha
-                }
+        let type = transformer.computeType
+        let layers = Dictionary(transformer.leafModules().flattened(), uniquingKeysWith: { first, _ in first })
+        var replacements = [(String, Module)]()
+        for (path, down) in downs.sorted(by: { $0.key < $1.key }) {
+            let up = ups[path]!
+            guard let layer = layers[path] as? Linear, !(layer is NFKMLXLoRAAdapter),
+                  let (outputs, inputs) = shape(of: layer, at: path, in: transformer) else {
+                throw NFKMLXError.loRANotApplicable("\(path) is not an unadapted linear layer of the transformer")
             }
+            guard down.ndim == 2, up.ndim == 2, down.dim(0) == up.dim(1), down.dim(1) == inputs, up.dim(0) == outputs else {
+                throw NFKMLXError.loRANotApplicable(
+                    "\(path) takes halves \(down.shape) and \(up.shape), which do not fit its \(outputs) × \(inputs) weight")
+            }
+            let alpha = alphas[path] ?? Float(down.dim(0))
+            let adapted: Linear
+            if let quantized = layer as? QuantizedLinear {
+                adapted = NFKMLXQuantizedLoRALinear(base: quantized, down: down.asType(type), up: up.asType(type),
+                                                    alpha: alpha)
+            } else {
+                let float = NFKMLXLoRALinear(base: layer, down: down.asType(type), up: up.asType(type), alpha: alpha)
+                float.resultType = type
+                adapted = float
+            }
+            adapted.train(layer.training)
+            replacements.append((path, adapted))
         }
-        guard adapted == downs.count else {
-            throw NFKMLXError.unsupportedConfiguration(
-                "the LoRA names \(downs.count) layers; the transformer adapts \(adapted)")
+        do {
+            try NFKMLXModuleReplacement.place(replacements, in: transformer)
+        } catch {
+            throw NFKMLXError.loRANotApplicable("an adapted layer could not be put in place: \(error)")
         }
-        var parameters = [(String, MLXArray)]()
-        for (path, down) in downs {
-            parameters.append(("\(path).lora_a", down.transposed().asType(.float32)))
-            parameters.append(("\(path).lora_b", ups[path]!.transposed().asType(.float32)))
-        }
-        try transformer.update(parameters: ModuleParameters.unflattened(parameters), verify: .noUnusedKeys)
+        transformer.freeze()
+        transformer.unfreeze(keys: ["lora_a", "lora_b"])
         setStrength(strength, in: transformer)
-        return adapted
+        return replacements.count
+    }
+
+    /// The `(outputs, inputs)` of the linear layer at `path`: its weight's, or, for a streamed block's empty
+    /// placeholder, the release's stored weight's.
+    static func shape(of layer: Linear, at path: String,
+                      in transformer: NFKMLXLTX2TransformerNet) -> (outputs: Int, inputs: Int)? {
+        if let quantized = layer as? QuantizedLinear {
+            return quantized.shape
+        }
+        if layer.weight.ndim == 2 {
+            return layer.shape
+        }
+        guard let (index, name) = NFKMLXLTX2TransformerNet.block(ofKey: path + ".weight"),
+              let stored = transformer.layerStream?.shape(ofLayer: index, tensor: name), stored.count == 2 else {
+            return nil
+        }
+        return (stored[0], stored[1])
     }
 
     /// Sets every adapter's weight in `model`; 0 turns the LoRA off.

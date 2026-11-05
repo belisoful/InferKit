@@ -29204,6 +29204,207 @@ def run_ltx2_real_diffusion_decoder(image, checkpoint):
 CHECKPOINT_MODELS["ltx2_real_diffusion_decoder"] = run_ltx2_real_diffusion_decoder
 
 
+def _ltx2_layerwise_transformer(directory, dtype, lora):
+    """LTX-2's released transformer in `directory` built on the meta device at `dtype`, every tensor outside
+    `transformer_blocks` read once and each block read as the forward reaches it, with `lora` (a Lightricks-format
+    file) loaded as `LTX2LoraLoaderMixin.load_lora_weights` loads it, under the adapter name `detailing`. peft
+    holds an adapter at its base layer's type; a meta base cannot carry that move, so the halves are cast to
+    `dtype` here. Each block's base weights are read into peft's `base_layer` and return to the meta device after
+    the block, while its adapter stays held. Returns the transformer and the release's `close`."""
+    from diffusers import LTX2VideoTransformer3DModel
+    from diffusers.loaders.lora_pipeline import LTX2LoraLoaderMixin
+
+    with torch.device("meta"):
+        transformer = LTX2VideoTransformer3DModel.from_config(
+            LTX2VideoTransformer3DModel.load_config(directory)).to(dtype).eval()
+    entries, read, close = _layerwise_release(directory, dtype, stem="diffusion_pytorch_model")
+    outside = {k: read(k) for k in entries if not k.startswith("transformer_blocks.")}
+    missing, unexpected = transformer.load_state_dict(outside, strict=False, assign=True)
+    missing = [k for k in missing if not k.startswith("transformer_blocks.")]
+    if missing or unexpected:
+        raise ValueError(f"outside the blocks: missing {missing}, unexpected {unexpected}")
+
+    state = LTX2LoraLoaderMixin.lora_state_dict(lora)
+    transformer.load_lora_adapter(state, prefix="transformer", adapter_name="detailing", low_cpu_mem_usage=True)
+    # The halves are set from the file here rather than trusted to the load: a meta base gives peft no device
+    # to move them to, and every one is checked against the file.
+    placed = 0
+    for name, parameter in list(transformer.named_parameters()):
+        if ".lora_" not in name:
+            continue
+        owner, leaf = name.rsplit(".", 1)
+        stored = f"transformer.{name.replace('.detailing.', '.')}"
+        if stored not in state:
+            raise ValueError(f"{name} has no tensor {stored} in the file")
+        value = state[stored].detach().to(dtype).clone()
+        setattr(transformer.get_submodule(owner), leaf, torch.nn.Parameter(value, requires_grad=False))
+        placed += 1
+    if placed != len(state):
+        raise ValueError(f"placed {placed} adapter halves of the file's {len(state)}")
+
+    for index, block in enumerate(transformer.transformer_blocks):
+        prefix = f"transformer_blocks.{index}."
+        held = set(block.state_dict())
+        names = {}
+        for key in entries:
+            if not key.startswith(prefix):
+                continue
+            name = key[len(prefix):]
+            owner, _, leaf = name.rpartition(".")
+            wrapped = f"{owner}.base_layer.{leaf}"
+            names[key] = name if name in held else wrapped
+        unmatched = sorted(n for n in names.values() if n not in held)
+        uncovered = sorted(n for n in held if ".lora_" not in n and n not in set(names.values()))
+        if unmatched or uncovered:
+            raise ValueError(f"block {index}: unmatched {unmatched[:4]}, uncovered {uncovered[:4]}")
+
+        def install(module, args, kwargs, names=names):
+            module.load_state_dict({name: read(key) for key, name in names.items()}, strict=False, assign=True)
+
+        def vacate(module, args, kwargs, output, names=names):
+            emptied = {name: torch.empty(entries[key][2], device="meta", dtype=dtype) for key, name in names.items()}
+            module.load_state_dict(emptied, strict=False, assign=True)
+
+        block.register_forward_pre_hook(install, with_kwargs=True)
+        block.register_forward_hook(vacate, with_kwargs=True)
+    return transformer, close
+
+
+def run_ltx2_real_dfr_lora(image, checkpoint):
+    """LTX-2.5's detailing IC-LoRA (`Lightricks/LTX-2.5-22b-IC-LoRA-Pixel-Spatial-Upscaler`) on the RELEASED
+    22B transformer: the first transformer call of DFR's stage 2, with the adapter at weight 0.5 and with it
+    disabled, at float32 from the stored bfloat16 and at bfloat16.
+
+    `--checkpoint` is the directory holding the release's `transformer/` (or `transformer_full/` where there is
+    no `transformer/`); the IC-LoRA is the file `IK_VAL_LTX2_5_IC_LORA` names. The transformer is diffusers'
+    own, built on the meta device with each block read as the forward reaches it
+    (`_ltx2_layerwise_transformer`). The call is `LTX2DFRPipeline.denoise`'s first at stage 2 of a 49-frame
+    192x256 canvas: `prepare_latents` lays out the grid, one keyframe slot at the canvas's seam, and the
+    half-size reference (spatial coordinates x2), from standard-normal normalized latents noised at the
+    stage-2 schedule's first sigma; the timestep is that sigma's, per token `t (1 - mask)`; the audio is 51
+    standard-normal tokens at the same timestep; the text streams are 256 standard-normal tokens at 4096 and
+    2048 with an all-ones mask, as the connectors hand them on; `use_cross_timestep` as `denoise` passes it.
+
+    Recorded: the call's inputs (`video`, `audio`, `text`, `audio_text`, `timestep`, `audio_timestep`,
+    `sigma`, `keyframes`, `coords` `[1, 3, tokens, 2]`, `grid` = latent frames, height, width), the
+    predictions `<f32|bf16>.<lora|base>.<video|audio>`, and each block's two streams in the float32 LoRA pass
+    (`block<i>.video`, `block<i>.audio`). Runs under the `ltxtrain` oracle env (diffusers with peft). `image`
+    unused.
+    """
+    from diffusers import FlowMatchEulerDiscreteScheduler, LTX2DFRPipeline
+    from diffusers.pipelines.ltx2.dfr_layout import resolve_canvas
+    from diffusers.pipelines.ltx2.utils import STAGE_2_DISTILLED_SIGMA_VALUES
+    import inspect
+
+    folder = "transformer" if os.path.isdir(os.path.join(checkpoint, "transformer")) else "transformer_full"
+    directory = os.path.join(checkpoint, folder)
+    merged = dict(os.environ)
+    with open(os.path.expanduser("~/.inferkit-validation.json")) as handle:
+        merged.update(json.load(handle))
+    lora = merged["IK_VAL_LTX2_5_IC_LORA"]
+
+    generator = torch.Generator().manual_seed(113)
+    height, width, frame_rate, text_tokens = 192, 256, 24.0, 256
+    canvas_frames, _, positions = resolve_canvas(49, 8)
+    frames = (canvas_frames - 1) // 8 + 1
+    latent_height, latent_width = height // 32, width // 32
+    grid = torch.randn(1, 128, frames, latent_height, latent_width, generator=generator)
+    slots = torch.randn(1, 128, len(positions), latent_height, latent_width, generator=generator)
+    reference = torch.randn(1, 128, frames, latent_height // 2, latent_width // 2, generator=generator)
+    audio_frames = round(canvas_frames / frame_rate * (16000 / 160 / 4))
+    audio = torch.randn(1, audio_frames, 128, generator=generator)
+    text = torch.randn(1, text_tokens, 4096, generator=generator)
+    audio_text = torch.randn(1, text_tokens, 2048, generator=generator)
+    mask = torch.ones(1, text_tokens, dtype=torch.int64)
+    scheduler = FlowMatchEulerDiscreteScheduler(
+        base_image_seq_len=1024, base_shift=0.95, invert_sigmas=False, max_image_seq_len=4096, max_shift=2.05,
+        num_train_timesteps=1000, shift=1.0, shift_terminal=None, stochastic_sampling=False,
+        time_shift_type="exponential", use_beta_sigmas=False, use_dynamic_shifting=False,
+        use_exponential_sigmas=False, use_karras_sigmas=False)
+    use_cross_timestep = inspect.signature(LTX2DFRPipeline.denoise).parameters["use_cross_timestep"].default
+
+    extra = {}
+    for tag, dtype in (("f32", torch.float32), ("bf16", torch.bfloat16)):
+        transformer, close = _ltx2_layerwise_transformer(directory, dtype, lora)
+        try:
+            stand_in = LTX2DFRPipeline.__new__(LTX2DFRPipeline)
+            for name, value in dict(vae_temporal_compression_ratio=8, vae_spatial_compression_ratio=32,
+                                    transformer_spatial_patch_size=1, transformer_temporal_patch_size=1,
+                                    transformer=transformer, scheduler=scheduler).items():
+                object.__setattr__(stand_in, name, value)
+            timestep = stand_in._inference_timesteps(STAGE_2_DISTILLED_SIGMA_VALUES, torch.device("cpu"))[0]
+            packed, conditioning, _, coords, keyframes, _ = stand_in.prepare_latents(
+                slot_frame_indices=list(positions), slot_initial_latents=slots, reference_latents=reference,
+                reference_downscale_factor=2, num_channels_latents=128, height=height, width=width,
+                num_frames=canvas_frames, frame_rate=frame_rate, noise_scale=STAGE_2_DISTILLED_SIGMA_VALUES[0],
+                dtype=torch.float32, device=torch.device("cpu"), generator=torch.Generator().manual_seed(127),
+                latents=grid, latents_normalized=True)
+            scalar = timestep.expand(1)
+            video_timestep = scalar.unsqueeze(-1) * (1 - conditioning.squeeze(-1))
+            audio_coords = transformer.audio_rope.prepare_audio_coords(1, audio_frames, torch.device("cpu"))
+            if tag == "f32":
+                extra.update(video=packed.contiguous(), audio=audio.contiguous(), text=text.contiguous(),
+                             audio_text=audio_text.contiguous(), timestep=video_timestep.float().clone(),
+                             audio_timestep=scalar.float().clone(), sigma=scalar.float().clone(),
+                             keyframes=keyframes.float().contiguous(), coords=coords.float().contiguous(),
+                             grid=torch.tensor([frames, latent_height, latent_width], dtype=torch.int32))
+
+            def call():
+                return transformer(
+                    hidden_states=packed.to(dtype), audio_hidden_states=audio.to(dtype),
+                    encoder_hidden_states=text.to(dtype), audio_encoder_hidden_states=audio_text.to(dtype),
+                    timestep=video_timestep, audio_timestep=scalar, sigma=scalar, audio_sigma=scalar,
+                    encoder_attention_mask=mask, audio_encoder_attention_mask=mask, fps=frame_rate,
+                    audio_num_frames=audio_frames, audio_coords=audio_coords, use_cross_timestep=use_cross_timestep,
+                    video_keyframes_mask=keyframes, video_coords=coords, return_dict=False)
+
+            with torch.no_grad():
+                transformer.set_adapters(["detailing"], weights=[0.5])
+                probe = transformer.transformer_blocks[0].attn1.to_q
+                checked = []
+
+                def recompute(module, args, output):
+                    # peft's LoRA layer against its own halves by hand: base + scaling · B(A x).
+                    x = args[0]
+                    expected = (module.base_layer(x) + module.lora_B["detailing"](module.lora_A["detailing"](x))
+                                * module.scaling["detailing"]).to(output.dtype)
+                    checked.append((float(module.scaling["detailing"]), float((output - expected).abs().max())))
+
+                probe_handle = probe.register_forward_hook(recompute)
+                handles = []
+                if tag == "f32":
+                    for index, block in enumerate(transformer.transformer_blocks):
+                        def seam(module, args, output, index=index):
+                            extra[f"block{index}.video"] = output[0].detach().float().contiguous()
+                            extra[f"block{index}.audio"] = output[1].detach().float().contiguous()
+                        handles.append(block.register_forward_hook(seam))
+                video, audio_out = call()
+                probe_handle.remove()
+                for handle in handles:
+                    handle.remove()
+                print(tag, "block 0 attn1.to_q: scaling, max |peft - by hand|", checked)
+                if not torch.isfinite(video).all():
+                    raise ValueError(f"{tag}: the adapted prediction is not finite")
+                extra[f"{tag}.lora.video"] = video.float().contiguous()
+                extra[f"{tag}.lora.audio"] = audio_out.float().contiguous()
+                transformer.disable_adapters()
+                video, audio_out = call()
+                extra[f"{tag}.base.video"] = video.float().contiguous()
+                extra[f"{tag}.base.audio"] = audio_out.float().contiguous()
+        finally:
+            close()
+        del transformer
+        adapted, plain = extra[f"{tag}.lora.video"], extra[f"{tag}.base.video"]
+        print(tag, folder, "video", tuple(adapted.shape), "norms adapted", float(adapted.norm()), "plain",
+              float(plain.norm()), "difference", float((adapted - plain).norm()), "cosine",
+              float(torch.nn.functional.cosine_similarity(adapted.flatten(), plain.flatten(), dim=0)))
+    globals()["_extra"] = extra
+    return extra["f32.lora.video"][0].clone()
+
+
+CHECKPOINT_MODELS["ltx2_real_dfr_lora"] = run_ltx2_real_dfr_lora
+
+
 def _ltx2_dfr_lora(transformer, rank=4, seed=97):
     """A tiny LoRA over `transformer` in Lightricks' own key format (`diffusion_model.…lora_A.weight`), on every
     block's video self-attention, video text attention, and feed-forward, as an IC-LoRA stand-in."""

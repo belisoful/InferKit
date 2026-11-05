@@ -1994,6 +1994,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - A kohya adapter and a diffusers adapter held together at 0.8 and 0.6 give diffusers' velocity at bfloat16 at a
   cosine of 0.99999.
 
+#### LTX-2.5's detailing IC-LoRA adapts a streamed transformer, at its type
+
+- `NFKMLXLTX2LoRA.apply(_:to:strength:)` adapts a transformer whose blocks stream from the release. Before,
+  a streamed block's empty placeholder stopped the process when the adapter read its shape, so DFR with the
+  IC-LoRA loaded stopped on any machine that streams LTX-2.5's 22B transformer. Each adapter now takes its
+  shape from the file, checked against the release's stored weight.
+- The adapter's halves are held at the type the transformer computes in, and a float layer's sum is cast back
+  to it, as peft holds an adapter at its base layer's type. Before, a bfloat16 transformer's adapted layers
+  returned float32.
+- Measured on the released weights: the IC-LoRA on LTX-2.5's distilled transformer at DFR stage 2's first call
+  holds to diffusers with peft at float32 (prediction 0.9999999968550127, the adapter's contribution
+  0.9999999721748168), and at bfloat16 inside the reference's own bfloat16 floor.
+
 #### Whisper holds LoRA adapters beside its weights
 
 - Every Whisper entry takes the `adapters` load option, lists its repository (`openai/whisper-small`, …) under

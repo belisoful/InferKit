@@ -302,6 +302,97 @@ final class NFKMLXLTX2DFRTests: XCTestCase {
         XCTAssertTrue(adapters.allSatisfy { $0.1.strength == 0 })
     }
 
+    // The detailing IC-LoRA on LTX-2.5's released 22B transformer (`IK_VAL_LTX2_5_TRANSFORMER`'s `transformer/`,
+    // or its `transformer_full/` as the oracle reads it, every block streamed from the release) against diffusers with peft at the first call of DFR's stage 2
+    // (`run_reference.py ltx2_real_dfr_lora`, `IK_PARITY_LTX2_REAL_DFR_LORA`): the predictions with the adapter at
+    // 0.5 and with it off, and the adapter's own contribution, their difference, at float32 from the stored
+    // bfloat16 and at bfloat16; at float32 each block's streams too.
+    func testDetailingLoRAOnTheReleasedTransformer() throws {
+        guard let directory = config["IK_VAL_LTX2_5_TRANSFORMER"], FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_LTX2_5_TRANSFORMER to the directory holding LTX-2.5's transformer/")
+        }
+        guard let lora = config["IK_VAL_LTX2_5_IC_LORA"], FileManager.default.fileExists(atPath: lora) else {
+            throw XCTSkip("set IK_VAL_LTX2_5_IC_LORA (\(NFKMLXLTX2Generator.detailingLoRARepo))")
+        }
+        guard let path = config["IK_PARITY_LTX2_REAL_DFR_LORA"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_LTX2_REAL_DFR_LORA (run_reference.py ltx2_real_dfr_lora)")
+        }
+        let r = try MLX.loadArrays(url: URL(fileURLWithPath: path))
+        let release = URL(fileURLWithPath: directory)
+        let folder = FileManager.default.fileExists(atPath: release.appendingPathComponent("transformer").path)
+            ? release.appendingPathComponent("transformer") : release.appendingPathComponent("transformer_full")
+        let configuration = try NFKMLXLTX2TransformerNet.configuration(
+            fromHuggingFace: folder.appendingPathComponent("config.json"))
+        let adapter = try NFKMLXLTX2LoRA.arrays(at: URL(fileURLWithPath: lora))
+        let grid = try XCTUnwrap(r["grid"]).asArray(Int32.self).map(Int.init)
+        let coords = try XCTUnwrap(r["coords"])
+        let coordinates = NFKMLXLTX2VideoCoordinates(starts: (0 ..< 3).map { coords[0, $0, 0..., 0].asArray(Float.self) },
+                                                     ends: (0 ..< 3).map { coords[0, $0, 0..., 1].asArray(Float.self) })
+        let audio = try XCTUnwrap(r["audio"])
+
+        for (tag, precision) in [("f32", NFKMLXWeightPrecision.float32), ("bf16", .checkpoint)] {
+            let net = NFKMLXLTX2TransformerNet(configuration)
+            try NFKMLXLTX2TransformerNet.loadWeights(into: net, from: folder, precision: precision,
+                                                     streamed: Set(0 ..< configuration.numLayers))
+            XCTAssertEqual(try NFKMLXLTX2LoRA.apply(adapter, to: net, strength: 0.5), 480)
+            let dtype = net.computeType
+            XCTAssertEqual(dtype, tag == "f32" ? .float32 : .bfloat16)
+            func predict() throws -> (video: MLXArray, audio: MLXArray) {
+                let pass = NFKMLXLTX2Pass(
+                    video: try XCTUnwrap(r["video"]).asType(dtype), audio: audio.asType(dtype),
+                    text: try XCTUnwrap(r["text"]).asType(dtype), audioText: try XCTUnwrap(r["audio_text"]).asType(dtype),
+                    timestep: try XCTUnwrap(r["timestep"]), audioTimestep: try XCTUnwrap(r["audio_timestep"]),
+                    sigma: try XCTUnwrap(r["sigma"]), audioSigma: try XCTUnwrap(r["audio_timestep"]),
+                    keyframes: try XCTUnwrap(r["keyframes"]))
+                let output = net.predictions([pass], frames: grid[0], height: grid[1], width: grid[2],
+                                             audioFrames: audio.dim(1), fps: 24, crossTimestep: true,
+                                             videoCoordinates: coordinates)[0]
+                eval(output.video, output.audio)
+                try net.verifyStream()
+                return output
+            }
+            var blocks = [String]()
+            if tag == "f32" {
+                net.blockObserver = { [self] index, video, audio in
+                    guard let expected = r["block\(index).video"], let expectedAudio = r["block\(index).audio"] else { return }
+                    blocks.append("\(index) \(cosine(video, expected)) / \(cosine(audio, expectedAudio))")
+                }
+            }
+            let adapted = try predict()
+            net.blockObserver = nil
+            NFKMLXLTX2LoRA.setStrength(0, in: net)
+            let base = try predict()
+            let reference = (lora: try XCTUnwrap(r["\(tag).lora.video"]), base: try XCTUnwrap(r["\(tag).base.video"]))
+            let video = cosine(adapted.video, reference.lora)
+            let baseVideo = cosine(base.video, reference.base)
+            let contribution = cosine(adapted.video.asType(.float32) - base.video.asType(.float32),
+                                      reference.lora - reference.base)
+            let audioCosine = cosine(adapted.audio, try XCTUnwrap(r["\(tag).lora.audio"]))
+            if !blocks.isEmpty {
+                print("VALIDATION PARITY ltx2.5-real-dfr-lora-blocks (video / audio): " + blocks.joined(separator: "; "))
+            }
+            print("VALIDATION PARITY ltx2.5-real-dfr-lora-\(tag): video \(video), audio \(audioCosine), "
+                  + "without the adapter \(baseVideo), the adapter's contribution \(contribution)")
+            if tag == "f32" {
+                XCTAssertGreaterThan(video, 0.999999996)
+                XCTAssertGreaterThan(audioCosine, 0.9999999997)
+                XCTAssertGreaterThan(baseVideo, 0.999999998)
+                XCTAssertGreaterThan(contribution, 0.99999997)
+            } else {
+                // bfloat16 is held to the reference's own bfloat16-against-float32 floor: each gap stays inside it.
+                let f32 = (lora: try XCTUnwrap(r["f32.lora.video"]), base: try XCTUnwrap(r["f32.base.video"]))
+                let floors = (video: cosine(reference.lora, f32.lora), base: cosine(reference.base, f32.base),
+                              contribution: cosine(reference.lora - reference.base, f32.lora - f32.base))
+                print("VALIDATION PARITY ltx2.5-real-dfr-lora-bf16-floor: video \(floors.video), without the adapter "
+                      + "\(floors.base), the adapter's contribution \(floors.contribution)")
+                XCTAssertLessThan(1 - video, 1 - floors.video)
+                XCTAssertLessThan(1 - baseVideo, 1 - floors.base)
+                XCTAssertLessThan(1 - contribution, 1 - floors.contribution)
+            }
+            NFKMLXGPU.clearCache()
+        }
+    }
+
     // The epilogue's keyframe rebuild rounds each decoded frame to bytes, so its floor is the decode's
     // last-ulp differences landing on the other side of a half: the stretch is Pillow's to the byte on the
     // reference's own bytes, the bytes differ from the reference's by one level where they differ at all, and

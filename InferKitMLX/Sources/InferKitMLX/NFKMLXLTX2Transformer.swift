@@ -643,6 +643,10 @@ public final class NFKMLXLTX2TransformerNet: Module {
     /// nil where every block is held.
     var layerStream: NFKMLXLayerStream?
 
+    /// Receives each block's index and the first pass's two streams once the block has run, for measuring a
+    /// block against a reference's.
+    var blockObserver: ((Int, MLXArray, MLXArray) -> Void)?
+
     /// Whether a block's activations are recomputed from its inputs in the backward pass rather than held
     /// from the forward one (gradient checkpointing, MLX's `checkpoint`), the trainer's
     /// `enable_gradient_checkpointing`. A training step then holds one block's activations at a time, at the
@@ -769,6 +773,7 @@ public final class NFKMLXLTX2TransformerNet: Module {
                 continue
             }
             for (pass, output) in outputs.enumerated() { prepared[pass].streams = output }
+            blockObserver?(index, outputs[0].video, outputs[0].audio)
         }
 
         // The output modulation reads the EMBEDDED timestep rather than the expanded one, and its two

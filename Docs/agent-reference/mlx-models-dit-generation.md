@@ -367,8 +367,24 @@ arithmetic as before.
     reference's own bytes, 39 of 442368 of the decoded bytes land one level apart where the decode's last ulp crosses
     a half, and encoding the reference's stretched bytes gives its keyframes at 0.99999999999844 or better.
     The released IC-LoRA is held to `.ltx25`'s layers by its header inventory (all 960 tensors on 480 layers)
-    and loads through the public loader; its effect is not measured on released weights, because the 38 GB
-    transformer is not on this machine.
+    and loads through the public loader.
+  - The IC-LoRA on the released distilled transformer (`run_reference.py ltx2_real_dfr_lora`,
+    `IK_PARITY_LTX2_REAL_DFR_LORA`, the `ltxtrain` env): DFR stage 2's first transformer call on a 49-frame
+    192 × 256 canvas (516 video tokens: the grid, one slot, the half-size reference) with the adapter at 0.5 and
+    off, diffusers' transformer built on the meta device and read a block at a time, every block streamed on
+    the port's side. The adapter moves the prediction to cosine 0.920 against the one without it. Float32 from
+    the stored bfloat16: prediction 0.9999999968550127, without the adapter 0.9999999984897476, the adapter's
+    contribution (their difference) 0.9999999721748168, audio 0.999999999765947, every block's video stream
+    0.999999999917006 or better and audio 0.999999999860586 or better. Bfloat16 against the reference's
+    bfloat16: prediction 0.9947716900166145, without the adapter 0.994996937380083, contribution
+    0.9318236471293128, inside the reference's own bfloat16-against-float32 floor (0.9850993612530495,
+    0.9873454490433559, 0.8283196581302352), each gap at most 0.40 of the floor's.
+  - The adapters (`NFKMLXLTX2LoRA.apply`) take their shape from the file, checked against the layer or, for a
+    streamed block's empty placeholder, the release's stored weight; they stay resident while the stream reads
+    the block in its turn. Their halves are held at the transformer's compute type and a float layer's sum is
+    cast back to it, peft's arrangement: diffusers' `inject_adapter_in_model` does not upcast, so peft moves
+    the halves to the base layer's type. A meta-device base gives peft no type to move them to, so the oracle
+    sets each half from the file itself and checks peft's block-0 output against `base + scaling · B(A x)`.
   - DFR runs on the distilled `ltx-2.5` only (`ltx-2.5-full` samples a different schedule). Customization: the
     recipe is glue over stages listed in `mlx-customization-ledger.md`.
 

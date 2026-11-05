@@ -5856,6 +5856,25 @@
         "IK_VAL_LTX2_5_TRANSFORMER_FULL": ""
       },
       "note": "LTX-2.5's full (SFT) transformer (37.98 GB bf16, gated), the one Lightricks' trainer fine-tunes. IK_VAL_LTX2_5_TRANSFORMER_FULL is the parent of transformer_full/; NFKMLXLTX2TrainingTests.testLTX25QLoRAStepOnReleasedWeights builds it at 4 bits and runs three QLoRA steps (about 5 min, peak 24.5 GB: run under LMC)."
+    },
+    {
+      "key": "LTX2_5_TRANSFORMER",
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "revision": "4791a1100e0cf97f7ed5c55c12dd71dce13f9dd3",
+      "directory": "LTX-2.5-Diffusers-transformer",
+      "files": [
+        "transformer/config.json",
+        "transformer/diffusion_pytorch_model.safetensors.index.json",
+        "transformer/diffusion_pytorch_model-00001-of-00004.safetensors",
+        "transformer/diffusion_pytorch_model-00002-of-00004.safetensors",
+        "transformer/diffusion_pytorch_model-00003-of-00004.safetensors",
+        "transformer/diffusion_pytorch_model-00004-of-00004.safetensors"
+      ],
+      "config": {
+        "IK_VAL_LTX2_5_TRANSFORMER": "",
+        "IK_PARITY_LTX2_REAL_DFR_LORA": "records/ltx2_real_dfr_lora.safetensors"
+      },
+      "note": "LTX-2.5's distilled transformer (37.98 GB bf16, gated), the one DFR samples with; the folder also holds an 8-shard set its index does not name, which is not fetched. IK_VAL_LTX2_5_TRANSFORMER is the parent of transformer/. IK_PARITY_LTX2_REAL_DFR_LORA is `run_reference.py ltx2_real_dfr_lora --checkpoint <that parent>` (ltxtrain env, reads IK_VAL_LTX2_5_IC_LORA), held by NFKMLXLTX2DFRTests.testDetailingLoRAOnTheReleasedTransformer, which streams every block from the release (run under LMC)."
     }
   ],
   "oracle_environments": {
@@ -6373,7 +6392,8 @@
         "ltx2_real_duration_head",
         "ltx2_real_prompt_enhancer",
         "wan_lora",
-        "ltx2_dfr"
+        "ltx2_dfr",
+        "ltx2_real_dfr_lora"
       ]
     },
     "wantrain_finetrainers": {

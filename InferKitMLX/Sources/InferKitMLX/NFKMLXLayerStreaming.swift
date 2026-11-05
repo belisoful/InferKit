@@ -141,6 +141,12 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
     /// Whether layer `index` is streamed rather than held.
     public func streams(_ index: Int) -> Bool { tensors[index] != nil }
 
+    /// The shape layer `index`'s tensor `name` takes when it is installed, or nil where the stream does not
+    /// read it.
+    func shape(ofLayer index: Int, tensor name: String) -> [Int]? {
+        tensors[index]?.first { $0.name == name }?.shape
+    }
+
     /// The bytes one pass reads: every streamed layer's tensors as stored.
     public var bytesPerPass: Int {
         tensors.values.reduce(0) { total, layer in total + layer.reduce(0) { $0 + $1.entry.byteCount } }

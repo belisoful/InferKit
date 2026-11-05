@@ -614,6 +614,60 @@ extension NFKMLXLTX2StageTests {
         XCTAssertTrue(packed.transformerBlocks[0].attn1.toQ is NFKMLXQuantizedLoRALinear, "QLoRA over the packed base")
     }
 
+    // A LoRA in Lightricks' key format over a transformer whose blocks stream from the release adapts them as it
+    // adapts held ones: a streamed block's empty placeholders take adapters sized from the release, held at the
+    // transformer's type, which stay resident while the stream reads the block's weights in their turn.
+    func testALoRAAdaptsStreamedBlocksAsItAdaptsHeldOnes() throws {
+        let arrays = try record("IK_PARITY_LTX2_PIPELINE", oracle: "ltx2_pipeline")
+        let release = try tinyRelease(arrays)
+        defer { try? FileManager.default.removeItem(at: release) }
+        let folder = release.appendingPathComponent("transformer")
+        let configuration = try NFKMLXLTX2TransformerNet.configuration(
+            fromHuggingFace: folder.appendingPathComponent("config.json"))
+        let held = NFKMLXLTX2TransformerNet(configuration), streamed = NFKMLXLTX2TransformerNet(configuration)
+        try NFKMLXLTX2TransformerNet.loadWeights(into: held, from: folder, precision: .checkpoint, streamed: [])
+        try NFKMLXLTX2TransformerNet.loadWeights(into: streamed, from: folder, precision: .checkpoint, streamed: [0, 1])
+
+        let targets = ["attn1.to_q", "attn1.to_out.0", "attn2.to_q", "ff.net.0.proj", "ff.net.2"]
+        var lora = [String: MLXArray]()
+        var seed: UInt64 = 10
+        for (path, module) in held.leafModules().flattened() {
+            guard let layer = module as? Linear, targets.contains(where: { path.hasSuffix("." + $0) }) else { continue }
+            let (outputs, inputs) = layer.shape
+            seed += 2
+            lora["diffusion_model.\(path).lora_A.weight"] = MLXRandom.normal([4, inputs], key: MLXRandom.key(seed)) * 0.3
+            lora["diffusion_model.\(path).lora_B.weight"] = MLXRandom.normal([outputs, 4], key: MLXRandom.key(seed + 1)) * 0.3
+        }
+        XCTAssertEqual(lora.count, 20, "five layers in each of two blocks")
+
+        let pass = NFKMLXLTX2Pass(video: MLXRandom.normal([1, 12, 8], key: MLXRandom.key(3)),
+                                  audio: MLXRandom.normal([1, 9, 8], key: MLXRandom.key(4)),
+                                  text: MLXRandom.normal([1, 8, 32], key: MLXRandom.key(1)),
+                                  audioText: MLXRandom.normal([1, 8, 16], key: MLXRandom.key(2)),
+                                  timestep: MLXArray([Float(700)]), audioTimestep: MLXArray([Float(700)]),
+                                  sigma: MLXArray([Float(700)]))
+        func predict(_ net: NFKMLXLTX2TransformerNet) throws -> (video: MLXArray, audio: MLXArray) {
+            let output = net.predictions([pass], frames: 2, height: 2, width: 3, audioFrames: 9, crossTimestep: true)[0]
+            eval(output.video, output.audio)
+            try net.verifyStream()
+            return output
+        }
+        let base = try predict(held)
+        XCTAssertEqual(try NFKMLXLTX2LoRA.apply(lora, to: held, strength: 0.5), 10)
+        XCTAssertEqual(try NFKMLXLTX2LoRA.apply(lora, to: streamed, strength: 0.5), 10)
+        let adapters = streamed.leafModules().flattened().compactMap { $0.1 as? NFKMLXLoRALinear }
+        XCTAssertEqual(adapters.count, 10)
+        XCTAssertTrue(adapters.allSatisfy { $0.loraA.dtype == streamed.computeType && $0.resultType == streamed.computeType })
+        let heldOutput = try predict(held), streamedOutput = try predict(streamed)
+        XCTAssertEqual(cosine(streamedOutput.video, heldOutput.video), 1, accuracy: 1e-12)
+        XCTAssertEqual(cosine(streamedOutput.audio, heldOutput.audio), 1, accuracy: 1e-12)
+        XCTAssertLessThan(cosine(heldOutput.video, base.video), 0.9999, "the adapters change the prediction")
+        NFKMLXLTX2LoRA.setStrength(0, in: streamed)
+        let off = try predict(streamed)
+        XCTAssertEqual(cosine(off.video, base.video), 1, accuracy: 1e-12)
+        XCTAssertThrowsError(try NFKMLXLTX2LoRA.apply(lora, to: streamed), "a layer takes one IC-LoRA")
+    }
+
     // The public directory factory on a release written to disk: the clip and its soundtrack come back at
     // their shapes, a transformer whose blocks stream from the release gives the held one's velocities, the
     // backend writes the movie with its audio track and the soundtrack beside it, and the registry refuses

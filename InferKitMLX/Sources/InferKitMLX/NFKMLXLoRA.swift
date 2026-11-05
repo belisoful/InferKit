@@ -81,6 +81,17 @@ public final class NFKMLXLoRALinear: Linear, NFKMLXLoRAAdapter {
         super.init(weight: base.weight, bias: base.bias)
     }
 
+    /// Wraps `base` with a released adapter's halves as the file stores them, `down` `[rank, inputs]` and
+    /// `up` `[outputs, rank]`. `base` may be a streamed block's empty placeholder, which the stream fills
+    /// in its turn.
+    init(base: Linear, down: MLXArray, up: MLXArray, alpha: Float) {
+        self.dropout = 0
+        self._loraA.wrappedValue = down.transposed()
+        self._loraB.wrappedValue = up.transposed()
+        self.scale = alpha / Float(down.dim(0))
+        super.init(weight: base.weight, bias: base.bias)
+    }
+
     public override func callAsFunction(_ x: MLXArray) -> MLXArray {
         guard strength != 0 else { return super.callAsFunction(x) }
         let sum = super.callAsFunction(x)
@@ -128,6 +139,17 @@ public final class NFKMLXQuantizedLoRALinear: QuantizedLinear, NFKMLXLoRAAdapter
         self._loraA.wrappedValue = MLXRandom.uniform(-deviation ..< deviation, [inputs, rank])
         self._loraB.wrappedValue = MLXArray.zeros([rank, outputs])
         self.scale = alpha / Float(rank)
+        super.init(weight: base.weight, bias: base.bias, scales: base.scales, biases: base.biases,
+                   groupSize: base.groupSize, bits: base.bits, mode: base.mode, globalScale: base.globalScale)
+    }
+
+    /// Wraps `base` with a released adapter's halves as the file stores them, `down` `[rank, inputs]` and
+    /// `up` `[outputs, rank]`.
+    init(base: QuantizedLinear, down: MLXArray, up: MLXArray, alpha: Float) {
+        self.dropout = 0
+        self._loraA.wrappedValue = down.transposed()
+        self._loraB.wrappedValue = up.transposed()
+        self.scale = alpha / Float(down.dim(0))
         super.init(weight: base.weight, bias: base.bias, scales: base.scales, biases: base.biases,
                    groupSize: base.groupSize, bits: base.bits, mode: base.mode, globalScale: base.globalScale)
     }
