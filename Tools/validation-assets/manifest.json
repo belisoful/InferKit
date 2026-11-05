@@ -628,6 +628,26 @@
       "note": "An Igbo adapter for Whisper small (theelvace/whisper-small-igbo, MIT), PEFT layout over the query and value projections, rank 32; its adapter_config.json (977 B, same revision) sits beside it. The second adapter of the IK_PARITY_WHISPER_ADAPTERS stack, at strength 0.6."
     },
     {
+      "key": "LORA_FLUX_SUPER_REALISM",
+      "file": "lora/flux-super-realism/super-realism.safetensors",
+      "bytes": 612747744,
+      "url": "https://huggingface.co/strangerzonehf/Flux-Super-Realism-LoRA/resolve/321693353a5c05fe013ad431578d97e866159515/super-realism.safetensors",
+      "config": [
+        "IK_VAL_LORA_FLUX_SUPER_REALISM"
+      ],
+      "note": "A FLUX.1 [dev] style adapter (strangerzonehf/Flux-Super-Realism-LoRA, MIT) in kohya's layout over the original model's names (lora_unet_double_blocks_N_img_attn_qkv, lora_unet_single_blocks_N_linear1, modulation layers) with per-layer alphas; NFKMLXFluxAdapters splits the fused layers onto diffusers' names. Held at strength 0.8 beside the FLUX_SCHNELL transformer and stacked with HYPER_FLUX_8STEP_LORA at 0.6, measured against diffusers' FLUX loader (FluxPipeline.lora_state_dict, load_lora_into_transformer, set_adapters) at bfloat16 (run_reference.py flux_adapters under the ltxtrain env with IK_FLUX_ADAPTERS='<realism>=0.8;<hyper>=0.6' -> IK_PARITY_FLUX_ADAPTERS)."
+    },
+    {
+      "key": "HYPER_FLUX_8STEP_LORA",
+      "file": "hyper-sd/Hyper-FLUX.1-dev-8steps-lora.safetensors",
+      "bytes": 1388026440,
+      "url": "https://huggingface.co/ByteDance/Hyper-SD/resolve/bc08d970a87c74c71209491d64e3525845698863/Hyper-FLUX.1-dev-8steps-lora.safetensors",
+      "config": [
+        "IK_VAL_HYPER_FLUX_8STEP_LORA"
+      ],
+      "note": "Hyper-SD's eight-step FLUX.1 [dev] adapter (ByteDance/Hyper-SD; the repository card names no license, and an adapter of FLUX.1 [dev] falls under its non-commercial license) in diffusers' layout (transformer.<layer>.lora_A / lora_B, embedders included). Its guidance-embedding part is left out on [schnell], which has none, as diffusers leaves it out. The second adapter of the IK_PARITY_FLUX_ADAPTERS stack, at strength 0.6."
+    },
+    {
       "key": "HYPER_SD15_4STEP_LORA",
       "file": "hyper-sd/Hyper-SD15-4steps-lora.safetensors",
       "bytes": 269127064,

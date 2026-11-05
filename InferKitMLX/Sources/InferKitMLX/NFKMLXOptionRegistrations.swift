@@ -32,7 +32,8 @@ import MLX
 /// - Qwen3-VL and pplx-decider: residency, precision, and a runtime weight quantization of the decoder;
 /// - DeepSeek V4: residency, and each other value whose key names an ``NFKMLXDeepSeekLoadOptions``
 ///   property, set by key-value coding;
-/// - the staged generators (FLUX.1 and its ControlNet, FLUX.2, SD3 and its ControlNet, SANA, Z-Image,
+/// - FLUX.1: residency, and the adapters held beside its transformer;
+/// - the staged generators (FLUX.1's ControlNet, FLUX.2, SD3 and its ControlNet, SANA, Z-Image,
 ///   Qwen-Image, Wan, LTX-Video, MiniMax Music 3, Stable Audio Open): residency.
 /// - Wan 2.2 A14B: residency, precision, and a runtime weight quantization of both experts' blocks.
 /// - Wan 2.2 Animate: residency, precision, and a runtime weight quantization of the transformer's blocks.
@@ -308,9 +309,10 @@ enum NFKMLXOptionRegistrations {
         }
         let residency: Set<String> = [NFKModelLoadOptionResidency]
         registerDirectoryModels(registryNames(families: ["flux"], where: lists(NFKModelTaskTextToImage)),
-                                consumes: residency) { url, name, options in
+                                consumes: residency.union([NFKModelLoadOptionAdapters])) { url, name, options in
             let schedule: NFKMLXFlowMatchConfiguration = name == "flux.1-dev" ? .flux : .fluxSchnell
-            let flux = try NFKMLXFlux.flux(directoryURL: url, schedule: schedule, residency: options.residency)
+            let flux = try NFKMLXFlux.flux(directoryURL: url, schedule: schedule, residency: options.residency,
+                                           adapters: options.adapters())
             report(flux.holdsStagesResident, to: options)
             return flux.inferenceBackend()
         }

@@ -2069,14 +2069,17 @@ enum NFKMLXCatalogImage {
              "A guidance-distilled rectified-flow transformer that draws an image from a prompt."),
         ]
         return releases.map { release in
-            model(release.name, release.displayName, family: "flux",
-                  summary: release.summary, tasks: [NFKModelTaskTextToImage],
-                  inputs: [promptInput], outputs: [generatedImageOutput],
-                  parameters: generatorOptions(side: 1024, multiple: 16, steps: release.steps, guidance: 3.5,
-                                               guidanceHelp: "The guidance a guidance-distilled release ([dev]) embeds. [schnell] ignores it."),
-                  license: release.license,
-                  source: hubRelease(release.repository, components: NFKMLXFlux.releaseComponents),
-                  residencies: stagedResidencies)
+            var entry = model(release.name, release.displayName, family: "flux",
+                              summary: release.summary, tasks: [NFKModelTaskTextToImage],
+                              inputs: [promptInput], outputs: [generatedImageOutput],
+                              parameters: generatorOptions(side: 1024, multiple: 16, steps: release.steps, guidance: 3.5,
+                                                           guidanceHelp: "The guidance a guidance-distilled release ([dev]) embeds. [schnell] ignores it.")
+                                  + [.adapterStrengths],
+                              license: release.license,
+                              source: hubRelease(release.repository, components: NFKMLXFlux.releaseComponents),
+                              residencies: stagedResidencies)
+            entry.adapterBases = [NFKModelAdapterBaseFlux1]
+            return entry
         }
     }
 

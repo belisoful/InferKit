@@ -1934,6 +1934,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### FLUX.1 holds LoRA adapters beside its transformer
+
+- `flux.1-schnell` and `flux.1-dev` take the `adapters` load option under the `flux-1` base and declare
+  `NFKParameterAdapterStrengths`, and `+[NFKMLXFlux backendWithDirectoryURL:residency:adapterURLs:strengths:error:]`
+  builds one from Objective-C. The adapters stay unmerged beside the transformer's layers, and a staged release
+  holds them again each time it loads the transformer.
+- The reader takes diffusers' layout and the two that name the original model, kohya's and Black Forest Labs',
+  whose fused attention and single-block projections split onto the transformer's separate layers. A [dev]
+  adapter's guidance-embedding part is left out on [schnell]. A text encoder's adapter or an XLabs file is
+  refused.
+- A kohya adapter and a diffusers adapter held together at 0.8 and 0.6 give diffusers' velocity at bfloat16 at a
+  cosine of 0.99999.
+
 #### Whisper holds LoRA adapters beside its weights
 
 - Every Whisper entry takes the `adapters` load option, lists its repository (`openai/whisper-small`, …) under

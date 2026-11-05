@@ -8972,6 +8972,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "flux-1"
+      ],
       "displayName" : "FLUX.1 [dev]",
       "engine" : "mlx",
       "family" : "flux",
@@ -8997,6 +9000,7 @@
         "url" : "https://huggingface.co/black-forest-labs/FLUX.1-dev/blob/main/LICENSE.md"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "residency" : "residency"
       },
       "options" : [
@@ -9048,6 +9052,16 @@
           "title" : "Guidance"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -9077,6 +9091,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -9224,6 +9246,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "flux-1"
+      ],
       "displayName" : "FLUX.1 [schnell]",
       "engine" : "mlx",
       "family" : "flux",
@@ -9250,6 +9275,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "residency" : "residency"
       },
       "options" : [
@@ -9301,6 +9327,16 @@
           "title" : "Guidance"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -9330,6 +9366,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [

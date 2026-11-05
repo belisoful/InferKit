@@ -117,8 +117,11 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
     }
 
     func testTheImageGeneratorsDeclareTheirBackendsKeys() throws {
+        // A FLUX.1 entry declares the adapter strengths for a load that holds adapters; a backend built without one
+        // does not read them.
         for name in [NFKMLXFlux.modelName, NFKMLXCatalogImage.fluxDevName] {
-            assertPorts(name, inputs: NFKMLXFlux.backendInputKeys, parameters: NFKMLXFlux.backendParameterKeys,
+            assertPorts(name, inputs: NFKMLXFlux.backendInputKeys,
+                        parameters: NFKMLXFlux.backendParameterKeys.union([NFKParameterAdapterStrengths]),
                         outputs: [NFKOutputImage])
         }
         for name in [NFKMLXFlux2.modelName] + NFKMLXCatalogImage.flux2AdditionalReleases.map(\.name) {

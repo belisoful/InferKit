@@ -1013,6 +1013,20 @@ arithmetic as before.
   0.9999831167429072 (`run_reference.py flux_real`, `IK_PARITY_FLUX_REAL` / `IK_VAL_FLUX_SCHNELL`, from the
   ungated `cocktailpeanut/xulf-s` mirror). The 12B transformer needs ~24 GB resident, so that test runs
   where the machine can hold it, not by default.
+  **Held adapters (2026-11-05).** `NFKMLXFluxAdapters.hold` reads diffusers' `transformer.<layer>.lora_A` /
+  `lora_B` (scaled by `lora_adapter_metadata` or a layer's `alpha`, else 1), kohya's `lora_unet_<layer>` and
+  Black Forest Labs' `diffusion_model.<layer>`. The last two name the original model, through
+  `originalLayers(doubleBlocks:singleBlocks:)`: a double block's `img_attn.qkv` / `txt_attn.qkv` and a single
+  block's `linear1` split their up half by each target's outputs over a shared down half, and the final layer's
+  `adaLN_modulation.1` swaps its halves onto `norm_out.linear`, whose scale and shift diffusers orders the other
+  way. A [dev] adapter's guidance-embedding part is left out on [schnell], as diffusers leaves it out; any other
+  missing layer is refused. `NFKMLXFlux` attaches the adapters inside its pipeline stage's loader, so a staged
+  release holds them again at each load. Parity (`testFluxHeldAdaptersMatchTheReference`,
+  `run_reference.py flux_adapters`, `IK_PARITY_FLUX_ADAPTERS`): `strangerzonehf/Flux-Super-Realism-LoRA` (kohya)
+  at 0.8 with Hyper-SD's eight-step FLUX adapter (diffusers) at 0.6, on `run_flux_real`'s input at bfloat16,
+  against diffusers' FLUX loader with `set_adapters`: velocity 0.99999434, base transformer 0.99999610, the
+  adapters' change 0.99910, and at strength 0 the adapted record reads 0.99534. The change is a tenth of the
+  velocity's norm and each bfloat16 side carries the base distance, which together put the change near 1 − 1e-3.
 - `NFKMLXFlux2TransformerNet` — the FLUX.2 transformer (`Flux2Transformer2DModel`, Black Forest Labs).
   It keeps FLUX.1's two block kinds and changes four things. MODULATION LIVES ON THE MODEL: three
   heads (`double_stream_modulation_img`, `…_txt`, `single_stream_modulation`) are evaluated once from

@@ -2289,6 +2289,56 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(similarity, 0.99, "the released FLUX.1 [schnell] transformer matches the reference")
     }
 
+    // Two released FLUX.1 adapters held beside the released [schnell] transformer at their own strengths, one in
+    // kohya's layout over the original model's fused layers and one in diffusers', against diffusers' FLUX loader
+    // with both active through set_adapters, at bfloat16 on run_flux_real's inputs. The adapters' change to the
+    // velocity compares apart from the bfloat16 distance between the two transformers.
+    func testFluxHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX_ADAPTERS"], let release = config["IK_VAL_FLUX_SCHNELL"],
+              let realism = config["IK_VAL_LORA_FLUX_SUPER_REALISM"], let hyper = config["IK_VAL_HYPER_FLUX_8STEP_LORA"] else {
+            throw XCTSkip("set IK_PARITY_FLUX_ADAPTERS, IK_VAL_FLUX_SCHNELL, IK_VAL_LORA_FLUX_SUPER_REALISM, and "
+                          + "IK_VAL_HYPER_FLUX_8STEP_LORA")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        let adapters = [URL(fileURLWithPath: realism), URL(fileURLWithPath: hyper)]
+        XCTAssertEqual(strengths.count, adapters.count, "the record holds one strength per adapter")
+        let directory = URL(fileURLWithPath: release)
+        let net = NFKMLXFluxTransformerNet(try NFKMLXFluxTransformerNet.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXFluxTransformerNet.loadWeights(into: net, from: directory, precision: .checkpoint)
+        try NFKMLXFluxAdapters.hold(zip(adapters, strengths).map { (url: $0, strength: $1) }, in: net)
+
+        func velocity(at run: [Float]) throws -> MLXArray {
+            let output = try NFKMLXAdapterRun.$strengths.withValue(run) {
+                net(try XCTUnwrap(arrays["hidden"]).asType(.bfloat16),
+                    encoderHidden: try XCTUnwrap(arrays["encoder"]).asType(.bfloat16),
+                    pooled: try XCTUnwrap(arrays["pooled"]).asType(.bfloat16),
+                    timestep: try XCTUnwrap(arrays["timestep"]).asType(.bfloat16),
+                    guidance: nil, imageIds: try XCTUnwrap(arrays["img_ids"]))
+            }
+            eval(output)
+            return output.asType(.float32)
+        }
+        func values(_ array: MLXArray) -> [Double] { array.reshaped([-1]).asArray(Float.self).map(Double.init) }
+        let reference = try XCTUnwrap(arrays["output"])
+        let referenceBase = try XCTUnwrap(arrays["base_output"])
+        let adapted = try velocity(at: strengths)
+        let base = try velocity(at: strengths.map { _ in 0 })
+        let similarity = cosine(values(adapted), values(reference))
+        let baseSimilarity = cosine(values(base), values(referenceBase))
+        let change = cosine(values(adapted - base), values(reference - referenceBase))
+        let control = cosine(values(base), values(reference))
+        print("VALIDATION PARITY flux-adapters: strengths \(strengths), velocity cosine \(similarity); base transformer "
+              + "\(baseSimilarity); the adapters' change to the velocity, cosine \(change); control at strength 0 \(control)")
+        XCTAssertLessThan(control, similarity, "the record tells the adapted transformer from the base")
+        XCTAssertGreaterThan(similarity, 0.99999)
+        // The change is a tenth of the velocity's norm (the control's distance), and each side's bfloat16 velocity
+        // carries its own error (the base comparison's distance), so the change compares to about 1 − 1e-3.
+        XCTAssertGreaterThan(change, 0.999)
+    }
+
     // FLUX.1's text front end (NFKMLXFluxTextEncoder) on the RELEASED CLIP-L and T5-XXL weights, against
     // transformers' CLIPTextModel and T5EncoderModel. The two encoders are ~10 GB in bfloat16, which fits
     // where the 24 GB transformer does not, so this measures the whole prompt→conditioning path — the CLIP

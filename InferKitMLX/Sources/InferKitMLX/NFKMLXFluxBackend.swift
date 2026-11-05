@@ -31,7 +31,8 @@ extension NFKMLXFlux {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: Self.backendInputKeys,
-                                parameterKeys: Self.backendParameterKeys,
+                                parameterKeys: adapterStrengths.isEmpty ? Self.backendParameterKeys
+                                    : Self.backendParameterKeys.union([NFKParameterAdapterStrengths]),
                                 outputKeys: [NFKOutputImage]) { [self] request, job in
             let prompt = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             func parameter(_ key: String) -> NSNumber? { NFKMLXGenerationBackend.number(request, key) }
@@ -40,10 +41,13 @@ extension NFKMLXFlux {
             steps = parameter(NFKParameterSteps)?.intValue ?? steps
             guidance = parameter(NFKParameterGuidanceScale)?.floatValue ?? guidance
             job.reportProgress(0)
-            let image = try cgImage(forPrompt: prompt,
-                                    width: parameter(NFKParameterWidth)?.intValue ?? 1024,
-                                    height: parameter(NFKParameterHeight)?.intValue ?? 1024,
-                                    seed: NFKMLXGenerationBackend.seed(request))
+            // The held adapters read the run's strengths as each step builds its graph.
+            let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
+            let image = try NFKMLXAdapterRun.$strengths.withValue(strengths) {
+                try cgImage(forPrompt: prompt, width: parameter(NFKParameterWidth)?.intValue ?? 1024,
+                            height: parameter(NFKParameterHeight)?.intValue ?? 1024,
+                            seed: NFKMLXGenerationBackend.seed(request))
+            }
             if job.status == .cancelled { return nil }
             job.reportProgress(1)
             return NFKMLXGenerationBackend.imageResult(image)
@@ -62,6 +66,27 @@ extension NFKMLXFlux {
     @objc(backendWithDirectoryURL:residency:error:)
     public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try flux(directoryURL: directoryURL, residency: residency).inferenceBackend()
+    }
+
+    /// ``backend(directoryURL:residency:)`` with LoRA adapters held beside the transformer: each a diffusers, kohya,
+    /// or Black Forest Labs safetensors file, at the strength in `strengths` at its index. The adapters stay
+    /// unmerged, so they stack, and a request sets each one's strength through `NFKParameterAdapterStrengths`, an
+    /// array in the order of `adapterURLs`.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the counts differ, and `NFKMLXError.loRANotApplicable`
+    ///   when an adapter does not fit FLUX.1 (at construction for a resident release, at the first image for a
+    ///   staged one).
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:residency:adapterURLs:strengths:error:)
+    public static func backend(directoryURL: URL, residency: NFKMLXResidency, adapterURLs: [URL],
+                               strengths: [NSNumber]) throws -> any NFKInferenceBackend {
+        guard adapterURLs.count == strengths.count else {
+            throw NFKMLXError.unsupportedConfiguration("one strength per adapter: \(adapterURLs.count) adapters, "
+                                                       + "\(strengths.count) strengths")
+        }
+        return try flux(directoryURL: directoryURL, schedule: .fluxSchnell, residency: residency,
+                        adapters: zip(adapterURLs, strengths).map { (url: $0, strength: $1.floatValue) }).inferenceBackend()
     }
 
     /// ``backend(directoryURL:residency:)`` over `schedule`: `.fluxSchnell` for the four-step distillation

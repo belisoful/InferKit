@@ -110,6 +110,10 @@ public final class NFKMLXFlux: NSObject {
     /// The guidance scale a guidance-distilled release ([dev]) reads; schnell ignores it.
     @objc public var guidance: Float = 3.5
 
+    /// The strengths the adapters held beside the transformer were loaded at, in load order; empty for a
+    /// release that holds none.
+    var adapterStrengths: [Float] = []
+
     /// Whether the text encoders and the transformer stay loaded together between images. False where
     /// the release is staged: each image then loads CLIP-L and T5-XXL, encodes, releases them, and
     /// loads the transformer and the autoencoder. Introduced in InferKit 0.4.0.
@@ -232,6 +236,14 @@ public final class NFKMLXFlux: NSObject {
     /// ``holdsStagesResident`` reports the placement. Introduced in InferKit 0.4.0.
     public static func flux(directoryURL: URL, schedule: NFKMLXFlowMatchConfiguration,
                             residency: NFKMLXResidency = .automatic) throws -> NFKMLXFlux {
+        try flux(directoryURL: directoryURL, schedule: schedule, residency: residency, adapters: [])
+    }
+
+    /// ``flux(directoryURL:schedule:residency:)`` with `adapters` held beside the transformer at their strengths,
+    /// read by ``NFKMLXFluxAdapters``. A staged release holds them again each time it loads the transformer, so a
+    /// misfit surfaces at the first image; a resident one at construction.
+    static func flux(directoryURL: URL, schedule: NFKMLXFlowMatchConfiguration, residency: NFKMLXResidency,
+                     adapters: [(url: URL, strength: Float)]) throws -> NFKMLXFlux {
         let transformerDirectory = directoryURL.appendingPathComponent("transformer")
         let configuration = try NFKMLXFluxTransformerNet.configuration(
             fromHuggingFace: transformerDirectory.appendingPathComponent("config.json"))
@@ -257,10 +269,12 @@ public final class NFKMLXFlux: NSObject {
                 let transformer = NFKMLXFluxTransformerNet(configuration)
                 try NFKMLXFluxTransformerNet.loadWeights(into: transformer, from: transformerDirectory,
                                                          precision: .checkpoint)
+                try NFKMLXFluxAdapters.hold(adapters, in: transformer)
                 let vae = NFKMLXSDAutoencoder(configuration: .flux)
                 try NFKMLXStableDiffusionModels.loadVAEWeights(into: vae, from: vaeURL, precision: .checkpoint)
                 return NFKMLXFluxPipeline(transformer: transformer, vae: vae, schedule: schedule)
             })
+        flux.adapterStrengths = adapters.map(\.strength)
         if plan.holdsStagesResident {
             try flux.loadResident()
         }

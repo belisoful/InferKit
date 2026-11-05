@@ -164,8 +164,8 @@ enum NFKMLXDecoderAdapters {
 
     /// One detour beside the linear layer at `path`, its halves `down` `[rank, inputs]` and `up`
     /// `[outputs, rank]` checked against the layer's shape and held at the layer's type.
-    private static func detour(down: MLXArray, up: MLXArray, scale: Double, adapter: Int, strength: Float,
-                               path: String, layers: [String: Module], name: String) throws -> NFKMLXLowRankDetour {
+    static func detour(down: MLXArray, up: MLXArray, scale: Double, adapter: Int, strength: Float,
+                       path: String, layers: [String: Module], name: String) throws -> NFKMLXLowRankDetour {
         let shape: (outputs: Int, inputs: Int)
         let type: DType
         switch layers[path] {
