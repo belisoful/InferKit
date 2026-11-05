@@ -743,7 +743,7 @@ extension NFKMLXCatalogLanguage {
 
     fileprivate static func languageEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
         let architecture = release.routesExperts ? "mixture-of-experts decoder" : "dense decoder"
-        return NFKMLXCatalogEntry(
+        var entry = NFKMLXCatalogEntry(
             identifier: release.name, displayName: release.displayName, family: release.family,
             summary: "\(release.displayName), a \(architecture) that writes text, calls tools, and follows a JSON Schema.",
             registryName: release.name, tasks: [NFKModelTaskTextGeneration],
@@ -759,12 +759,18 @@ extension NFKMLXCatalogLanguage {
             license: license(release.repository),
             residencies: release.routesExperts ? residencies(routesExperts: true) : streamedResidencies,
             modelTypes: release.modelTypes)
+        // An adapter trained on the release names its repository as its base.
+        entry.adapterBases = [release.repository]
+        entry.parameters.append(.adapterStrengths)
+        return entry
     }
 
     fileprivate static var ggufEntry: NFKMLXCatalogEntry {
         let release = ggufRelease
         let file = "SmolLM2-135M-Instruct-Q4_K_M.gguf"
         var entry = languageEntry(release)
+        entry.adapterBases = []
+        entry.parameters.removeAll { $0.key == NFKParameterAdapterStrengths }
         entry.residencies = [NFKModelResidencyResident]
         entry.summary = "SmolLM2 135M Instruct quantized to Q4_K_M, read from one GGUF file with its tokenizer."
         entry.variants = [variant(release, files: [NFKModelFile(path: file, role: NFKModelFileRoleWeights)],
@@ -806,14 +812,16 @@ extension NFKMLXCatalogLanguage {
         -> NFKMLXCatalogEntry {
         let files = releaseFiles(required: NFKMLXHybridLanguage.requiredFiles, optional: NFKMLXHybridLanguage.optionalFiles,
                                  weights: NFKMLXHybridLanguage.weightFiles)
-        return decoderEntry(
+        var entry = decoderEntry(
             name: size.name, displayName: size.displayName, family: "qwen3.5",
             summary: "\(size.displayName), a hybrid linear- and full-attention decoder that writes text and calls tools.",
             variants: [familyVariant(size.name, size.repository, displayName: size.displayName, isDefault: true,
                                      revision: size.revision, files: files)],
             license: .apache2(), readsReasoning: true,
-            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions(),
-            residencies: streamedResidencies)
+            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput],
+            parameters: toolDecoderOptions() + [.adapterStrengths], residencies: streamedResidencies)
+        entry.adapterBases = [size.repository]
+        return entry
     }
 
     fileprivate static var qwen4ExpEntry: NFKMLXCatalogEntry {

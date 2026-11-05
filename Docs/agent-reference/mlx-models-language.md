@@ -40,6 +40,30 @@ attention and feed-forward.
   Trap: Swift 6.4 crashes in IRGen on a call to the optional throwing requirement through an
   existential (`(backend as any NFKInferenceBackend).tokenCount?(for:)`); the tests call it on the
   concrete type.
+- Held adapters (2026-11-05): the dense decoders and the Qwen3.5 hybrids take the `adapters` load option
+  through `NFKMLXDecoderAdapters.hold`, which places one `NFKMLXLowRankDetour` per adapter beside each
+  named layer (`NFKMLXAdaptedLinear`, or `NFKMLXAdaptedQuantizedLinear` over a packed layer) after any load
+  quantization, since `NFKMLXQuantization.quantize` would replace an adapted layer with a plain one.
+  - PEFT: `lora_A` `[r, in]` and `lora_B` `[out, r]`, scaled by `NFKMLXWanLoRA.peftConfiguration(json:)` from
+    the `adapter_config.json` beside the file. mlx-lm: `lora_a` `[in, r]` and `lora_b` `[r, out]` transposed,
+    scaled by `lora_parameters.scale`. A file without its configuration is refused: the scaling is unknown.
+  - The run's strengths ride `NFKMLXAdapterRun.strengths`, set inside each backend's generate call rather
+    than around the job, because a detached task does not inherit a task-local value.
+  - The dense backend carries them in `NFKMLXGenerationOptions.adapterStrengths`, and
+    `NFKMLXPromptCache.matches` compares them, so a conversation's cache computed at other strengths starts
+    over.
+  - The hybrid's compiled single-position step is traced once and keeps the strengths of its first run, so
+    `NFKMLXHybridLanguageNet.holdsAdapters` turns it off; `testTheHybridDecodersCachedPassFollowsEachRunsStrength`
+    fails with it on.
+  - A detour's halves are held at the layer's type (a packed layer's scales' type), and the product runs at the
+    input's type. PEFT runs a float32 adapter in float32 over a bf16 base, so a bf16 comparison differs there.
+  - Parity: `testQwen3HeldAdaptersMatchTheReference`, two released Qwen3-0.6B adapters against PEFT's
+    `set_adapter` + `set_scale` at float32 (`run_reference.py qwen3_adapters`, `IK_PARITY_QWEN3_ADAPTERS`):
+    `phh/Qwen3-0.6B-TLDR-Lora` (q and v, rank 8) at 0.8 and `codelion/Qwen3-0.6B-accuracy-recovery-lora`
+    (every projection, rank 64) at 0.5. Over the prompt and the 16-token greedy continuation, 36 positions:
+    logit cosine 0.99999999999, worst difference 5.3e-05, every position's argmax the reference's, and the
+    backend writes the reference's continuation at the strengths a request sets. At strength 0 the same
+    record reads 0.98955.
 - `NFKMLXRoPEScaling` — the rotary frequency scaling a release declares (`rope_scaling`), shared by the
   dense decoder and DeepSeek. At reference parity against `transformers`' own `ROPE_INIT_FUNCTIONS`
   for `linear`, `yarn`, `llama3`, and `longrope` across ten configurations (worst relative frequency

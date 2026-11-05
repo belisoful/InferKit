@@ -588,6 +588,26 @@
       "note": "IKEA instructions style (ostris/ikea-instructions-lora-sdxl, license other), a kohya SDXL adapter over the UNet residual blocks' convolutions as well as its attention. The second adapter of the IK_PARITY_SDXL_ADAPTERS_T2I stack, at strength 0.7."
     },
     {
+      "key": "LORA_QWEN3_06B_TLDR",
+      "file": "lora/qwen3-0.6b-tldr/adapter_model.safetensors",
+      "bytes": 4602248,
+      "url": "https://huggingface.co/phh/Qwen3-0.6B-TLDR-Lora/resolve/0f39534202828516c2645f1aeb8c5e9e9a0f6801/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_QWEN3_06B_TLDR"
+      ],
+      "note": "A summarizing adapter for Qwen3-0.6B (phh/Qwen3-0.6B-TLDR-Lora, apache-2.0), PEFT layout over the query and value projections, rank 8, lora_alpha 32; its adapter_config.json (769 B, same revision) sits beside it and states the scaling. Held unmerged beside the QWEN3 release at strength 0.8 and stacked with LORA_QWEN3_06B_RECOVERY at 0.5 (NFKMLXDecoderAdapters). Measured against PEFT with both adapters active at those strengths through set_adapter and set_scale, at float32 (run_reference.py qwen3_adapters under the ltxtrain env with IK_QWEN3_ADAPTERS='<tldr>=0.8;<recovery>=0.5' -> IK_PARITY_QWEN3_ADAPTERS). The repository's GGUF and training pickles are not fetched."
+    },
+    {
+      "key": "LORA_QWEN3_06B_RECOVERY",
+      "file": "lora/qwen3-0.6b-accuracy-recovery/adapter_model.safetensors",
+      "bytes": 161533160,
+      "url": "https://huggingface.co/codelion/Qwen3-0.6B-accuracy-recovery-lora/resolve/3d95d847c6fa0942db30ff5d005bfd3729220d3d/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_QWEN3_06B_RECOVERY"
+      ],
+      "note": "An accuracy-recovery adapter for Qwen3-0.6B (codelion/Qwen3-0.6B-accuracy-recovery-lora, apache-2.0), PEFT layout over every attention and feed-forward projection, rank 64, lora_alpha 128; its adapter_config.json (898 B, same revision) sits beside it. The second adapter of the IK_PARITY_QWEN3_ADAPTERS stack, at strength 0.5."
+    },
+    {
       "key": "HYPER_SD15_4STEP_LORA",
       "file": "hyper-sd/Hyper-SD15-4steps-lora.safetensors",
       "bytes": 269127064,

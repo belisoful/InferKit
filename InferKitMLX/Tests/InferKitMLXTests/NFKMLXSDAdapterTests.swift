@@ -356,7 +356,9 @@ final class NFKMLXSDAdapterTests: XCTestCase {
             XCTAssertTrue(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: identifier)
                 .contains(NFKModelLoadOptionAdapters), identifier)
         }
-        for descriptor in descriptors.values where descriptor.family != "stable-diffusion" {
+        let decoders: Set<String> = ["qwen3", "qwen3-moe", "qwen2-moe", "mixtral", "gpt-oss", "mistral", "qwen3.5"]
+        for descriptor in descriptors.values
+        where descriptor.family != "stable-diffusion" && !decoders.contains(descriptor.family) {
             XCTAssertEqual(descriptor.adapterBases, [], "\(descriptor.identifier) takes no adapters yet")
         }
     }

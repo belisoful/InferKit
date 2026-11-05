@@ -1976,10 +1976,7 @@ enum NFKMLXCatalogImage {
                                   strengthOption(1, help: "How much of the source image the sampler regenerates. 1 starts from full noise."),
                                   .option(NFKParameterSeed, title: "Seed",
                                           help: "The seed of the initial noise. A run without one uses a fixed seed."),
-                                  .option(NFKParameterAdapterStrengths, kind: NFKModelOptionKindNumberList,
-                                          title: "Adapter strengths",
-                                          help: "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
-                                          minimum: -2, maximum: 2, step: 0.05)],
+                                  .adapterStrengths],
                      license: license, source: source)
         entry.adapterBases = [stableDiffusionAdapterBase(configuration)]
         return entry

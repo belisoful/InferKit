@@ -1934,6 +1934,24 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The language decoders hold LoRA adapters beside their weights
+
+- The dense and mixture decoders (`qwen3`, `qwen3-moe`, `qwen2-moe`, `mixtral`, `gpt-oss`, `mistral`) and the
+  Qwen3.5 hybrids take the `adapters` load option. Each entry lists its own repository under `adapterBases`,
+  which a PEFT adapter names as its `base_model_name_or_path`, and declares `NFKParameterAdapterStrengths`.
+- The option reads PEFT's `adapter_model.safetensors` and mlx-lm's `adapters.safetensors`, each
+  scaled by the `adapter_config.json` beside it: `lora_alpha / r` (rsLoRA and the rank and alpha patterns
+  included) for PEFT, `lora_parameters.scale` for mlx-lm. Each adapter stays unmerged beside the layers it
+  names, a quantized layer included, so adapters stack and a request changes their strengths without a
+  reload. A file without its configuration, a DoRA, a file that carries whole layers (`modules_to_save`), an
+  embedding's adapter, or a layer that does not fit is refused before any layer changes.
+- A conversation's kept prompt cache serves only the strengths it was computed at. The Qwen3.5 hybrid runs its
+  cached single-position step uncompiled while it holds adapters, since a compiled step keeps the strengths it
+  was traced at. Adapters need every layer held: a streamed decoder is refused.
+- Two released Qwen3-0.6B adapters held at 0.8 and 0.5, one over the query and value projections and one over
+  every projection, give PEFT's logits with both active at those strengths at a cosine of 0.99999999999, and
+  the reference's greedy continuation.
+
 #### Stable Diffusion holds LoRA adapters beside its weights
 
 - Every Stable Diffusion entry (`stable-diffusion-v1-5`, `stable-diffusion-2-1-base`,

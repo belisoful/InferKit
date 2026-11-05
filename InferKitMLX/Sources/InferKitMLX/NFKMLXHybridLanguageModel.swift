@@ -570,6 +570,9 @@ public final class NFKMLXHybridLanguageNet: Module {
     /// The reader of the layers a streamed load leaves in the release, read in their turn on every pass;
     /// nil where every layer is held. Introduced in InferKit 0.4.0.
     public internal(set) var layerStream: NFKMLXLayerStream?
+    /// Whether adapters are held beside the layers. A compiled step would fix the strengths it was traced at,
+    /// so a cached pass runs uncompiled.
+    var holdsAdapters = false
 
     /// Throws the first failed read of a streamed layer. Every pass after a failed read skips every
     /// layer, so a caller holding a streamed decoder checks after each pass. Nothing is thrown where
@@ -608,7 +611,7 @@ public final class NFKMLXHybridLanguageNet: Module {
         for (index, layer) in model.layers.enumerated() {
             guard let next = NFKMLXLayerStream.run(layerStream, layer: layer, index: index,
                                                    { layer(hidden, mask: mask, cache: cache, layer: index,
-                                                           compiles: layerStream == nil) },
+                                                           compiles: layerStream == nil && !holdsAdapters) },
                                                    keeping: { [$0] }) else {
                 continue
             }
@@ -1110,7 +1113,8 @@ public final class NFKMLXHybridLanguage: NSObject {
                         budget: Int, identifier: String = modelName, draftDirectoryURL: URL? = nil,
                         draftBits: Int? = 4, quantizationBits: Int? = nil,
                         quantizationGroupSize: Int = NFKMLXLoadOptions.defaultQuantizationGroupSize,
-                        generation: NFKMLXGenerationOptions = NFKMLXGenerationOptions()) throws -> NFKMLXDecoderBackend {
+                        generation: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
+                        adapters: [(url: URL, strength: Float)] = []) throws -> NFKMLXDecoderBackend {
         if quantizationBits != nil && residency == .streamed {
             throw NFKMLXError.unsupportedConfiguration(
                 "\(identifier) holds a quantized decoder resident: a streamed layer is read from the release as "
@@ -1149,11 +1153,18 @@ public final class NFKMLXHybridLanguage: NSObject {
             try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
                             budget: budget > 0 ? Swift.max(budget - draftBytes, 1) : 0, reserving: draftBytes)
         }
+        if !adapters.isEmpty && net.layerStream != nil {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(identifier) holds adapters beside layers held in memory; load it with a residency that holds every layer")
+        }
+        let strengths = try NFKMLXDecoderAdapters.hold(adapters, in: net)
+        net.holdsAdapters = !strengths.isEmpty
         let backend = try NFKMLXDecoderBackend.release(directoryURL: directoryURL, identifier: identifier, modules: [net],
                                                        layerStream: net.layerStream,
                                                        draft: draft.map { draft in { draft($0) } },
                                                        cached: net.cachedGeneration) { net($0) }
         backend.cacheDefaults = generation
+        backend.adapterStrengths = strengths
         return backend
     }
 

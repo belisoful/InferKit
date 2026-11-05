@@ -195,6 +195,13 @@ extension NFKModelOption {
                        choices: choices.map { NFKModelOptionChoice(value: $0.value, title: $0.title) },
                        stage: stage, group: group, extensions: nil)
     }
+
+    /// The strengths one request gives the adapters a model holds under `NFKModelLoadOptionAdapters`.
+    static var adapterStrengths: NFKModelOption {
+        .option(NFKParameterAdapterStrengths, kind: NFKModelOptionKindNumberList, title: "Adapter strengths",
+                help: "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+                minimum: -2, maximum: 2, step: 0.05)
+    }
 }
 
 extension NFKModelLicense {

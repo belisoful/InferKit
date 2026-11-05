@@ -1125,6 +1125,12 @@ runs the strengths set at load. A path that is missing, not a safetensors file, 
 | `stable-diffusion-xl` | `NFKModelAdapterBaseStableDiffusionXL` | SDXL and its distillations |
 | `flux-1` | `NFKModelAdapterBaseFlux1` | FLUX.1 |
 | `stable-diffusion-3` | `NFKModelAdapterBaseStableDiffusion3` | Stable Diffusion 3.x |
+| a Hugging Face repository, such as `Qwen/Qwen3-0.6B` | none | that release: the language decoders list their own repository |
+
+A language decoder's adapter names its base as the `base_model_name_or_path` of the `adapter_config.json`
+beside it, and the decoder reads its scaling from that file, so a decoder adapter loads with its
+configuration beside it: PEFT's `adapter_model.safetensors` (`lora_alpha / r`) or mlx-lm's
+`adapters.safetensors` (`lora_parameters.scale`).
 
 `-[NFKModelCatalog inspectAdapterAtURL:forModelIdentifier:error:]` reads an adapter without loading a model:
 the safetensors header and metadata, and an `adapter_config.json` beside the file. The repository form,

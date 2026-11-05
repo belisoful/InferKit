@@ -327,6 +327,11 @@ public enum NFKMLXWanLoRA {
         } else {
             return PEFTConfiguration()
         }
+        return try peftConfiguration(json: json)
+    }
+
+    /// The scaling a PEFT `LoraConfig` states, read from its JSON form. A DoRA is refused.
+    static func peftConfiguration(json: [String: Any]) throws -> PEFTConfiguration {
         if (json["use_dora"] as? NSNumber)?.boolValue == true {
             throw NFKMLXError.loRANotApplicable("the adapter is a DoRA, which merges differently from a LoRA")
         }

@@ -10,6 +10,7 @@
 //
 
 import Foundation
+import InferKit
 import MLX
 import MLXNN
 
@@ -20,6 +21,26 @@ import MLXNN
 /// none. The value is task-local, so two runs of one model in flight at once each read their own.
 enum NFKMLXAdapterRun {
     @TaskLocal static var strengths: [Float]?
+
+    /// The strengths a request gives a model's held adapters: its `NFKParameterAdapterStrengths` over the
+    /// `loaded` strengths, an adapter it leaves out keeping its own, or nil for a model that holds none.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the parameter is not an array of numbers or
+    ///   names more adapters than the model holds.
+    static func strengths(for request: NFKInferenceRequest, loaded: [Float]) throws -> [Float]? {
+        guard !loaded.isEmpty else { return nil }
+        guard let given = request.parameter(forKey: NFKParameterAdapterStrengths) else { return loaded }
+        guard let numbers = given as? [NSNumber], numbers.count <= loaded.count else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(NFKParameterAdapterStrengths) takes an array of at most \(loaded.count) numbers, one "
+                + "per adapter in load order")
+        }
+        var strengths = loaded
+        for (index, number) in numbers.enumerated() {
+            strengths[index] = number.floatValue
+        }
+        return strengths
+    }
 }
 
 /// One adapter's low-rank detour beside a layer: `strength · scale · up(down(x))`, as PEFT's LoRA
@@ -133,6 +154,26 @@ final class NFKMLXAdaptedLinear: Linear {
     }
 }
 
+/// A `QuantizedLinear` with the detours of the adapters held beside it. The packed weight stays as loaded,
+/// and the detours run at the input's type.
+final class NFKMLXAdaptedQuantizedLinear: QuantizedLinear {
+    let detourList: NFKMLXDetourList
+
+    init(base: QuantizedLinear) {
+        detourList = NFKMLXDetourList(base: base)
+        super.init(weight: base.weight, bias: base.bias, scales: base.scales, biases: base.biases,
+                   groupSize: base.groupSize, bits: base.bits, mode: base.mode, globalScale: base.globalScale)
+        train(base.training)
+    }
+
+    override func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let output = super.callAsFunction(x)
+        return detourList.detours.reduce(output) { output, detour in
+            detour.linear(x).map { output + $0 } ?? output
+        }
+    }
+}
+
 /// A `Conv2d` with the detours of the adapters held beside it.
 final class NFKMLXAdaptedConv2d: Conv2d {
     let detourList: NFKMLXDetourList
@@ -164,8 +205,8 @@ final class NFKMLXAdaptedConv2d: Conv2d {
 /// Places detours beside the layers of a model.
 enum NFKMLXAdapterLayers {
 
-    /// Adds each layer's detours beside it, replacing a plain `Linear` or `Conv2d` with its adapted
-    /// form the first time an adapter reaches it.
+    /// Adds each layer's detours beside it, replacing a plain `Linear`, a `QuantizedLinear`, or a `Conv2d`
+    /// with its adapted form the first time an adapter reaches it.
     ///
     /// - Parameter detours: the detours by layer path, as `leafModules().flattened()` names the layer.
     /// - Throws: `NFKMLXError.loRANotApplicable` when a path names no linear or convolution layer of the
@@ -180,6 +221,12 @@ enum NFKMLXAdapterLayers {
                 adapted.detourList.detours += added
             case let adapted as NFKMLXAdaptedConv2d:
                 adapted.detourList.detours += added
+            case let adapted as NFKMLXAdaptedQuantizedLinear:
+                adapted.detourList.detours += added
+            case let quantized as QuantizedLinear where !(quantized is NFKMLXLoRAAdapter):
+                let adapted = NFKMLXAdaptedQuantizedLinear(base: quantized)
+                adapted.detourList.detours = added
+                replacements.append((path, adapted))
             case let linear as Linear where !(linear is QuantizedLinear) && !(linear is NFKMLXLoRAAdapter):
                 let adapted = NFKMLXAdaptedLinear(base: linear)
                 adapted.detourList.detours = added
@@ -206,6 +253,8 @@ enum NFKMLXAdapterLayers {
             case let adapted as NFKMLXAdaptedLinear:
                 return total + adapted.detourList.detours.reduce(0) { $0 + $1.byteCount }
             case let adapted as NFKMLXAdaptedConv2d:
+                return total + adapted.detourList.detours.reduce(0) { $0 + $1.byteCount }
+            case let adapted as NFKMLXAdaptedQuantizedLinear:
                 return total + adapted.detourList.detours.reduce(0) { $0 + $1.byteCount }
             default:
                 return total

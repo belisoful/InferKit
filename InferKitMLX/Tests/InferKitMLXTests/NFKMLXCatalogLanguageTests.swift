@@ -173,9 +173,13 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
         let backend = try NFKMLXLanguage.backend(weightsURL: nil, tokenizer: nil, configuration: .tiny)
         let names = ["qwen3-0.6b", "qwen3-1.7b", "qwen3-4b", "qwen3-14b", "qwen3-32b", "qwen3-30b-a3b", "qwen1.5-moe-a2.7b",
                      "mixtral-8x7b-instruct", "gpt-oss-20b", "mistral-small-24b-instruct-2501", "smollm2-135m-instruct-gguf"]
+        // A release-directory entry declares the adapter strengths for a load that holds adapters; a backend
+        // built without one does not read them, and the GGUF entry takes none.
         for name in names {
+            let reads = backend.supportedParameterKeys ?? []
             try assertKeys(of: name, inputs: backend.supportedInputKeys ?? [],
-                           parameters: backend.supportedParameterKeys ?? [], outputs: backend.supportedOutputKeys ?? [])
+                           parameters: name.hasSuffix("-gguf") ? reads : reads.union([NFKParameterAdapterStrengths]),
+                           outputs: backend.supportedOutputKeys ?? [])
         }
     }
 

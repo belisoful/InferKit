@@ -80,6 +80,8 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
 
     /// The context window and key-value cache quantization a run takes where its request sets none.
     var cacheDefaults = NFKMLXGenerationOptions()
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    var adapterStrengths: [Float] = []
 
     /// Whether generation drafts with a smaller release of the same vocabulary
     /// (``NFKMLXHybridLanguage/backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)``).
@@ -152,13 +154,17 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     private var contextLength: Int? { modelInfo[NFKModelInfoContextLength] as? Int }
 
     /// The request parameters the backend reads, with `NFKMLXGenerationParameterKey.draftTokens` where
-    /// a draft model proposes tokens. Introduced in InferKit 0.4.0.
+    /// a draft model proposes tokens and `NFKParameterAdapterStrengths` where the model holds adapters.
+    /// Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
         var keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
                                  NFKMLXGenerationParameterKey.toolCallFormat]
         if templateReadsReasoningEffort { keys.insert(NFKParameterReasoningEffort) }
         if hasDraftModel {
             keys.insert(NFKMLXGenerationParameterKey.draftTokens)
+        }
+        if !adapterStrengths.isEmpty {
+            keys.insert(NFKParameterAdapterStrengths)
         }
         if isCached {
             keys.formUnion([NFKMLXGenerationParameterKey.contextWindow, NFKMLXGenerationParameterKey.cacheQuantizationBits,
@@ -228,12 +234,16 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         let (promptTokens, format) = try prompt(for: request)
         let decode: ([Int]) -> String = { [holder] in holder.tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reasoningFormat = request.messages != nil ? chatTemplate.flatMap(NFKMLXReasoningFormat.detected(inChatTemplate:)) : nil
-        let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                             draftTokens: draftTokens, cacheOptions: cacheOptions) { limit in
-            job.map { job in
-                NFKMLXLanguageBackend.partialReporter(job, prompt: promptTokens, limit: limit, format: reasoningFormat,
-                                                      callMarkers: NFKMLXToolCalling.templateTools(for: request) != nil ? format?.markers ?? [] : [],
-                                                      decode: decode)
+        let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
+        // The held adapters read the run's strengths as each pass builds its graph.
+        let (produced, limit) = try NFKMLXAdapterRun.$strengths.withValue(strengths) {
+            try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
+                         draftTokens: draftTokens, cacheOptions: cacheOptions) { limit in
+                job.map { job in
+                    NFKMLXLanguageBackend.partialReporter(job, prompt: promptTokens, limit: limit, format: reasoningFormat,
+                                                          callMarkers: NFKMLXToolCalling.templateTools(for: request) != nil ? format?.markers ?? [] : [],
+                                                          decode: decode)
+                }
             }
         }
         let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(decode(produced), format: reasoningFormat,

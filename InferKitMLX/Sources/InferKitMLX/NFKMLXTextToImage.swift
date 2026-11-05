@@ -485,18 +485,7 @@ final class NFKMLXSDTextToImageModel {
     /// - Throws: `NFKMLXError.unsupportedConfiguration` when the parameter is not an array of numbers or
     ///   names more adapters than the model holds.
     func adapterStrengths(for request: NFKInferenceRequest) throws -> [Float]? {
-        guard !adapterStrengths.isEmpty else { return nil }
-        guard let given = request.parameter(forKey: NFKParameterAdapterStrengths) else { return adapterStrengths }
-        guard let numbers = given as? [NSNumber], numbers.count <= adapterStrengths.count else {
-            throw NFKMLXError.unsupportedConfiguration(
-                "\(NFKParameterAdapterStrengths) takes an array of at most \(adapterStrengths.count) numbers, one "
-                + "per adapter in load order")
-        }
-        var strengths = adapterStrengths
-        for (index, number) in numbers.enumerated() {
-            strengths[index] = number.floatValue
-        }
-        return strengths
+        try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
     }
 
     /// The draws a consistency sampler re-noises with, in place of its seeded stream, for reproducing a

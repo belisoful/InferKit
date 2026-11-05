@@ -18,11 +18,12 @@ import MLX
 /// @discussion Each family's factory reads the `NFKModelLoadOption*` keys it lists as consumed, through
 /// ``NFKMLXLoadOptions``, and keeps the family's own default for a key the options leave out:
 /// - the dense and mixture decoders (``NFKMLXLanguage``): residency, precision, a runtime weight
-///   quantization of 2 to 8 bits at group size 64, a draft model and its bits, and the context length and
-///   cache settings as generation defaults;
+///   quantization of 2 to 8 bits at group size 64, a draft model and its bits, the context length and
+///   cache settings as generation defaults, and the adapters held beside its weights;
 /// - Gemma 3, TranslateGemma, and Nemotron-H: residency, precision, a draft model and its bits;
 /// - Qwen3.5 (and 3.6 and 3.8): residency, precision, a runtime weight quantization of 2 to 8 bits held
-///   resident, a draft model and its bits, and the context length and cache settings as generation defaults;
+///   resident, a draft model and its bits, the context length and cache settings as generation defaults,
+///   and the adapters held beside its weights;
 /// - Gemma 3n and Whisper: precision;
 /// - Stable Diffusion (each release, and each released adapter merged into its base): precision, and the
 ///   adapters held beside its weights;
@@ -111,7 +112,7 @@ enum NFKMLXOptionRegistrations {
         let names = registryNames(families: ["qwen3", "qwen3-moe", "qwen2-moe", "mixtral", "gpt-oss", "mistral"],
                                   where: lists(NFKModelTaskTextGeneration))
         let consumes = generationKeys.union(quantizationKeys).union(draftKeys)
-            .union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])
+            .union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision, NFKModelLoadOptionAdapters])
         registerDirectoryModels(names, consumes: consumes) { url, _, options in
             try NFKMLXLanguage.backend(directoryURL: url, loadOptions: options)
         }
@@ -166,7 +167,8 @@ enum NFKMLXOptionRegistrations {
         }
         registerDirectoryModels(registryNames(families: ["qwen3.5"]),
                                 consumes: draftKeys.union(quantizationKeys).union(generationKeys)
-                                    .union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
+                                    .union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                            NFKModelLoadOptionAdapters])) {
             url, name, options in
             try NFKMLXHybridLanguage.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
                                              residency: options.residency, budget: NFKMLXResidencyBudget.current(),
@@ -174,7 +176,7 @@ enum NFKMLXOptionRegistrations {
                                              draftBits: options.draftBits(orDefault: 4),
                                              quantizationBits: options.quantizationBits,
                                              quantizationGroupSize: options.quantizationGroupSize,
-                                             generation: options.generationOptions())
+                                             generation: options.generationOptions(), adapters: options.adapters())
         }
         // An Open-Jev model's URL is the hub cache holding the release and its base.
         for variant in NFKMLXOpenJevVariant.allCases {

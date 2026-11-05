@@ -249,6 +249,10 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// ``NFKMLXPromptCache``.
     public var reusesPromptCache: Bool = false
 
+    /// The strengths a run gives the adapters the model holds, in load order, or nil for a model that holds
+    /// none. A kept prompt cache computed at other strengths is not reused.
+    var adapterStrengths: [Float]?
+
     /// Constrains what the model may emit; nil leaves sampling free. See ``NFKMLXTokenConstraint``.
     ///
     /// @discussion The mask is applied to the logits before temperature and nucleus filtering, so
@@ -521,6 +525,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     private let streamedBytesAtLoad: Int
     private let identifier: String
     private let defaults: NFKMLXGenerationOptions
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    private let adapterStrengths: [Float]
     /// The cache kept between requests when a request asks for reuse. Generation is serialized
     /// through `generationLock`: two runs through one cache would interleave their rows.
     private var promptCache: NFKMLXPromptCache?
@@ -547,7 +553,9 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
     init(net: NFKMLXLanguageNet, tokenizer: NFKTokenizer?, identifier: String,
          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
-         draft: NFKMLXLanguageNet? = nil, releaseURL: URL? = nil, releaseTemplate: NFKMLXChatTemplate? = nil) {
+         draft: NFKMLXLanguageNet? = nil, releaseURL: URL? = nil, releaseTemplate: NFKMLXChatTemplate? = nil,
+         adapterStrengths: [Float] = []) {
+        self.adapterStrengths = adapterStrengths
         self.lifecycle = NFKMLXLifecycle(NFKLMHolder(net, tokenizer, draft: draft))
         self.hasTokenizer = tokenizer != nil
         self.countingTokenizer = tokenizer
@@ -630,27 +638,29 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// The request parameters the backend reads: the core sampling keys, the schema and the two
     /// keys that shape the output, the context length and cache settings a catalog build sets as load
     /// defaults (`NFKModelLoadOptionContextLength`, `NFKModelLoadOptionCacheBits`,
-    /// `NFKModelLoadOptionCacheGroupSize`), and every ``NFKMLXGenerationParameterKey``. Introduced in
-    /// InferKit 0.4.0.
+    /// `NFKModelLoadOptionCacheGroupSize`), every ``NFKMLXGenerationParameterKey``, and
+    /// `NFKParameterAdapterStrengths` where the model holds adapters. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed,
-         NFKParameterJSONSchema, NFKParameterOutputFormat, NFKParameterChoices,
-         NFKModelLoadOptionContextLength, NFKModelLoadOptionCacheBits, NFKModelLoadOptionCacheGroupSize,
-         NFKMLXGenerationParameterKey.contextWindow,
-         NFKMLXGenerationParameterKey.cacheQuantizationBits,
-         NFKMLXGenerationParameterKey.cacheQuantizationGroupSize,
-         NFKMLXGenerationParameterKey.cacheQuantizationPerChannelKeys,
-         NFKMLXGenerationParameterKey.prefillChunkSize,
-         NFKMLXGenerationParameterKey.chatTemplate,
-         NFKMLXGenerationParameterKey.draftTokens,
-         NFKMLXGenerationParameterKey.reusesPromptCache,
-         NFKMLXGenerationParameterKey.outputFormat,
-         NFKMLXGenerationParameterKey.choices,
-         NFKMLXGenerationParameterKey.reasoningFormat,
-         NFKMLXGenerationParameterKey.toolCallFormat,
-         NFKParameterReasoningEffort,
-         NFKParameterConversationKey,
-         NFKParameterTools]
+        let keys: Set<String> = [
+            NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed,
+            NFKParameterJSONSchema, NFKParameterOutputFormat, NFKParameterChoices,
+            NFKModelLoadOptionContextLength, NFKModelLoadOptionCacheBits, NFKModelLoadOptionCacheGroupSize,
+            NFKMLXGenerationParameterKey.contextWindow,
+            NFKMLXGenerationParameterKey.cacheQuantizationBits,
+            NFKMLXGenerationParameterKey.cacheQuantizationGroupSize,
+            NFKMLXGenerationParameterKey.cacheQuantizationPerChannelKeys,
+            NFKMLXGenerationParameterKey.prefillChunkSize,
+            NFKMLXGenerationParameterKey.chatTemplate,
+            NFKMLXGenerationParameterKey.draftTokens,
+            NFKMLXGenerationParameterKey.reusesPromptCache,
+            NFKMLXGenerationParameterKey.outputFormat,
+            NFKMLXGenerationParameterKey.choices,
+            NFKMLXGenerationParameterKey.reasoningFormat,
+            NFKMLXGenerationParameterKey.toolCallFormat,
+            NFKParameterReasoningEffort,
+            NFKParameterConversationKey,
+            NFKParameterTools]
+        return adapterStrengths.isEmpty ? keys : keys.union([NFKParameterAdapterStrengths])
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -846,6 +856,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
                 "text generation needs a tokenizer; build the backend with one")
         }
         var (options, tokens, toolCallFormat) = try preparedPrompt(for: request, tokenizer: tokenizer)
+        options.adapterStrengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
         options.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: tokens.count,
                                                           contextLength: holder.net.configuration.contextLength,
                                                           window: options.contextWindow, source: identifier)
@@ -1044,6 +1055,16 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// the cached share a run reports. `onToken` sees each token, and answering false ends the run.
     private func generate(_ tokens: [Int], options requested: NFKMLXGenerationOptions, conversation: String?,
                           holder: NFKLMHolder, onToken: ((Int) -> Bool)? = nil) throws -> (produced: [Int], cached: Int) {
+        // The held adapters read the run's strengths as each pass builds its graph.
+        try NFKMLXAdapterRun.$strengths.withValue(requested.adapterStrengths) {
+            try generateAtStrengths(tokens, options: requested, conversation: conversation, holder: holder,
+                                    onToken: onToken)
+        }
+    }
+
+    private func generateAtStrengths(_ tokens: [Int], options requested: NFKMLXGenerationOptions,
+                                     conversation: String?, holder: NFKLMHolder,
+                                     onToken: ((Int) -> Bool)?) throws -> (produced: [Int], cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
         let net = holder.net
         var options = requested
@@ -1061,6 +1082,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
                 cache = NFKMLXPromptCache(layerCount: net.configuration.layerCount,
                                           window: options.contextWindow,
                                           quantization: options.cacheQuantization)
+                cache?.adapterStrengths = options.adapterStrengths
             }
             promptCache = cache
         } else {
@@ -1910,8 +1932,15 @@ public final class NFKMLXLanguage: NSObject {
             try net.requireHeldLayers(for: "quantize at load")
         }
         try loadOptions.applyWeightQuantization(to: net)
+        // Adapters go in after the quantization, which would replace an adapted layer with a plain one.
+        let adapters = try loadOptions.adapters()
+        if !adapters.isEmpty {
+            try net.requireHeldLayers(for: "hold adapters")
+        }
+        let strengths = try NFKMLXDecoderAdapters.hold(adapters, in: net)
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
-                                     options: loadOptions.generationOptions(), draft: draft, releaseURL: directoryURL)
+                                     options: loadOptions.generationOptions(), draft: draft, releaseURL: directoryURL,
+                                     adapterStrengths: strengths)
     }
 
     /// The bytes `module`'s parameters hold.

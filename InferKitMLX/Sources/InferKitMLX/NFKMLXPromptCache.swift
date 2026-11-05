@@ -40,6 +40,8 @@ public final class NFKMLXPromptCache {
     /// 0.4.0.
     public private(set) var sharedPrefixLength = 0
     private(set) var cache: NFKMLXKeyValueCache
+    /// The strengths of the held adapters the cached rows were computed at, or nil for a model that holds none.
+    var adapterStrengths: [Float]?
 
     public init(layerCount: Int, window: Int? = nil,
                 quantization: NFKMLXKeyValueCache.Quantization? = nil) {
@@ -59,7 +61,7 @@ public final class NFKMLXPromptCache {
     /// is what decides whether a backend keeps it or starts another.
     func matches(layerCount: Int, options: NFKMLXGenerationOptions) -> Bool {
         self.layerCount == layerCount && window == options.contextWindow
-            && quantization == options.cacheQuantization
+            && quantization == options.cacheQuantization && adapterStrengths == options.adapterStrengths
     }
 
     /// Rolls the cache back to the longest prefix it shares with `prompt` and returns that prefix's
@@ -263,11 +265,13 @@ typealias NFKMLXConversationCaches = NFKMLXConversationStates<NFKMLXPromptCache>
 
 extension NFKMLXConversationStates where State == NFKMLXPromptCache {
     /// The conversation's cache, marked most recently used. A conversation without one, or whose
-    /// cache was built for another window or quantization, starts a new one.
+    /// cache was built for another window, quantization, or adapter strengths, starts a new one.
     func cache(for conversation: String, layerCount: Int, options: NFKMLXGenerationOptions) -> NFKMLXPromptCache {
         state(for: conversation, isUsable: { $0.matches(layerCount: layerCount, options: options) }) {
-            NFKMLXPromptCache(layerCount: layerCount, window: options.contextWindow,
-                              quantization: options.cacheQuantization)
+            let made = NFKMLXPromptCache(layerCount: layerCount, window: options.contextWindow,
+                                         quantization: options.cacheQuantization)
+            made.adapterStrengths = options.adapterStrengths
+            return made
         }
     }
 }
