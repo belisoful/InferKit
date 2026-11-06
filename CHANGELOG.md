@@ -108,6 +108,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Live streams carry a model's state from unit to unit
+
+- `NFKLiveStream` (`NFKLiveStream.h`) runs a model on a live source one unit at a time: `resultForUnit:error:`,
+  `reset`, and `close`. `NFKInferenceOpenLiveStream` opens one on any backend with parameters every unit
+  runs with. A backend whose model carries state implements the optional
+  `-[NFKInferenceBackend openLiveStreamWithParameters:error:]`, and its stream keeps that state between
+  units; another backend runs each unit as a request.
+- `NFKBlockLiveStream` is a stream of blocks for a backend to return: it merges the stream's parameters
+  under each unit's, answers one unit at a time, and refuses units after `close`.
+- The C interface opens streams with `nfk_live_stream_open`, pushes units with `nfk_live_stream_push`, and
+  ends them with `nfk_live_stream_reset` and `nfk_live_stream_free`.
+
 #### Models declare that they run on a live source
 
 - `NFKModelLiveProfile` (`NFKModelLive.h`) declares how a model runs on a stream: its unit, a video frame
@@ -1988,6 +2000,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Robust Video Matting and Silero VAD stream
+
+- `NFKMLXRVM`'s backends open a live stream that carries the decoder's four recurrent states from frame to
+  frame, as the clip backend does, at the reference's automatic downsample ratio. `NFKMLXMattingBackend`
+  takes a `streamForward` for any matter that carries state.
+- `NFKMLXSileroVADBackend` opens a live stream over 16 kHz mono audio: each 512-sample chunk is scored from
+  the LSTM state and the look-back the chunks before it left, exactly as a clip of the same samples is
+  scored. A unit's result holds a segment per chunk at or above the threshold, timed from the stream's
+  start.
+- Both RVM releases and Silero VAD carry stateful live profiles.
 
 #### The stateless video-frame models are live
 

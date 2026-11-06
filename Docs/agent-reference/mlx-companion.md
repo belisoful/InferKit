@@ -976,9 +976,28 @@ To refresh a benchmark:
 first table holds the stateless video-frame models, image in and each output key out: MODNet, U²-Net-p,
 BiSeNet and BiSeNet V2, SegFormer-B0, DeepLabV3, Depth Anything V2 Small and 3 Small, SimpleBaseline pose,
 RetinaFace MobileNet-0.25, RF-DETR Nano, Small, and Seg Small, RT-DETR R18vd, Real-ESRGAN general x4v3,
-and the three SwinIR lightweight scales. The stateful models (RVM, the speech enhancers, Silero VAD)
-join with the stream API. `NFKMLXCatalogLiveTests` holds the table to the shipped entries and their
-ports.
+and the three SwinIR lightweight scales. `statefulVideoFrameOutputs` holds the two RVM releases and `audioChunks`
+Silero VAD (512 samples at 16 kHz). The speech enhancers join when their streams ship.
+`NFKMLXCatalogLiveTests` holds the tables to the shipped entries and their ports.
+
+### Live streams
+
+A backend whose model carries state answers `openLiveStream(parameters:)` with an `NFKBlockLiveStream`
+whose blocks hold that state:
+
+- `NFKMLXMattingBackend` takes `streamForward`, a maker of one stream's forward. The stream makes it on
+  its first unit and again when the backend's model was reloaded (`NFKMattingStreamState`), so a reload
+  starts the stream from a fresh state rather than reading a freed model. A matter without one streams
+  frame by frame through its per-frame forward.
+- RVM's stream forward is `NFKMLXRVM.streamForward(net:)`, which shares `matteFrame` with the clip
+  backend: the automatic downsample ratio `min(512 / max(H, W), 1)` and the evaluated state per frame.
+  `NFKMLXRVMLiveStreamTests` holds it equal to `matteClip` frame by frame.
+- Silero VAD's stream keeps the LSTM's hidden and cell state, the last 64 samples, and the samples short of
+  a chunk (`NFKSileroStreamState`). Units of any length score the same chunks as one clip, bit for bit
+  (`NFKMLXSileroVADLiveStreamTests`, uneven units of 60 to 2000 samples, random weights).
+- `NFKMLXLiveAudio` reads an audio unit from an `AVAudioPCMBuffer` (float32 or int16), WAV bytes, or a WAV
+  `NFKAudioAsset`. A stream refuses another rate or channel count with `kNFKError_InferenceUnsupported`
+  rather than resampling each unit, which would put a seam at every unit boundary.
 
 ## Unload, reload, and load measurement
 

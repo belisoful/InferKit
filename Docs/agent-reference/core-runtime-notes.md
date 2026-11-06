@@ -323,6 +323,16 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
   - The C interface reaches the profiles through the manifest JSON (`nfk_catalog_copy_json`).
   - The core declares `vision-segmentation`, `vision-pose`, and `vision-face`
     (`NFKAppleModelDescriptors.m`); the MLX table is `NFKMLXCatalogLive.swift`.
+- **Live streams** (`NFKLiveStream.h`, added 2026-11-06). The decisions:
+  - A stream is a synchronous push: `resultForUnit:error:` answers each unit before the next, one at a
+    time per stream. A server or a client that falls behind drops units before it pushes them, never
+    inside the stream, so a stateful model never sees a gap it cannot account for.
+  - The backend method is optional on `NFKInferenceBackend`. `NFKInferenceOpenLiveStream` falls back to
+    one request per unit, which is right for a stateless model and the only answer for a plugin or a
+    remote backend until those carry streams.
+  - `NFKBlockLiveStream` owns the serialization, the parameter merge, and the closed state, so a backend
+    supplies only its unit, reset, and close blocks. Swift backends return one from `openLiveStream`.
+  - The C handle holds its `NFKCBackend`, so `nfk_backend_free` before `nfk_live_stream_free` is safe.
 - `descriptorWithIdentifier:derivedFromBackend:` reads the optional `supportedInputKeys`,
   `supportedParameterKeys`, and `supportedOutputKeys` (the last added to `NFKInferenceBackend` with
   the catalog), sorts each, and types each key from the table. The family is the backend's

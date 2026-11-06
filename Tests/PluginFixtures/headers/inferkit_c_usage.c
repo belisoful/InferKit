@@ -73,6 +73,11 @@ int usage_main(void)
 	nfk_job *job = nfk_backend_submit(backend, &request, progress, completion, NULL);
 	nfk_job_cancel(job);
 	nfk_job_free(job);
+	nfk_live_stream *stream = nfk_live_stream_open(backend, "{}", &error);
+	nfk_result *unit_result = nfk_live_stream_push(stream, &request, &error);
+	nfk_live_stream_reset(stream);
+	nfk_live_stream_free(stream);
+	nfk_result_free(unit_result);
 	nfk_backend_unload(backend);
 	nfk_backend_free(backend);
 	nfk_result_free(result);

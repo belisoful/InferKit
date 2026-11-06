@@ -68,7 +68,11 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
     public typealias RequestForward = @Sendable (_ plate: MLXArray, _ hint: MLXArray?,
                                                  _ request: NFKInferenceRequest) -> MLXArray
 
-    private let lifecycle: NFKMLXLifecycle<RequestForward>
+    /// Makes the forward of one live stream, which carries the model's state from each frame to the next.
+    /// Introduced in InferKit 0.4.0.
+    public typealias StreamForwardFactory = @Sendable () -> RequestForward
+
+    private let lifecycle: NFKMLXLifecycle<NFKMattingForwards>
     private let identifier: String
     private let ready: Bool
     private let configuration: NFKMattingConfiguration
@@ -84,7 +88,7 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
         self.configuration = configuration
         self.forwardInputKeys = []
         self.forwardParameterKeys = []
-        self.lifecycle = NFKMLXLifecycle({ plate, hint, _ in forward(plate, hint) })
+        self.lifecycle = NFKMLXLifecycle(NFKMattingForwards(forward: { plate, hint, _ in forward(plate, hint) }, makeStream: nil))
         super.init()
     }
 
@@ -97,18 +101,21 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
     ///   - forwardParameterKeys: The request parameters `requestForward` reads, such as SAM's click
     ///     point. They join `supportedParameterKeys`.
     ///   - requestForward: The model forward over the plate, the hint, and the request.
+    ///   - streamForward: Makes the forward of a live stream for a model that carries state from frame
+    ///     to frame, or nil for a model that treats each frame alone.
     public init(identifier: String = "mlx-matting",
                 isReady: Bool = true,
                 configuration: NFKMattingConfiguration = NFKMattingConfiguration(),
                 forwardInputKeys: Set<String> = [],
                 forwardParameterKeys: Set<String> = [],
-                requestForward: @escaping RequestForward) {
+                requestForward: @escaping RequestForward,
+                streamForward: StreamForwardFactory? = nil) {
         self.identifier = identifier
         self.ready = isReady
         self.configuration = configuration
         self.forwardInputKeys = forwardInputKeys
         self.forwardParameterKeys = forwardParameterKeys
-        self.lifecycle = NFKMLXLifecycle(requestForward)
+        self.lifecycle = NFKMLXLifecycle(NFKMattingForwards(forward: requestForward, makeStream: streamForward))
         super.init()
     }
 
@@ -193,7 +200,7 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
         Task.detached(priority: .userInitiated) {
             do {
                 let outputs = try lifecycle.withState {
-                    try NFKMLXMattingBackend.run(request, configuration: configuration, forward: $0)
+                    try NFKMLXMattingBackend.run(request, configuration: configuration, forward: $0.forward)
                 }
                 job.finish(with: NFKInferenceResult(outputs: outputs))
             } catch {
@@ -201,6 +208,30 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
             }
         }
         return job
+    }
+
+    // MARK: Live streams
+
+    /// Opens a live stream: each unit mattes one frame. A model built with a stream forward carries its
+    /// state from each frame to the next, and `reset` starts it again; another model runs each frame
+    /// alone. The stream reads the backend's model at each unit, and a stream whose model was unloaded
+    /// and loaded again starts from a fresh state. Introduced in InferKit 0.4.0.
+    @objc(openLiveStreamWithParameters:error:)
+    public func openLiveStream(parameters: [String: Any]?) throws -> any NFKLiveStream {
+        let lifecycle = self.lifecycle
+        let configuration = self.configuration
+        let carried = NFKMattingStreamState()
+        return NFKBlockLiveStream(parameters: parameters, unitHandler: { unit, errorPointer in
+            do {
+                let outputs = try lifecycle.withState { forwards in
+                    try NFKMLXMattingBackend.run(unit, configuration: configuration, forward: carried.forward(from: forwards))
+                }
+                return NFKInferenceResult(outputs: outputs)
+            } catch {
+                errorPointer?.pointee = error as NSError
+                return nil
+            }
+        }, resetHandler: { carried.reset() }, closeHandler: { carried.reset() })
     }
 
     private static func run(_ request: NFKInferenceRequest,
@@ -313,5 +344,36 @@ extension NFKMLXMattingBackend: NFKMLXReloading {
         lifecycle.enableReload(building: build, as: NFKMLXMattingBackend.self, measurement: measurement) {
             try $0.lifecycle.loadedState()
         }
+    }
+}
+
+/// A matting backend's forwards for one load: the per-frame forward, and the maker of a live stream's.
+final class NFKMattingForwards: @unchecked Sendable {
+    let forward: NFKMLXMattingBackend.RequestForward
+    let makeStream: NFKMLXMattingBackend.StreamForwardFactory?
+
+    init(forward: @escaping NFKMLXMattingBackend.RequestForward, makeStream: NFKMLXMattingBackend.StreamForwardFactory?) {
+        self.forward = forward
+        self.makeStream = makeStream
+    }
+}
+
+/// The forward one live stream runs, made from the load it first ran on. The stream answers one unit at a
+/// time, so the state needs no lock of its own.
+final class NFKMattingStreamState: @unchecked Sendable {
+    private var load: NFKMattingForwards?
+    private var step: NFKMLXMattingBackend.RequestForward?
+
+    func forward(from forwards: NFKMattingForwards) -> NFKMLXMattingBackend.RequestForward {
+        if load !== forwards || step == nil {
+            load = forwards
+            step = forwards.makeStream?() ?? forwards.forward
+        }
+        return step!
+    }
+
+    func reset() {
+        load = nil
+        step = nil
     }
 }

@@ -192,7 +192,8 @@ fn main() {
 | --- | --- | --- |
 | a backend from `nfk_backend_create` | the caller | `nfk_backend_free` |
 | a job from `nfk_backend_submit` | the caller | `nfk_job_free` |
-| a result from `nfk_backend_run` or a completion | the caller | `nfk_result_free` |
+| a live stream from `nfk_live_stream_open` | the caller | `nfk_live_stream_free` |
+| a result from `nfk_backend_run`, `nfk_live_stream_push`, or a completion | the caller | `nfk_result_free` |
 | an error from an `out_error` or a completion | the caller | `nfk_error_free` |
 | a string from `nfk_catalog_copy_json` or `nfk_backend_copy_description` | the caller | `nfk_string_free` |
 | a partial result in a progress callback | InferKit | nothing; valid during the call |
@@ -218,6 +219,7 @@ fn main() {
   ```
 - A job holds its backend. `nfk_backend_free` on a backend with a job in flight frees it when the job's
   run ends.
+- A live stream holds its backend until `nfk_live_stream_free`, which closes the stream.
 
 ## Threading
 
@@ -490,6 +492,25 @@ nfk_job *job = nfk_backend_submit(backend, &request, on_progress, on_completion,
 /* … later, to stop it: nfk_job_cancel(job); the completion then reports 3072 */
 wait_until_done(state);
 nfk_job_free(job);
+```
+
+### A live stream
+
+A stream runs a model on a live source one unit at a time, with the state the model carries between
+units (`NFKLiveStream.h`). The parameters apply to every unit, and a unit's own override them.
+
+```c
+nfk_live_stream *stream = nfk_live_stream_open(backend, "{\"speechThreshold\": 0.6}", &error);
+for (;;) {
+	nfk_payload unit = next_chunk();   /* the program's own capture: one audio chunk or video frame */
+	nfk_result *result = nfk_live_stream_push(stream, &unit, &error);
+	if (result != NULL) {
+		printf("%s\n", nfk_result_json(result));
+	}
+	nfk_result_free(result);
+}
+nfk_live_stream_reset(stream);   /* the next unit runs as the first */
+nfk_live_stream_free(stream);
 ```
 
 ### Plugins

@@ -120,11 +120,18 @@ final class NFKSileroDecoder: Module {
     /// Encoder features `[chunks, 1, hidden]` → speech probability per chunk `[chunks]`. The chunks are
     /// the LSTM's sequence axis (batch one), which threads the recurrent state across them.
     func callAsFunction(_ feats: MLXArray) -> MLXArray {
+        callAsFunction(feats, hidden: nil, cell: nil).probabilities
+    }
+
+    /// The same scoring from a carried LSTM state, returning the state after the last chunk.
+    func callAsFunction(_ feats: MLXArray, hidden: MLXArray?, cell: MLXArray?)
+        -> (probabilities: MLXArray, hidden: MLXArray, cell: MLXArray) {
         let sequence = feats.reshaped([1, feats.shape[0], feats.shape[2]])   // [1, chunks, hidden]
-        let hidden = rnn(sequence).0                                          // [1, chunks, hidden]
-        let dropped = NFKDropout.apply(hidden, rate: 0.1, active: training)
+        let (states, cells) = rnn(sequence, hidden: hidden, cell: cell)      // [1, chunks, hidden] each
+        let dropped = NFKDropout.apply(states, rate: 0.1, active: training)
         let logits = final(relu(dropped))                                     // [1, chunks, 1]
-        return sigmoid(logits).reshaped([-1])                                 // [chunks]
+        let last = feats.shape[0] - 1
+        return (sigmoid(logits).reshaped([-1]), states[0..., last, 0...], cells[0..., last, 0...])
     }
 }
 
@@ -159,9 +166,11 @@ public final class NFKMLXSileroVADNet: Module {
 
     /// Builds the model input `[chunks, context + chunk + padRight, 1]` from a mono clip: the clip is
     /// padded to a whole number of chunks, each chunk is prefixed with the previous chunk's final
-    /// `contextSamples` (the first chunk with zeros), and each `context + chunk` row is right-reflected by
-    /// `stftPadRight`, reproducing the reference's per-row `ReflectionPad1d`.
-    static func chunkedInput(_ samples: [Float], _ c: NFKMLXSileroVADConfiguration) -> MLXArray {
+    /// `contextSamples` (the first chunk with `leading`, a stream's carried context, else zeros), and each
+    /// `context + chunk` row is right-reflected by `stftPadRight`, reproducing the reference's per-row
+    /// `ReflectionPad1d`.
+    static func chunkedInput(_ samples: [Float], _ c: NFKMLXSileroVADConfiguration,
+                             context leading: [Float]? = nil) -> MLXArray {
         let num = c.numSamples, ctx = c.contextSamples, pad = c.stftPadRight
         var signal = samples
         let remainder = signal.count % num
@@ -180,6 +189,10 @@ public final class NFKMLXSileroVADNet: Module {
                 let prevTail = (chunk - 1) * num + (num - ctx)
                 for i in 0 ..< ctx {
                     data[base + i] = signal[prevTail + i]
+                }
+            } else if let leading {
+                for i in 0 ..< ctx {
+                    data[base + i] = leading[i]
                 }
             }
             // The chunk itself.
@@ -204,6 +217,40 @@ public final class NFKMLXSileroVADNet: Module {
         return NFKMLXSpeechSpans.merge(probabilities[...], frameSeconds: configuration.chunkSeconds,
                                        threshold: threshold ?? configuration.threshold,
                                        duration: Double(samples.count) / Double(sampleRate))
+    }
+}
+
+/// What a live stream carries between units: the LSTM state, the last `contextSamples` samples scored, the
+/// samples short of a whole chunk, and the chunks scored so far.
+final class NFKSileroStreamState {
+    var hidden: MLXArray?
+    var cell: MLXArray?
+    var context: [Float]?
+    var pending: [Float] = []
+    var scoredChunks = 0
+}
+
+extension NFKMLXSileroVADNet {
+
+    /// Scores the whole chunks `samples` completes after the stream's pending samples, from the stream's
+    /// state, and leaves the rest pending. The probabilities are those a clip of every sample so far scores
+    /// for the same chunks. The samples are at the configuration's rate.
+    func streamProbabilities(_ samples: [Float], state: NFKSileroStreamState) -> [Float] {
+        let signal = state.pending + samples
+        let chunks = signal.count / configuration.numSamples
+        state.pending = Array(signal[(chunks * configuration.numSamples)...])
+        guard chunks > 0 else {
+            return []
+        }
+        let scored = Array(signal[..<(chunks * configuration.numSamples)])
+        let input = Self.chunkedInput(scored, configuration, context: state.context)
+        let (probabilities, hidden, cell) = decoder(encoder(input), hidden: state.hidden, cell: state.cell)
+        eval(probabilities, hidden, cell)
+        state.hidden = hidden
+        state.cell = cell
+        state.context = Array(scored[(scored.count - configuration.contextSamples)...])
+        state.scoredChunks += chunks
+        return probabilities.asArray(Float.self)
     }
 }
 
@@ -262,6 +309,47 @@ public final class NFKMLXSileroVADBackend: NSObject, NFKInferenceBackend {
             }
         }
         return job
+    }
+
+    // MARK: Live streams
+
+    /// Opens a live stream over mono 16 kHz audio. Each unit's samples join those the units before left
+    /// short of a 512-sample chunk, and each whole chunk is scored from the LSTM state and look-back the
+    /// chunks before it left, as a clip of the same samples is. A unit's result holds a segment for each of
+    /// its chunks at or above the speech threshold, timed in seconds from the stream's start, with the
+    /// chunk's probability as its confidence; adjacent segments merge into the spans a clip detects. A unit
+    /// at another rate or channel count fails with `kNFKError_InferenceUnsupported`. Introduced in
+    /// InferKit 0.4.0.
+    @objc(openLiveStreamWithParameters:error:)
+    public func openLiveStream(parameters: [String: Any]?) throws -> any NFKLiveStream {
+        let net = holder.net
+        let configuration = net.configuration
+        var state = NFKSileroStreamState()
+        return NFKBlockLiveStream(parameters: parameters, unitHandler: { unit, errorPointer in
+            guard let (samples, sampleRate, channels) = NFKMLXLiveAudio.samples(from: unit.input(forKey: NFKInputAudio)) else {
+                errorPointer?.pointee = NFKMLXError.unsupportedInput as NSError
+                return nil
+            }
+            guard sampleRate == configuration.sampleRate, channels == 1 else {
+                errorPointer?.pointee = NFKMLXLiveAudio.formatError(sampleRate: sampleRate, channels: channels,
+                                                                    expectedRate: configuration.sampleRate,
+                                                                    expectedChannels: 1)
+                return nil
+            }
+            let threshold = NFKMLXDetectionParameterKey.threshold(unit, NFKMLXVoiceActivityParameterKey.speechThreshold,
+                                                                  default: configuration.threshold)
+            let first = state.scoredChunks
+            let probabilities = net.streamProbabilities(samples, state: state)
+            let segments = probabilities.enumerated().compactMap { offset, probability -> NFKAudioSegment? in
+                guard probability >= threshold else {
+                    return nil
+                }
+                let start = Double(first + offset) * configuration.chunkSeconds
+                return NFKAudioSegment(startSeconds: start, endSeconds: start + configuration.chunkSeconds, label: nil,
+                                       confidence: Double(min(max(probability, 0), 1)))
+            }
+            return NFKInferenceResult(outputs: [NFKOutputSegments: segments])
+        }, resetHandler: { state = NFKSileroStreamState() }, closeHandler: { state = NFKSileroStreamState() })
     }
 
     private static func audio(from request: NFKInferenceRequest) -> (samples: [Float], sampleRate: Int)? {

@@ -955,6 +955,33 @@
 	CGImageRelease(square);
 }
 
+- (void)testExampleALiveSourceOneUnitAtATime
+{
+	NSError *error = nil;
+	__block double level = 0;                                      // the state the stream carries
+	NFKBlockLiveStream *smoother =
+		[[NFKBlockLiveStream alloc] initWithParameters:@{ @"weight": @0.5 }
+										   unitHandler:^NFKInferenceResult *(NFKInferenceRequest *unit, NSError **unitError) {
+			double weight = [[unit parameterForKey:@"weight"] doubleValue];
+			level = weight * [[unit inputForKey:@"value"] doubleValue] + (1 - weight) * level;
+			return [NFKInferenceResult resultWithOutputs:@{ @"level": @(level) }];
+		} resetHandler:^{ level = 0; } closeHandler:nil];
+
+	NFKInferenceResult *first = [smoother resultForUnit:[NFKInferenceRequest requestWithInputs:@{ @"value": @4 }]
+												  error:&error];   // level 2
+	NFKInferenceResult *second = [smoother resultForUnit:[NFKInferenceRequest requestWithInputs:@{ @"value": @4 }]
+												   error:&error];  // level 3: it read the unit before
+	XCTAssertEqualObjects([first outputForKey:@"level"], @2, @"%@", error);
+	XCTAssertEqualObjects([second outputForKey:@"level"], @3);
+	[smoother reset];                                              // the next unit runs as the first
+	XCTAssertEqualObjects([[smoother resultForUnit:[NFKInferenceRequest requestWithInputs:@{ @"value": @4 }] error:&error]
+						   outputForKey:@"level"], @2);
+	[smoother close];
+
+	id<NFKLiveStream> perUnit = NFKInferenceOpenLiveStream([NFKPassthroughBackend backend], nil, &error);
+	XCTAssertNotNil(perUnit, @"a backend without a stream of its own runs each unit as a request: %@", error);
+}
+
 - (void)testExampleRemoteStreamingToolsAndRetries
 {
 	// Tools and a schema are contract keys, translated into each provider's shape; what the model

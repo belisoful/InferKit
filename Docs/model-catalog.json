@@ -51328,6 +51328,17 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/PeterL1n/RobustVideoMatting/blob/master/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image",
+          "mask"
+        ],
+        "stateful" : true,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -51548,6 +51559,17 @@
         "note" : "Software that includes the weights is distributed under the GPL.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/PeterL1n/RobustVideoMatting/blob/master/LICENSE"
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image",
+          "mask"
+        ],
+        "stateful" : true,
+        "unit" : "videoFrame"
       },
       "options" : [
 
@@ -63323,6 +63345,19 @@
         "name" : "MIT License",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/snakers4/silero-vad/blob/master/LICENSE"
+      },
+      "live" : {
+        "channelCount" : 1,
+        "chunkDuration" : 0.032000000000000001,
+        "inputs" : [
+          "audio"
+        ],
+        "outputs" : [
+          "segments"
+        ],
+        "sampleRate" : 16000,
+        "stateful" : true,
+        "unit" : "audioChunk"
       },
       "options" : [
         {

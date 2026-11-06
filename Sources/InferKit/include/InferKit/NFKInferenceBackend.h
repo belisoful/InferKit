@@ -13,6 +13,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@protocol NFKLiveStream;
+
 /*!
 	@protocol   NFKInferenceBackend
 	@abstract   A swappable inference engine that turns a request into a result.
@@ -222,6 +224,18 @@ NS_ASSUME_NONNULL_BEGIN
 				thread. Introduced in InferKit 0.4.0.
 */
 @property (nonatomic, readonly) NSInteger peakByteCount;
+
+/*!
+	@method     openLiveStreamWithParameters:error:
+	@abstract   Opens a stream that runs the model on a live source, one unit at a time (NFKLiveStream.h).
+	@discussion A backend whose model carries state from unit to unit implements it, and its stream keeps
+				that state between units. The parameters apply to every unit of the stream. Several streams
+				of one backend run independently, each with its own state, and share the loaded model. A
+				caller opens streams through NFKInferenceOpenLiveStream, which serves a backend without this
+				method. Introduced in InferKit 0.4.0.
+*/
+- (nullable id<NFKLiveStream>)openLiveStreamWithParameters:(nullable NSDictionary<NSString *, id> *)parameters
+													 error:(NSError **)error NS_SWIFT_NAME(openLiveStream(parameters:));
 
 @end
 

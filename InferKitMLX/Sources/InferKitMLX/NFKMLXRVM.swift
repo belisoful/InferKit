@@ -683,9 +683,9 @@ public final class NFKMLXRVM: NSObject {
         let holder = NFKRVMHolder(net)
         var configuration = NFKMattingConfiguration()
         configuration.emitsMatte = true
-        return NFKMLXMattingBackend(identifier: spec.name, configuration: configuration) { plate, _ in
-            holder.net.matte(plate)
-        }
+        return NFKMLXMattingBackend(identifier: spec.name, configuration: configuration,
+                                    requestForward: { plate, _, _ in holder.net.matte(plate) },
+                                    streamForward: { streamForward(net: holder.net) })
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds the backend — no registry required.

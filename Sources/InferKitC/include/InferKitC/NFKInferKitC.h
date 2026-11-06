@@ -204,6 +204,28 @@ void nfk_job_cancel(nfk_job *job);
 	not called on a thread the backend's run waits for. Introduced in InferKit 0.4.0. */
 void nfk_job_free(nfk_job *job);
 
+/*! A live stream on a backend: a model run on a live source one unit at a time, with the state it carries
+	between units (NFKLiveStream.h). Introduced in InferKit 0.4.0. */
+typedef struct nfk_live_stream nfk_live_stream;
+
+/*! Opens a live stream on a backend with a JSON object of parameters every unit runs with, or NULL with
+	an error. parameters_json may be NULL or empty for none. A backend whose model treats each unit alone
+	runs each unit as a request. Parameters that are not a JSON object fail in NFKInferenceErrorDomain with
+	kNFKError_InferenceMissingInput (2). The stream holds the backend until nfk_live_stream_free. Introduced
+	in InferKit 0.4.0. */
+nfk_live_stream *nfk_live_stream_open(nfk_backend *backend, const char *parameters_json, nfk_error **out_error);
+
+/*! Runs one unit, a payload of the unit's inputs and any parameters of its own, and blocks the calling
+	thread until it ends. Returns the unit's result, or NULL with an error. Units from several threads are
+	answered one after the other. Introduced in InferKit 0.4.0. */
+nfk_result *nfk_live_stream_push(nfk_live_stream *stream, const nfk_payload *unit, nfk_error **out_error);
+
+/*! Forgets the state the stream carries, so the next unit runs as the first. Introduced in InferKit 0.4.0. */
+void nfk_live_stream_reset(nfk_live_stream *stream);
+
+/*! Closes and frees a live stream. Introduced in InferKit 0.4.0. */
+void nfk_live_stream_free(nfk_live_stream *stream);
+
 /*! A result's tagged JSON, {"outputs": {…}}, valid until nfk_result_free. Introduced in InferKit 0.4.0. */
 const char *nfk_result_json(const nfk_result *result);
 

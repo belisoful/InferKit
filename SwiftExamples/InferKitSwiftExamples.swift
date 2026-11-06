@@ -352,6 +352,21 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(NFKModelCatalog.referenceBenchmark(forTask: NFKModelTaskCodeGeneration), NFKModelBenchmarkLiveCodeBench)
     }
 
+    // A live stream imports resultForUnit:error: as result(for:) throws, and a backend's stream as
+    // openLiveStream(parameters:).
+    func testExampleALiveStreamFromSwift() throws {
+        var total = 0
+        let counter = NFKBlockLiveStream(parameters: nil, unitHandler: { unit, _ in
+            total += (unit.input(forKey: "value") as? Int) ?? 0
+            return NFKInferenceResult(outputs: ["total": total])
+        }, resetHandler: { total = 0 }, closeHandler: nil)
+        _ = try counter.result(for: NFKInferenceRequest(inputs: ["value": 2]))
+        let second = try counter.result(for: NFKInferenceRequest(inputs: ["value": 3]))
+        XCTAssertEqual(second.output(forKey: "total") as? Int, 5)
+        counter.close()
+        XCTAssertThrowsError(try counter.result(for: NFKInferenceRequest(inputs: ["value": 1])))
+    }
+
     // The live category imports as liveDescriptors(forUnit:), and a profile's check as keepsUp(rate:variant:width:height:chip:).
     func testExampleListingLiveModelsFromSwift() throws {
         let timing = NFKModelLiveTiming(variantIdentifier: nil, chip: "Apple M3 Max", width: 1280, height: 720,

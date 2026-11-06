@@ -1419,6 +1419,30 @@ job.completionHandler = { j in /* j.result or j.error */ }
 // job.cancel()
 ```
 
+### A live source, one unit at a time
+
+`NFKInferenceOpenLiveStream` runs a model on a camera or microphone one unit at a time. A backend whose
+model carries state from unit to unit keeps it in its own stream; any other backend runs each unit as a
+request. A backend of your own returns an `NFKBlockLiveStream` holding its state:
+
+```objc
+__block double level = 0;                                      // the state the stream carries
+NFKBlockLiveStream *smoother =
+    [[NFKBlockLiveStream alloc] initWithParameters:@{ @"weight": @0.5 }
+                                       unitHandler:^NFKInferenceResult *(NFKInferenceRequest *unit, NSError **error) {
+        double weight = [[unit parameterForKey:@"weight"] doubleValue];
+        level = weight * [[unit inputForKey:@"value"] doubleValue] + (1 - weight) * level;
+        return [NFKInferenceResult resultWithOutputs:@{ @"level": @(level) }];
+    } resetHandler:^{ level = 0; } closeHandler:nil];
+
+NFKInferenceResult *first = [smoother resultForUnit:[NFKInferenceRequest requestWithInputs:@{ @"value": @4 }]
+                                              error:&error];   // level 2
+NFKInferenceResult *second = [smoother resultForUnit:[NFKInferenceRequest requestWithInputs:@{ @"value": @4 }]
+                                               error:&error];  // level 3: it read the unit before
+[smoother reset];                                              // the next unit runs as the first
+[smoother close];
+```
+
 ### Reasoning and what the turn cost
 
 `NFKParameterReasoningEffort` asks a reasoning model how hard to think. The three levels the contract

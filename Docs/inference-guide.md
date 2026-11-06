@@ -35,6 +35,7 @@ the toolkit is going. [Examples](examples.md) has a compiled snippet for every b
 - [Serving a model to other machines](#serving-a-model-to-other-machines)
 - [Models as tools](#models-as-tools)
 - [Speech in, text out](#speech-in-text-out)
+- [Live sources](#live-sources)
 - [Optional engines discovered at runtime](#optional-engines-discovered-at-runtime)
 - [Choosing and combining engines](#choosing-and-combining-engines)
 - [Roadmap](#roadmap)
@@ -1341,6 +1342,35 @@ download. It needs the user's consent, which the app asks for once through
 `requiresOnDeviceRecognition` is turned off. Each word arrives under `NFKOutputSegments` with its
 time range. Whisper keeps translation, word timestamps for any locale, and a chosen model size;
 Apple's recognizer keeps the download at zero.
+
+## Live sources
+
+A model that runs on a camera, a screen, or a microphone takes one unit at a time: a video frame or an
+audio chunk. Its catalog descriptor says so with a live profile (`NFKModelLive.h`): the unit, the keys a
+unit carries in and out, whether the model keeps state from unit to unit, and its measured time per unit
+(see [Live profiles](model-catalog.md#live-profiles)).
+
+A live stream (`NFKLiveStream.h`) runs those units. `NFKInferenceOpenLiveStream` opens one on any
+backend with parameters every unit runs with. A backend whose model carries state, such as Robust Video
+Matting's recurrent decoder or Silero VAD's LSTM, opens its own stream, which keeps that state between
+units; any other backend runs each unit as a request. `reset` starts the state again, at a scene cut or a
+new speaker, and `close` releases the stream.
+
+<!-- objc-check: given id<NFKInferenceBackend> matter = nil; CGImageRef frame = NULL; -->
+```objc
+NSError *error = nil;
+id<NFKLiveStream> stream = NFKInferenceOpenLiveStream(matter, nil, &error);
+NFKInferenceRequest *unit = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)frame }];
+NFKInferenceResult *matted = [stream resultForUnit:unit error:&error];   // reads the frames before it
+id mask = [matted outputForKey:NFKOutputMask];
+[stream reset];                                                          // a cut: forget the state
+[stream close];
+```
+
+A stream answers its units one at a time, in the order they arrive. Several streams of one backend keep
+their own state and share the loaded model. An audio unit is an `AVAudioPCMBuffer`, WAV bytes, or an
+`NFKAudioAsset` at the profile's sample rate and channel count. The C interface opens the same streams
+with `nfk_live_stream_open` (see [C interface](c-api.md#a-live-stream)).
 
 ## Optional engines discovered at runtime
 

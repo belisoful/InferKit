@@ -7,6 +7,7 @@
 //
 
 #if __has_include(<InferKitC/NFKInferKitC.h>)
+#import "NFKLiveStream.h"
 #import <InferKitC/NFKInferKitC.h>
 #elif __has_include(<InferKit/NFKInferKitC.h>)
 #import <InferKit/NFKInferKitC.h>
@@ -950,6 +951,29 @@ int32_t nfk_plugins_add_directory(const char *path, nfk_error **out_error)
 
 #pragma mark - Backends
 
+/*! Reads a JSON object from text that may be NULL or empty, which reads as nil. NO with an error in domain
+	and code, naming what, for text that is not a JSON object. */
+static BOOL NFKCReadJSONObject(const char * _Nullable text, NSString *what, NSString *domain, NSInteger code,
+							   NSDictionary<NSString *, id> * _Nullable * _Nonnull outObject, NSError **outError)
+{
+	*outObject = nil;
+	if (text == NULL || text[0] == '\0') {
+		return YES;
+	}
+	NSData *JSON = [NSData dataWithBytesNoCopy:(void *)text length:strlen(text) freeWhenDone:NO];
+	NSError *parseError = nil;
+	id object = [NSJSONSerialization JSONObjectWithData:JSON options:0 error:&parseError];
+	if (![object isKindOfClass:NSDictionary.class]) {
+		NSString *reason = parseError != nil
+			? [NSString stringWithFormat:@"The %@ are not JSON: %@", what, parseError.localizedDescription]
+			: [NSString stringWithFormat:@"The %@ are not a JSON object.", what];
+		*outError = NFKCMakeError(domain, code, reason);
+		return NO;
+	}
+	*outObject = object;
+	return YES;
+}
+
 nfk_backend *nfk_backend_create(const char *catalog_identifier, const char *options_json, nfk_error **out_error)
 {
 	NFKCClearError(out_error);
@@ -962,20 +986,12 @@ nfk_backend *nfk_backend_create(const char *catalog_identifier, const char *opti
 				return NULL;
 			}
 			NSDictionary<NSString *, id> *options = nil;
-			if (options_json != NULL && options_json[0] != '\0') {
-				NSData *JSON = [NSData dataWithBytesNoCopy:(void *)options_json length:strlen(options_json) freeWhenDone:NO];
-				NSError *parseError = nil;
-				id object = [NSJSONSerialization JSONObjectWithData:JSON options:0 error:&parseError];
-				if (![object isKindOfClass:NSDictionary.class]) {
-					NSString *reason = parseError != nil
-						? [NSString stringWithFormat:@"The options are not JSON: %@", parseError.localizedDescription]
-						: @"The options are not a JSON object.";
-					NFKCSetError(out_error, NFKCMakeError(NFKModelCatalogErrorDomain, NFKModelCatalogErrorInvalidOptions, reason));
-					return NULL;
-				}
-				options = object;
-			}
 			NSError *error = nil;
+			if (!NFKCReadJSONObject(options_json, @"options", NFKModelCatalogErrorDomain, NFKModelCatalogErrorInvalidOptions,
+									&options, &error)) {
+				NFKCSetError(out_error, error);
+				return NULL;
+			}
 			id<NFKInferenceBackend> backend = [NFKModelCatalog.sharedCatalog backendForModelIdentifier:identifier options:options error:&error];
 			if (backend == nil) {
 				NFKCSetError(out_error, error ?: NFKCMakeError(NFKModelCatalogErrorDomain, NFKModelCatalogErrorNoBuilder,
@@ -1080,6 +1096,109 @@ nfk_result *nfk_backend_run(nfk_backend *backend, const nfk_payload *request, nf
 		}
 	}
 }
+
+#pragma mark - Live streams
+
+/*! A live stream and the backend it holds open. */
+@interface NFKCLiveStream : NSObject
+@property (nonatomic, readonly) NFKCBackend *backend;
+@property (nonatomic, readonly) id<NFKLiveStream> stream;
+@end
+
+@implementation NFKCLiveStream
+
+- (instancetype)initWithBackend:(NFKCBackend *)backend stream:(id<NFKLiveStream>)stream
+{
+	self = [super init];
+	if (self != nil) {
+		_backend = backend;
+		_stream = stream;
+	}
+	return self;
+}
+
+@end
+
+nfk_live_stream *nfk_live_stream_open(nfk_backend *backend, const char *parameters_json, nfk_error **out_error)
+{
+	NFKCClearError(out_error);
+	@autoreleasepool {
+		@try {
+			NFKCBackend *object = NFKCObjectOfClass(backend, NFKCBackend.class);
+			if (object == nil) {
+				NFKCSetError(out_error, NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceNotReady, @"No backend was passed."));
+				return NULL;
+			}
+			NSDictionary<NSString *, id> *parameters = nil;
+			NSError *error = nil;
+			if (!NFKCReadJSONObject(parameters_json, @"parameters", NFKInferenceErrorDomain, kNFKError_InferenceMissingInput,
+									&parameters, &error)) {
+				NFKCSetError(out_error, error);
+				return NULL;
+			}
+			id<NFKLiveStream> stream = NFKInferenceOpenLiveStream(object.backend, parameters, &error);
+			if (stream == nil) {
+				NFKCSetError(out_error, error ?: NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure,
+															   @"The backend opened no stream and reported no error."));
+				return NULL;
+			}
+			return (nfk_live_stream *)NFKCRetainHandle([[NFKCLiveStream alloc] initWithBackend:object stream:stream]);
+		} @catch (NSException *exception) {
+			NFKCSetError(out_error, NFKCExceptionError(exception));
+			return NULL;
+		}
+	}
+}
+
+nfk_result *nfk_live_stream_push(nfk_live_stream *stream, const nfk_payload *unit, nfk_error **out_error)
+{
+	NFKCClearError(out_error);
+	@autoreleasepool {
+		@try {
+			NFKCLiveStream *object = NFKCObjectOfClass(stream, NFKCLiveStream.class);
+			if (object == nil) {
+				NFKCSetError(out_error, NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceNotReady, @"No live stream was passed."));
+				return NULL;
+			}
+			NFKCRunFiles *files = [[NFKCRunFiles alloc] init];
+			NSError *error = nil;
+			NFKInferenceRequest *decoded = NFKCRequestFromPayload(unit, nil, files, &error);
+			NFKInferenceResult *result = decoded != nil ? [object.stream resultForUnit:decoded error:&error] : nil;
+			if (result == nil) {
+				NFKCSetError(out_error, error ?: NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure,
+															   @"The unit failed and reported no error."));
+				return NULL;
+			}
+			return NFKCResultHandle(result, files, out_error);
+		} @catch (NSException *exception) {
+			NFKCSetError(out_error, NFKCExceptionError(exception));
+			return NULL;
+		}
+	}
+}
+
+void nfk_live_stream_reset(nfk_live_stream *stream)
+{
+	@autoreleasepool {
+		@try {
+			[[NFKCObjectOfClass(stream, NFKCLiveStream.class) stream] reset];
+		} @catch (NSException *exception) {
+		}
+	}
+}
+
+void nfk_live_stream_free(nfk_live_stream *stream)
+{
+	@autoreleasepool {
+		@try {
+			[[NFKCObjectOfClass(stream, NFKCLiveStream.class) stream] close];
+			NFKCReleaseHandle(stream, NFKCLiveStream.class);
+		} @catch (NSException *exception) {
+		}
+	}
+}
+
+#pragma mark - Backend jobs
 
 nfk_job *nfk_backend_submit(nfk_backend *backend, const nfk_payload *request, nfk_progress_callback progress,
 							nfk_completion_callback completion, void *context)

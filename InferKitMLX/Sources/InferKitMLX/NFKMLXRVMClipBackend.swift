@@ -25,6 +25,11 @@ public enum NFKMLXRVMClipOutput: Int {
     case composition
 }
 
+/// The recurrent state one live stream carries between frames.
+private final class NFKRVMStreamState: @unchecked Sendable {
+    var state = NFKMLXRVMNet.initialState
+}
+
 /// Holds the network for capture in the clip backend's transform.
 private final class NFKRVMClipHolder: @unchecked Sendable {
     let net: NFKMLXRVMNet
@@ -44,10 +49,7 @@ extension NFKMLXRVM {
         let green = MLXArray([Float(120) / 255, 1, Float(155) / 255])
         return frames.map { frame in
             let (height, width) = (frame.dim(0), frame.dim(1))
-            let ratio = Swift.min(512 / Float(Swift.max(height, width)), 1)
-            let (foreground, alpha, next) = net.forward(frame.reshaped([1, height, width, 3]), state: state,
-                                                        downsampleRatio: ratio)
-            state = next
+            let (foreground, alpha) = matteFrame(frame, net: net, state: &state)
             let written: MLXArray
             switch output {
             case .alpha:
@@ -59,6 +61,32 @@ extension NFKMLXRVM {
             }
             let result = written.reshaped([height, width, 3])
             eval([result] + state.compactMap { $0 })
+            return result
+        }
+    }
+
+    /// Mattes one frame `[H, W, 3]` at the reference's automatic downsample ratio, `min(512 / max(H, W), 1)`,
+    /// from `state` and leaving the next state there. Returns the foreground and the alpha, `[1, H, W, 3]`
+    /// and `[1, H, W, 1]`.
+    static func matteFrame(_ frame: MLXArray, net: NFKMLXRVMNet,
+                           state: inout NFKMLXRVMNet.State) -> (foreground: MLXArray, alpha: MLXArray) {
+        let (height, width) = (frame.dim(0), frame.dim(1))
+        let ratio = Swift.min(512 / Float(Swift.max(height, width)), 1)
+        let (foreground, alpha, next) = net.forward(frame.reshaped([1, height, width, 3]), state: state,
+                                                    downsampleRatio: ratio)
+        state = next
+        return (foreground, alpha)
+    }
+
+    /// The forward of one live stream over `net`: each call mattes a frame `[H, W, 3]` from the state the
+    /// frames before it left, as a clip does, and returns the foreground and alpha `[H, W, 4]`.
+    static func streamForward(net: NFKMLXRVMNet) -> NFKMLXMattingBackend.RequestForward {
+        let carried = NFKRVMStreamState()
+        return { plate, _, _ in
+            let (height, width) = (plate.dim(0), plate.dim(1))
+            let (foreground, alpha) = matteFrame(plate, net: net, state: &carried.state)
+            let result = concatenated([foreground, alpha], axis: 3).reshaped([height, width, 4])
+            eval([result] + carried.state.compactMap { $0 })
             return result
         }
     }

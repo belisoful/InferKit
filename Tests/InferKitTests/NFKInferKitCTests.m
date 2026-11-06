@@ -672,6 +672,34 @@ static void NFKCAPITestCompletion(void *context, nfk_result *result, nfk_error *
 	nfk_backend_free(backend);
 }
 
+- (void)testALiveStreamRunsEachUnitWithTheStreamsParameters
+{
+	nfk_backend *backend = [self backendFor:NFKCAPIEchoModel options:"{\"mode\": \"loud\"}"];
+	nfk_error *error = NULL;
+	XCTAssert(nfk_live_stream_open(backend, "[1]", &error) == NULL, @"parameters must be a JSON object");
+	XCTAssertEqual(nfk_error_code(error), (int64_t)kNFKError_InferenceMissingInput);
+	nfk_error_free(error);
+	error = NULL;
+	nfk_live_stream *stream = nfk_live_stream_open(backend, "{\"suffix\": \"!\"}", &error);
+	XCTAssert(stream != NULL, @"%s", nfk_error_message(error));
+	nfk_backend_free(backend);
+
+	nfk_payload unit = [self payloadWithJSON:"{\"inputs\": {\"prompt\": \"hi\"}}" buffers:NULL count:0];
+	nfk_result *result = nfk_live_stream_push(stream, &unit, &error);
+	XCTAssert(result != NULL, @"%s", nfk_error_message(error));
+	XCTAssertEqualObjects([self outputsOfResult:result][NFKOutputText], @"loud:hi:!", @"the stream holds its backend");
+	nfk_result_free(result);
+	nfk_payload own = [self payloadWithJSON:"{\"inputs\": {\"prompt\": \"yo\"}, \"parameters\": {\"suffix\": \"?\"}}" buffers:NULL count:0];
+	result = nfk_live_stream_push(stream, &own, &error);
+	XCTAssertEqualObjects([self outputsOfResult:result][NFKOutputText], @"loud:yo:?", @"a unit's parameter overrides the stream's");
+	nfk_result_free(result);
+	nfk_live_stream_reset(stream);
+	nfk_live_stream_free(stream);
+	XCTAssert(nfk_live_stream_push(NULL, &unit, &error) == NULL);
+	XCTAssertEqual(nfk_error_code(error), (int64_t)kNFKError_InferenceNotReady);
+	nfk_error_free(error);
+}
+
 - (void)testAnUnknownModelFailsWithTheCatalogsDomainAndCode
 {
 	nfk_error *error = NULL;

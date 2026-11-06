@@ -25,9 +25,27 @@ final class NFKMLXCatalogLiveTests: XCTestCase {
         }
     }
 
+    func testTheStatefulModelsDeclareTheirState() throws {
+        for (identifier, outputs) in NFKMLXCatalogLive.statefulVideoFrameOutputs {
+            let live = try XCTUnwrap(descriptors.first { $0.identifier == identifier }?.liveProfile, identifier)
+            XCTAssertTrue(live.isStateful, identifier)
+            XCTAssertEqual(live.outputKeys, outputs, identifier)
+        }
+    }
+
+    func testTheAudioModelsDeclareTheirChunk() throws {
+        let silero = try XCTUnwrap(descriptors.first { $0.identifier == "silero-vad" }?.liveProfile)
+        XCTAssertEqual(silero.unit, NFKModelLiveUnitAudioChunk)
+        XCTAssertEqual(silero.chunkDuration, Double(NFKMLXSileroVADConfiguration.v6.numSamples) / 16000)
+        XCTAssertEqual(silero.sampleRate, Double(NFKMLXSileroVADConfiguration.v6.sampleRate))
+        XCTAssertEqual(silero.channelCount, 1)
+        XCTAssertTrue(silero.isStateful)
+    }
+
     func testOnlyTheDeclaredModelsAreLive() {
         let live = Set(descriptors.filter { $0.liveProfile != nil }.map(\.identifier))
-        XCTAssertEqual(live, Set(NFKMLXCatalogLive.videoFrameOutputs.keys))
+        XCTAssertEqual(live, Set(NFKMLXCatalogLive.videoFrameOutputs.keys).union(NFKMLXCatalogLive.statefulVideoFrameOutputs.keys)
+            .union(NFKMLXCatalogLive.audioChunks.keys))
         XCTAssertNil(descriptors.first { $0.identifier == "birefnet" }?.liveProfile, "a seconds-per-frame matter is not live")
     }
 }
