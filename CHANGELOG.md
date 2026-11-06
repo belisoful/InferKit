@@ -108,6 +108,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Models declare that they run on a live source
+
+- `NFKModelLiveProfile` (`NFKModelLive.h`) declares how a model runs on a stream: its unit, a video frame
+  (`NFKModelLiveUnitVideoFrame`) or an audio chunk (`NFKModelLiveUnitAudioChunk`) with its duration,
+  sample rate, and channel count; the input and output keys a unit carries; whether the model keeps
+  state from unit to unit; and the latency it adds. A descriptor carries one as `liveProfile` (manifest
+  field `live`).
+- `NFKModelLiveTiming` is a measured median time per unit of one release on one chip, at a frame size for
+  video. `keepsUpWithRate:variant:width:height:chip:` answers whether a release keeps up with a source.
+- `-[NFKModelCatalog liveDescriptorsForUnit:]` lists the live models. The catalog route and
+  `nfk_catalog_copy_json` carry the profiles.
+- `vision-segmentation`, `vision-pose`, and `vision-face` are live video-frame models.
+
 #### The native route answers value objects as JSON on request
 
 - `POST /v1/inferkit/run` takes `valueObjects`: `"archive"` (the default) or `"json"`. With `"json"` the
@@ -1975,6 +1988,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### The stateless video-frame models are live
+
+- MODNet, U²-Net-p, BiSeNet and BiSeNet V2, SegFormer-B0, DeepLabV3, Depth Anything V2 Small and 3 Small,
+  SimpleBaseline pose, RetinaFace MobileNet-0.25, RF-DETR Nano, Small, and Seg Small, RT-DETR R18vd,
+  Real-ESRGAN general x4v3, and the SwinIR lightweight scales carry a stateless video-frame live profile
+  (`NFKMLXCatalogLive.swift`), image in and their output keys out.
 
 #### Published benchmark scores for the catalog's models
 

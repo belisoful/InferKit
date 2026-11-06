@@ -123,12 +123,13 @@ lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend`
 | `modelTypes` | array of string | no | The `model_type` values of the Hugging Face `config.json` files the model's loader reads, such as `"qwen3"`. A [resolver](#resolving-a-repository) matches a repository against them. Empty when absent. |
 | `adapterBases` | array of string | no | The [adapter bases](#adapters) of the LoRA adapters the model takes through the `adapters` load option. Empty when absent. |
 | `qualityScores` | array of [quality score](#quality-scores) | no | The published benchmark scores of the model's releases. Empty when absent. |
+| `live` | [live profile](#live-profiles) | no | How the model runs on a live source, one video frame or audio chunk at a time. None when absent. |
 | `standIn` | boolean | no | True for a reference or test stand-in a user interface hides. False when absent. |
 | `introducedVersion` | string | no | The InferKit version that introduced the model, such as `"0.4.0"`. |
 
 A writer always writes `id`, `displayName`, `family`, `engine`, the arrays (empty when there is
-nothing in them), `requirements`, and `standIn`. It writes `presets`, `modelTypes`, `adapterBases`, and
-`qualityScores` only when there are some.
+nothing in them), `requirements`, and `standIn`. It writes `presets`, `modelTypes`, `adapterBases`,
+`qualityScores`, and `live` only when there are some.
 
 A descriptor with more than one variant derives a load option under `variant`
 (`NFKModelLoadOptionVariant`): a choice of its variants' identifiers, the default variant by default.
@@ -1198,6 +1199,53 @@ benchmark (`+referenceBenchmarkForTask:`), best first, using each model's defaul
   computed from, so a user interface shows the score and its source beside the rank.
 - `qualityRankingForModelIdentifier:task:` is one model's ranking, nil when the ranking leaves it out.
 - A task without a reference benchmark has no ranking.
+
+## Live profiles
+
+`NFKModelLiveProfile` (`NFKModelLive.h`). How a model runs on a live source: one unit, a video frame or an
+audio chunk, is one request.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `unit` | string | yes | `"videoFrame"` (`NFKModelLiveUnitVideoFrame`) or `"audioChunk"` (`NFKModelLiveUnitAudioChunk`). |
+| `inputs` | array of string | yes | The input keys a unit carries, keys of the model's `inputs`, such as `["image"]`. |
+| `outputs` | array of string | yes | The output keys a unit's result carries, keys of the model's `outputs`. |
+| `stateful` | boolean | no | True when the model carries state from unit to unit, so its results depend on the units before. False when absent. |
+| `chunkDuration` | number | audio | An audio chunk's duration in seconds. |
+| `sampleRate` | number | audio | The sample rate a chunk is in, in hertz. |
+| `channelCount` | integer | audio | The channels a chunk has. |
+| `lookahead` | number | no | The latency the model adds past a unit, in milliseconds. 0 when absent. |
+| `timings` | array of [live timing](#live-timings) | no | The measured times per unit. Empty when absent. |
+
+An audio profile carries a positive `chunkDuration`, `sampleRate`, and `channelCount`; a video profile
+carries none of them. A model is malformed when a profile key is not among its inputs or outputs.
+
+A stateless model treats each unit alone, so a client may drop units when it falls behind. A stateful
+model needs its units in order.
+
+### Live timings
+
+`NFKModelLiveTiming`. The median time one release takes per unit on one chip.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `variant` | string | no | The [variant](#variant) measured. The default variant when absent. |
+| `chip` | string | yes | The chip, as `NFKHardwareProfile.chipName` reports it, such as `"Apple M3 Max"`. |
+| `width`, `height` | integer | video | The frame size in pixels a video timing was measured at. |
+| `milliseconds` | number | yes | The median time per unit, positive. |
+| `measured` | string | yes | The day of the measurement, `YYYY-MM-DD`. |
+| `note` | string | no | A sentence on how the timing was measured. |
+
+A model is malformed when a timing names a variant it does not have, or when two timings of one variant
+share a chip and a frame size.
+
+- `-[NFKModelLiveProfile keepsUpWithRate:variant:width:height:chip:]` answers whether a release keeps up:
+  a video timing at the frame size, or the smallest measured size above it, within `1000 / rate`
+  milliseconds; an audio timing below the chunk's duration. It answers nil when no timing does.
+- `-[NFKModelCatalog liveDescriptorsForUnit:]` lists the visible models with a profile of the unit, or of
+  either unit for nil, by identifier.
+- The catalog route (`GET /v1/inferkit/catalog`) and the C interface's `nfk_catalog_copy_json` carry the
+  profiles in the manifest.
 
 ## Errors
 

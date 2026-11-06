@@ -14,6 +14,7 @@
 #import "NFKModelOptions.h"
 #import "NFKModelPreset.h"
 #import "NFKModelQuality.h"
+#import "NFKModelLive.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -110,6 +111,14 @@ typedef id _Nullable (^NFKModelElementReader)(id element, NSString *path, NSErro
 
 @interface NFKModelQualityScore (NFKModelCatalogReading)
 + (nullable instancetype)scoreFromObject:(id)object path:(NSString *)path error:(NSError **)error;
+@end
+
+@interface NFKModelLiveTiming (NFKModelCatalogReading)
++ (nullable instancetype)timingFromObject:(id)object path:(NSString *)path error:(NSError **)error;
+@end
+
+@interface NFKModelLiveProfile (NFKModelCatalogReading)
++ (nullable instancetype)profileFromObject:(id)object path:(NSString *)path error:(NSError **)error;
 @end
 
 /*! The descriptor's option and memory work against a given catalog and machine. The public methods pass

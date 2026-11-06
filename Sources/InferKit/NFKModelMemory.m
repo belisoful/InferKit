@@ -2740,8 +2740,9 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 												  license:self.license requirements:self.requirements
 											  residencies:self.residencies memoryModel:self.memoryModel presets:self.presets
 											   modelTypes:self.modelTypes adapterBases:self.adapterBases
-											qualityScores:self.qualityScores standIn:self.isStandIn
-										introducedVersion:self.introducedVersion extensions:self.extensions];
+											qualityScores:self.qualityScores liveProfile:self.liveProfile
+												  standIn:self.isStandIn introducedVersion:self.introducedVersion
+											   extensions:self.extensions];
 }
 
 - (NFKModelOption *)option:(NFKModelOption *)option withMemoryBytesPerUnit:(NSNumber *)perUnit

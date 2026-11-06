@@ -1079,6 +1079,16 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/CoinCheung/BiSeNet/blob/master/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -1176,6 +1186,16 @@
         "name" : "MIT License",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/CoinCheung/BiSeNet/blob/master/LICENSE"
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
       },
       "options" : [
 
@@ -4884,6 +4904,16 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/pytorch/vision/blob/main/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -6685,6 +6715,16 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -7100,6 +7140,16 @@
         "name" : "Apache License 2.0",
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
       },
       "options" : [
 
@@ -30864,6 +30914,17 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/ZHKKKe/MODNet/blob/master/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image",
+          "mask"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -36563,6 +36624,16 @@
         "name" : "Apache License 2.0",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/open-mmlab/mmpose/blob/main/LICENSE"
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "pose"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
       },
       "options" : [
 
@@ -48764,6 +48835,16 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/xinntao/Real-ESRGAN/blob/master/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -49353,6 +49434,16 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/xinntao/facexlib/blob/master/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "detections"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
         {
           "default" : 0.80000000000000004,
@@ -49810,6 +49901,16 @@
         "name" : "Apache License 2.0",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "detections"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
       },
       "options" : [
         {
@@ -50412,6 +50513,17 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "detections",
+          "mask"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
         {
           "default" : 0.29999999999999999,
@@ -50777,6 +50889,16 @@
         "name" : "Apache License 2.0",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "detections"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
       },
       "options" : [
         {
@@ -51864,6 +51986,16 @@
         "name" : "Apache License 2.0",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "detections"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
       },
       "options" : [
         {
@@ -60900,6 +61032,16 @@
         "restrictsCommercialUse" : true,
         "url" : "https://github.com/NVlabs/SegFormer/blob/master/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -66878,6 +67020,16 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/JingyunLiang/SwinIR/blob/main/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -66976,6 +67128,16 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/JingyunLiang/SwinIR/blob/main/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -67073,6 +67235,16 @@
         "name" : "Apache License 2.0",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/JingyunLiang/SwinIR/blob/main/LICENSE"
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
       },
       "options" : [
 
@@ -71076,6 +71248,17 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/xuebinqin/U-2-Net/blob/master/LICENSE"
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "image",
+          "mask"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
 
       ],
@@ -71966,6 +72149,17 @@
         "note" : "The model is part of the operating system and runs under its license.",
         "restrictsCommercialUse" : false
       },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "detections",
+          "pose"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
+      },
       "options" : [
         {
           "default" : true,
@@ -72214,6 +72408,16 @@
         "name" : "Apple system framework",
         "note" : "The model is part of the operating system and runs under its license.",
         "restrictsCommercialUse" : false
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "pose"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
       },
       "options" : [
         {
@@ -72553,6 +72757,16 @@
         "name" : "Apple system framework",
         "note" : "The model is part of the operating system and runs under its license.",
         "restrictsCommercialUse" : false
+      },
+      "live" : {
+        "inputs" : [
+          "image"
+        ],
+        "outputs" : [
+          "mask"
+        ],
+        "stateful" : false,
+        "unit" : "videoFrame"
       },
       "options" : [
         {

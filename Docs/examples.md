@@ -6016,6 +6016,21 @@ NFKModelQualityRanking *turbo =
                                                                task:NFKModelTaskTranscription];  // nil when unscored
 ```
 
+A descriptor whose model runs on a live source carries a live profile: the unit (a video frame or an audio
+chunk), the keys a unit carries in and out, whether the model keeps state from unit to unit, and its
+measured time per unit. A client offers the models that keep up with its source:
+
+```objc
+for (NFKModelDescriptor *model in [NFKModelCatalog.sharedCatalog liveDescriptorsForUnit:NFKModelLiveUnitVideoFrame]) {
+    NFKModelLiveProfile *live = model.liveProfile;             // image in, mask out, one frame at a time
+    NSNumber *keepsUp = [live keepsUpWithRate:60 variant:nil width:1920 height:1080
+                                         chip:NFKHardwareProfile.currentProfile.chipName];
+    if (keepsUp.boolValue) {                                   // nil when no timing answers
+        // offer model.identifier for a 1080p60 source
+    }
+}
+```
+
 A variant's `source` is what `NFKHFHub` plans, downloads, reports on, and removes, so an app fetches
 every catalog model the same way. A source that needs a converter fails with
 `NFKDownloadErrorRequiresConversion`; one of kind `system` or `none` holds no files and completes at

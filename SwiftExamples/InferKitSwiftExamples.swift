@@ -352,6 +352,23 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(NFKModelCatalog.referenceBenchmark(forTask: NFKModelTaskCodeGeneration), NFKModelBenchmarkLiveCodeBench)
     }
 
+    // The live category imports as liveDescriptors(forUnit:), and a profile's check as keepsUp(rate:variant:width:height:chip:).
+    func testExampleListingLiveModelsFromSwift() throws {
+        let timing = NFKModelLiveTiming(variantIdentifier: nil, chip: "Apple M3 Max", width: 1280, height: 720,
+                                        millisecondsPerUnit: 20, measuredDate: "2026-11-06", note: nil, extensions: nil)
+        let live = NFKModelLiveProfile.videoFrameProfile(withInputKeys: [NFKInputImage], outputKeys: [NFKOutputMask],
+                                                         stateful: false, timings: [timing])
+        var model = ["id": "example.segmenter", "family": "example", "engine": NFKModelEnginePlugin] as [String: Any]
+        model["inputs"] = [["key": NFKInputImage]]
+        model["outputs"] = [["key": NFKOutputMask]]
+        model["live"] = live.dictionaryRepresentation()
+        let catalog = NFKModelCatalog()
+        catalog.addDescriptor(try NFKModelDescriptor(dictionary: model))
+        let profile = try XCTUnwrap(catalog.liveDescriptors(forUnit: NFKModelLiveUnitVideoFrame).first?.liveProfile)
+        XCTAssertEqual(profile.keepsUp(rate: 30, variant: nil, width: 1280, height: 720, chip: "Apple M3 Max"), true)
+        XCTAssertEqual(profile.keepsUp(rate: 60, variant: nil, width: 1280, height: 720, chip: "Apple M3 Max"), false)
+    }
+
     func testExampleModelMemoryFromSwift() throws {
         let decoder = NFKModelStageFacts(identifier: "decoder",
                                          byteCountByPrecision: [NFKModelPrecisionCheckpoint: 2_000_000_000])

@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 @class NFKModelMemoryModel;
 @class NFKModelPreset;
 @class NFKModelQualityScore;
+@class NFKModelLiveProfile;
 @class NFKModelRequirements;
 
 /*!
@@ -712,6 +713,10 @@ NS_ASSUME_NONNULL_BEGIN
 	the descriptor lists and a variant it has, or no variant for the default one. Introduced in InferKit
 	0.4.0. */
 @property (nonatomic, readonly, copy) NSArray<NFKModelQualityScore *> *qualityScores;
+/*! How the model runs on a live source, one video frame or audio chunk at a time (NFKModelLive.h), or nil
+	for a model that does not. Its keys are keys of the descriptor's inputs and outputs, and each timing
+	names a variant it has, or no variant for the default one. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NFKModelLiveProfile *liveProfile;
 /*! The model's releases. */
 @property (nonatomic, readonly, copy) NSArray<NFKModelVariant *> *variants;
 /*! The variant whose isDefault is YES, else the first variant, else nil. */
@@ -753,11 +758,39 @@ NS_ASSUME_NONNULL_BEGIN
 						modelTypes:(nullable NSArray<NSString *> *)modelTypes
 					  adapterBases:(nullable NSArray<NSString *> *)adapterBases
 					 qualityScores:(nullable NSArray<NFKModelQualityScore *> *)qualityScores
+					   liveProfile:(nullable NFKModelLiveProfile *)liveProfile
 						   standIn:(BOOL)standIn
 				 introducedVersion:(nullable NSString *)introducedVersion
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
 
-/*! A descriptor with every field but qualityScores, which is empty. */
+/*! A descriptor with every field but liveProfile, which is nil. */
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+							family:(NSString *)family
+						   summary:(nullable NSString *)summary
+							engine:(NSString *)engine
+					  registryName:(nullable NSString *)registryName
+				 providerClassName:(nullable NSString *)providerClassName
+							 tasks:(nullable NSArray<NSString *> *)tasks
+				   inputModalities:(nullable NSArray<NSString *> *)inputModalities
+				  outputModalities:(nullable NSArray<NSString *> *)outputModalities
+							inputs:(nullable NSArray<NFKModelPort *> *)inputs
+						   outputs:(nullable NSArray<NFKModelPort *> *)outputs
+						   options:(nullable NSArray<NFKModelOption *> *)options
+						  variants:(nullable NSArray<NFKModelVariant *> *)variants
+						   license:(nullable NFKModelLicense *)license
+					  requirements:(nullable NFKModelRequirements *)requirements
+					   residencies:(nullable NSArray<NSString *> *)residencies
+					   memoryModel:(nullable NFKModelMemoryModel *)memoryModel
+						   presets:(nullable NSArray<NFKModelPreset *> *)presets
+						modelTypes:(nullable NSArray<NSString *> *)modelTypes
+					  adapterBases:(nullable NSArray<NSString *> *)adapterBases
+					 qualityScores:(nullable NSArray<NFKModelQualityScore *> *)qualityScores
+						   standIn:(BOOL)standIn
+				 introducedVersion:(nullable NSString *)introducedVersion
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions;
+
+/*! A descriptor with every field but qualityScores and liveProfile, which are empty. */
 - (instancetype)initWithIdentifier:(NSString *)identifier
 					   displayName:(nullable NSString *)displayName
 							family:(NSString *)family
@@ -783,7 +816,7 @@ NS_ASSUME_NONNULL_BEGIN
 				 introducedVersion:(nullable NSString *)introducedVersion
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions;
 
-/*! A descriptor with every field but adapterBases and qualityScores, which are empty. */
+/*! A descriptor with every field but adapterBases, qualityScores, and liveProfile, which are empty. */
 - (instancetype)initWithIdentifier:(NSString *)identifier
 					   displayName:(nullable NSString *)displayName
 							family:(NSString *)family
@@ -808,7 +841,8 @@ NS_ASSUME_NONNULL_BEGIN
 				 introducedVersion:(nullable NSString *)introducedVersion
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions;
 
-/*! A descriptor with every field but modelTypes, adapterBases, and qualityScores, which are empty. */
+/*! A descriptor with every field but modelTypes, adapterBases, qualityScores, and liveProfile, which are
+	empty. */
 - (instancetype)initWithIdentifier:(NSString *)identifier
 					   displayName:(nullable NSString *)displayName
 							family:(NSString *)family
@@ -872,7 +906,9 @@ NS_ASSUME_NONNULL_BEGIN
 	engine is missing, a field or a nested value is malformed, or two inputs, outputs, or options share
 	a key, or two variants or presets share an id. A quality score fails it when the score's task is not
 	among the tasks, its variant is not among the variants, or another score of the same variant shares
-	its task and benchmark identifier. */
+	its task and benchmark identifier. A live profile fails it when one of its keys is not among the
+	inputs or outputs, a timing's variant is not among the variants, or another timing of the same variant
+	shares its chip and frame size. */
 + (nullable instancetype)descriptorWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
 /*! The descriptor as its manifest dictionary, every nested value included, with the extensions

@@ -608,6 +608,22 @@ static void NFKCAPITestCompletion(void *context, nfk_result *result, nfk_error *
 	nfk_string_free(withoutError);
 }
 
+- (void)testTheCatalogJSONCarriesTheLiveProfiles
+{
+	char *json = nfk_catalog_copy_json(NULL);
+	XCTAssert(json != NULL);
+	NSDictionary *manifest = [self JSONObject:json];
+	nfk_string_free(json);
+	NSDictionary *segmentation = nil;
+	for (NSDictionary *model in manifest[@"models"]) {
+		if ([model[@"id"] isEqualToString:@"vision-segmentation"]) {
+			segmentation = model;
+		}
+	}
+	XCTAssertEqualObjects(segmentation[@"live"][@"unit"], NFKModelLiveUnitVideoFrame);
+	XCTAssertEqualObjects(segmentation[@"live"][@"outputs"], @[ NFKOutputMask ]);
+}
+
 #pragma mark Building
 
 - (void)testAnAppleModelBuildsByIdentifierAndEmbedsAnImageBuffer

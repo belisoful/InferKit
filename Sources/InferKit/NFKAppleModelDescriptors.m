@@ -4,6 +4,7 @@
 //
 
 #import "NFKAppleModelDescriptors.h"
+#import "NFKModelLive.h"
 #import "NFKModelBuilding.h"
 #import "NFKModelDescriptor.h"
 #import "NFKModelVocabulary.h"
@@ -43,6 +44,8 @@
 @property (nonatomic, copy, nullable) NSArray<NFKModelOption *> * (^options)(void);
 /*! The output keys a load option can switch off, which the descriptor marks optional. */
 @property (nonatomic, copy, nullable) NSSet<NSString *> *optionalOutputKeys;
+/*! How the engine runs on a live source, or nil. */
+@property (nonatomic, copy, nullable) NFKModelLiveProfile *liveProfile;
 @end
 
 @implementation NFKAppleEngine
@@ -640,6 +643,14 @@ static BOOL NFKAppleIncludesMachineChoices = YES;
 			}
 		}
 		byName[@"vision-face"].optionalOutputKeys = [NSSet setWithObject:NFKOutputPose];
+		NSDictionary<NSString *, NSArray<NSString *> *> *liveOutputs = @{ @"vision-segmentation": @[ NFKOutputMask ],
+																		   @"vision-pose": @[ NFKOutputPose ],
+																		   @"vision-face": @[ NFKOutputDetections, NFKOutputPose ] };
+		for (NSString *identifier in liveOutputs) {
+			byName[identifier].liveProfile = [NFKModelLiveProfile videoFrameProfileWithInputKeys:@[ NFKInputImage ]
+																					  outputKeys:liveOutputs[identifier]
+																						stateful:NO timings:nil];
+		}
 		engines = [byName copy];
 	});
 	return engines;
@@ -738,8 +749,10 @@ static BOOL NFKAppleIncludesMachineChoices = YES;
 											 registryName:engine.identifier providerClassName:engine.providerClassName
 													tasks:engine.tasks inputModalities:nil outputModalities:nil
 												   inputs:inputs outputs:outputs options:options variants:@[ variant ]
-												  license:license requirements:requirements residencies:nil standIn:NO
-										introducedVersion:@"0.4.0" extensions:nil];
+												  license:license requirements:requirements residencies:nil memoryModel:nil
+												  presets:nil modelTypes:nil adapterBases:nil qualityScores:nil
+											  liveProfile:engine.liveProfile standIn:NO introducedVersion:@"0.4.0"
+											   extensions:nil];
 }
 
 @end

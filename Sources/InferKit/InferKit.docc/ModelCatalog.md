@@ -154,6 +154,11 @@ garbled, or looping output.
 - ``NFKModelQualityScore``
 - ``NFKModelQualityRanking``
 
+### Live sources
+
+- ``NFKModelLiveProfile``
+- ``NFKModelLiveTiming``
+
 ### Memory
 
 - ``NFKModelMemoryBudget``

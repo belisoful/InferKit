@@ -969,6 +969,17 @@ To refresh a benchmark:
 
 `NFKMLXCatalogQualityTests` pins each task's leader.
 
+### Live profiles
+
+`NFKMLXCatalogLive.swift` declares the entries that run on a live source (`NFKModelLive.h`,
+`core-runtime-notes.md`). `modelDescriptors()` applies it with the quality table, before measuring. The
+first table holds the stateless video-frame models, image in and each output key out: MODNet, U²-Net-p,
+BiSeNet and BiSeNet V2, SegFormer-B0, DeepLabV3, Depth Anything V2 Small and 3 Small, SimpleBaseline pose,
+RetinaFace MobileNet-0.25, RF-DETR Nano, Small, and Seg Small, RT-DETR R18vd, Real-ESRGAN general x4v3,
+and the three SwinIR lightweight scales. The stateful models (RVM, the speech enhancers, Silero VAD)
+join with the stream API. `NFKMLXCatalogLiveTests` holds the table to the shipped entries and their
+ports.
+
 ## Unload, reload, and load measurement
 
 The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `peakByteCount`

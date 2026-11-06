@@ -184,6 +184,8 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKModelAdapterErrorDomain,
 	(const void *)&NFKModelCatalogErrorDomain,
 	(const void *)&NFKModelCatalogManifestKind,
+	(const void *)&NFKModelLiveUnitVideoFrame,
+	(const void *)&NFKModelLiveUnitAudioChunk,
 	(const void *)&NFKModelMemoryBasisMeasured,
 	(const void *)&NFKModelMemoryBasisStoredDType,
 	(const void *)&NFKModelMemoryBasisDeclared,

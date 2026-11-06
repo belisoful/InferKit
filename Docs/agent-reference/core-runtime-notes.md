@@ -308,6 +308,21 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
     Coding is its own task (`code-generation`). A decoder lists it when a coding score exists.
   - A resolved descriptor (`NFKModelResolver`) is another release, so it carries no scores.
   - The MLX table is `NFKMLXCatalogQuality.swift`; `mlx-companion.md` describes refreshing it.
+- **Live profiles declare what runs on a stream** (`NFKModelLive.h`, added 2026-11-06). The decisions:
+  - The developer's plan has four phases: the declaration (this), a stateful stream through
+    `NFKInferenceBackend` and the C ABI, a WebSocket route `/v1/inferkit/live` with raw frames and PCM,
+    and measured timings. Video timings are taken at 1280 × 720 and 1920 × 1080 per variant; audio per
+    chunk.
+  - A model is declared live when its normal use answers one unit in a bounded single forward. A
+    seconds-per-frame model (BiRefNet, a diffusion upscaler) is not declared, whatever its task.
+  - A stateful model is declared with its stream: a profile that says `stateful` names state a client
+    can keep, so RVM, DeepFilterNet, GTCRN, FRCRN, Silero VAD, and SpeechAnalyzer are declared with the
+    stream phase.
+  - Live transcription needs a streaming recognizer. Windowing the offline Parakeet-TDT or Canary is not
+    declared live; a cache-aware streaming FastConformer is to be ported at reference parity.
+  - The C interface reaches the profiles through the manifest JSON (`nfk_catalog_copy_json`).
+  - The core declares `vision-segmentation`, `vision-pose`, and `vision-face`
+    (`NFKAppleModelDescriptors.m`); the MLX table is `NFKMLXCatalogLive.swift`.
 - `descriptorWithIdentifier:derivedFromBackend:` reads the optional `supportedInputKeys`,
   `supportedParameterKeys`, and `supportedOutputKeys` (the last added to `NFKInferenceBackend` with
   the catalog), sorts each, and types each key from the table. The family is the backend's

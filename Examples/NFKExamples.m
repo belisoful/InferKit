@@ -1641,6 +1641,30 @@
 	XCTAssertEqual(small.rank, 2);
 }
 
+- (void)testExampleListingTheModelsThatRunOnALiveSource
+{
+	NSString *json = @"{ \"schemaVersion\": 2, \"kind\": \"inferkit.model-catalog\", \"models\": ["
+		"{ \"id\": \"example.matter\", \"family\": \"example\", \"engine\": \"plugin\", \"tasks\": [\"matting\"],"
+		"\"inputs\": [{ \"key\": \"image\", \"required\": true }], \"outputs\": [{ \"key\": \"mask\" }],"
+		"\"live\": { \"unit\": \"videoFrame\", \"inputs\": [\"image\"], \"outputs\": [\"mask\"],"
+		"\"timings\": [{ \"chip\": \"Apple M3 Max\", \"width\": 1920, \"height\": 1080, \"milliseconds\": 12.5,"
+		"\"measured\": \"2026-11-06\" }] } } ] }";
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	NSError *error = nil;
+	XCTAssertTrue([catalog addDescriptorsFromManifestData:[json dataUsingEncoding:NSUTF8StringEncoding] error:&error],
+				  @"%@", error);
+
+	NSMutableArray<NSString *> *offered = [NSMutableArray array];
+	for (NFKModelDescriptor *model in [catalog liveDescriptorsForUnit:NFKModelLiveUnitVideoFrame]) {
+		NFKModelLiveProfile *live = model.liveProfile;             // image in, mask out, one frame at a time
+		NSNumber *keepsUp = [live keepsUpWithRate:60 variant:nil width:1920 height:1080 chip:@"Apple M3 Max"];
+		if (keepsUp.boolValue) {                                   // nil when no timing answers
+			[offered addObject:model.identifier];
+		}
+	}
+	XCTAssertEqualObjects(offered, @[ @"example.matter" ]);
+}
+
 - (void)testExampleAPackageListsItsDescriptors
 {
 	[NFKModelCatalog registerProviderClassName:@"ExampleModelDescriptors"];
