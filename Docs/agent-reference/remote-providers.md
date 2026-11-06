@@ -1463,6 +1463,11 @@ machine's remote clients reach a model this process hosts. Files:
   the port-value conversions. An untagged JSON object for a value-class type is read by injecting the
   type's tag and calling `NFKWireValueObjectFromJSON`.
 - `NFKInferenceServer.m`: registry, per-model FIFO (`NFKServedModel`), routing, auth, streaming.
+  The native route's encoder sets `encodesValueObjectsAsJSON` when the body names `"valueObjects":
+  "json"`, for the result and every streamed `partial`; the default `"archive"` keeps the keyed
+  archives `NFKRemoteInferKitBackend` has always read. The client decodes both, so it sends no field.
+  The JSON form serves a client without the value classes (a Python add-on, a browser), which would
+  otherwise parse `NSKeyedArchiver` plists keyed by the classes' private coding keys.
   A synchronous backend holds its slot until its call returns, cancelled or not, because it cannot be
   interrupted and the next run must not overlap it. A job backend releases its slot when the job ends.
 - `NFKRemoteInferKitBackend.m`: the native client. `respondsToSelector:` answers NO for the two

@@ -108,6 +108,22 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### The native route answers value objects as JSON on request
+
+- `POST /v1/inferkit/run` takes `valueObjects`: `"archive"` (the default) or `"json"`. With `"json"` the
+  result and the streamed `partial` and `result` events carry InferKit's value classes as JSON objects of
+  their fields, the form `NFKValueCoding` writes, in place of keyed archives. A mesh arrives as its counts
+  with its PLY inline, or its GLB when it has a material. A client outside Apple's platforms reads them
+  without the classes' archive keys. Another value is refused with 400.
+
+#### A mesh's colors are sRGB, and its GLB writes them linear
+
+- `NFKMesh.colors` are sRGB-encoded, the display values a backend returns. OBJ and PLY carry them as they
+  are.
+- glTF defines `COLOR_0` as linear, so the GLB writer converts the colors from sRGB to linear and the GLB
+  reader converts them back. A round trip through a GLB returns each color within 3e-8. Before, the GLB
+  carried the sRGB values as `COLOR_0`, so a reader that follows glTF showed them washed out.
+
 #### Published benchmark scores and a computed quality rank
 
 - `NFKModelQualityScore` (`NFKModelQuality.h`) is one published score of one release on one benchmark: its

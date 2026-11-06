@@ -236,7 +236,7 @@ static NSDictionary<NSString *, NSString *> *NFKServedImageFields(void)
 
 static NSDictionary<NSString *, NSString *> *NFKServedNativeFields(void)
 {
-	return @{ @"model": @"string", @"request": @"object", @"stream": @"boolean" };
+	return @{ @"model": @"string", @"request": @"object", @"stream": @"boolean", @"valueObjects": @"string" };
 }
 
 #pragma mark - Keys
@@ -4574,6 +4574,10 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	NSError *error = NFKServedFieldTypeError(body[@"request"], @{ @"inputs": @"object", @"parameters": @"object",
 																  @"outputModality": @"integer" }, @"request");
+	NSString *valueObjects = body[@"valueObjects"] ?: @"archive";
+	if (error == nil && ![@[ @"archive", @"json" ] containsObject:valueObjects]) {
+		error = NFKServedInvalidRequest(@"valueObjects must be \"archive\" or \"json\"");
+	}
 	NFKServedTarget *target = error == nil ? [self modelNamed:body[@"model"] error:&error] : nil;
 	NFKInferenceWireCoding *decoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
 	NFKInferenceRequest *inference = nil;
@@ -4597,6 +4601,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	served[@"base"] = target.baseModelName;
 	served[@"preset"] = target.presetIdentifier;
 	NFKInferenceWireCoding *encoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
+	encoder.encodesValueObjectsAsJSON = [valueObjects isEqualToString:@"json"];
 	NSObject *lock = [[NSObject alloc] init];
 	__block NFKInferenceResult *lastPartial = nil;
 	if (streams) {

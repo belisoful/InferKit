@@ -820,6 +820,10 @@ answers HTTP on one port, under `/v1`:
   `NFKRemoteInferKitBackend` is its client, and `backendForProvider:` builds it for the `inferKit`
   preset. Its streamed form reports the hosted job's progress and partial results. `NFKValueCoding`
   reads and writes the same JSON in an app (see [Values as JSON and files](#values-as-json-and-files)).
+  The value classes (detections, meshes, MIDI, and the rest) cross as keyed archives by default. A body
+  field `"valueObjects": "json"` answers them as JSON objects of their fields instead, the form
+  `NFKValueCoding` writes, so a client without the classes reads them: a mesh arrives as its counts with
+  its PLY inline as base64, or its GLB when it has a material.
 - The catalog route, `GET /v1/inferkit/catalog`, and the estimate route, `POST /v1/inferkit/estimate`,
   which tell a client what the server can build and what a model would hold on the server's machine
   (see [Catalog models, presets, and aliases](#catalog-models-presets-and-aliases)).

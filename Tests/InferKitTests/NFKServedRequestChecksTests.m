@@ -316,7 +316,7 @@
 - (void)testNativeAndEstimateRoutesRefuseEveryDocumentedFieldOfAnotherType
 {
 	NSDictionary *run = @{ @"model": @"served", @"request": @{ @"inputs": @{ @"prompt": @"hi" } } };
-	[self fuzzPath:@"/v1/inferkit/run" base:run fields:@{ @"model": @"string", @"request": @"object", @"stream": @"boolean" } anthropic:NO];
+	[self fuzzPath:@"/v1/inferkit/run" base:run fields:@{ @"model": @"string", @"request": @"object", @"stream": @"boolean", @"valueObjects": @"string" } anthropic:NO];
 	[self fuzzPath:@"/v1/inferkit/estimate" base:@{ @"model": @"served" } fields:@{ @"model": @"string", @"options": @"object" } anthropic:NO];
 	for (NSString *field in @[ @"inputs", @"parameters", @"outputModality" ]) {
 		NSMutableDictionary *request = [@{ @"inputs": @{ @"prompt": @"hi" } } mutableCopy];

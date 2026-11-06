@@ -714,6 +714,98 @@
 	XCTAssertEqualObjects(seen, (@[ @"a", @"ab", @"abc" ]));
 }
 
+/*! A colored tetrahedron, with material as its material when one is given. */
+- (NFKMesh *)coloredTetrahedronWithMaterial:(nullable NFKMeshMaterial *)material
+{
+	float positions[12] = { 0, 0, 0,  1, 0, 0,  0, 1, 0,  0, 0, 1 };
+	float colors[12] = { 1, 0, 0,  0, 1, 0,  0, 0, 1,  0.5f, 0.25f, 0.75f };
+	float textures[8] = { 0, 0,  1, 0,  0, 1,  0.5f, 0.5f };
+	uint32_t indices[12] = { 0, 2, 1,  0, 1, 3,  0, 3, 2,  1, 2, 3 };
+	NSError *error = nil;
+	NFKMesh *mesh = [[NFKMesh alloc] initWithPositions:[NSData dataWithBytes:positions length:sizeof positions] normals:nil
+											   colors:[NSData dataWithBytes:colors length:sizeof colors]
+								   textureCoordinates:[NSData dataWithBytes:textures length:sizeof textures]
+											  indices:[NSData dataWithBytes:indices length:sizeof indices] material:material error:&error];
+	XCTAssertNotNil(mesh, @"%@", error);
+	return mesh;
+}
+
+/*! The JSON of each data event in a streamed reply, [DONE] left out. */
+- (NSArray<NSDictionary *> *)eventsIn:(NSData *)body
+{
+	NSMutableArray<NSDictionary *> *events = [NSMutableArray array];
+	NSString *text = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
+	for (NSString *block in [text componentsSeparatedByString:@"\n\n"]) {
+		if (![block hasPrefix:@"data: "] || [block isEqualToString:@"data: [DONE]"]) {
+			continue;
+		}
+		id event = [NSJSONSerialization JSONObjectWithData:[[block substringFromIndex:6] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+		if ([event isKindOfClass:NSDictionary.class]) {
+			[events addObject:event];
+		}
+	}
+	return events;
+}
+
+- (void)testTheNativeRouteAnswersValueObjectsAsJSONOnRequest
+{
+	NSError *error = nil;
+	NFKMeshMaterial *material = [[NFKMeshMaterial alloc] initWithBaseColorTexture:nil normalTexture:nil metallicRoughnessTexture:nil
+																  baseColorFactor:@[ @1, @0.5, @0.25, @1 ] metallicFactor:0 roughnessFactor:0.5f
+																			error:&error];
+	XCTAssertNotNil(material, @"%@", error);
+	NFKMesh *plain = [self coloredTetrahedronWithMaterial:nil];
+	NFKMesh *textured = [self coloredTetrahedronWithMaterial:material];
+	NFKDetection *detection = [NFKDetection detectionWithLabel:@"cat" classIndex:3 confidence:0.5 boundingBox:CGRectMake(0.25, 0.25, 0.5, 0.5)];
+	NFKServedTestBackend *backend = [[NFKServedTestBackend alloc] init];
+	backend.reply = ^NFKInferenceResult *(NFKInferenceRequest *request, NSError **replyError) {
+		return [NFKInferenceResult resultWithOutputs:@{ NFKOutputMesh: plain, @"textured": textured, @"detections": @[ detection ] }];
+	};
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"mesher": backend }];
+	NSURL *run = [server.localBaseURL URLByAppendingPathComponent:@"inferkit/run"];
+	NSDictionary *request = @{ @"inputs": @{ NFKInputPrompt: @"a tetrahedron" } };
+	NSHTTPURLResponse *response = nil;
+
+	NSData *body = [self send:[self postTo:run JSON:@{ @"model": @"mesher", @"stream": @YES, @"request": request }] response:&response];
+	XCTAssertEqual(response.statusCode, 200);
+	NSDictionary *outputs = [self eventsIn:body].lastObject[@"result"][@"outputs"];
+	XCTAssertEqualObjects(outputs[NFKOutputMesh][@"$nfk"], @"archive", @"archives stay the default: %@", outputs);
+
+	for (NSNumber *streams in @[ @YES, @NO ]) {
+		body = [self send:[self postTo:run JSON:@{ @"model": @"mesher", @"stream": streams, @"request": request, @"valueObjects": @"json" }]
+				 response:&response];
+		XCTAssertEqual(response.statusCode, 200);
+		NSDictionary *reply = streams.boolValue ? [self eventsIn:body].lastObject
+												: [NSJSONSerialization JSONObjectWithData:body options:0 error:NULL];
+		XCTAssertEqualObjects(reply[@"type"], streams.boolValue ? @"result" : nil);
+		outputs = reply[@"result"][@"outputs"];
+		NSDictionary *mesh = outputs[NFKOutputMesh];
+		XCTAssertEqualObjects(mesh[@"$nfk"], @"mesh", @"%@", outputs);
+		XCTAssertEqualObjects(mesh[@"vertexCount"], @4);
+		XCTAssertEqualObjects(mesh[@"colors"], @YES);
+		XCTAssertNil(mesh[@"glb"]);
+		NFKMesh *read = [NFKMesh meshWithPLYData:[[NSData alloc] initWithBase64EncodedString:mesh[@"ply"] options:0] error:&error];
+		XCTAssertEqual(read.faceCount, 4u, @"%@", error);
+		NSDictionary *glb = outputs[@"textured"];
+		XCTAssertEqualObjects(glb[@"$nfk"], @"mesh");
+		XCTAssertNil(glb[@"ply"], @"a PLY would drop the material");
+		read = [NFKMesh meshWithGLBData:[[NSData alloc] initWithBase64EncodedString:glb[@"glb"] options:0] error:&error];
+		XCTAssertEqualObjects(read.material, material, @"%@", error);
+		XCTAssertEqualObjects(outputs[@"detections"][0][@"$nfk"], @"detection");
+		XCTAssertEqualObjects(outputs[@"detections"][0][@"label"], @"cat");
+	}
+
+	NFKRemoteInferKitBackend *client = [NFKRemoteInferKitBackend backendWithBaseURL:server.localBaseURL];
+	NFKInferenceResult *result = [client runInferenceForRequest:[NFKInferenceRequest requestWithInputs:request[@"inputs"]] error:&error];
+	XCTAssertEqualObjects([result outputForKey:NFKOutputMesh], plain, @"the native client keeps the exact archive: %@", error);
+
+	NSDictionary *reply = [NSJSONSerialization JSONObjectWithData:[self send:[self postTo:run JSON:@{ @"model": @"mesher", @"request": request,
+																									  @"valueObjects": @"xml" }]
+																 response:&response] options:0 error:NULL];
+	XCTAssertEqual(response.statusCode, 400);
+	XCTAssertTrue([reply[@"error"][@"message"] containsString:@"valueObjects"], @"%@", reply);
+}
+
 - (void)testAnInProcessJobReportsTheBackendsPartialsAndResult
 {
 	NFKServedStreamingBackend *backend = [[NFKServedStreamingBackend alloc] init];

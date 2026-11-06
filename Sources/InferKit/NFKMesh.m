@@ -52,6 +52,28 @@ static void NFKMeshPadToFour(NSMutableData *data, uint8_t pad)
 	}
 }
 
+/*! A color component from sRGB's encoding to linear light, IEC 61966-2-1's transfer function. */
+static float NFKMeshLinearFromSRGB(float value)
+{
+	return (float)(value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4));
+}
+
+/*! A color component from linear light to sRGB's encoding, the inverse of NFKMeshLinearFromSRGB. */
+static float NFKMeshSRGBFromLinear(float value)
+{
+	return (float)(value <= 0.0031308 ? value * 12.92 : 1.055 * pow(value, 1.0 / 2.4) - 0.055);
+}
+
+/*! Applies transfer to each of data's float32 values in place. */
+static void NFKMeshTransferColors(NSMutableData *data, NSUInteger start, float (*transfer)(float))
+{
+	float *values = (float *)((uint8_t *)data.mutableBytes + start);
+	NSUInteger count = (data.length - start) / sizeof(float);
+	for (NSUInteger i = 0; i < count; i++) {
+		values[i] = transfer(values[i]);
+	}
+}
+
 #pragma mark - PLY structure
 
 typedef NS_ENUM(NSInteger, NFKPLYType) {
@@ -499,7 +521,10 @@ static NFKMeshVector NFKMeshVectorFrom(simd_float3 v)
 		attributes[@"NORMAL"] = addAttribute(self.normals, @"VEC3", NO);
 	}
 	if (self.colors != nil) {
-		attributes[@"COLOR_0"] = addAttribute(self.colors, @"VEC3", NO);
+		// glTF defines COLOR_0 as linear; this type's colors are sRGB.
+		NSMutableData *linear = [self.colors mutableCopy];
+		NFKMeshTransferColors(linear, 0, NFKMeshLinearFromSRGB);
+		attributes[@"COLOR_0"] = addAttribute(linear, @"VEC3", NO);
 	}
 	if (self.textureCoordinates != nil) {
 		// glTF's v runs down the image; OBJ's and this type's run up.
@@ -1209,7 +1234,11 @@ static NFKMeshMaterial *NFKMeshGLBMaterial(NSDictionary *document, NSData *binar
 			}
 			anyColors = anyColors || values != nil;
 			missingColors = missingColors || values == nil;
+			NSUInteger colorStart = colors.length;
 			appendFloats(colors, values, components, 3, count);
+			if (values != nil) {
+				NFKMeshTransferColors(colors, colorStart, NFKMeshSRGBFromLinear);
+			}
 
 			values = attributes[@"TEXCOORD_0"] != nil ? readAccessor(attributes[@"TEXCOORD_0"], &components) : nil;
 			if (attributes[@"TEXCOORD_0"] != nil && values == nil) {

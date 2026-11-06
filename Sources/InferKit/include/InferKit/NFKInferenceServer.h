@@ -223,7 +223,9 @@ NS_SWIFT_SENDABLE
 				  NFKInferenceResult in InferKit's tagged JSON form, so every key reaches the hosted
 				  backend: pixel buffers, masks, multi-arrays, audio and video files, and the core's
 				  value types. NFKRemoteInferKitBackend is its client and streams the job's progress
-				  and partial results.
+				  and partial results. The value classes cross as keyed archives by default; a body
+				  field "valueObjects": "json" answers them as JSON objects of their fields
+				  (NFKValueCoding's form), which a client without the classes reads.
 				- The status route, GET /inferkit/status, which reports each model's load and the
 				  machine's state for a load balancer or a dashboard (see Status).
 				- The catalog route, GET /inferkit/catalog, which answers the catalog the server builds

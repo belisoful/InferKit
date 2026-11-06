@@ -51,6 +51,9 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 				position, three a normal, three a color in 0...1 (red, green, blue), two a texture
 				coordinate (u, v with v up, the glTF and OBJ convention). The indices are three uint32 a
 				triangle, counter-clockwise seen from outside.
+				Colors are sRGB-encoded, the display values an image's pixels hold. A backend that
+				returns colors writes them in sRGB, and a consumer that renders in linear light converts
+				them.
 
 				The material (NFKMeshMaterial) is glTF's metallic-roughness model, its textures read through
 				the texture coordinates.
@@ -58,7 +61,9 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 				The mesh writes itself as a Wavefront OBJ (text, vertex colors as the common "v x y z r g
 				b" extension), a binary little-endian PLY (colors as 8-bit red, green, blue), or a glTF
 				2.0 binary (GLB, one primitive, colors as COLOR_0 floats, the material and its textures
-				embedded), and reads each of the three. OBJ and PLY carry no material.
+				embedded), and reads each of the three. OBJ and PLY carry no material. OBJ and PLY
+				define no color space and carry the sRGB values. glTF defines COLOR_0 as linear, so the
+				GLB writer converts the colors from sRGB to linear and the reader converts them back.
 				A PLY is read in its text and both binary forms; an OBJ's polygons are fanned into
 				triangles and its per-face attribute indices are resolved to one attribute set per vertex.
 
@@ -81,8 +86,8 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 /*! The unit normals, three float32 a vertex, or nil when the mesh carries none. */
 @property (nonatomic, readonly, copy, nullable) NSData *normals;
 
-/*! The vertex colors, three float32 a vertex in 0...1 (red, green, blue), or nil when the mesh carries
-	none. */
+/*! The vertex colors, three float32 a vertex in 0...1 (red, green, blue, sRGB-encoded), or nil when the
+	mesh carries none. */
 @property (nonatomic, readonly, copy, nullable) NSData *colors;
 
 /*! The texture coordinates, two float32 a vertex (u, v), or nil when the mesh carries none. */
@@ -159,7 +164,8 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 /*! The mesh as a binary little-endian PLY file. */
 - (NSData *)PLYData;
 
-/*! The mesh as a glTF 2.0 binary (GLB) file. */
+/*! The mesh as a glTF 2.0 binary (GLB) file. COLOR_0 holds the colors converted from sRGB to linear,
+	as glTF defines it. */
 - (NSData *)GLBData;
 
 /*! Writes the mesh in the format url's extension names: "obj", "ply", or "glb". Returns NO and fills
@@ -177,6 +183,7 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 
 /*! Reads a glTF 2.0 binary (GLB) file: every triangle primitive of every mesh, with POSITION, NORMAL,
 	COLOR_0, and TEXCOORD_0 where present, concatenated into one mesh in the order the file lists them.
+	COLOR_0 is read as linear, as glTF defines it, and converted to sRGB; its alpha is dropped.
 	A file without a binary chunk, with an unsupported primitive mode, or with an attribute of another
 	component type fails with NSFileReadCorruptFileError in NSCocoaErrorDomain. */
 + (nullable instancetype)meshWithGLBData:(NSData *)data error:(NSError **)error;

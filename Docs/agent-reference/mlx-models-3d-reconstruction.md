@@ -15,6 +15,15 @@ the value type `NFKModelValueTypeMesh` and the task `NFKModelTaskImageTo3D`. On 
 wire a mesh is a JSON object of its counts carrying its binary PLY, inline as base64 or beside the JSON
 as a file; a mesh with a material travels as its GLB instead, under `glb` or as a `.glb` file
 (`NFKWireValueObjects.m`, `NFKInferenceWireCoding.m`).
+Vertex colors are sRGB-encoded. TripoSR's decoder learns them against the input picture's pixels, and the
+reference exports them through trimesh as 8-bit display colors; a Blender render of a known material
+(linear 0.9, 0.4, 0.1, sRGB 0.955, 0.665, 0.349) came back from TripoSR with a median vertex color of
+(0.816, 0.547, 0.328), near the sRGB values (2026-11-05). glTF defines `COLOR_0` as linear, so the GLB
+writer converts sRGB to linear (IEC 61966-2-1) and the reader converts back. The round trip is not bit
+exact: float32 sRGB → linear is not injective (adjacent inputs share an output in 16.5 % of [0, 1]), and
+an enumeration of every float32 in [0, 1] puts the largest difference at 2.98e-8. A colored mesh with a
+material therefore crosses the wire (its GLB form) within that difference; one without a material keeps
+its PLY, which quantizes to 8 bits.
 The candidate survey behind the modality is `Docs/porting-candidates.md` ("3D asset generation
 candidates"); TripoSR is its first port, chosen because it is the smallest permissive model and forces
 the mesh type, the surface extraction, and the writers every later port uses.

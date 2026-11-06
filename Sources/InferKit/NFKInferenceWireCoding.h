@@ -147,8 +147,9 @@ NSString *NFKServedFileExtension(NSString * _Nullable extension);
 /*! Writes InferKit's value classes (NFKDetection, NFKKeypoint, NFKClassification, NFKAudioSegment,
 	NFKMIDISequence, NFKMIDINote, NFKMusicBeat, NFKQuadrilateral, NFKDecisionAnswer) as JSON objects
 	tagged by class, the form NFKWireValueObjects.h lists, in place of keyed archives. The C interface
-	and the plugin channel set it. Off by default, so the HTTP route keeps its archives. The decoder
-	reads both forms whatever the setting. */
+	and the plugin channel set it, and the HTTP route sets it when a request names "valueObjects":
+	"json". Off by default, so the HTTP route keeps its archives otherwise. The decoder reads both forms
+	whatever the setting. */
 @property (nonatomic, assign) BOOL encodesValueObjectsAsJSON;
 
 /*! The files this coder wrote while decoding, for the caller that owns their lifetime. */

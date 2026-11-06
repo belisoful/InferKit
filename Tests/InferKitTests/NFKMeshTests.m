@@ -282,6 +282,31 @@ static void NFKAssertMeshesClose(XCTestCase *test, NFKMesh *a, NFKMesh *b, float
 	XCTAssertEqual(error.code, NSFileReadCorruptFileError);
 }
 
+- (void)testGLBColorsAreLinearAndReadBackAsSRGB
+{
+	NFKMesh *mesh = self.tetrahedron;
+	NSData *glb = mesh.GLBData;
+	uint32_t jsonLength = 0;
+	[glb getBytes:&jsonLength range:NSMakeRange(12, 4)];
+	jsonLength = CFSwapInt32LittleToHost(jsonLength);
+	NSDictionary *document = [NSJSONSerialization JSONObjectWithData:[glb subdataWithRange:NSMakeRange(20, jsonLength)] options:0 error:NULL];
+	NSDictionary *accessor = document[@"accessors"][[document[@"meshes"][0][@"primitives"][0][@"attributes"][@"COLOR_0"] unsignedIntegerValue]];
+	NSDictionary *view = document[@"bufferViews"][[accessor[@"bufferView"] unsignedIntegerValue]];
+	float linear[12];
+	[glb getBytes:linear range:NSMakeRange(20 + jsonLength + 8 + [view[@"byteOffset"] unsignedIntegerValue], sizeof linear)];
+	float expected[12] = { 1, 0, 0,  0, 1, 0,  0, 0, 1,  0.21404114f, 0.050876088f, 0.52252155f };
+	for (NSUInteger i = 0; i < 12; i++) {
+		XCTAssertEqualWithAccuracy(linear[i], expected[i], 1e-7f, @"COLOR_0 component %lu is linear, as glTF defines it", (unsigned long)i);
+	}
+
+	NSError *error = nil;
+	NFKMesh *read = [NFKMesh meshWithGLBData:glb error:&error];
+	XCTAssertNotNil(read, @"%@", error);
+	for (NSUInteger i = 0; i < mesh.vertexCount; i++) {
+		XCTAssertLessThanOrEqual(NFKVectorMaxDifference([read colorAtIndex:i], [mesh colorAtIndex:i]), 3e-8f, @"color %lu reads back as sRGB", (unsigned long)i);
+	}
+}
+
 - (void)testWritingAndReadingByExtension
 {
 	NFKMesh *mesh = self.tetrahedron;
