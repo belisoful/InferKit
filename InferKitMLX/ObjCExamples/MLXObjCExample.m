@@ -10,6 +10,7 @@
 //  verifies construction and the contract.
 //
 
+#import <AVFoundation/AVFoundation.h>
 #import <XCTest/XCTest.h>
 #import <InferKit/InferKit.h>
 @import InferKitMLX;
@@ -2033,6 +2034,66 @@
 	XCTAssertNotNil(speech, @"%@", error);
 	XCTAssertEqualObjects(NFKInferenceLoadOptionValues(speech)[NFKModelLoadOptionResidency], NFKModelResidencyStaged,
 						  @"a backend reports the options it was built with");
+}
+
+// Docs/examples.md: Running MLX models from Objective-C — a live stream on a stateful model.
+- (void)testObjectiveCOpensALiveStreamOnAStatefulModel
+{
+	NFKModelLiveProfile *matting = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"robust-video-matting"].liveProfile;
+	XCTAssertEqualObjects(matting.unit, NFKModelLiveUnitVideoFrame);
+	XCTAssertTrue(matting.isStateful);
+	NFKModelLiveProfile *listening = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"silero-vad"].liveProfile;
+	XCTAssertEqualObjects(listening.unit, NFKModelLiveUnitAudioChunk);
+	XCTAssertEqual(listening.sampleRate, 16000.0);
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
+	NSError *error = nil;
+	id<NFKInferenceBackend> matter = [NFKMLXRVM backendWithVariant:NFKMLXRVMVariantMobileNetV3 weightsURL:nil error:&error];
+	XCTAssertTrue([matter respondsToSelector:@selector(openLiveStreamWithParameters:error:)], @"%@", error);
+	id<NFKLiveStream> frames = NFKInferenceOpenLiveStream(matter, nil, &error);
+	CGImageRef plate = [self examplePlate];
+	NFKInferenceRequest *frame = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)plate }];
+	CGImageRelease(plate);
+	XCTAssertNotNil([[frames resultForUnit:frame error:&error] outputForKey:NFKOutputMask], @"%@", error);
+	XCTAssertNotNil([[frames resultForUnit:frame error:&error] outputForKey:NFKOutputMask],
+					@"the second frame runs from the state the first left: %@", error);
+	[frames reset];
+	[frames close];
+	XCTAssertNil([frames resultForUnit:frame error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceNotReady);
+
+	error = nil;
+	id<NFKInferenceBackend> vad = [NFKMLXSileroVAD backendWithWeightsURL:nil error:&error];
+	id<NFKLiveStream> chunks = NFKInferenceOpenLiveStream(vad, @{ NFKMLXVoiceActivityParameterKey.speechThreshold: @0.5 },
+														  &error);
+	AVAudioFormat *mono = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:16000 channels:1];
+	AVAudioPCMBuffer *chunk = [[AVAudioPCMBuffer alloc] initWithPCMFormat:mono frameCapacity:1024];
+	chunk.frameLength = 1024;
+	for (AVAudioFrameCount index = 0; index < chunk.frameLength; index++) {
+		chunk.floatChannelData[0][index] = 0.5f * sinf(0.07f * index);
+	}
+	NFKInferenceResult *heard = [chunks resultForUnit:[NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: chunk }]
+												error:&error];
+	XCTAssertNotNil(heard.segments, @"the unit's two 512-sample chunks are scored: %@", error);
+
+	NFKMLXReloadableBackend *held =
+		[[NFKMLXReloadableBackend alloc] initWithProvider:^id<NFKInferenceBackend>(NSError **buildError) {
+			return [NFKMLXSileroVAD backendWithWeightsURL:nil error:buildError];
+		} error:&error];
+	id<NFKLiveStream> forwarded = NFKInferenceOpenLiveStream(held, nil, &error);
+	NFKInferenceResult *heldHeard = [forwarded resultForUnit:[NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: chunk }]
+													   error:&error];
+	XCTAssertNotNil(heldHeard.segments, @"the wrapper forwards the opening to the model's own stream: %@", error);
+	[forwarded close];
+
+	AVAudioFormat *wide = [[AVAudioFormat alloc] initStandardFormatWithSampleRate:48000 channels:1];
+	AVAudioPCMBuffer *other = [[AVAudioPCMBuffer alloc] initWithPCMFormat:wide frameCapacity:512];
+	other.frameLength = 512;
+	XCTAssertNil([chunks resultForUnit:[NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: other }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceUnsupported, @"the stream takes the profile's rate");
+	[chunks close];
 }
 
 // Kokoro speaks in the voicepack a request names, and Chatterbox in the voice of a clip a request carries.

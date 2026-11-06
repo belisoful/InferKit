@@ -353,7 +353,8 @@ final class InferKitSwiftExamples: XCTestCase {
     }
 
     // A live stream imports resultForUnit:error: as result(for:) throws, and a backend's stream as
-    // openLiveStream(parameters:).
+    // openLiveStream(parameters:). NFKInferenceOpenLiveStream takes an error pointer, as the other
+    // NFKInference functions do.
     func testExampleALiveStreamFromSwift() throws {
         var total = 0
         let counter = NFKBlockLiveStream(parameters: nil, unitHandler: { unit, _ in
@@ -365,6 +366,12 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(second.output(forKey: "total") as? Int, 5)
         counter.close()
         XCTAssertThrowsError(try counter.result(for: NFKInferenceRequest(inputs: ["value": 1])))
+
+        var error: NSError?
+        let perUnit = try XCTUnwrap(NFKInferenceOpenLiveStream(NFKPassthroughBackend(), nil, &error), "\(String(describing: error))")
+        let echoed = try perUnit.result(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "a unit"]))
+        XCTAssertEqual(echoed.output(forKey: NFKInputPrompt) as? String, "a unit",
+                       "a backend without a stream of its own runs each unit as a request")
     }
 
     // The live category imports as liveDescriptors(forUnit:), and a profile's check as keepsUp(rate:variant:width:height:chip:).

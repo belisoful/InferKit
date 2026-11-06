@@ -998,6 +998,10 @@ whose blocks hold that state:
 - `NFKMLXLiveAudio` reads an audio unit from an `AVAudioPCMBuffer` (float32 or int16), WAV bytes, or a WAV
   `NFKAudioAsset`. A stream refuses another rate or channel count with `kNFKError_InferenceUnsupported`
   rather than resampling each unit, which would put a seam at every unit boundary.
+- Objective-C reaches both streams through `NFKInferenceOpenLiveStream` on a factory's backend
+  (`MLXObjCExample.testObjectiveCOpensALiveStreamOnAStatefulModel`). A Silero VAD that a registry, hub, or
+  asynchronous factory wraps in `NFKMLXReloadableBackend` opens its stream through the wrapper's message
+  forwarding, and the stream keeps the model it holds after an unload.
 
 ## Unload, reload, and load measurement
 

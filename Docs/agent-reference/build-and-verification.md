@@ -217,7 +217,7 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    ```
    xcodebuild test -scheme InferKitMLXTests        …    # 3254 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  159 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #   67 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #   68 — the Objective-C ones
    ```
 
    Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as

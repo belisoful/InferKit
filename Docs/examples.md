@@ -3212,6 +3212,34 @@ let whisper = try NFKMLXModelRegistry.backend(named: "my-whisper", weightsURL: c
                                               options: [NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32])
 ```
 
+### A live stream on a stateful model
+
+Robust Video Matting carries its recurrent state from frame to frame, and Silero VAD its LSTM state and
+look-back from chunk to chunk. Each backend opens its own live stream, which `NFKInferenceOpenLiveStream`
+returns, and the catalog descriptor's `liveProfile` names the unit each takes. A Silero unit is mono
+16 kHz audio of any length; the stream scores each whole 512-sample chunk and keeps the rest for the next
+unit:
+
+<!-- objc-check: given AVAudioPCMBuffer *microphoneBuffer = nil; -->
+```objc
+@import InferKitMLX;
+NSError *error = nil;
+
+id<NFKInferenceBackend> matter = [NFKMLXRVM backendWithVariant:NFKMLXRVMVariantMobileNetV3 weightsURL:localURL error:&error];
+id<NFKLiveStream> matting = NFKInferenceOpenLiveStream(matter, nil, &error);
+NFKInferenceResult *matted = [matting resultForUnit:[NFKInferenceRequest requestWithInputs:@{ NFKInputImage: frame }]
+                                              error:&error];   // runs from the state the frames before left
+[matting reset];                                               // a scene cut: the next frame starts fresh
+
+id<NFKInferenceBackend> vad = [NFKMLXSileroVAD backendWithWeightsURL:localURL error:&error];
+id<NFKLiveStream> listening =
+    NFKInferenceOpenLiveStream(vad, @{ NFKMLXVoiceActivityParameterKey.speechThreshold: @0.6 }, &error);
+NFKInferenceResult *heard = [listening resultForUnit:[NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: microphoneBuffer }]
+                                               error:&error];
+NSArray<NFKAudioSegment *> *speech = heard.segments;           // a segment per chunk of speech, in seconds from the start
+[listening close];
+```
+
 ### MLX runtime knobs from Objective-C
 
 MLX's global seed, GPU memory management, and device selection ship as Swift-only free functions,

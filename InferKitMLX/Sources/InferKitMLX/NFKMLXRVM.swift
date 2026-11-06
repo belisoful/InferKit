@@ -635,8 +635,8 @@ private final class NFKRVMHolder: @unchecked Sendable {
 ///
 /// `NFKMLXRVMNet` is the reference recurrent-matting network. Random weights run (proving the
 /// pipeline); the released `rvm_mobilenetv3` checkpoint, converted to **safetensors**, makes the matte
-/// accurate. The matting backend mattes a single image (no temporal state); a video consumer threads
-/// the recurrent state frame by frame through `NFKMLXRVMNet.forward`.
+/// accurate. The matting backend mattes a single image from the empty state; its live stream
+/// (`openLiveStream(parameters:)`) carries the recurrent state from frame to frame.
 /// The released Robust Video Matting encoder to build, for the Objective-C factory.
 @objc(NFKMLXRVMVariant)
 public enum NFKMLXRVMVariant: Int {
