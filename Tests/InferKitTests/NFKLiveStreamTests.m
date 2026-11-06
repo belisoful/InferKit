@@ -111,6 +111,25 @@
 						  @"reset starts a new stream: %@", error);
 }
 
+- (void)testADefaultedBackendOpensTheWrappedStreamWithItsDefaults
+{
+	NFKLiveCountingBackend *backend = [[NFKLiveCountingBackend alloc] init];
+	NFKDefaultedBackend *defaulted = [[NFKDefaultedBackend alloc] initWithBackend:backend requestDefaults:@{ @"scale": @3 }
+																  loadOptionValues:nil];
+	XCTAssertTrue([defaulted respondsToSelector:@selector(openLiveStreamWithParameters:error:)]);
+	XCTAssertFalse([[[NFKDefaultedBackend alloc] initWithBackend:[[NFKLiveEchoBackend alloc] init] requestDefaults:@{}
+												loadOptionValues:nil] respondsToSelector:@selector(openLiveStreamWithParameters:error:)],
+				   @"the wrapper streams only where the wrapped backend does");
+	id<NFKLiveStream> stream = NFKInferenceOpenLiveStream(defaulted, nil, NULL);
+	XCTAssertEqual(backend.opened, 1);
+	[stream resultForUnit:[self unitWithValue:1] error:NULL];
+	XCTAssertEqualObjects([[stream resultForUnit:[self unitWithValue:1] error:NULL] outputForKey:@"total"], @6,
+						  @"the default applies to every unit and the state carries");
+	stream = NFKInferenceOpenLiveStream(defaulted, @{ @"scale": @1 }, NULL);
+	XCTAssertEqualObjects([[stream resultForUnit:[self unitWithValue:4] error:NULL] outputForKey:@"total"], @4,
+						  @"the stream's own parameter wins over the default");
+}
+
 - (void)testTwoStreamsOfOneBackendKeepTheirOwnState
 {
 	NFKLiveCountingBackend *backend = [[NFKLiveCountingBackend alloc] init];

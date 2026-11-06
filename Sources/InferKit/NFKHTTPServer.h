@@ -42,6 +42,27 @@ NS_ASSUME_NONNULL_BEGIN
 NSArray<NFKHTTPFormPart *> * _Nullable NFKHTTPFormParts(NFKHTTPRequest *request);
 
 /*!
+	@class      NFKHTTPWebSocket
+	@abstract   A connection a request upgraded to a WebSocket (RFC 6455).
+	@discussion The handlers run on the connection's queue, in the order messages arrive, and must not block
+				it. A message arrives whole, its fragments joined. A ping is answered with a pong. A client
+				frame without a mask, with a reserved opcode or bits, or with text that is not UTF-8 closes the
+				socket with 1002 or 1007, and a message past the listener's maximumBodyBytes with 1009.
+				closeHandler runs once, when either side closes or the connection drops. The send methods may
+				be called from any thread; the frames reach the connection in call order.
+*/
+@interface NFKHTTPWebSocket : NSObject
+/*! Receives each binary message as binary, or each text message as text. */
+@property (nonatomic, copy, nullable) void (^messageHandler)(NSData * _Nullable binary, NSString * _Nullable text);
+@property (nonatomic, copy, nullable) void (^closeHandler)(void);
+@property (nonatomic, readonly) BOOL closed;
+- (void)sendText:(NSString *)text;
+- (void)sendBinary:(NSData *)data;
+/*! Sends a close frame with code and reason, then ends the connection. */
+- (void)closeWithCode:(uint16_t)code reason:(nullable NSString *)reason;
+@end
+
+/*!
 	@class      NFKHTTPResponse
 	@abstract   The writer for one request's reply.
 	@discussion Every method may be called from any thread; the writes reach the connection in call
@@ -68,6 +89,11 @@ NSArray<NFKHTTPFormPart *> * _Nullable NFKHTTPFormParts(NFKHTTPRequest *request)
 /*! A named server-sent event: "event: <name>", "data: <payload>", and the blank line that ends it. */
 - (void)sendEventNamed:(NSString *)name data:(NSString *)payload;
 - (void)endStream;
+/*! Answers the request's WebSocket upgrade with 101 Switching Protocols and returns the socket the
+	connection becomes; the request's handler calls it before it returns. Returns nil, having answered
+	400, for a request that is not a GET carrying Upgrade: websocket, Connection: Upgrade,
+	Sec-WebSocket-Version: 13, and a Sec-WebSocket-Key. */
+- (nullable NFKHTTPWebSocket *)acceptWebSocketForRequest:(NFKHTTPRequest *)request;
 @end
 
 typedef void (^NFKHTTPRequestHandler)(NFKHTTPRequest *request, NFKHTTPResponse *response);

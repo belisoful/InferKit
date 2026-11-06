@@ -126,7 +126,8 @@ typedef NSURL * _Nullable (^NFKModelLocator)(NFKModelDescriptor *descriptor,
 	@discussion A request's own parameters win. The optional members, such as modelInfo, prepare,
 				unload, isLoaded, and the byte counts, answer as the wrapped backend answers them, and
 				respondsToSelector: reports what the wrapped backend implements. loadOptionValues is the
-				wrapped backend's when it reports them, else the values the wrapper was given.
+				wrapped backend's when it reports them, else the values the wrapper was given. A live
+				stream opens on the wrapped backend with the defaults under the stream's parameters.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKDefaultedBackend : NSObject <NFKInferenceBackend>

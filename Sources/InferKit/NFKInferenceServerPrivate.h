@@ -13,6 +13,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class NFKServedModel;
+@class NFKModelDescriptor;
 
 /*! The wire a route's replies, its errors included, are written in. */
 typedef NS_ENUM(NSInteger, NFKServedWire) {
@@ -62,6 +63,8 @@ typedef NS_ENUM(NSInteger, NFKServedWire) {
 	and an exception the run's handlers raise answers 500. The reply's head carries the model's load as
 	it stands when the head is written, and the target's base model and preset. */
 - (void)enqueue:(NFKServedRun *)run on:(NFKServedTarget *)target request:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response;
+/*! The catalog descriptor a target's model was built from, or nil for a model added as a backend. */
+- (nullable NFKModelDescriptor *)descriptorOfTarget:(NFKServedTarget *)target;
 
 @end
 

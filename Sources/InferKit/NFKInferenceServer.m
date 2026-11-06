@@ -25,6 +25,7 @@
 #import "NFKModelDescriptorPrivate.h"
 #import "NFKServedMCP.h"
 #import "NFKInferenceWireCoding.h"
+#import "NFKServedLive.h"
 #import "NFKServedHostStatus.h"
 #import "NFKServerRoutePrivate.h"
 #import "NFKServerObservationPrivate.h"
@@ -3689,6 +3690,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 													  @"/responses": @"POST",
 													  @"/responses/input_tokens": @"POST",
 													  @"/inferkit/run": @"POST",
+													  @"/inferkit/live": @"GET",
 													  @"/inferkit/status": @"GET",
 													  @"/inferkit/catalog": @"GET",
 													  @"/inferkit/estimate": @"POST" };
@@ -3731,6 +3733,8 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		[NFKServedResponses serveResponses:request response:response server:self];
 	} else if ([route isEqualToString:@"/responses/input_tokens"]) {
 		[NFKServedResponses serveInputTokens:request response:response server:self];
+	} else if ([route isEqualToString:@"/inferkit/live"]) {
+		[NFKServedLive serveRequest:request response:response server:self];
 	} else {
 		[self serveNativeRun:request response:response];
 	}
@@ -3950,6 +3954,11 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		return headers;
 	};
 	[model enqueue:run];
+}
+
+- (nullable NFKModelDescriptor *)descriptorOfTarget:(NFKServedTarget *)target
+{
+	return target.model.descriptor;
 }
 
 #pragma mark Models

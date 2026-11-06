@@ -1372,6 +1372,46 @@ their own state and share the loaded model. An audio unit is an `AVAudioPCMBuffe
 `NFKAudioAsset` at the profile's sample rate and channel count. The C interface opens the same streams
 with `nfk_live_stream_open` (see [C interface](c-api.md#a-live-stream)).
 
+A server streams a hosted model on its live route, `GET /v1/inferkit/live`, a WebSocket; each connection
+is one stream. `NFKRemoteInferKitBackend` opens streams through it, so a model that carries state keeps
+it on the serving machine:
+
+<!-- objc-check: given NSURL *serverURL = nil; CVPixelBufferRef frame = NULL; -->
+```objc
+NFKRemoteInferKitBackend *remote = [NFKRemoteInferKitBackend backendWithBaseURL:serverURL];
+remote.modelName = @"robust-video-matting";
+NSError *error = nil;
+id<NFKLiveStream> stream = NFKInferenceOpenLiveStream(remote, nil, &error);   // the route's WebSocket
+NFKInferenceResult *matted = [stream resultForUnit:[NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)frame }]
+                                             error:&error];
+```
+
+A client in another language speaks the route directly. Text messages are JSON objects:
+
+| Message | Direction | Fields |
+|---|---|---|
+| `start` | to the server | `model` (or the `model` query parameter), `parameters` every unit runs with, `valueObjects` (`"archive"` or `"json"`, as on the run route). A second `start` opens a new stream. |
+| `started` | to the client | `model`, `base`, `preset`, and `live`, the model's [live profile](model-catalog.md#live-profiles) or null |
+| `unit` | to the server | `seq` (echoed back), `inputs` in the run route's tagged JSON, `parameters` of the unit's own |
+| `reset` | both ways | forgets the stream's state after the units before it, answered with `reset` |
+| `result` | to the client | `seq`, `outputs` in tagged JSON, `milliseconds` the unit ran, `dropped` (the `seq`s left out since the last answer) |
+| `error` | to the client | `seq` and `error` in the run route's shape; the stream goes on |
+
+A unit with raw buffers, and a result with an image or audio output, is a binary message: a 4-byte
+little-endian header length, the header (the message above with `buffers`), then the buffers' bytes. Each
+buffer names its `key`, its `offset` and `length` in the bytes after the header, and its `format`:
+
+| Format | Fields | Value |
+|---|---|---|
+| `bgra` | `width`, `height`, `bytesPerRow` | a 32BGRA pixel buffer, premultiplied |
+| `nv12`, `nv12-full` | `width`, `height`, `bytesPerRow`, `chromaBytesPerRow` | a 4:2:0 biplanar pixel buffer, video or full range: the luma plane, then the chroma plane (in only) |
+| `gray8`, `gray-f32` | `width`, `height`, `bytesPerRow` | a one-component pixel buffer, such as a matte or a depth map (out only) |
+| `pcm-f32`, `pcm-s16` | `sampleRate`, `channels` | interleaved PCM (`pcm-s16` in only) |
+
+Each unit runs in the hosted model's slot, as a request does. A unit carrying a pixel buffer replaces the
+units queued behind the one in flight, so the newest frame runs next; other units queue in order, at most
+256. The route takes the same key and origin checks as the run route.
+
 ## Optional engines discovered at runtime
 
 [`NFKDynamicBackend`](../Sources/InferKit/include/InferKit/NFKDynamicBackend.h) activates a heavier

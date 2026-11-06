@@ -3,6 +3,7 @@
 //  InferKit
 //
 
+#import "NFKLiveStream.h"
 #import "NFKModelBuilding.h"
 #import "NFKModelDescriptorPrivate.h"
 #import "NFKModelOptions.h"
@@ -127,7 +128,7 @@ static NSSet<NSString *> *NFKDefaultedForwardedSelectors(void)
 		selectors = [NSSet setWithArray:@[
 			@"prepareWithError:", @"submitInferenceJobForRequest:", @"supportedParameterKeys", @"supportedInputKeys",
 			@"supportedOutputKeys", @"modelInfo", @"backendStatus", @"tokenCountForRequest:error:", @"unload",
-			@"isLoaded", @"residentByteCount", @"peakByteCount",
+			@"isLoaded", @"residentByteCount", @"peakByteCount", @"openLiveStreamWithParameters:error:",
 		]];
 	});
 	return selectors;
@@ -234,6 +235,14 @@ static NSSet<NSString *> *NFKDefaultedForwardedSelectors(void)
 - (NSDictionary<NSString *, id> *)backendStatus
 {
 	return [self.backend respondsToSelector:@selector(backendStatus)] ? self.backend.backendStatus : @{};
+}
+
+- (nullable id<NFKLiveStream>)openLiveStreamWithParameters:(nullable NSDictionary<NSString *, id> *)parameters
+													 error:(NSError **)error
+{
+	NSMutableDictionary<NSString *, id> *merged = [self.requestDefaults mutableCopy];
+	[merged addEntriesFromDictionary:parameters ?: @{}];
+	return [self.backend openLiveStreamWithParameters:merged error:error];
 }
 
 - (nullable NSNumber *)tokenCountForRequest:(NFKInferenceRequest *)request error:(NSError **)error

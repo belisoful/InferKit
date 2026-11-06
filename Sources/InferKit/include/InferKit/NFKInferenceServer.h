@@ -226,6 +226,12 @@ NS_SWIFT_SENDABLE
 				  and partial results. The value classes cross as keyed archives by default; a body
 				  field "valueObjects": "json" answers them as JSON objects of their fields
 				  (NFKValueCoding's form), which a client without the classes reads.
+				- The live route, GET /inferkit/live, a WebSocket that runs a hosted model on a live source
+				  one unit at a time through a live stream (NFKLiveStream.h), so a model that carries state
+				  from frame to frame keeps it on the server. Video frames cross as raw BGRA or NV12 and
+				  audio as PCM, beside the native route's tagged JSON. When the model falls behind, the
+				  newest frame runs next and the frames it replaced are reported. NFKRemoteInferKitBackend
+				  opens streams through it.
 				- The status route, GET /inferkit/status, which reports each model's load and the
 				  machine's state for a load balancer or a dashboard (see Status).
 				- The catalog route, GET /inferkit/catalog, which answers the catalog the server builds

@@ -108,6 +108,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### The server streams a hosted model on its live route
+
+- `GET /v1/inferkit/live` is a WebSocket that runs a hosted model on a live source through a live stream,
+  so a model that carries state keeps it on the server. A client sends `start`, then units, as tagged
+  JSON or as raw BGRA or NV12 frames and PCM chunks in binary messages; each unit is answered in order
+  with its result, images and audio as raw buffers. When the model falls behind, the newest frame runs
+  next and the replaced frames are reported under `dropped`. The route takes the run route's key and
+  origin checks, and each unit runs in the hosted model's slot.
+- `NFKRemoteInferKitBackend` opens live streams through the route.
+- `NFKDefaultedBackend` opens the wrapped backend's stream with its defaults under the stream's
+  parameters.
+
 #### Live streams carry a model's state from unit to unit
 
 - `NFKLiveStream` (`NFKLiveStream.h`) runs a model on a live source one unit at a time: `resultForUnit:error:`,

@@ -11,12 +11,174 @@
 #import <InferKit/NFKModelMemory.h>
 #import "NFKInferenceWireCoding.h"
 #import "NFKJobGuard.h"
+#import "NFKLiveStream.h"
+#import <AVFoundation/AVFoundation.h>
+#import <CoreVideo/CoreVideo.h>
 
 @interface NFKRemoteInferKitBackend ()
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedInputKeys;
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedParameterKeys;
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedOutputKeys;
 @property (atomic, readwrite, strong, nullable) NFKServerLoad *lastReportedLoad;
+@end
+
+
+/*! A result buffer as the value it describes: a pixel buffer for an image, a PCM buffer for audio. */
+static id _Nullable NFKRemoteLiveBufferValue(NSDictionary *buffer, NSData * _Nullable payload)
+{
+	NSUInteger offset = [buffer[@"offset"] unsignedIntegerValue], length = [buffer[@"length"] unsignedIntegerValue];
+	if (![buffer[@"key"] isKindOfClass:NSString.class] || offset > payload.length || length > payload.length - offset) {
+		return nil;
+	}
+	const uint8_t *bytes = (const uint8_t *)payload.bytes + offset;
+	NSString *format = buffer[@"format"];
+	if ([format isEqualToString:@"pcm-f32"]) {
+		NSInteger channels = [buffer[@"channels"] integerValue];
+		double sampleRate = [buffer[@"sampleRate"] doubleValue];
+		if (channels <= 0 || !(sampleRate > 0) || length % ((NSUInteger)channels * 4) != 0) {
+			return nil;
+		}
+		AVAudioFormat *pcmFormat = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:sampleRate
+																	  channels:(AVAudioChannelCount)channels interleaved:YES];
+		AVAudioFrameCount frames = (AVAudioFrameCount)(length / ((NSUInteger)channels * 4));
+		AVAudioPCMBuffer *pcm = [[AVAudioPCMBuffer alloc] initWithPCMFormat:pcmFormat frameCapacity:MAX(frames, 1)];
+		pcm.frameLength = frames;
+		memcpy(pcm.floatChannelData[0], bytes, length);
+		return pcm;
+	}
+	NSDictionary<NSString *, NSArray<NSNumber *> *> *pixelFormats = @{ @"bgra": @[ @(kCVPixelFormatType_32BGRA), @4 ],
+																		@"gray8": @[ @(kCVPixelFormatType_OneComponent8), @1 ],
+																		@"gray-f32": @[ @(kCVPixelFormatType_OneComponent32Float), @4 ] };
+	NSArray<NSNumber *> *pixelFormat = pixelFormats[format];
+	size_t width = [buffer[@"width"] unsignedIntegerValue], height = [buffer[@"height"] unsignedIntegerValue];
+	size_t rowBytes = [buffer[@"bytesPerRow"] unsignedIntegerValue];
+	if (pixelFormat == nil || width == 0 || height == 0 || rowBytes < width * pixelFormat[1].unsignedIntegerValue || length < rowBytes * height) {
+		return nil;
+	}
+	CVPixelBufferRef pixels = NULL;
+	NSDictionary *attributes = @{ (id)kCVPixelBufferIOSurfacePropertiesKey: @{} };
+	if (CVPixelBufferCreate(kCFAllocatorDefault, width, height, pixelFormat[0].unsignedIntValue, (__bridge CFDictionaryRef)attributes,
+							&pixels) != kCVReturnSuccess) {
+		return nil;
+	}
+	CVPixelBufferLockBaseAddress(pixels, 0);
+	uint8_t *destination = CVPixelBufferGetBaseAddress(pixels);
+	size_t destinationRow = CVPixelBufferGetBytesPerRow(pixels);
+	for (size_t row = 0; row < height; row++) {
+		memcpy(destination + row * destinationRow, bytes + row * rowBytes, width * pixelFormat[1].unsignedIntegerValue);
+	}
+	CVPixelBufferUnlockBaseAddress(pixels, 0);
+	return (__bridge_transfer id)pixels;
+}
+
+/*! A live route connection that sends a message and waits for the answer of a type. */
+@interface NFKRemoteLiveSocket : NSObject
+- (instancetype)initWithTask:(NSURLSessionWebSocketTask *)task timeout:(NSTimeInterval)timeout;
+/*! Sends message and returns the next message of type with the sequence, or nil with the error the
+	server answered, the transport's, or a timeout. A binary answer's bytes after its header land in
+	payload. */
+- (nullable NSDictionary *)send:(NSDictionary *)message
+					  untilType:(NSString *)type
+					   sequence:(nullable NSNumber *)sequence
+						payload:(NSData * _Nullable * _Nullable)outPayload
+						  error:(NSError * _Nullable *)outError;
+- (void)close;
+@end
+
+@implementation NFKRemoteLiveSocket {
+	NSURLSessionWebSocketTask *_task;
+	NSTimeInterval _timeout;
+}
+
+- (instancetype)initWithTask:(NSURLSessionWebSocketTask *)task timeout:(NSTimeInterval)timeout
+{
+	self = [super init];
+	if (self != nil) {
+		_task = task;
+		_timeout = timeout > 0 ? timeout : 60;
+		[task resume];
+	}
+	return self;
+}
+
+- (nullable NSDictionary *)send:(NSDictionary *)message
+					  untilType:(NSString *)type
+					   sequence:(nullable NSNumber *)sequence
+						payload:(NSData * _Nullable * _Nullable)outPayload
+						  error:(NSError * _Nullable *)outError
+{
+	NSString *text = [[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:message options:0 error:NULL] ?: [NSData data]
+										   encoding:NSUTF8StringEncoding];
+	__block NSError *failure = nil;
+	dispatch_semaphore_t sent = dispatch_semaphore_create(0);
+	[_task sendMessage:[[NSURLSessionWebSocketMessage alloc] initWithString:text] completionHandler:^(NSError *error) {
+		failure = error;
+		dispatch_semaphore_signal(sent);
+	}];
+	if (dispatch_semaphore_wait(sent, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(_timeout * NSEC_PER_SEC))) != 0 || failure != nil) {
+		return [self fail:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the live route did not take the message in time"]
+					error:outError];
+	}
+	for (;;) {
+		__block NSURLSessionWebSocketMessage *received = nil;
+		dispatch_semaphore_t arrived = dispatch_semaphore_create(0);
+		[_task receiveMessageWithCompletionHandler:^(NSURLSessionWebSocketMessage *answer, NSError *error) {
+			received = answer;
+			failure = error;
+			dispatch_semaphore_signal(arrived);
+		}];
+		if (dispatch_semaphore_wait(arrived, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(_timeout * NSEC_PER_SEC))) != 0) {
+			return [self fail:[NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the live route did not answer in time"]
+						error:outError];
+		}
+		if (received == nil) {
+			return [self fail:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the live route closed"]
+						error:outError];
+		}
+		NSData *headerData = nil, *payload = nil;
+		if (received.type == NSURLSessionWebSocketMessageTypeString) {
+			headerData = [received.string dataUsingEncoding:NSUTF8StringEncoding];
+		} else if (received.data.length >= 4) {
+			uint32_t length = 0;
+			[received.data getBytes:&length length:4];
+			length = CFSwapInt32LittleToHost(length);
+			if ((NSUInteger)length <= received.data.length - 4) {
+				headerData = [received.data subdataWithRange:NSMakeRange(4, length)];
+				payload = [received.data subdataWithRange:NSMakeRange(4 + length, received.data.length - 4 - length)];
+			}
+		}
+		NSDictionary *answer = headerData != nil ? [NSJSONSerialization JSONObjectWithData:headerData options:0 error:NULL] : nil;
+		if (![answer isKindOfClass:NSDictionary.class]) {
+			continue;
+		}
+		BOOL answersThis = sequence == nil || [answer[@"seq"] isEqual:sequence];
+		if ([answer[@"type"] isEqualToString:@"error"] && (answer[@"seq"] == nil || answersThis)) {
+			return [self fail:[NFKInferenceWireCoding errorFromJSONObject:answer]
+						?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the live route failed the unit"]
+						error:outError];
+		}
+		if ([answer[@"type"] isEqualToString:type] && answersThis) {
+			if (outPayload != NULL) {
+				*outPayload = payload;
+			}
+			return answer;
+		}
+	}
+}
+
+- (nullable NSDictionary *)fail:(NSError *)error error:(NSError * _Nullable *)outError
+{
+	if (outError != NULL) {
+		*outError = error;
+	}
+	return nil;
+}
+
+- (void)close
+{
+	[_task cancelWithCloseCode:NSURLSessionWebSocketCloseCodeNormalClosure reason:nil];
+}
+
 @end
 
 @implementation NFKRemoteInferKitBackend
@@ -409,6 +571,71 @@
 }
 
 #pragma mark Errors
+
+#pragma mark Live streams
+
+- (nullable id<NFKLiveStream>)openLiveStreamWithParameters:(nullable NSDictionary<NSString *, id> *)parameters
+													 error:(NSError * _Nullable *)outError
+{
+	NSMutableURLRequest *request = [self serverRequestForPath:@"inferkit/live" error:outError];
+	if (request == nil) {
+		return nil;
+	}
+	NSURLComponents *components = [NSURLComponents componentsWithURL:request.URL resolvingAgainstBaseURL:NO];
+	components.scheme = [components.scheme.lowercaseString isEqualToString:@"https"] ? @"wss" : @"ws";
+	request.URL = components.URL;
+	NFKRemoteLiveSocket *socket = [[NFKRemoteLiveSocket alloc] initWithTask:[self.session webSocketTaskWithRequest:request]
+																	timeout:self.timeout];
+	NSMutableDictionary *start = [@{ @"type": @"start", @"parameters": parameters ?: @{} } mutableCopy];
+	start[@"model"] = self.modelName;
+	NSError *error = nil;
+	NSDictionary *started = [socket send:start untilType:@"started" sequence:nil payload:NULL error:&error];
+	if (started == nil) {
+		[socket close];
+		if (outError != NULL) {
+			*outError = error;
+		}
+		return nil;
+	}
+	__block NSInteger sequence = 0;
+	return [[NFKBlockLiveStream alloc] initWithParameters:nil unitHandler:^NFKInferenceResult *(NFKInferenceRequest *unit, NSError **unitError) {
+		NFKInferenceWireCoding *coder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
+		NSDictionary *encoded = [coder JSONObjectForRequest:unit error:unitError];
+		if (encoded == nil) {
+			return nil;
+		}
+		sequence += 1;
+		NSMutableDictionary *message = [@{ @"type": @"unit", @"seq": @(sequence) } mutableCopy];
+		message[@"inputs"] = encoded[@"inputs"];
+		message[@"parameters"] = encoded[@"parameters"];
+		NSData *payload = nil;
+		NSDictionary *answer = [socket send:message untilType:@"result" sequence:@(sequence) payload:&payload error:unitError];
+		if (answer == nil) {
+			return nil;
+		}
+		NFKInferenceResult *result = [coder resultFromJSONObject:@{ @"outputs": answer[@"outputs"] ?: @{} } error:unitError];
+		if (result == nil) {
+			return nil;
+		}
+		NSMutableDictionary<NSString *, id> *outputs = [result.outputs mutableCopy];
+		for (NSDictionary *buffer in [answer[@"buffers"] isKindOfClass:NSArray.class] ? answer[@"buffers"] : @[]) {
+			id value = NFKRemoteLiveBufferValue(buffer, payload);
+			if (value == nil) {
+				if (unitError != NULL) {
+					*unitError = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure
+															reason:@"a result buffer does not agree with its description"];
+				}
+				return nil;
+			}
+			outputs[buffer[@"key"]] = value;
+		}
+		return [NFKInferenceResult resultWithOutputs:outputs];
+	} resetHandler:^{
+		[socket send:@{ @"type": @"reset" } untilType:@"reset" sequence:nil payload:NULL error:NULL];
+	} closeHandler:^{
+		[socket close];
+	}];
+}
 
 - (BOOL)failWithCode:(NSInteger)code reason:(NSString *)reason error:(NSError * _Nullable *)outError
 {

@@ -39,6 +39,11 @@ NS_ASSUME_NONNULL_BEGIN
 				model. Until then the backend does not respond to any of the three selectors, which a
 				caller reads as "not declared". A hosted backend that declares no set leaves its
 				selector unanswered after prepareWithError: as well.
+
+				openLiveStreamWithParameters:error: opens a live stream on the hosted model through the
+				live route (GET /v1/inferkit/live, a WebSocket), so a hosted model that carries state from
+				unit to unit keeps it on the server. Each unit crosses whole, as a run's request does, and
+				its result comes back the same way.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKRemoteInferKitBackend : NSObject <NFKInferenceBackend>

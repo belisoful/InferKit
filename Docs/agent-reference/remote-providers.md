@@ -1462,6 +1462,24 @@ machine's remote clients reach a model this process hosts. Files:
 - `NFKValueCoding.h/.m`: the public face of the coder, with `encodesValueObjectsAsJSON` always on, and
   the port-value conversions. An untagged JSON object for a value-class type is read by injecting the
   type's tag and calling `NFKWireValueObjectFromJSON`.
+- `NFKHTTPServer.m` speaks WebSocket (RFC 6455) for the live route: `acceptWebSocketForRequest:`
+  answers 101 and turns the connection's buffer into frames (`processFrames`). The reply stays the
+  connection's current one, so the idle timer never closes a live socket. Client frames must be masked;
+  fragments join before delivery, a ping is answered with its payload, and the listener's
+  `maximumBodyBytes` bounds a message (1009). The connection's drop and graceful close both reach
+  the socket's `closeHandler`.
+- `NFKServedLive.m`: the live route. One `NFKServedLiveSession` per socket holds the target, the queue,
+  and the stream. Each unit is an `NFKServedRun` whose `work` block opens the stream on the backend the
+  run reached, unwrapping `NFKDefaultedBackend`, and opens it again when a `start` changed the stream or
+  the model was built again. Units go through `enqueue:on:request:response:` one at a time, so they share
+  the model's slot, load on demand, and idle unload with requests. The completion handler catches its
+  own exceptions, because the guard's 500 would write HTTP into the socket. Drops happen in the queue,
+  never inside the stream: a frame replaces the queued frames, and other units queue to 256. Output
+  images leave as tight BGRA (`NFKImageCoding` converts other formats); one-component 8-bit and float
+  pixel buffers keep their bytes.
+- `NFKRemoteInferKitBackend` opens a stream over the route with `NFKRemoteLiveSocket`: a sent message,
+  then the next answer of the type with the unit's `seq`, each wait bounded by `timeout`. Units cross as
+  tagged JSON, so a pixel buffer keeps its format; buffers in the answer become pixel and PCM buffers.
 - `NFKInferenceServer.m`: registry, per-model FIFO (`NFKServedModel`), routing, auth, streaming.
   The native route's encoder sets `encodesValueObjectsAsJSON` when the body names `"valueObjects":
   "json"`, for the result and every streamed `partial`; the default `"archive"` keeps the keyed

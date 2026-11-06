@@ -4,6 +4,7 @@
 //
 
 #import "NFKHTTPServer.h"
+#import <CommonCrypto/CommonDigest.h>
 #import <Network/Network.h>
 #import <arpa/inet.h>
 #import <netinet/in.h>
@@ -252,7 +253,65 @@ static NFKHTTPChunkedState NFKHTTPDecodeChunked(NSData *buffer, NSUInteger start
 @property (nonatomic, assign) NSUInteger maximumBodyBytes;
 @property (nonatomic, assign) NSTimeInterval idleTimeout;
 @property (nonatomic, assign) CFAbsoluteTime lastActivity;
+/*! The socket the connection became, after which the buffer holds WebSocket frames. */
+@property (nonatomic, strong, nullable) NFKHTTPWebSocket *webSocket;
 @end
+
+#pragma mark - WebSocket
+
+typedef NS_ENUM(uint8_t, NFKWebSocketOpcode) {
+	NFKWebSocketOpcodeContinuation = 0x0,
+	NFKWebSocketOpcodeText = 0x1,
+	NFKWebSocketOpcodeBinary = 0x2,
+	NFKWebSocketOpcodeClose = 0x8,
+	NFKWebSocketOpcodePing = 0x9,
+	NFKWebSocketOpcodePong = 0xA,
+};
+
+@interface NFKHTTPWebSocket ()
+@property (nonatomic, weak) NFKHTTPConnection *owner;
+@property (nonatomic, assign, readwrite) BOOL closed;
+@property (nonatomic, assign) BOOL closeSent;
+/*! The opcode and bytes of a fragmented message still arriving, or 0 and nil. */
+@property (nonatomic, assign) NFKWebSocketOpcode fragmentOpcode;
+@property (nonatomic, strong, nullable) NSMutableData *fragments;
+- (instancetype)initWithOwner:(NFKHTTPConnection *)owner;
+- (void)receiveFrameWithOpcode:(NFKWebSocketOpcode)opcode final:(BOOL)final payload:(NSData *)payload;
+- (void)connectionDidDrop;
+@end
+
+/*! An unmasked server frame: FIN set, the opcode, and the payload. */
+static NSData *NFKWebSocketFrame(NFKWebSocketOpcode opcode, NSData *payload)
+{
+	NSMutableData *frame = [NSMutableData dataWithCapacity:payload.length + 10];
+	uint8_t first = 0x80 | opcode;
+	[frame appendBytes:&first length:1];
+	if (payload.length < 126) {
+		uint8_t length = (uint8_t)payload.length;
+		[frame appendBytes:&length length:1];
+	} else if (payload.length <= UINT16_MAX) {
+		uint8_t marker = 126;
+		uint16_t length = CFSwapInt16HostToBig((uint16_t)payload.length);
+		[frame appendBytes:&marker length:1];
+		[frame appendBytes:&length length:2];
+	} else {
+		uint8_t marker = 127;
+		uint64_t length = CFSwapInt64HostToBig(payload.length);
+		[frame appendBytes:&marker length:1];
+		[frame appendBytes:&length length:8];
+	}
+	[frame appendData:payload];
+	return frame;
+}
+
+/*! The Sec-WebSocket-Accept value for a client's key. */
+static NSString *NFKWebSocketAcceptValue(NSString *key)
+{
+	NSData *joined = [[key stringByAppendingString:@"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"] dataUsingEncoding:NSUTF8StringEncoding];
+	unsigned char digest[CC_SHA1_DIGEST_LENGTH];
+	CC_SHA1(joined.bytes, (CC_LONG)joined.length, digest);
+	return [[NSData dataWithBytes:digest length:sizeof digest] base64EncodedStringWithOptions:0];
+}
 
 /*! Whether an address endpoint is a loopback address, IPv4-mapped IPv6 included. */
 static BOOL NFKHTTPEndpointIsLoopback(nw_endpoint_t _Nullable endpoint)
@@ -365,6 +424,10 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 
 - (void)processBuffer
 {
+	if (self.webSocket != nil) {
+		[self processFrames];
+		return;
+	}
 	while (!self.closed && self.current == nil && self.buffer.length > 0) {
 		NSRange headEnd = [self.buffer rangeOfData:NFKHTTPHeadEnd() options:0 range:NSMakeRange(0, self.buffer.length)];
 		if (headEnd.location == NSNotFound || headEnd.location > NFKHTTPMaximumHeadBytes) {
@@ -434,6 +497,66 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 		[self.buffer replaceBytesInRange:NSMakeRange(0, consumed) withBytes:NULL length:0];
 		self.sentContinue = NO;
 		[self dispatchRequestWithLine:requestLine headers:headers body:body];
+	}
+	if (self.webSocket != nil) {
+		[self processFrames];
+	}
+}
+
+/*! Reads every whole frame in the buffer and hands its message to the socket. */
+- (void)processFrames
+{
+	NFKHTTPWebSocket *socket = self.webSocket;
+	while (!self.closed && !socket.closed && self.buffer.length >= 2) {
+		const uint8_t *bytes = self.buffer.bytes;
+		BOOL final = (bytes[0] & 0x80) != 0;
+		NFKWebSocketOpcode opcode = bytes[0] & 0x0F;
+		BOOL masked = (bytes[1] & 0x80) != 0;
+		uint64_t length = bytes[1] & 0x7F;
+		NSUInteger offset = 2;
+		if (length == 126) {
+			if (self.buffer.length < 4) {
+				return;
+			}
+			length = ((uint64_t)bytes[2] << 8) | bytes[3];
+			offset = 4;
+		} else if (length == 127) {
+			if (self.buffer.length < 10) {
+				return;
+			}
+			length = 0;
+			for (NSUInteger index = 0; index < 8; index++) {
+				length = (length << 8) | bytes[2 + index];
+			}
+			offset = 10;
+		}
+		if ((bytes[0] & 0x70) != 0 || !masked) {
+			[socket closeWithCode:1002 reason:(bytes[0] & 0x70) != 0 ? @"a reserved bit is set" : @"a client frame is not masked"];
+			return;
+		}
+		BOOL control = (opcode & 0x08) != 0;
+		BOOL known = opcode <= NFKWebSocketOpcodeBinary || opcode == NFKWebSocketOpcodeClose || opcode == NFKWebSocketOpcodePing
+			|| opcode == NFKWebSocketOpcodePong;
+		if (!known || (control && (!final || length > 125))) {
+			[socket closeWithCode:1002 reason:@"the frame breaks the protocol"];
+			return;
+		}
+		if (length + socket.fragments.length > self.maximumBodyBytes) {
+			[socket closeWithCode:1009 reason:@"the message exceeds the server's limit"];
+			return;
+		}
+		if (self.buffer.length < offset + 4 + length) {
+			return;
+		}
+		uint8_t mask[4];
+		memcpy(mask, bytes + offset, 4);
+		NSMutableData *payload = [NSMutableData dataWithBytes:bytes + offset + 4 length:(NSUInteger)length];
+		uint8_t *unmasked = payload.mutableBytes;
+		for (NSUInteger index = 0; index < payload.length; index++) {
+			unmasked[index] ^= mask[index % 4];
+		}
+		[self.buffer replaceBytesInRange:NSMakeRange(0, offset + 4 + (NSUInteger)length) withBytes:NULL length:0];
+		[socket receiveFrameWithOpcode:opcode final:final payload:payload];
 	}
 }
 
@@ -548,6 +671,7 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 		nw_connection_cancel(connection);
 	});
 	[self.listener connectionDidClose:self];
+	[self.webSocket connectionDidDrop];
 }
 
 /*! The peer went away, the network failed, or the server is stopping: the pending reply, if any,
@@ -563,6 +687,7 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 	NFKHTTPResponse *pending = self.current;
 	self.current = nil;
 	[pending connectionDidDrop];
+	[self.webSocket connectionDidDrop];
 }
 
 - (void)cancelTimer
@@ -702,6 +827,32 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 	}];
 }
 
+- (nullable NFKHTTPWebSocket *)acceptWebSocketForRequest:(NFKHTTPRequest *)request
+{
+	NSString *key = [request valueForHeader:@"sec-websocket-key"];
+	BOOL upgrade = [request.method isEqualToString:@"GET"]
+		&& [[request valueForHeader:@"upgrade"].lowercaseString isEqualToString:@"websocket"]
+		&& [[request valueForHeader:@"connection"].lowercaseString containsString:@"upgrade"]
+		&& [[request valueForHeader:@"sec-websocket-version"] isEqualToString:@"13"]
+		&& [[NSData alloc] initWithBase64EncodedString:key ?: @"" options:0].length == 16;
+	if (!upgrade) {
+		[self sendStatus:400 JSONObject:@{ @"error": @{ @"message": @"the route takes a WebSocket upgrade (RFC 6455, version 13)",
+														 @"type": @"invalid_request_error" } }
+				 headers:@{ @"Sec-WebSocket-Version": @"13" }];
+		return nil;
+	}
+	if (![self claimHeaders]) {
+		return nil;
+	}
+	NFKHTTPConnection *owner = self.owner;
+	NFKHTTPWebSocket *socket = [[NFKHTTPWebSocket alloc] initWithOwner:owner];
+	owner.webSocket = socket;
+	NSString *head = [NSString stringWithFormat:@"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+					  "Sec-WebSocket-Accept: %@\r\nServer: InferKit\r\n\r\n", NFKWebSocketAcceptValue(key)];
+	[owner write:[head dataUsingEncoding:NSUTF8StringEncoding] completion:nil];
+	return socket;
+}
+
 - (void)connectionDidDrop
 {
 	void (^handler)(void) = nil;
@@ -734,6 +885,133 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 	}
 	if (alreadyGone && disconnectHandler != nil) {
 		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), disconnectHandler);
+	}
+}
+
+@end
+
+#pragma mark - WebSocket
+
+@implementation NFKHTTPWebSocket
+
+- (instancetype)initWithOwner:(NFKHTTPConnection *)owner
+{
+	self = [super init];
+	if (self != nil) {
+		_owner = owner;
+	}
+	return self;
+}
+
+/*! Runs on the connection's queue. */
+- (void)receiveFrameWithOpcode:(NFKWebSocketOpcode)opcode final:(BOOL)final payload:(NSData *)payload
+{
+	switch (opcode) {
+		case NFKWebSocketOpcodePing:
+			[self send:NFKWebSocketOpcodePong payload:payload];
+			return;
+		case NFKWebSocketOpcodePong:
+			return;
+		case NFKWebSocketOpcodeClose: {
+			uint16_t code = 1000;
+			if (payload.length >= 2) {
+				const uint8_t *bytes = payload.bytes;
+				code = (uint16_t)((bytes[0] << 8) | bytes[1]);
+			}
+			[self closeWithCode:code reason:nil];
+			return;
+		}
+		case NFKWebSocketOpcodeContinuation:
+			if (self.fragments == nil) {
+				[self closeWithCode:1002 reason:@"a continuation frame continues no message"];
+				return;
+			}
+			[self.fragments appendData:payload];
+			break;
+		case NFKWebSocketOpcodeText:
+		case NFKWebSocketOpcodeBinary:
+			if (self.fragments != nil) {
+				[self closeWithCode:1002 reason:@"a new message began inside a fragmented one"];
+				return;
+			}
+			self.fragmentOpcode = opcode;
+			self.fragments = [payload mutableCopy];
+			break;
+	}
+	if (!final) {
+		return;
+	}
+	NSData *message = [self.fragments copy];
+	NFKWebSocketOpcode kind = self.fragmentOpcode;
+	self.fragments = nil;
+	NSString *text = nil;
+	if (kind == NFKWebSocketOpcodeText) {
+		text = [[NSString alloc] initWithData:message encoding:NSUTF8StringEncoding];
+		if (text == nil) {
+			[self closeWithCode:1007 reason:@"a text message is not UTF-8"];
+			return;
+		}
+	}
+	void (^handler)(NSData * _Nullable, NSString * _Nullable) = self.messageHandler;
+	if (handler != nil) {
+		handler(kind == NFKWebSocketOpcodeBinary ? message : nil, text);
+	}
+}
+
+- (void)send:(NFKWebSocketOpcode)opcode payload:(NSData *)payload
+{
+	@synchronized (self) {
+		if (self.closeSent) {
+			return;
+		}
+		if (opcode == NFKWebSocketOpcodeClose) {
+			self.closeSent = YES;
+		}
+	}
+	NFKHTTPConnection *owner = self.owner;
+	[owner write:NFKWebSocketFrame(opcode, payload) completion:opcode == NFKWebSocketOpcodeClose ? ^{
+		dispatch_async(owner.queue, ^{
+			[owner closeGracefully];
+		});
+	} : nil];
+}
+
+- (void)sendText:(NSString *)text
+{
+	[self send:NFKWebSocketOpcodeText payload:[text dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data]];
+}
+
+- (void)sendBinary:(NSData *)data
+{
+	[self send:NFKWebSocketOpcodeBinary payload:data];
+}
+
+- (void)closeWithCode:(uint16_t)code reason:(nullable NSString *)reason
+{
+	NSMutableData *payload = [NSMutableData dataWithCapacity:2 + reason.length];
+	uint16_t bigEndian = CFSwapInt16HostToBig(code);
+	[payload appendBytes:&bigEndian length:2];
+	NSData *text = [reason dataUsingEncoding:NSUTF8StringEncoding];
+	[payload appendData:[text subdataWithRange:NSMakeRange(0, MIN(text.length, (NSUInteger)123))]];
+	[self send:NFKWebSocketOpcodeClose payload:payload];
+	[self connectionDidDrop];
+}
+
+/*! Marks the socket closed and runs closeHandler once. */
+- (void)connectionDidDrop
+{
+	void (^handler)(void) = nil;
+	@synchronized (self) {
+		if (self.closed) {
+			return;
+		}
+		self.closed = YES;
+		handler = self.closeHandler;
+		self.closeHandler = nil;
+		self.messageHandler = nil;
+	}
+	if (handler != nil) {
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), handler);
 	}
 }
 
