@@ -247,6 +247,21 @@
 	XCTAssertEqualObjects(turns[1].speaker, @"spk_2");
 }
 
+- (void)testAVideoDurationIsSentAsWholeSecondsInTheResponseFormat
+{
+	self.backend.runsInBackground = YES;
+	self.backend.modelName = @"gemini-omni-1.2-flash";
+	[self.backend stage:@"{\"id\":\"v1_vid\",\"status\":\"completed\",\"steps\":[{\"type\":\"model_output\",\"content\":["
+	 "{\"type\":\"video\",\"mime_type\":\"video/mp4\",\"data\":\"AAAA\"}]}]}"];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a wave" }
+															   parameters:@{ NFKParameterDurationSeconds: @15 }
+														   outputModality:NFKModalityVideo];
+	NSError *error = nil;
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:&error], @"%@", error);
+	XCTAssertEqualObjects([self.backend bodyAt:0][@"response_format"], (@{ @"type": @"video", @"duration": @"15s" }));
+	XCTAssertNil([self.backend bodyAt:0][@"generation_config"][NFKParameterDurationSeconds]);
+}
+
 - (void)testABackgroundVideoIsPolledAndItsURIFetchedWithTheKey
 {
 	self.backend.runsInBackground = YES;

@@ -30,7 +30,9 @@ extern NSString * const NFKGeminiOutputEnvironmentIdentifier;
 				  NFKParameterResolution (image_size, "1K"…"4K"), NFKParameterOutputFormat
 				- NFKModalityAudio → speech (the TTS models, voice) or music (the Lyria models)
 				- NFKModalityVideo → a clip (Omni Flash): NFKParameterAspectRatio,
-				  NFKParameterResolution
+				  NFKParameterResolution, NFKParameterDurationSeconds (duration in whole seconds, "15s",
+				  passed through unchanged; the service enforces its range, 3–15 for a new clip and 3–10
+				  for an extension or interpolation)
 				- otherwise text, with NFKParameterJSONSchema as a JSON response format
 
 				Audio in with NFKParameterSpeakerDiarization, NFKParameterWordTimestamps,
@@ -89,7 +91,7 @@ extern NSString * const NFKGeminiOutputEnvironmentIdentifier;
 @property (nonatomic, copy, nullable) NSString *apiKey;
 
 /*! The model, for example gemini-4-argon, gemini-3.8-flash, gemini-nano-banana-2.1,
-	gemini-3.8-flash-tts, gemini-3.5-transcribe, lyria-3.5, or gemini-omni-1.1-flash. With agentName set
+	gemini-3.8-flash-tts, gemini-3.5-transcribe, lyria-3.5, or gemini-omni-1.2-flash. With agentName set
 	it is the model an Antigravity agent runs on. */
 @property (nonatomic, copy, nullable) NSString *modelName;
 

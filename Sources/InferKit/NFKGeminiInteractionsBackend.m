@@ -32,7 +32,8 @@ static NSSet<NSString *> *NFKInteractionsMappedParameters(void)
 										NFKParameterPreviousResponseIdentifier, NFKParameterAspectRatio,
 										NFKParameterResolution, NFKParameterOutputFormat, NFKParameterSpeakerDiarization,
 										NFKParameterWordTimestamps, NFKParameterVocabulary, NFKParameterSourceLanguage,
-										NFKParameterVideoFrameCount, NFKParameterMCPServers, NFKParameterSkills, @"voice", @"speakers",
+										NFKParameterVideoFrameCount, NFKParameterDurationSeconds, NFKParameterMCPServers, NFKParameterSkills,
+										@"voice", @"speakers",
 										@"processing" ]];
 	});
 	return mapped;
@@ -151,7 +152,7 @@ static double NFKInteractionsSeconds(id offset)
 								  NFKParameterStopSequences, NFKParameterPreviousResponseIdentifier, NFKParameterAspectRatio,
 								  NFKParameterResolution, NFKParameterOutputFormat, NFKParameterSpeakerDiarization,
 								  NFKParameterWordTimestamps, NFKParameterVocabulary, NFKParameterSourceLanguage,
-								  NFKParameterVideoFrameCount, NFKParameterMCPServers ]];
+								  NFKParameterVideoFrameCount, NFKParameterDurationSeconds, NFKParameterMCPServers ]];
 }
 
 - (NSSet<NSString *> *)supportedInputKeys
@@ -551,6 +552,9 @@ static double NFKInteractionsSeconds(id offset)
 			format[@"type"] = @"video";
 			format[@"aspect_ratio"] = parameters[NFKParameterAspectRatio];
 			format[@"resolution"] = parameters[NFKParameterResolution];
+			if ([parameters[NFKParameterDurationSeconds] isKindOfClass:NSNumber.class]) {
+				format[@"duration"] = [NSString stringWithFormat:@"%lds", (long)[parameters[NFKParameterDurationSeconds] integerValue]];
+			}
 			break;
 		default: {
 			NSDictionary *schema = [parameters[NFKParameterJSONSchema] isKindOfClass:NSDictionary.class] ? parameters[NFKParameterJSONSchema] : nil;
