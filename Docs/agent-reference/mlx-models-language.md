@@ -634,9 +634,17 @@ attention and feed-forward.
   `moduleKey(forReference:)` also reads a
   `Qwen3_5Model` save, whose decoder sits under `language_model.` with no `model.` wrapper.
   `loadQuantizedWeights(into:fromDirectory:bits:groupSize:includeEmbeddings:)` packs a release as it reads
-  the shards: each layer is installed, quantized, and evaluated when its last tensor arrives, so a release
-  past the working set (Qwen3.8-27B) loads at the size of its packed form; it equals packing after a
-  `.checkpoint` load element for element (`NFKMLXPplxDeciderTests`).
+  the shards: each layer's reads are evaluated alone, then the layer is installed, quantized, and evaluated
+  when its last tensor arrives, so a release past the working set (Qwen3.8-27B) loads at the size of its
+  packed form, and no packing command buffer waits on the disk (the GPU-timeout mechanism of
+  `mlx-runtime-gotchas.md`); it equals packing after a
+  `.checkpoint` load element for element (`NFKMLXPplxDeciderTests`). The backend factory loads through
+  `loadPackedWeights(into:fromDirectory:bits:groupSize:)`, which writes the packed decoder beside the release
+  (`inferkit-packed/q<bits>-g<group>.safetensors`, `NFKMLXWeights.save`, then a manifest of the release files'
+  names, sizes, and modification dates) and reads it on later loads through `matchStructure`. The developer
+  approved the disk use (2026-11-06): about 15 GB for Qwen3.8-27B at 4 bits. A manifest that no longer matches
+  repacks; the manifest is written after the copy, so a killed write leaves no manifest and the next load
+  packs. A model description's storage bytes count the copy, since it sits inside the release folder.
 - `NFKMLXQwen4Exp` — the Qwen4-Exp decoder (`Qwen4ExpForConditionalGeneration`), which
   **Qwen3.8-Flash-Next** is the released 180B instance of. It keeps the hybrid family's skeleton and
   adds four mechanisms nothing else in the package uses, so it is a port rather than a configuration

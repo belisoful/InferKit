@@ -246,6 +246,39 @@ final class NFKMLXPplxDeciderTests: XCTestCase {
         XCTAssertThrowsError(try NFKMLXPplxDecider.verifyPackedFits(inDirectory: root, bits: 4, groupSize: 64, budget: 1024))
     }
 
+    func testAPackedCopyIsWrittenOnceAndLoadsAsThePackingDoes() throws {
+        try requireMLXRuntime()
+        let root = temporaryDirectory("packed-copy")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try writeTinyCheckpoint(to: root)
+        let config = NFKMLXPplxDeciderConfiguration.tiny.decoder
+        let packed = NFKMLXHybridLanguage.makeNet(config)
+        XCTAssertFalse(try NFKMLXHybridLanguage.loadPackedWeights(into: packed, fromDirectory: root, bits: 4, groupSize: 32),
+                       "the first load packs the release")
+        let folder = root.appendingPathComponent(NFKMLXHybridLanguage.packedFolderName)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("q4-g32.safetensors").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder.appendingPathComponent("q4-g32.json").path))
+
+        let copied = NFKMLXHybridLanguage.makeNet(config)
+        XCTAssertTrue(try NFKMLXHybridLanguage.loadPackedWeights(into: copied, fromDirectory: root, bits: 4, groupSize: 32),
+                      "the next load reads the copy")
+        XCTAssertTrue(copied.model.embedTokens is QuantizedEmbedding)
+        let tokens = MLXArray([5, 17, 90, 3, 44, 12].map(Int32.init)).reshaped([1, -1])
+        XCTAssertEqual(abs(packed.normalizedHidden(tokens, attention: .causal) - copied.normalizedHidden(tokens, attention: .causal))
+                        .max().item(Float.self), 0, "the copy holds the packing element for element")
+
+        let other = NFKMLXHybridLanguage.makeNet(config)
+        XCTAssertFalse(try NFKMLXHybridLanguage.loadPackedWeights(into: other, fromDirectory: root, bits: 8, groupSize: 32),
+                       "another geometry has a copy of its own")
+        let shard = try NFKMLXReleaseWeights.files(inDirectory: root)[0]
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -3600)], ofItemAtPath: shard.path)
+        XCTAssertFalse(try NFKMLXHybridLanguage.loadPackedWeights(into: NFKMLXHybridLanguage.makeNet(config), fromDirectory: root,
+                                                                  bits: 4, groupSize: 32),
+                       "a release file that changed is packed again")
+        XCTAssertTrue(try NFKMLXHybridLanguage.loadPackedWeights(into: NFKMLXHybridLanguage.makeNet(config), fromDirectory: root,
+                                                                 bits: 4, groupSize: 32))
+    }
+
     func testALongRequestSplitsItsQuestionsAndOneQuestionPastTheLimitIsRefused() throws {
         try requireMLXRuntime()
         NFKMLXRandom.seed(33)

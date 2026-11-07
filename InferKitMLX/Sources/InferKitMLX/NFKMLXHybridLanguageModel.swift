@@ -964,8 +964,17 @@ public final class NFKMLXHybridLanguage: NSObject {
                                 by: \.0).mapValues { Set($0.map(\.1)) }
         var gathered = [Int: [(String, MLXArray)]]()
         var outside = [(String, MLXArray)]()
-        var misshapen = [String]()
+        // The released form of a read tensor: a convolution kernel in this module's layout, at the type most of
+        // the release carries.
         var released: DType?
+        func installed(_ name: String, _ value: MLXArray) -> MLXArray {
+            var tensor = name.hasSuffix("conv1d.weight") && value.ndim == 3 ? value.transposed(0, 2, 1) : value
+            if let released, tensor.dtype.isFloatingPoint, tensor.dtype != released {
+                tensor = tensor.asType(released)
+            }
+            return tensor
+        }
+        var misshapen = [String]()
         for url in try NFKMLXReleaseWeights.files(inDirectory: directory) {
             let arrays = try NFKMLXWeights.loadCheckpoint(url: url).arrays
             if released == nil {
@@ -976,18 +985,16 @@ public final class NFKMLXHybridLanguage: NSObject {
             for (key, value) in arrays {
                 guard let name = moduleKey(forReference: key), !(tied && name.hasPrefix("lm_head.")),
                       let shape = expected[name] else { continue }
-                var tensor = name.hasSuffix("conv1d.weight") && value.ndim == 3 ? value.transposed(0, 2, 1) : value
-                if let released, tensor.dtype.isFloatingPoint, tensor.dtype != released {
-                    tensor = tensor.asType(released)
-                }
-                if tensor.shape != shape {
-                    misshapen.append("\(name) \(tensor.shape) for \(shape)")
+                let installedShape = name.hasSuffix("conv1d.weight") && value.ndim == 3
+                    ? [value.dim(0), value.dim(2), value.dim(1)] : value.shape
+                if installedShape != shape {
+                    misshapen.append("\(name) \(installedShape) for \(shape)")
                 }
                 guard let layer = layerIndex(name) else {
-                    outside.append((name, tensor))
+                    outside.append((name, value))
                     continue
                 }
-                gathered[layer, default: []].append((name, tensor))
+                gathered[layer, default: []].append((name, value))
                 unread[layer]?.remove(name)
                 if unread[layer]?.isEmpty == true {
                     completed.append(layer)
@@ -999,8 +1006,12 @@ public final class NFKMLXHybridLanguage: NSObject {
             for layer in completed {
                 let prefix = "\(layerPrefix)\(layer)."
                 let block = net.model.layers[layer]
+                // The reads are evaluated alone, on the CPU stream, before any GPU work consumes them: a GPU
+                // command buffer that waits on a disk read outlasts the GPU watchdog under memory pressure.
+                let reads = gathered.removeValue(forKey: layer) ?? []
+                eval(reads.map(\.1))
                 block.update(parameters: ModuleParameters.unflattened(
-                    (gathered.removeValue(forKey: layer) ?? []).map { (String($0.0.dropFirst(prefix.count)), $0.1) }))
+                    reads.map { (String($0.0.dropFirst(prefix.count)), installed($0.0, $0.1)) }))
                 try NFKMLXQuantization.quantize(module: block, bits: bits, groupSize: groupSize)
                 eval(block)
                 unread[layer] = nil
@@ -1013,12 +1024,99 @@ public final class NFKMLXHybridLanguage: NSObject {
         guard missing.isEmpty else {
             throw NFKMLXError.weightsMismatch("the release lacks \(missing.count) parameters, such as \(missing.prefix(3))")
         }
-        net.update(parameters: ModuleParameters.unflattened(outside))
+        eval(outside.map(\.1))
+        net.update(parameters: ModuleParameters.unflattened(outside.map { ($0.0, installed($0.0, $0.1)) }))
         if includeEmbeddings {
             try NFKMLXQuantization.quantize(module: net.model, bits: bits, groupSize: groupSize, includeEmbeddings: true)
         }
         eval(net)
         NFKMLXGPU.clearCache()
+    }
+
+    /// The folder inside a release that holds its packed copies.
+    static let packedFolderName = "inferkit-packed"
+
+    /// Loads a release packed to `bits`, from the packed copy beside it when the copy matches the release,
+    /// and otherwise by packing the release as it is read and writing the copy for the next load.
+    ///
+    /// @discussion The copy is the packed decoder as the packing leaves it, every layer, the embedding,
+    /// and the output projection at `bits` and `groupSize`, so a load from it equals packing the release
+    /// element for element. It lives in the release's `inferkit-packed` folder, one safetensors file per
+    /// geometry beside a manifest naming the release files it was packed from with their sizes and
+    /// modification dates. A copy whose manifest no longer matches the release is packed again. A release
+    /// folder that cannot be written, or a volume without room for the copy, loads by packing each time.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    ///
+    /// - Returns: whether the weights came from the packed copy.
+    @discardableResult
+    public static func loadPackedWeights(into net: NFKMLXHybridLanguageNet, fromDirectory directory: URL,
+                                         bits: Int, groupSize: Int = 64) throws -> Bool {
+        let folder = directory.appendingPathComponent(packedFolderName, isDirectory: true)
+        let name = "q\(bits)-g\(groupSize)"
+        let copy = folder.appendingPathComponent(name + ".safetensors")
+        let manifestURL = folder.appendingPathComponent(name + ".json")
+        let sources = try packedSources(of: directory)
+        if let manifest = try? JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any],
+           manifest["format"] as? Int == 1, let recorded = manifest["sources"],
+           canonicalJSON(recorded) != nil, canonicalJSON(recorded) == canonicalJSON(sources),
+           FileManager.default.fileExists(atPath: copy.path) {
+            let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: copy)
+            try NFKMLXQuantization.matchStructure(of: checkpoint, on: net)
+            let expected = Set(net.parameters().flattened().map(\.0))
+            if Set(checkpoint.arrays.keys) == expected {
+                net.update(parameters: ModuleParameters.unflattened(checkpoint.arrays.map { ($0.key, $0.value) }))
+                eval(net)
+                NFKMLXGPU.clearCache()
+                return true
+            }
+        }
+        // Each layer packs as its last tensor arrives, so the stored decoder is never held whole; the
+        // embedding and the output projection pack after, as the catalog's estimate counts them.
+        try loadQuantizedWeights(into: net, fromDirectory: directory, bits: bits, groupSize: groupSize,
+                                 includeEmbeddings: true)
+        try NFKMLXQuantization.quantize(module: net, bits: bits, groupSize: groupSize)
+        eval(net)
+        NFKMLXGPU.clearCache()
+        writePackedCopy(of: net, to: copy, manifest: manifestURL, sources: sources)
+        return false
+    }
+
+    /// A JSON value's bytes with its keys sorted, so two values that hold the same JSON compare equal.
+    static func canonicalJSON(_ value: Any) -> Data? {
+        try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+    }
+
+    /// The release files a packed copy is packed from, with their sizes and modification dates.
+    static func packedSources(of directory: URL) throws -> [[String: Any]] {
+        try NFKMLXReleaseWeights.files(inDirectory: directory).map { url in
+            let resolved = url.resolvingSymlinksInPath()
+            let attributes = try FileManager.default.attributesOfItem(atPath: resolved.path)
+            let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+            return ["name": url.lastPathComponent, "bytes": (attributes[.size] as? NSNumber)?.int64Value ?? 0,
+                    "modified": Int64(modified)]
+        }
+    }
+
+    /// Writes the packed copy and then its manifest, so a manifest names only a whole copy. A failure
+    /// leaves no copy and the load as it was.
+    static func writePackedCopy(of net: NFKMLXHybridLanguageNet, to copy: URL, manifest: URL, sources: [[String: Any]]) {
+        let packedBytes = net.parameters().flattened().reduce(0) { $0 + $1.1.nbytes }
+        let folder = copy.deletingLastPathComponent()
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let free = try folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+                .volumeAvailableCapacityForImportantUsage ?? 0
+            guard free > Int64(packedBytes) + (2 << 30) else {
+                return
+            }
+            try? FileManager.default.removeItem(at: manifest)
+            try NFKMLXWeights.save(net, to: copy)
+            let record: [String: Any] = ["format": 1, "bytes": packedBytes, "sources": sources]
+            try JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]).write(to: manifest, options: .atomic)
+        } catch {
+            try? FileManager.default.removeItem(at: manifest)
+        }
     }
 
     /// The module key a checkpoint key maps to, or nil for a tensor this decoder does not carry. A
@@ -1142,13 +1240,8 @@ public final class NFKMLXHybridLanguage: NSObject {
         let draftBytes = draft.map { NFKMLXLanguage.heldBytes(of: $0) } ?? 0
         let net = makeNet(configuration)
         if let quantizationBits {
-            // Each layer packs as its last tensor arrives, so the stored decoder is never held whole; the
-            // embedding and the output projection pack after, as the catalog's estimate counts them.
-            try loadQuantizedWeights(into: net, fromDirectory: directoryURL, bits: quantizationBits,
-                                     groupSize: quantizationGroupSize, includeEmbeddings: true)
-            try NFKMLXQuantization.quantize(module: net, bits: quantizationBits, groupSize: quantizationGroupSize)
-            eval(net)
-            NFKMLXGPU.clearCache()
+            try loadPackedWeights(into: net, fromDirectory: directoryURL, bits: quantizationBits,
+                                  groupSize: quantizationGroupSize)
         } else {
             try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
                             budget: budget > 0 ? Swift.max(budget - draftBytes, 1) : 0, reserving: draftBytes)

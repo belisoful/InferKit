@@ -277,4 +277,99 @@ final class NFKMLXHybridCacheTests: XCTestCase {
               + "\(String(format: "%.1f", long.prefill)) s (\(String(format: "%.1f", 23_000 / long.prefill)) tokens/s), "
               + "then decode \(String(format: "%.2f", 32 / long.decode)) tokens/s, cache \(gib(long.cache))")
     }
+
+    // A timing of the served path, run where `IK_TIME_QWEN3_8_27B_SERVED` is set: the catalog's qwen3.8-27b
+    // hosted by NFKInferenceServer with 4-bit weights, a 64K window, and an 8-bit cache, asked through the
+    // streamed chat route at temperature 0 as a client asks it. Each stage prints the process footprint and the
+    // memory MLX holds; each reply prints when its first reasoning and first content delta arrived and its rate.
+    func testTheQwen3_8_27BServedThroughTheChatRoute() async throws {
+        try requireMLXRuntime()
+        let environment = NFKMLXValidationConfig.environment
+        guard environment["IK_TIME_QWEN3_8_27B_SERVED"] != nil, let release = environment["IK_VAL_QWEN3_8_27B"] else {
+            throw XCTSkip("set IK_TIME_QWEN3_8_27B_SERVED and IK_VAL_QWEN3_8_27B to time the served 27B")
+        }
+        func gb(_ bytes: Int) -> String { String(format: "%.2f GB", Double(bytes) / 1e9) }
+        func memory(_ stage: String) {
+            var info = rusage_info_v4()
+            _ = withUnsafeMutablePointer(to: &info) { pointer in
+                pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) }
+            }
+            print("VALIDATION TIMING qwen3.8-27b served \(stage): footprint \(gb(Int(info.ri_phys_footprint))), lifetime peak "
+                  + "\(gb(Int(info.ri_lifetime_max_phys_footprint))); MLX active \(gb(MLX.Memory.activeMemory)), cache "
+                  + "\(gb(MLX.Memory.cacheMemory)), peak \(gb(MLX.Memory.peakMemory))")
+        }
+        NFKMLXGPU.applyStandingLimits()
+        NFKHFHub.defaultModelFolderURLs = [URL(fileURLWithPath: release).deletingLastPathComponent()]
+        let server = NFKInferenceServer()
+        server.port = 0
+        server.loopbackOnly = true
+        try server.addModel(identifier: "qwen3.8-27b", options: [
+            NFKModelLoadOptionQuantizationBits: 4, NFKModelLoadOptionContextLength: 65536,
+            NFKModelLoadOptionCacheBits: 8, NFKModelLoadOptionResidency: NFKModelResidencyResident,
+        ], catalog: nil, forModelName: "agent")
+        try server.start()
+        defer { server.stop() }
+        memory("before load")
+
+        func ask(_ prompt: String, maxTokens: Int, label: String) async throws {
+            var request = URLRequest(url: try XCTUnwrap(server.localBaseURL).appendingPathComponent("chat/completions"))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 7200
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "model": "agent", "messages": [["role": "user", "content": prompt]], "max_tokens": maxTokens,
+                "temperature": 0, "stream": true, "stream_options": ["include_usage": true],
+            ] as [String: Any])
+            let start = Date()
+            var firstReasoning: Date?, firstContent: Date?, last = start
+            var reasoningDeltas = 0, contentDeltas = 0
+            var usage: [String: Any] = [:]
+            let (bytes, _) = try await URLSession.shared.bytes(for: request)
+            for try await line in bytes.lines where line.hasPrefix("data: ") && line != "data: [DONE]" {
+                guard let event = try? JSONSerialization.jsonObject(with: Data(line.dropFirst(6).utf8)) as? [String: Any] else {
+                    continue
+                }
+                if let reported = event["usage"] as? [String: Any] {
+                    usage = reported
+                }
+                for choice in event["choices"] as? [[String: Any]] ?? [] {
+                    let delta = choice["delta"] as? [String: Any] ?? [:]
+                    if let text = delta["reasoning_content"] as? String ?? delta["reasoning"] as? String, !text.isEmpty {
+                        reasoningDeltas += 1
+                        firstReasoning = firstReasoning ?? Date()
+                        last = Date()
+                    }
+                    if let text = delta["content"] as? String, !text.isEmpty {
+                        contentDeltas += 1
+                        firstContent = firstContent ?? Date()
+                        last = Date()
+                    }
+                }
+            }
+            let first = [firstReasoning, firstContent].compactMap { $0 }.min()
+            let deltas = reasoningDeltas + contentDeltas
+            let rate = first.map { deltas > 1 ? Double(deltas - 1) / last.timeIntervalSince($0) : 0 } ?? 0
+            func seconds(_ date: Date?) -> String { date.map { String(format: "%.1f s", $0.timeIntervalSince(start)) } ?? "none" }
+            print("VALIDATION TIMING qwen3.8-27b served \(label): prompt \(usage["prompt_tokens"] ?? "?") tokens, "
+                  + "completion \(usage["completion_tokens"] ?? "?"); first reasoning \(seconds(firstReasoning)), first content "
+                  + "\(seconds(firstContent)); \(reasoningDeltas) reasoning and \(contentDeltas) content deltas at "
+                  + "\(String(format: "%.2f", rate)) deltas/s; whole reply \(String(format: "%.1f", last.timeIntervalSince(start))) s")
+            memory("after \(label)")
+        }
+        let loading = Date()
+        try await ask("Say hello.", maxTokens: 8, label: "the warm-up")
+        print("VALIDATION TIMING qwen3.8-27b served load and warm-up \(Int(Date().timeIntervalSince(loading))) s")
+        try await ask("Write a short paragraph about the sea.", maxTokens: 200, label: "the short prompt")
+        let docs = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Docs")
+        var text = ""
+        for name in try FileManager.default.contentsOfDirectory(atPath: docs.path).sorted() where name.hasSuffix(".md") {
+            text += (try? String(contentsOf: docs.appendingPathComponent(name), encoding: .utf8)) ?? ""
+            if text.count > 88_000 {
+                break
+            }
+        }
+        try await ask(String(text.prefix(88_000)) + "\n\nSummarize the documents above in five sentences.", maxTokens: 200,
+                      label: "the long prompt")
+    }
 }

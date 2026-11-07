@@ -2013,6 +2013,22 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A quantized hybrid release keeps its packed copy
+
+- A Qwen3.5 or Qwen3.8 release loaded with `quantizationBits` writes its packed weights beside the release on
+  the first load, in `inferkit-packed/q<bits>-g<group>.safetensors` with a manifest of the release files it
+  was packed from, and later loads read that copy directly: Qwen3.8-27B at 4 bits reads about 15 GB in place
+  of 54 GB and runs no packing. The copy is the packing element for element. A release file that changes
+  is packed again; a folder that cannot be written, or a volume without room, packs on every load.
+  `NFKMLXHybridLanguage.loadPackedWeights(into:fromDirectory:bits:groupSize:)` is the entry.
+
+#### A quantized hybrid load reads each layer before it packs it
+
+- `NFKMLXHybridLanguage.loadQuantizedWeights` evaluates a layer's tensors as they are read, then converts
+  and packs them, and reads the embedding and output projection the same way. Before, the packing ran on
+  the GPU in the same evaluation as the reads, so its command buffer waited on the disk, and under memory
+  pressure a Qwen3.8-27B load at 4 bits could end in a GPU timeout.
+
 #### Robust Video Matting and Silero VAD stream
 
 - `NFKMLXRVM`'s backends open a live stream that carries the decoder's four recurrent states from frame to
