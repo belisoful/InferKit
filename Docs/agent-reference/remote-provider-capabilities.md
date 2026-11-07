@@ -27,6 +27,7 @@ misshapes part of it), **gap** (nothing reaches it).
 | prompt-cache controls: key, retention, options (mode, TTL, prewarm), per-part breakpoints | `/chat/completions`, `/responses` | covered (2026-10-23); prewarm and the 12-hour TTL are Responses-only; the cache-write usage counts are not read |
 | text + image → image inside Responses | `image_generation` tool | covered |
 | text → image, image(s) + mask → image | `/images/generations`, `/images/edits` | covered (multi-image `image[]`, streamed partial images) |
+| text (+ images) → animated GIF, text → SVG (`gpt-image-2.6-*`) | `/images/generations`, `/images/edits` (`output_format` `gif` or `svg`) | partial: a GIF decodes to its first frame (the file stays in the raw body); an SVG fails to decode |
 | text → speech | `/audio/speech` | covered (`stream_format: sse`); a custom voice object goes by name |
 | audio → text | `/audio/transcriptions` | covered (`gpt-transcribe` text and stream, diarized_json, words); `whisper-1` family shuts down 2027-02-26 |
 | audio → English text | `/audio/translations` | covered until `whisper-1` shuts down |
@@ -72,7 +73,7 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 | voice library: list, get, design, replicate, delete | `/v1beta/voices` (2026-09-22) | covered (`NFKGeminiVoiceLibrary`) |
 | audio → text with diarization and word times | Interactions `transcription_config` (`gemini-3.5-transcribe`) | covered (Interactions) |
 | text (+ images) → music | Interactions (`lyria-3.5`, `lyria-3-*`) | covered |
-| text + image + video + audio → video, video editing | Interactions (`gemini-omni-1.1-flash`) | covered (Interactions, background); Google names it the default video model over Veo |
+| text + image + video + audio → video, video editing | Interactions (`gemini-omni-1.2-flash`; 1.1 routes to it from 2026-12-03) | covered (Interactions, background); Google names Omni the default video model over Veo |
 | text + images → video | Veo `predictLongRunning` / OpenAI-layer `videos` | covered (`NFKRemoteVideoBackend`) |
 | text + image + audio + video + PDF → embedding | `:embedContent` (`gemini-embedding-2`) | covered (native `embedContent`, the preset's default) |
 | token count | `:countTokens` | covered |

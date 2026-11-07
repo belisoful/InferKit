@@ -365,6 +365,24 @@ nil for a preset that does not serve the path.
   multipart edit is refused). Together takes `width` / `height`, `steps`, and `seed` instead of `size`.
   Gemini ignores unknown fields and documents no edits. OpenRouter's path is `/api/v1/images`, so
   `images/generations` does not reach it. Groq, Mistral, and DeepSeek serve no images.
+  - 2026-11-06 check (OpenAI's image generation guide and the `gpt-image-2.6-flare` model page,
+    Images 2.6 announced 2026-11-04):
+    - `gpt-image-2.6-sunburst` (quality, edit consistency) and `gpt-image-2.6-flare` (speed) serve
+      `/v1/images/generations` and `/v1/images/edits`. The Flare page lists no Batch and no Responses
+      support.
+    - Sizes are `WIDTHxHEIGHT` with edges a multiple of 16, an aspect ratio from 1:3 to 3:1, no edge
+      over 3840, and 655,360 to 8,294,400 pixels; above `2560x1440` is experimental. `complexity`
+      takes `low | medium | high` (default `high`).
+    - `output_format: "gif"` returns an animated GIF on both paths. `frame_count` is 2 to 16 (default
+      9) and `frame_duration_ms` is 20 to 2000 rounded to 10 (default 200); `size` names one frame.
+      Still images sent to the edits path guide the animation. GIF takes no streaming, partial
+      images, or `output_compression`.
+    - `output_format: "svg"` returns static SVG XML in `b64_json`, generations only, with `n` 1. An
+      SVG is not an edit input.
+    - In the backend, `output_format`, `frame_count`, and `frame_duration_ms` reach the request by
+      name. The response decodes each entry through `NFKImageCoding`, so a GIF yields its first
+      frame on `NFKOutputImage` and the whole file only inside `NFKRemoteBackendRawKey`. An SVG
+      fails to decode and the request fails with "the response's image could not be decoded".
 - **Transcription:** `whisper-1` and the `gpt-4o-*-transcribe` models shut down 2027-02-26 for
   `gpt-transcribe` (same path, no documented `verbose_json` / `segments[]`) or `gpt-live-transcribe`
   (Realtime only). `whisper-1` is also OpenAI's only `/audio/translations` model. Groq `whisper-large-v3`
@@ -522,6 +540,22 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
   terminal status (`requires_action` included). The stream is `?alt=sse` with `event_type` events;
   `step.delta {delta: {type: text, text}}` grows the text and the finished interaction is read back by
   the id from `interaction.created`.
+  - 2026-11-06 check (the Omni guide, `aistudio.google.com/docs/omni`; Omni 1.2 Flash generally
+    available 2026-11-05):
+    - `gemini-omni-1.2-flash` replaces `gemini-omni-1.1-flash`. From 2026-12-03 a 1.1 request routes
+      to 1.2 and bills at 1.2's rate. 720p costs $0.07 per second.
+    - `response_format` carries `duration` as a string of whole seconds, `"3s"` to `"15s"` (default
+      `"10s"`; over 15 is an invalid argument), and it overrides a length in the prompt.
+      `resolution` is `360p | 720p | 1080p | 4k` (default 720p); `aspect_ratio` is `16:9 | 9:16`.
+    - Inputs: up to 6 reference images (3 per character, 2 characters) as `image` blocks. Reference
+      videos of up to 3 s each: 3 for a 3–10 s clip, 1 for an 11–15 s clip, new generation only. An
+      edited video is a `video` block of 15 s or less; `previous_interaction_id` edits a generated one.
+    - Extension and first/last-frame interpolation take 3–10 s per turn, read the input's final 10 s,
+      and reach 30 s in total.
+    - The backend's video `response_format` writes `duration` from `NFKParameterDurationSeconds` as
+      whole seconds (`@15` → `"15s"`) beside `aspect_ratio` and `resolution`, and keeps the key out
+      of `generation_config`. It does not clamp the value; the service refuses one out of range.
+      Without the parameter the field is absent and the clip is the 10 s default.
   - 2026-10-13 audit (the API reference and the agent, long-decode, and video guides; the guides send
     `Api-Revision: 2026-05-20`, which the backend does not):
     - Top-level fields by parameter name: `service_tier` (`flex | standard | priority | deferred`),

@@ -295,6 +295,15 @@ Checked on 2026-10-16 and left alone:
   gated with manual approval) at 822B parameters and 1.6 TB bf16. Its dense sibling
   `meta-models/Muse-Glimmer-30B` (Apache-2.0, 29.8B) is the member that fits a 32 GB machine.
 
+Checked on 2026-11-06 and left alone:
+
+- **Kimi K3.1 Pro.** Open weights (`moonshotai/Kimi-K3.1-Pro`, created 2026-11-02, not gated) under
+  Moonshot's own `kimi-k3.1-pro` license, a modified MIT with conditions for large hosted services.
+  2.78T parameters in 96 MXFP4 shards, 1561.4 GB. The config is `kimi_k31` over a `kimi_linear` text
+  model: 93 layers, 7168 wide, 896 routed experts with 16 per token and 2 shared, sigmoid routing, and
+  a 1,048,576-token context. It exceeds a 32 GB machine at any precision. Remote use through the
+  `/chat/completions` presets is already covered.
+
 ## Text-to-speech candidates
 
 Surveyed on 2026-09-26 against the Hugging Face detail endpoint (`/api/models/<repo>?blobs=true`).
@@ -509,6 +518,21 @@ exact license on the specific checkpoint.
 - **Flux [dev], Kontext [dev], Flux.2 [dev].** FLUX Non-Commercial. Only Flux.1 [schnell] and
   Flux.2 [klein] 4B are Apache-2.0.
 - **Cohere Command-A, Aya-Vision.** CC-BY-NC, and both reduce to a covered decoder plus a SigLIP tower.
+- **The MiniMax H3 family** (checked 2026-11-06). Every release is under the MiniMax H3 Community
+  License, which grants nothing in its Excluded Territories: the European Union, the United Kingdom,
+  the Republic of Korea, and the United States. None is gated. The releases share one 33.12B
+  transformer (`MiniMaxH3Transformer3DModel`, diffusers 0.42 dev: 50 layers plus 2 refiner layers,
+  5376 wide, 56 heads, patch 1×2×2, an audio input), 66.28 GB in bf16.
+  - `MiniMaxAI/MiniMax-H3` (2026-07-28, 498.5 GB): text and image to video with audio.
+  - `PrunaAI/P-H3-Image` (2026-10-27, 99.9 GB): text to image and editing from 1 to 8 images.
+    Besides the transformer it carries an 8.9 GB text encoder, an 18.8 GB prompt upsampler, and a
+    5.6 GB autoencoder. Pruna's card gives about 21 GB of memory at 4 bits for an 8 MP image, so a
+    quantized transformer is the one H3 member that fits a 32 GB machine.
+  - `Pika-Labs/Pika-H3-Flex` (2026-10-29, 219.9 GB): a post-training of MiniMax-H3, carrying two
+    transformers (`transformer`, `transformer_ref`), a 66.7 GB text encoder, a video and an audio
+    autoencoder, and first/last-frame and reference adapters. `Pika-Labs/Pika-H3-Flex-Turbo-LoRA`
+    holds 2-, 4-, and 8-step distillation adapters. The open release covers 480p and 768p; higher
+    resolutions stay on Pika's API.
 
 ## Vendor verdicts
 
