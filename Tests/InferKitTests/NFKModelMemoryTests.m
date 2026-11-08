@@ -1009,6 +1009,15 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 						  @([NFKModelMemoryBudget leastWorkingSetHoldingByteCount:2820200000]));
 }
 
+- (void)testDerivingTheMinimumOfAMixtureCountsItsExpertsPaged
+{
+	NFKModelDescriptor *derived = [[self mixtureOfExperts] descriptorByDerivingMemoryFigures];
+	XCTAssertEqualObjects(derived.defaultVariant.peakByteCount, @(41 * NFKTestGiB));
+	XCTAssertEqualObjects(derived.defaultVariant.minimumMemoryByteCount,
+						  @([NFKModelMemoryBudget leastWorkingSetHoldingByteCount:(9 + 4) * NFKTestGiB]),
+						  @"the 9 GiB left resident and the 4 GiB expert cache of a paged load without a budget");
+}
+
 - (void)testDerivingInACatalogFindsTheDraftThere
 {
 	NFKModelStageFacts *draftStage = [NFKModelStageFacts stageWithIdentifier:@"decoder"

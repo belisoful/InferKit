@@ -2798,13 +2798,19 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	NSMutableDictionary<NSString *, id> *options = [defaults mutableCopy];
 	options[NFKModelLoadOptionVariant] = variant.identifier;
 	NFKModelMemoryEstimate *estimate = [self estimateForResolvedOptions:options memoryBudget:nil catalog:catalog];
+	NFKModelMemoryEstimate *least = estimate;
+	NSString *residencyKey = self.memoryModel.residencyOptionKey;
+	if (residencyKey != nil && [[self optionWithKey:residencyKey] choiceWithValue:NFKModelResidencyPaged] != nil) {
+		options[residencyKey] = NFKModelResidencyPaged;
+		least = [self estimateForResolvedOptions:options memoryBudget:nil catalog:catalog];
+	}
 	return [[NFKModelVariant alloc] initWithIdentifier:variant.identifier displayName:variant.displayName
 											 isDefault:variant.isDefault registryName:variant.registryName source:variant.source
 									 downloadByteCount:variant.downloadByteCount
 									 residentByteCount:variant.residentByteCount ?: @(estimate.residentByteCount)
 										 peakByteCount:variant.peakByteCount ?: @(estimate.peakByteCount)
 										parameterCount:variant.parameterCount precision:variant.precision
-								minimumMemoryByteCount:variant.minimumMemoryByteCount ?: @(estimate.minimumWorkingSetByteCount)
+								minimumMemoryByteCount:variant.minimumMemoryByteCount ?: @(least.minimumWorkingSetByteCount)
 											   license:variant.license memoryFacts:variant.memoryFacts
 											extensions:variant.extensions];
 }

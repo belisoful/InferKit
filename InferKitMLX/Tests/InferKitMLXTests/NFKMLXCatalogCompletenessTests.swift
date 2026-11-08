@@ -174,4 +174,20 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
                       "Docs/model-catalog.json differs from the catalog. Regenerate it from InferKitMLX/: "
                           + "swift run inferkit-catalog export --output ../Docs/model-catalog.json")
     }
+
+    func testTheCommittedTierSnapshotIsThePlannersFigures() throws {
+        NFKAppleModelDescriptors.includesMachineChoices = false
+        defer { NFKAppleModelDescriptors.includesMachineChoices = true }
+        let catalog = NFKModelCatalog()
+        for provider in Self.snapshotProviders {
+            XCTAssertTrue(catalog.addDescriptors(fromProviderClassName: provider), provider)
+        }
+        let generated = try catalog.memoryTierSnapshotData() + Data("\n".utf8)
+        let snapshot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Docs/model-memory-tiers.json")
+        let committed = try Data(contentsOf: snapshot)
+        XCTAssertTrue(generated == committed,
+                      "Docs/model-memory-tiers.json differs from the planner's figures. Regenerate it from InferKitMLX/: "
+                          + "swift run inferkit-catalog tiers --output ../Docs/model-memory-tiers.json")
+    }
 }

@@ -39,9 +39,56 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
             XCTAssertFalse(facts.stages.isEmpty, key)
             XCTAssertNotNil(facts.stages.first?.byteCountByPrecision[NFKModelPrecisionCheckpoint], key)
             XCTAssertNotNil(variant.residentByteCount, "\(key) has no derived resident figure")
+            let entry = try descriptor(row.model)
+            var pagedOptions: [String: Any] = [NFKModelLoadOptionResidency: NFKModelResidencyPaged]
+            if entry.variants.count > 1 {
+                pagedOptions[NFKModelLoadOptionVariant] = row.variant
+            }
+            let peak = entry.residencies.contains(NFKModelResidencyPaged)
+                ? try entry.estimatedMemory(forOptions: pagedOptions).peakByteCount
+                : variant.peakByteCount?.intValue ?? -1
             XCTAssertEqual(variant.minimumMemoryByteCount?.intValue,
-                           NFKModelMemoryBudget.leastWorkingSetHoldingByteCount(variant.peakByteCount?.intValue ?? -1), key)
+                           NFKModelMemoryBudget.leastWorkingSetHoldingByteCount(peak), key)
         }
+    }
+
+    func testEveryEntryThatPagesStatesItsExperts() throws {
+        for entry in NFKMLXModelDescriptors.entries where entry.residencies.contains(NFKModelResidencyPaged) {
+            let stages = try XCTUnwrap(try descriptor(entry.identifier).defaultVariant?.memoryFacts?.stages, entry.identifier)
+            XCTAssertTrue(stages.contains { !$0.pageableByteCountByPrecision.isEmpty }, entry.identifier)
+        }
+    }
+
+    func testAPagedMinimumIsTheUnpagedBytesAndTheExpertCache() throws {
+        let mixture = try descriptor("qwen3-30b-a3b")
+        let variant = try XCTUnwrap(mixture.defaultVariant)
+        let paged = try mixture.estimatedMemory(forOptions: [NFKModelLoadOptionResidency: NFKModelResidencyPaged])
+        XCTAssertEqual(paged.residency, NFKModelResidencyPaged)
+        XCTAssertLessThan(paged.peakByteCount, variant.peakByteCount?.intValue ?? 0)
+        XCTAssertEqual(variant.minimumMemoryByteCount?.intValue,
+                       NFKModelMemoryBudget.leastWorkingSetHoldingByteCount(paged.peakByteCount))
+        XCTAssertEqual(mixture.requirements.minimumMemoryByteCount, variant.minimumMemoryByteCount)
+    }
+
+    func testEachWanExpertAndAnimateTransformerStreamsItsBlocks() throws {
+        let expert = try XCTUnwrap(try descriptor("wan2.2-t2v-a14b").defaultVariant?.memoryFacts)
+        XCTAssertEqual(expert.stages.map(\.identifier), ["text_encoder", "vae", "transformer", "transformer_2"])
+        XCTAssertEqual(expert.stages.map(\.layerCount), [0, 0, 40, 40])
+        XCTAssertEqual(expert.stages.map { $0.quantizableElementCount > 0 }, [false, false, true, true])
+        let animate = try XCTUnwrap(try descriptor("wan2.2-animate-14b").defaultVariant?.memoryFacts)
+        XCTAssertEqual(animate.stages.map(\.identifier), ["text_encoder", "transformer"])
+        XCTAssertEqual(animate.stages.map(\.layerCount), [0, 40])
+    }
+
+    // 48 blocks in each T5 stack, less block 0 of each and the other stream's read ahead.
+    func testMADLADStreamsBothT5StacksAndHoldsWhatItsLoaderHolds() throws {
+        let facts = try XCTUnwrap(try descriptor("madlad400-7b-mt").defaultVariant?.memoryFacts)
+        XCTAssertEqual(facts.stages.first?.layerCount, 93)
+        let stage = try XCTUnwrap(facts.stages.first)
+        let held = (stage.byteCountByPrecision[NFKModelPrecisionBFloat16]?.intValue ?? 0)
+            - (stage.layerByteCountByPrecision[NFKModelPrecisionBFloat16]?.intValue ?? 0)
+        // The embedding, the head, and three blocks at bfloat16, as the release's headers size them.
+        XCTAssertGreaterThanOrEqual(held, 2 * 1_048_576_000 + 3 * 167_785_472)
     }
 
     // Wan's precision option converts its transformer alone: the transformer stage's figure at each precision

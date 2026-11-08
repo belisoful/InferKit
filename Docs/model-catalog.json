@@ -5235,7 +5235,7 @@
       ],
       "registryName" : "deepseek-v4-flash-0731",
       "requirements" : {
-        "minimumMemoryBytes" : 208708305163,
+        "minimumMemoryBytes" : 28540743224,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -5278,7 +5278,7 @@
             ],
             "vocabularySize" : 129280
           },
-          "minimumMemoryBytes" : 208708305163,
+          "minimumMemoryBytes" : 28540743224,
           "parameterCount" : 165265454782,
           "peakBytes" : 173107092092,
           "precision" : "float8_e4m3",
@@ -5584,7 +5584,7 @@
       ],
       "registryName" : "deepseek-v4-pro-0813",
       "requirements" : {
-        "minimumMemoryBytes" : 1083287187826,
+        "minimumMemoryBytes" : 73654066848,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -5627,7 +5627,7 @@
             ],
             "vocabularySize" : 129280
           },
-          "minimumMemoryBytes" : 1083287187826,
+          "minimumMemoryBytes" : 73654066848,
           "parameterCount" : 889484881098,
           "peakBytes" : 916499142356,
           "precision" : "float8_e4m3",
@@ -5942,7 +5942,7 @@
       ],
       "registryName" : "deepseek-v4.1-flash",
       "requirements" : {
-        "minimumMemoryBytes" : 845307763563,
+        "minimumMemoryBytes" : 502128576664,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -5986,7 +5986,7 @@
             ],
             "vocabularySize" : 129280
           },
-          "minimumMemoryBytes" : 845307763563,
+          "minimumMemoryBytes" : 502128576664,
           "parameterCount" : 508182659298,
           "peakBytes" : 714216631732,
           "precision" : "float8_e4m3",
@@ -14259,7 +14259,7 @@
       ],
       "registryName" : "gemma-4-26b-a4b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 126492602495,
+        "minimumMemoryBytes" : 24072633290,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -14303,7 +14303,7 @@
             ],
             "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 126492602495,
+          "minimumMemoryBytes" : 24072633290,
           "parameterCount" : 25805936206,
           "peakBytes" : 103223744824,
           "precision" : "bfloat16",
@@ -16647,7 +16647,7 @@
       ],
       "registryName" : "gpt-oss-20b",
       "requirements" : {
-        "minimumMemoryBytes" : 21479480772,
+        "minimumMemoryBytes" : 14572834485,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16693,7 +16693,7 @@
             ],
             "vocabularySize" : 201088
           },
-          "minimumMemoryBytes" : 21479480772,
+          "minimumMemoryBytes" : 14572834485,
           "parameterCount" : 11956805184,
           "peakBytes" : 13962591360,
           "precision" : "bfloat16",
@@ -17249,8 +17249,8 @@
             },
             {
               "memory" : {
-                "peakBytes" : 13878074496,
-                "residentBytes" : 13878074496
+                "peakBytes" : 6093446272,
+                "residentBytes" : 6093446272
               },
               "title" : "Paged",
               "value" : "paged"
@@ -17322,7 +17322,7 @@
       ],
       "registryName" : "granite-4.0-h-tiny",
       "requirements" : {
-        "minimumMemoryBytes" : 21380049168,
+        "minimumMemoryBytes" : 12221663022,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -17355,12 +17355,17 @@
                   "float32" : 27756148992
                 },
                 "id" : "decoder",
+                "pageableBytesByPrecision" : {
+                  "bfloat16" : 12079595520,
+                  "checkpoint" : 12079595520,
+                  "float32" : 24159191040
+                },
                 "title" : "decoder"
               }
             ],
             "vocabularySize" : 100352
           },
-          "minimumMemoryBytes" : 21380049168,
+          "minimumMemoryBytes" : 12221663022,
           "parameterCount" : 6939037248,
           "peakBytes" : 13878074496,
           "precision" : "bfloat16",
@@ -21165,7 +21170,7 @@
       ],
       "registryName" : "hy-mt2-30b-a3b",
       "requirements" : {
-        "minimumMemoryBytes" : 75793448358,
+        "minimumMemoryBytes" : 14053293478,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -21209,7 +21214,7 @@
             ],
             "vocabularySize" : 120832
           },
-          "minimumMemoryBytes" : 75793448358,
+          "minimumMemoryBytes" : 14053293478,
           "parameterCount" : 30064725888,
           "peakBytes" : 60129463808,
           "precision" : "bfloat16",
@@ -28129,8 +28134,8 @@
             },
             {
               "memory" : {
-                "peakBytes" : 5880748032,
-                "residentBytes" : 5880748032
+                "peakBytes" : 1468046336,
+                "residentBytes" : 1468046336
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -28230,6 +28235,17 @@
                   "float32" : 11761496064
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 83893248,
+                  "checkpoint" : 167786496,
+                  "float32" : 167786496
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 4580488192,
+                  "checkpoint" : 9160976384,
+                  "float32" : 9160976384
+                },
+                "layerCount" : 61,
                 "title" : "decoder"
               }
             ],
@@ -28380,8 +28396,8 @@
             },
             {
               "memory" : {
-                "peakBytes" : 16593659904,
-                "residentBytes" : 16593659904
+                "peakBytes" : 2936087552,
+                "residentBytes" : 2936087552
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -28481,6 +28497,17 @@
                   "float32" : 33187319808
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 167785472,
+                  "checkpoint" : 335570944,
+                  "float32" : 335570944
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 13993143296,
+                  "checkpoint" : 27986286592,
+                  "float32" : 27986286592
+                },
+                "layerCount" : 93,
                 "title" : "decoder"
               }
             ],
@@ -30762,7 +30789,7 @@
       ],
       "registryName" : "mixtral-8x7b-instruct",
       "requirements" : {
-        "minimumMemoryBytes" : 115573439549,
+        "minimumMemoryBytes" : 14515385525,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -30808,7 +30835,7 @@
             ],
             "vocabularySize" : 32000
           },
-          "minimumMemoryBytes" : 115573439549,
+          "minimumMemoryBytes" : 14515385525,
           "parameterCount" : 46702792704,
           "peakBytes" : 93942456320,
           "precision" : "bfloat16",
@@ -38325,7 +38352,7 @@
       ],
       "registryName" : "qwen1.5-moe-a2.7b",
       "requirements" : {
-        "minimumMemoryBytes" : 39684520057,
+        "minimumMemoryBytes" : 15426639511,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -38371,7 +38398,7 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 39684520057,
+          "minimumMemoryBytes" : 15426639511,
           "parameterCount" : 14315784192,
           "peakBytes" : 29436874752,
           "precision" : "bfloat16",
@@ -41891,7 +41918,7 @@
       ],
       "registryName" : "qwen3-30b-a3b",
       "requirements" : {
-        "minimumMemoryBytes" : 77366900857,
+        "minimumMemoryBytes" : 14205617092,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -41938,7 +41965,7 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 77366900857,
+          "minimumMemoryBytes" : 14205617092,
           "parameterCount" : 30532122624,
           "peakBytes" : 61466898432,
           "precision" : "bfloat16",
@@ -44419,7 +44446,7 @@
       ],
       "registryName" : "qwen3-vl-30b-a3b",
       "requirements" : {
-        "minimumMemoryBytes" : 151268215793,
+        "minimumMemoryBytes" : 19892745563,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -44462,7 +44489,7 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 151268215793,
+          "minimumMemoryBytes" : 19892745563,
           "parameterCount" : 31070754032,
           "peakBytes" : 124283016128,
           "precision" : "bfloat16",
@@ -48492,7 +48519,7 @@
       ],
       "registryName" : "qwen4-exp",
       "requirements" : {
-        "minimumMemoryBytes" : 428582271088,
+        "minimumMemoryBytes" : 143488026495,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -48536,7 +48563,7 @@
             ],
             "vocabularySize" : 248320
           },
-          "minimumMemoryBytes" : 428582271088,
+          "minimumMemoryBytes" : 143488026495,
           "parameterCount" : 179999981459,
           "peakBytes" : 359999963128,
           "precision" : "bfloat16",
@@ -75716,16 +75743,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 45920680524,
-                "residentBytes" : 45920680524
+                "peakBytes" : 33297327692,
+                "residentBytes" : 33297327692
               },
               "title" : "Staged",
               "value" : "staged"
             },
             {
               "memory" : {
-                "peakBytes" : 45920680524,
-                "residentBytes" : 45920680524
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -75743,16 +75770,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 45920680524,
-                "residentBytes" : 45920680524
+                "peakBytes" : 33297327692,
+                "residentBytes" : 33297327692
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 91333790924,
-                "residentBytes" : 91333790924
+                "peakBytes" : 66087085260,
+                "residentBytes" : 66087085260
               },
               "title" : "Float32",
               "value" : "float32"
@@ -75770,56 +75797,56 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 45920680524,
-                "residentBytes" : 45920680524
+                "peakBytes" : 33297327692,
+                "residentBytes" : 33297327692
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 24710932044,
-                "residentBytes" : 24710932044
+                "peakBytes" : 18003068492,
+                "residentBytes" : 18003068492
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 19054999116,
-                "residentBytes" : 19054999116
+                "peakBytes" : 13924599372,
+                "residentBytes" : 13924599372
               },
               "title" : "6-bit",
               "value" : 6
             },
             {
               "memory" : {
-                "peakBytes" : 16227032652,
-                "residentBytes" : 16227032652
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "5-bit",
               "value" : 5
             },
             {
               "memory" : {
-                "peakBytes" : 13399066188,
-                "residentBytes" : 13399066188
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "4-bit",
               "value" : 4
             },
             {
               "memory" : {
-                "peakBytes" : 10571099724,
-                "residentBytes" : 10571099724
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "3-bit",
               "value" : 3
             },
             {
               "memory" : {
-                "peakBytes" : 7743133260,
-                "residentBytes" : 7743133260
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "2-bit",
               "value" : 2
@@ -75868,7 +75895,7 @@
       ],
       "registryName" : "wan2.2-animate-14b",
       "requirements" : {
-        "minimumMemoryBytes" : 59077232730,
+        "minimumMemoryBytes" : 44226229398,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -75897,22 +75924,42 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 45666895462,
-                  "checkpoint" : 45920680524,
-                  "float32" : 91333790924
+                  "bfloat16" : 12623352832,
+                  "checkpoint" : 12623352832,
+                  "float32" : 25246705664
                 },
-                "id" : "model",
-                "quantizableElements" : 22623731712,
-                "title" : "model"
+                "id" : "text_encoder",
+                "title" : "text_encoder, image_encoder"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 33043542630,
+                  "checkpoint" : 33297327692,
+                  "float32" : 66087085260
+                },
+                "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 807676928,
+                  "checkpoint" : 807676928,
+                  "float32" : 1615353856
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 32307077120,
+                  "checkpoint" : 32307077120,
+                  "float32" : 64614154240
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 16313876480,
+                "title" : "transformer, vae"
               }
             ]
           },
-          "minimumMemoryBytes" : 59077232730,
+          "minimumMemoryBytes" : 44226229398,
           "parameterCount" : 22833447731,
-          "peakBytes" : 45920680524,
+          "peakBytes" : 33297327692,
           "precision" : "bfloat16",
           "registryName" : "wan2.2-animate-14b",
-          "residentBytes" : 45920680524,
+          "residentBytes" : 33297327692,
           "source" : {
             "files" : [
               {
@@ -76173,16 +76220,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 45920680524,
-                "residentBytes" : 45920680524
+                "peakBytes" : 33297327692,
+                "residentBytes" : 33297327692
               },
               "title" : "Staged",
               "value" : "staged"
             },
             {
               "memory" : {
-                "peakBytes" : 45920680524,
-                "residentBytes" : 45920680524
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -76200,16 +76247,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 45920680524,
-                "residentBytes" : 45920680524
+                "peakBytes" : 33297327692,
+                "residentBytes" : 33297327692
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 91333790924,
-                "residentBytes" : 91333790924
+                "peakBytes" : 66087085260,
+                "residentBytes" : 66087085260
               },
               "title" : "Float32",
               "value" : "float32"
@@ -76227,56 +76274,56 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 45920680524,
-                "residentBytes" : 45920680524
+                "peakBytes" : 33297327692,
+                "residentBytes" : 33297327692
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 24710932044,
-                "residentBytes" : 24710932044
+                "peakBytes" : 18003068492,
+                "residentBytes" : 18003068492
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 19054999116,
-                "residentBytes" : 19054999116
+                "peakBytes" : 13924599372,
+                "residentBytes" : 13924599372
               },
               "title" : "6-bit",
               "value" : 6
             },
             {
               "memory" : {
-                "peakBytes" : 16227032652,
-                "residentBytes" : 16227032652
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "5-bit",
               "value" : 5
             },
             {
               "memory" : {
-                "peakBytes" : 13399066188,
-                "residentBytes" : 13399066188
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "4-bit",
               "value" : 4
             },
             {
               "memory" : {
-                "peakBytes" : 10571099724,
-                "residentBytes" : 10571099724
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "3-bit",
               "value" : 3
             },
             {
               "memory" : {
-                "peakBytes" : 7743133260,
-                "residentBytes" : 7743133260
+                "peakBytes" : 12623352832,
+                "residentBytes" : 12623352832
               },
               "title" : "2-bit",
               "value" : 2
@@ -76325,7 +76372,7 @@
       ],
       "registryName" : "wan2.2-animate-14b-distilled",
       "requirements" : {
-        "minimumMemoryBytes" : 59077232730,
+        "minimumMemoryBytes" : 44226229398,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -76354,22 +76401,42 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 45666895462,
-                  "checkpoint" : 45920680524,
-                  "float32" : 91333790924
+                  "bfloat16" : 12623352832,
+                  "checkpoint" : 12623352832,
+                  "float32" : 25246705664
                 },
-                "id" : "model",
-                "quantizableElements" : 22623731712,
-                "title" : "model"
+                "id" : "text_encoder",
+                "title" : "text_encoder, image_encoder"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 33043542630,
+                  "checkpoint" : 33297327692,
+                  "float32" : 66087085260
+                },
+                "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 807676928,
+                  "checkpoint" : 807676928,
+                  "float32" : 1615353856
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 32307077120,
+                  "checkpoint" : 32307077120,
+                  "float32" : 64614154240
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 16313876480,
+                "title" : "transformer, vae"
               }
             ]
           },
-          "minimumMemoryBytes" : 59077232730,
+          "minimumMemoryBytes" : 44226229398,
           "parameterCount" : 22833447731,
-          "peakBytes" : 45920680524,
+          "peakBytes" : 33297327692,
           "precision" : "bfloat16",
           "registryName" : "wan2.2-animate-14b-distilled",
-          "residentBytes" : 45920680524,
+          "residentBytes" : 33297327692,
           "source" : {
             "files" : [
               {
@@ -76532,7 +76599,11 @@
       },
       "memoryModel" : {
         "quantizationBits" : "quantizationBits",
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "bfloat16",
+          "vae" : "float32"
+        }
       },
       "options" : [
         {
@@ -76625,16 +76696,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 126180600268,
-                "residentBytes" : 126180600268
+                "peakBytes" : 57155604736,
+                "residentBytes" : 57155604736
               },
               "title" : "Staged",
               "value" : "staged"
             },
             {
               "memory" : {
-                "peakBytes" : 126180600268,
-                "residentBytes" : 126180600268
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -76652,56 +76723,56 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 126180600268,
-                "residentBytes" : 126180600268
+                "peakBytes" : 57155604736,
+                "residentBytes" : 57155604736
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 26942445004,
-                "residentBytes" : 26942445004
+                "peakBytes" : 15880069376,
+                "residentBytes" : 15880069376
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 18496644556,
-                "residentBytes" : 18496644556
+                "peakBytes" : 12367257856,
+                "residentBytes" : 12367257856
               },
               "title" : "6-bit",
               "value" : 6
             },
             {
               "memory" : {
-                "peakBytes" : 14273744332,
-                "residentBytes" : 14273744332
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "5-bit",
               "value" : 5
             },
             {
               "memory" : {
-                "peakBytes" : 10050844108,
-                "residentBytes" : 10050844108
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "4-bit",
               "value" : 4
             },
             {
               "memory" : {
-                "peakBytes" : 5827943884,
-                "residentBytes" : 5827943884
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "3-bit",
               "value" : 3
             },
             {
               "memory" : {
-                "peakBytes" : 1605043660,
-                "residentBytes" : 1605043660
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "2-bit",
               "value" : 2
@@ -76741,7 +76812,7 @@
       ],
       "registryName" : "wan2.2-i2v-a14b",
       "requirements" : {
-        "minimumMemoryBytes" : 153500667723,
+        "minimumMemoryBytes" : 72294790626,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -76770,22 +76841,73 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 68771210470,
-                  "checkpoint" : 126180600268,
-                  "float32" : 137542420940
+                  "bfloat16" : 11361820672,
+                  "checkpoint" : 11361820672,
+                  "float32" : 22723641344
                 },
-                "id" : "model",
-                "quantizableElements" : 33783201792,
-                "title" : "model"
+                "id" : "text_encoder",
+                "title" : "text_encoder",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 253785062,
+                  "checkpoint" : 507570124,
+                  "float32" : 507570124
+                },
+                "id" : "vae",
+                "title" : "vae"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 28577802368,
+                  "checkpoint" : 57155604736,
+                  "float32" : 57155604736
+                },
+                "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 1405577216,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 56223088640,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14051246080,
+                "title" : "transformer"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 28577802368,
+                  "checkpoint" : 57155604736,
+                  "float32" : 57155604736
+                },
+                "id" : "transformer_2",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 1405577216,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 56223088640,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14051246080,
+                "title" : "transformer_2"
               }
             ]
           },
-          "minimumMemoryBytes" : 153500667723,
+          "minimumMemoryBytes" : 72294790626,
           "parameterCount" : 34385605235,
-          "peakBytes" : 126180600268,
+          "peakBytes" : 57155604736,
           "precision" : "float32",
           "registryName" : "wan2.2-i2v-a14b",
-          "residentBytes" : 126180600268,
+          "residentBytes" : 57155604736,
           "source" : {
             "files" : [
               {
@@ -76927,7 +77049,11 @@
       },
       "memoryModel" : {
         "quantizationBits" : "quantizationBits",
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "bfloat16",
+          "vae" : "float32"
+        }
       },
       "options" : [
         {
@@ -77020,16 +77146,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 126177323468,
-                "residentBytes" : 126177323468
+                "peakBytes" : 57153966336,
+                "residentBytes" : 57153966336
               },
               "title" : "Staged",
               "value" : "staged"
             },
             {
               "memory" : {
-                "peakBytes" : 126177323468,
-                "residentBytes" : 126177323468
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -77047,56 +77173,56 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 126177323468,
-                "residentBytes" : 126177323468
+                "peakBytes" : 57153966336,
+                "residentBytes" : 57153966336
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 26939168204,
-                "residentBytes" : 26939168204
+                "peakBytes" : 15878430976,
+                "residentBytes" : 15878430976
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 18493367756,
-                "residentBytes" : 18493367756
+                "peakBytes" : 12365619456,
+                "residentBytes" : 12365619456
               },
               "title" : "6-bit",
               "value" : 6
             },
             {
               "memory" : {
-                "peakBytes" : 14270467532,
-                "residentBytes" : 14270467532
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "5-bit",
               "value" : 5
             },
             {
               "memory" : {
-                "peakBytes" : 10047567308,
-                "residentBytes" : 10047567308
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "4-bit",
               "value" : 4
             },
             {
               "memory" : {
-                "peakBytes" : 5824667084,
-                "residentBytes" : 5824667084
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "3-bit",
               "value" : 3
             },
             {
               "memory" : {
-                "peakBytes" : 1601766860,
-                "residentBytes" : 1601766860
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
               },
               "title" : "2-bit",
               "value" : 2
@@ -77136,7 +77262,7 @@
       ],
       "registryName" : "wan2.2-t2v-a14b",
       "requirements" : {
-        "minimumMemoryBytes" : 153496812664,
+        "minimumMemoryBytes" : 72292863097,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -77165,22 +77291,73 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 68769572070,
-                  "checkpoint" : 126177323468,
-                  "float32" : 137539144140
+                  "bfloat16" : 11361820672,
+                  "checkpoint" : 11361820672,
+                  "float32" : 22723641344
                 },
-                "id" : "model",
-                "quantizableElements" : 33783201792,
-                "title" : "model"
+                "id" : "text_encoder",
+                "title" : "text_encoder",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 253785062,
+                  "checkpoint" : 507570124,
+                  "float32" : 507570124
+                },
+                "id" : "vae",
+                "title" : "vae"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 28576983168,
+                  "checkpoint" : 57153966336,
+                  "float32" : 57153966336
+                },
+                "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 1405577216,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 56223088640,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14051246080,
+                "title" : "transformer"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 28576983168,
+                  "checkpoint" : 57153966336,
+                  "float32" : 57153966336
+                },
+                "id" : "transformer_2",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 1405577216,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 56223088640,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14051246080,
+                "title" : "transformer_2"
               }
             ]
           },
-          "minimumMemoryBytes" : 153496812664,
+          "minimumMemoryBytes" : 72292863097,
           "parameterCount" : 34384786035,
-          "peakBytes" : 126177323468,
+          "peakBytes" : 57153966336,
           "precision" : "float32",
           "registryName" : "wan2.2-t2v-a14b",
-          "residentBytes" : 126177323468,
+          "residentBytes" : 57153966336,
           "source" : {
             "files" : [
               {

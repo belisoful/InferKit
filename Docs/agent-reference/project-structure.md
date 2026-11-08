@@ -70,6 +70,7 @@ The full repository tree with per-directory notes.
 ├── Docs/                            # Consumer documents the README links to: inference-guide, examples,
 │                                    #   installation, coreml-llm, companions, model-index, model-parity,
 │                                    #   model-catalog, mlx-runtime-hazards, porting-candidates;
+│                                    #   model-memory-tiers.json is the planner's figures `inferkit-catalog tiers` writes
 │                                    #   model-catalog.json is the catalog snapshot `inferkit-catalog export` writes
 ├── Docs/agent-reference/            # Auxiliary maintainer notes behind AGENTS.md / CLAUDE.md, one file
 │                                    #   per subject; README.md there is the index

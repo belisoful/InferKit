@@ -389,7 +389,9 @@ figure is therefore (`+[NFKModelMemoryBudget leastWorkingSetHoldingByteCount:]`)
 - a peak of 4 GiB or more → the peak plus 4 GiB, divided by 0.85.
 - a smaller peak → twice the peak, divided by 0.85.
 
-A model that stages, pages, or streams counts only what one stage holds at once.
+A model that stages or streams counts what one stage holds at once whole. A model that pages counts
+what one stage holds with its routed experts paged, and the expert cache a paged load holds without a
+budget, up to 4 GiB. A streamed load's least memory is the figure of its `streamed` residency choice.
 
 `-[NFKModelRequirements problemForHardwareProfile:]` names the first requirement a machine does not
 meet, or returns nil. The checks run in this order, and `unmetReason` replaces the sentence:
@@ -1277,7 +1279,7 @@ a generated table the descriptors read when they are built.
 | `parameterCount` | The elements of the safetensors tensors the download holds, read from each file's header. A variant with a weight file in another format (a pickle, a GGUF, an archive), or a header the repository refuses, has none. A packed format counts its stored elements. |
 | `memoryFacts` | Each stage's tensor bytes at the checkpoint's types, at float32, and at bfloat16, with the figures the model's loader acts on. [Memory facts and load options](#memory-facts-and-load-options) lists them. |
 | `residentBytes`, `peakBytes` | The [estimate](#the-estimate) at the default options: the weights at the precision the loader holds them in, and a decoder's key-value cache at its default context length. A variant without memory facts takes the tensor bytes at the loader's precision. The load overhead is not measured, so the peak is the resident figure. |
-| `minimumMemoryBytes` | The least working set whose residency budget admits the peak beside that budget's reserve: the peak plus 4 GiB from a peak of 4 GiB, twice the peak below it, divided by 0.85. A staged model counts its largest stage. |
+| `minimumMemoryBytes` | The least working set whose residency budget admits the peak beside that budget's reserve: the peak plus 4 GiB from a peak of 4 GiB, twice the peak below it, divided by 0.85. A staged model counts its largest stage, and a model that pages counts the figure of its `paged` residency choice. |
 | `precision` | The floating type that holds the most stored tensor bytes, where the entry states none. |
 
 A measured variant can carry these extension fields:

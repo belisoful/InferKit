@@ -21,8 +21,8 @@ to prevent. Update all of these, in the modality's existing section, mirroring t
   and source files; a file from another repository names it, and a variant under another license
   names it. Register any name without a `register()` in that file's `registerAdditionalModels()`. Then
   regenerate the measurements and the snapshot: `python3 -I Tools/catalog/measure.py` from the
-  repository root, then `swift run inferkit-catalog export --output ../Docs/model-catalog.json` from
-  `InferKitMLX/`. A new loader precision or stage split goes in `NFKMLXLoadPlan` (`NFKMLXCatalogMeasurement.swift`),
+  repository root, then `swift run inferkit-catalog export --output ../Docs/model-catalog.json` and
+  `swift run inferkit-catalog tiers --output ../Docs/model-memory-tiers.json` from `InferKitMLX/`. A new loader precision or stage split goes in `NFKMLXLoadPlan` (`NFKMLXCatalogMeasurement.swift`),
   and a source the measurement cannot size goes in `NFKMLXCatalogCompletenessTests.unsizedSources`
   with its reason. See "Model catalog" in `mlx-companion.md`.
 - `Docs/model-parity.md` — the parity row with the real recorded numbers (capture them by temporarily

@@ -8,6 +8,7 @@
 //
 //      swift run inferkit-catalog export [--output FILE]
 //      swift run inferkit-catalog sources [--output FILE]
+//      swift run inferkit-catalog tiers [--output FILE]
 //
 
 import Foundation
@@ -17,9 +18,11 @@ import InferKitMLX
 let usage = """
     usage: inferkit-catalog export [--output FILE]
            inferkit-catalog sources [--output FILE]
+           inferkit-catalog tiers [--output FILE]
 
     export   the shared catalog's manifest, the bytes Docs/model-catalog.json holds
     sources  the Hugging Face and URL sources of every variant, with their files, as JSON
+    tiers    the planner's figures per variant on Macs of 8, 16, 24, and 32 GB, the bytes Docs/model-memory-tiers.json holds
     """
 
 /// A source's fields as JSON, with the file fields measure.py reads.
@@ -97,6 +100,8 @@ do {
         try write(try catalog.manifestData(), to: output)
     case "sources":
         try write(try sourcesData(catalog), to: output)
+    case "tiers":
+        try write(try catalog.memoryTierSnapshotData(), to: output)
     default:
         fail(usage)
     }

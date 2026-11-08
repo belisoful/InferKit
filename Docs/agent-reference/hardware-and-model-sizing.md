@@ -89,6 +89,15 @@ The cache is process-wide, which makes test order matter: a suite that measures 
 would have every later reading report that. `resetMeasuredBandwidth()` is why the reporting test
 starts by clearing it.
 
+## The four Mac sizes
+
+`Docs/model-memory-tiers.json` is the planner's answer for each catalog variant at its default options on
+Macs of 8, 16, 24, and 32 GB, as `residency peakBytes fits|refused`. The working sets are two thirds of the
+memory at 8, 16, and 24 GB, which is assumed, and the 26.8 GB an M1 Max with 32 GB reports. They leave 2.43,
+5.44, 10.30, and 18.48 GB beside the reserve. `NFKMLXCatalogCompletenessTests` compares the file with the
+planner, and `swift run inferkit-catalog tiers --output ../Docs/model-memory-tiers.json` from `InferKitMLX/`
+regenerates it. A diff in the file is the list of entries whose fit changed.
+
 ## Neural accelerators, and how to measure them
 
 Apple silicon carries matrix units ("NAX" in MLX) from the M5 on. `NFKHardwareProfile` reports

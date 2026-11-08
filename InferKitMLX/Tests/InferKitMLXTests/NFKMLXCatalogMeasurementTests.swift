@@ -90,7 +90,9 @@ final class NFKMLXCatalogMeasurementTests: XCTestCase {
         let staged = [NFKMLXFlux.modelName, "flux.1-dev", NFKMLXFluxControlNetGenerator.modelName, NFKMLXFlux2.modelName,
                       NFKMLXSD3Generator.modelName, NFKMLXSD3ControlNetGenerator.modelName, NFKMLXSANAGenerator.modelName,
                       NFKMLXZImageGenerator.modelName, NFKMLXQwenImageGenerator.modelName,
-                      NFKMLXLTXVideoGenerator.modelName, NFKMLXWanVideoGenerator.modelName, NFKMLXMusic3.modelName]
+                      NFKMLXLTXVideoGenerator.modelName, NFKMLXWanVideoGenerator.modelName, NFKMLXMusic3.modelName,
+                      "wan2.2-t2v-a14b", "wan2.2-i2v-a14b", NFKMLXWanAnimateGenerator.modelName,
+                      NFKMLXWanAnimateGenerator.distilledModelName]
         let entries = NFKMLXModelDescriptors.entries
         for name in staged {
             let entry = try XCTUnwrap(entries.first { $0.identifier == name }, name)

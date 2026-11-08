@@ -114,9 +114,11 @@ struct NFKMLXLoadProfile {
     var drafts = false
     /// The stages that take a wider precision where the budget holds it, keyed by stage identifier.
     var widenedStages: [String: String] = [:]
-    /// The one stage whose repeated layers a streamed load leaves in the release, or nil where every
-    /// stage with repeated layers streams.
-    var streamedStage: String? = nil
+    /// The stages whose repeated layers a streamed load leaves in the release and a quantized load packs,
+    /// empty where every stage with repeated layers does.
+    var streamedStages: Set<String> = []
+    /// The repeated layers a streamed load holds whatever its budget.
+    var heldLayerCount = 0
     /// The identifier of the single stage of a model that does not stage.
     var stageIdentifier = "model"
     /// True where a suggested preset halves the sampling steps.
@@ -142,10 +144,12 @@ struct NFKMLXLoadProfile {
     /// A decoder that streams the repeated layers it cannot hold: Gemma 3, Gemma 4, MADLAD-400,
     /// TranslateGemma, Qwen3-VL, Pixtral.
     static func streamedDecoder(precisions: [String], defaultPrecision: String, contextLength: Int?,
-                                keyValue: NFKMLXKeyValueRule?, drafts: Bool = false,
+                                keyValue: NFKMLXKeyValueRule?, drafts: Bool = false, heldLayerCount: Int = 0,
                                 tasks: Set<String>) -> NFKMLXLoadProfile {
-        decoder(precisions: precisions, defaultPrecision: defaultPrecision, contextLength: contextLength,
-                keyValue: keyValue, drafts: drafts, tasks: tasks)
+        var profile = decoder(precisions: precisions, defaultPrecision: defaultPrecision, contextLength: contextLength,
+                              keyValue: keyValue, drafts: drafts, tasks: tasks)
+        profile.heldLayerCount = heldLayerCount
+        return profile
     }
 
     /// A decoder whose only load choice is how it holds its routed experts, with the cache defaults where
@@ -160,9 +164,9 @@ struct NFKMLXLoadProfile {
     /// precision from its load plan, and the stages that widen. `precisions` offers a choice for
     /// `precisionStage` alone.
     static func diffusionPipeline(widenedStages: [String: String] = [:], precisions: [String] = [],
-                                  precisionStage: String? = nil, streamedStage: String? = nil) -> NFKMLXLoadProfile {
+                                  precisionStage: String? = nil, streamedStages: Set<String> = []) -> NFKMLXLoadProfile {
         NFKMLXLoadProfile(precisions: precisions, defaultPrecision: NFKModelPrecisionCheckpoint,
-                          precisionStage: precisionStage, widenedStages: widenedStages, streamedStage: streamedStage,
+                          precisionStage: precisionStage, widenedStages: widenedStages, streamedStages: streamedStages,
                           halvesSteps: true)
     }
 
@@ -215,10 +219,11 @@ struct NFKMLXLoadProfile {
                      defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true, contextLength: nil, keyValue: nil,
                      tasks: [NFKModelTaskTranslation]),
         ],
+        // Block 0 of each stack and the other stream's read ahead stay held.
         "madlad": [
             .streamedDecoder(precisions: [NFKModelPrecisionBFloat16, NFKModelPrecisionFloat32],
                              defaultPrecision: NFKModelPrecisionBFloat16, contextLength: nil, keyValue: nil,
-                             tasks: [NFKModelTaskTranslation]),
+                             heldLayerCount: 3, tasks: [NFKModelTaskTranslation]),
         ],
         // These generation backends read no cache parameter, so they declare no context or cache option.
         "gemma3n": [.decoder(contextLength: nil, keyValue: nil)],
@@ -274,7 +279,7 @@ struct NFKMLXLoadProfile {
         // The text encoder and umT5 widen to float32 where the budget holds them.
         "flux2": [.diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32])],
         "wan": [.diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32])],
-        "stable-diffusion-3": [.diffusionPipeline(streamedStage: "transformer")],
+        "stable-diffusion-3": [.diffusionPipeline(streamedStages: ["transformer"])],
         // The transformer takes the precision option and a runtime weight quantization where it is held
         // whole; the text encoder widens where the budget holds it, and both stream their layers.
         "ltx-2": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
@@ -293,11 +298,12 @@ struct NFKMLXLoadProfile {
         // packs the blocks' linear layers to 2 to 8 bits.
         "wan-animate": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                           defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true,
-                                          streamedStage: "transformer", halvesSteps: true)],
+                                          streamedStages: ["transformer"], halvesSteps: true)],
         // Wan 2.2 A14B stores both experts at float32, streams the blocks of an expert it cannot hold, or packs
         // the blocks' linear layers to 2 to 8 bits.
         "wan-a14b": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint], defaultPrecision: NFKModelPrecisionCheckpoint,
-                                       quantizes: true, streamedStage: "transformer", halvesSteps: true)],
+                                       quantizes: true, widenedStages: ["text_encoder": NFKModelPrecisionFloat32],
+                                       streamedStages: ["transformer", "transformer_2"], halvesSteps: true)],
         "minimax-music": [.diffusionPipeline()],
         "stable-audio": [.diffusionPipeline()],
     ]

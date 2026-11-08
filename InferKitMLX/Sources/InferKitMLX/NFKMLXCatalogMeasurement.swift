@@ -57,9 +57,11 @@ struct NFKMLXMeasuredVariant {
     /// The bytes of weight files whose tensors the measurement does not read (a pickle, a GGUF, an
     /// archive), by top-level directory.
     let opaqueBytes: [String: Int64]
-    /// The repeated layers of each top-level directory's largest layer container.
+    /// The repeated layers of each top-level directory's largest layer container. T5's two stacks, and
+    /// FLUX's double and single blocks, count as one container.
     var layers: [String: NFKMLXMeasuredLayers] = [:]
-    /// The routed-expert tensor bytes as stored (names holding `.experts.`), by top-level directory and dtype.
+    /// The routed-expert tensor bytes as stored (names holding `.experts.`, and Granite's two
+    /// `block_sparse_moe` linears), by top-level directory and dtype.
     var expertBytes: [String: [String: Int64]] = [:]
     /// The elements a runtime weight quantization packs (rank-2 `.weight` tensors whose input width
     /// divides 64, outside the embeddings and the norms), by top-level directory.
@@ -263,6 +265,11 @@ extension NFKMLXLoadPlan {
             plan.castDirectories = ["transformer"]
             return plan
         }(),
+        // Each expert is a stage of its own after the autoencoder's, and umT5 counts as Wan's does.
+        "wan-a14b": NFKMLXLoadPlan(precision: .stored, directories: ["text_encoder": .bfloat16, "vae": .float32],
+                                   stages: [["text_encoder"], ["vae"], ["transformer"], ["transformer_2"]]),
+        "wan-animate": NFKMLXLoadPlan(precision: .stored,
+                                      stages: [["text_encoder", "image_encoder"], ["transformer", "vae"]]),
         "minimax-music": NFKMLXLoadPlan(precision: .stored, directories: ["transformer": .float32],
                                         stages: [["language_model", "rvq_depth_decoder"],
                                                  ["condition_encoder", "transformer"], ["vocoder"]]),
@@ -426,19 +433,21 @@ struct NFKMLXFactsRecipe {
     var streamsLayers = false
     var keyValue: NFKMLXKeyValueRule? = nil
     var widenedStages: [String: String] = [:]
-    /// The one stage that streams its layers, or nil where every stage with layers does.
-    var streamedStage: String? = nil
+    /// The stages that stream their layers and pack their weights, empty where every stage with layers does.
+    var streamedStages: Set<String> = []
+    /// The repeated layers a streamed load holds whatever its budget.
+    var heldLayerCount = 0
 
     init(stageIdentifier: String = "model", quantizes: Bool = false, pagesExperts: Bool = false,
          streamsLayers: Bool = false, keyValue: NFKMLXKeyValueRule? = nil, widenedStages: [String: String] = [:],
-         streamedStage: String? = nil) {
+         streamedStages: Set<String> = []) {
         self.stageIdentifier = stageIdentifier
         self.quantizes = quantizes
         self.pagesExperts = pagesExperts
         self.streamsLayers = streamsLayers
         self.keyValue = keyValue
         self.widenedStages = widenedStages
-        self.streamedStage = streamedStage
+        self.streamedStages = streamedStages
     }
 
     init(entry: NFKMLXCatalogEntry, profile: NFKMLXLoadProfile?) {
@@ -449,7 +458,8 @@ struct NFKMLXFactsRecipe {
         streamsLayers = profile != nil && entry.residencies.contains(NFKModelResidencyStreamed)
         keyValue = profile?.contextLength != nil ? profile?.keyValue : nil
         widenedStages = profile?.widenedStages ?? [:]
-        streamedStage = profile?.streamedStage
+        streamedStages = profile?.streamedStages ?? []
+        heldLayerCount = profile?.heldLayerCount ?? 0
     }
 }
 
@@ -483,22 +493,26 @@ struct NFKMLXVariantFacts {
             precisions[split.identifier] = precision
             let pageable = recipe.pagesExperts
                 ? Self.bytesByPrecision(loads, tensors: measurement.expertBytes, opaque: [:]) : [:]
+            let holdsBlocks = recipe.streamedStages.isEmpty || recipe.streamedStages.contains(split.identifier)
             var layerCount = 0
             var largestLayer = [String: NSNumber]()
             var layerTotal = [String: NSNumber]()
-            if recipe.streamsLayers, recipe.streamedStage.map({ $0 == split.identifier }) ?? true,
+            if recipe.streamsLayers, holdsBlocks,
                let (directory, layers) = loads.compactMap({ load in measurement.layers[load.0].map { (load, $0) } })
                 .max(by: { $0.1.count < $1.1.count }) {
-                layerCount = layers.count
+                layerCount = layers.count - recipe.heldLayerCount
                 largestLayer = Self.bytesByPrecision([directory], tensors: [directory.0: layers.largestBytes], opaque: [:])
                 if !layers.totalBytes.isEmpty {
-                    layerTotal = Self.bytesByPrecision([directory], tensors: [directory.0: layers.totalBytes], opaque: [:])
+                    let streamed = layers.totalBytes.reduce(into: [String: Int64]()) { result, entry in
+                        result[entry.key] = entry.value - Int64(recipe.heldLayerCount) * (layers.largestBytes[entry.key] ?? 0)
+                    }
+                    layerTotal = Self.bytesByPrecision([directory], tensors: [directory.0: streamed], opaque: [:])
                 }
             }
-            var quantizable = recipe.quantizes ? split.directories.reduce(Int64(0)) {
+            var quantizable = recipe.quantizes && holdsBlocks ? split.directories.reduce(Int64(0)) {
                 $0 + (measurement.quantizableElements[$1] ?? 0)
             } : 0
-            if recipe.quantizes && recipe.quantizesEmbeddings, let vocabulary = measurement.geometry?.vocabularySize,
+            if recipe.quantizes && holdsBlocks && recipe.quantizesEmbeddings, let vocabulary = measurement.geometry?.vocabularySize,
                let width = measurement.geometry?.hiddenSize, width % NFKMLXLoadOptions.defaultQuantizationGroupSize == 0 {
                 quantizable += Int64(vocabulary) * Int64(width)
             }

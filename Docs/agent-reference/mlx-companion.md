@@ -848,7 +848,8 @@ The measurement:
 - A variant with memory facts takes `residentBytes`, `peakBytes`, and `minimumMemoryBytes` from the
   core's estimate at the default options (`descriptorByDerivingMemoryFiguresInCatalog:`): the plan's
   precisions, a decoder's key-value cache at 4096 positions, and `automatic` residency, which without a
-  budget holds the largest stage. A variant without facts keeps `NFKMLXVariantFigures`: the bytes at the
+  budget holds the largest stage. The minimum of an entry that pages reads its `paged` choice instead: the
+  bytes left resident and an expert cache of up to 4 GiB. A variant without facts keeps `NFKMLXVariantFigures`: the bytes at the
   plan's precisions and `NFKMLXResidencyBudget.leastWorkingSet(holding:)` of the largest stage. A
   model's requirement is the least of its variants' figures, set after the derivation.
 - Rerun the script after adding a source or changing a file list. It runs in a few minutes on a fresh
@@ -857,7 +858,9 @@ The measurement:
 Memory facts, load options, and presets (`NFKMLXCatalogOptions.swift`, 2026-10-15):
 
 - `measure.py` also writes, per top-level directory, the repeated layers of the largest layer container
-  (`NFKMLXMeasuredLayers`: the count, the largest, and their total), the `.experts.` bytes, the quantizable elements (rank-2 `.weight`, input
+  (`NFKMLXMeasuredLayers`: the count, the largest, and their total; T5's two stacks, and FLUX's double and
+  single blocks, count as one container), the routed-expert bytes (`.experts.`, and Granite's two
+  `block_sparse_moe` linears), the quantizable elements (rank-2 `.weight`, input
   width divisible by 64, no embedding or norm), and the `config.json` geometry (`NFKMLXMeasuredGeometry`,
   root and `text_config`). The fields default to empty, so a row the script wrote before them still
   compiles. A gated repository refuses `config.json` without a token: Gemma 3, Gemma 3n, TranslateGemma,

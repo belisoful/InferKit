@@ -108,6 +108,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A mixture's minimum memory counts its experts paged
+
+- `descriptorByDerivingMemoryFigures` gives a variant whose residency option offers `paged` the minimum of that
+  choice: the bytes left resident and the expert cache of a paged load without a budget. The variant's resident
+  and peak figures stay the whole model's. Qwen3 30B-A3B states 14.2 GB in place of 77.3 GB.
+
 #### The server streams a hosted model on its live route
 
 - `GET /v1/inferkit/live` is a WebSocket that runs a hosted model on a live source through a live stream,
@@ -2012,6 +2018,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### The catalog states the layers and experts more models stream and page
+
+- MADLAD-400 counts its two T5 stacks as its streamed layers. Wan 2.2 A14B and Animate split their facts into
+  the stages their loaders plan, and each expert or Animate transformer states its blocks. Granite 4.0-H Tiny
+  states its experts, so its `paged` choice falls from 13.8 GB to 6.0 GB.
+- `measure.py` counts FLUX's double and single blocks together and reads T5's stacks in every release. FLUX.1 dev
+  and schnell still refuse their headers to the measuring token.
+- `-[NFKModelCatalog memoryTierSnapshotData]` and `inferkit-catalog tiers` write `Docs/model-memory-tiers.json`, the
+  planner's figures for each variant on Macs of 8, 16, 24, and 32 GB, and a test compares the file with the planner.
 
 #### A quantized hybrid release keeps its packed copy
 

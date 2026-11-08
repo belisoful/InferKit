@@ -228,8 +228,14 @@ def tensor_stats(url):
 
 # MARK: - Tensor structure
 
-# The first repeated-layer container in a tensor name: `model.layers.12.`, `transformer_blocks.3.`.
-LAYER_PATTERN = re.compile(r"^((?:.*?\.)?(?:layers|h|blocks|transformer_blocks))\.(\d+)\.")
+# The first repeated-layer container in a tensor name: `model.layers.12.`, `transformer_blocks.3.`,
+# T5's `encoder.block.3.`.
+LAYER_PATTERN = re.compile(
+    r"^((?:.*?\.)?(?:layers|h|blocks|(?:single_)?transformer_blocks|(?:encoder|decoder)\.block))\.(\d+)\.")
+# The containers one pass runs in turn, counted as one: T5's two stacks, and FLUX's double and single blocks.
+SIBLING_STACK = re.compile(r"(?:(?:encoder|decoder)\.block|(?:single_)?transformer_blocks)$")
+# A routed expert's tensor: one expert per name, or Granite's two tensors that stack every expert.
+EXPERT_PATTERN = re.compile(r"\.experts\.|\.block_sparse_moe\.(?:input|output)_linear\.")
 QUANTIZATION_GROUP = 64
 
 
@@ -243,19 +249,24 @@ def is_quantizable(name, shape):
 
 class Structure:
     """What one top-level directory's tensors hold beyond their bytes: the repeated layers of its
-    largest layer container, its routed experts, and its quantizable elements."""
+    largest layer container (sibling stacks count as one), its routed experts, and its quantizable
+    elements."""
 
     def __init__(self):
-        self.containers = {}  # container -> index -> dtype -> bytes
+        self.containers = {}  # container -> layer -> dtype -> bytes
         self.expert_bytes = {}
         self.quantizable = 0
 
     def add(self, name, dtype, shape, nbytes):
         match = LAYER_PATTERN.match(name)
         if match:
-            layer = self.containers.setdefault(match.group(1), {}).setdefault(int(match.group(2)), {})
+            container, index = match.group(1), int(match.group(2))
+            sibling = SIBLING_STACK.search(container)
+            key = (sibling.group(0), index) if sibling else index
+            stack = container[:sibling.start()] + "stacks" if sibling else container
+            layer = self.containers.setdefault(stack, {}).setdefault(key, {})
             layer[dtype] = layer.get(dtype, 0) + nbytes
-        if ".experts." in name:
+        if EXPERT_PATTERN.search(name):
             self.expert_bytes[dtype] = self.expert_bytes.get(dtype, 0) + nbytes
         if is_quantizable(name, shape):
             count = 1
