@@ -635,7 +635,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 {
 	return @[ @"precision", @"quantizationBits", @"quantizationGroupSize", @"contextLength", @"cacheBits",
 			  @"cacheGroupSize", @"draft", @"draftBits", @"residency", @"adapters", @"cacheStage", @"draftStage",
-			  @"adapterStage", @"stagePrecisions" ];
+			  @"adapterStage", @"stagePrecisions", @"fallbackPrecision" ];
 }
 
 @implementation NFKModelMemoryModel
@@ -654,6 +654,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 								draftStage:(nullable NSString *)draftStage
 							  adapterStage:(nullable NSString *)adapterStage
 						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
+							 fallbackPrecision:(nullable NSString *)fallbackPrecision
 								extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
 	self = [super init];
@@ -672,9 +673,35 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 		_draftStage = [draftStage copy];
 		_adapterStage = [adapterStage copy];
 		_stagePrecisions = [stagePrecisions copy] ?: @{};
+		_fallbackPrecision = [fallbackPrecision copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelMemoryModelFields());
 	}
 	return self;
+}
+
+- (instancetype)initWithPrecisionOptionKey:(nullable NSString *)precisionOptionKey
+				 quantizationBitsOptionKey:(nullable NSString *)quantizationBitsOptionKey
+			quantizationGroupSizeOptionKey:(nullable NSString *)quantizationGroupSizeOptionKey
+					contextLengthOptionKey:(nullable NSString *)contextLengthOptionKey
+						cacheBitsOptionKey:(nullable NSString *)cacheBitsOptionKey
+				   cacheGroupSizeOptionKey:(nullable NSString *)cacheGroupSizeOptionKey
+							draftOptionKey:(nullable NSString *)draftOptionKey
+						draftBitsOptionKey:(nullable NSString *)draftBitsOptionKey
+						residencyOptionKey:(nullable NSString *)residencyOptionKey
+						 adaptersOptionKey:(nullable NSString *)adaptersOptionKey
+								cacheStage:(nullable NSString *)cacheStage
+								draftStage:(nullable NSString *)draftStage
+							  adapterStage:(nullable NSString *)adapterStage
+						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
+								extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithPrecisionOptionKey:precisionOptionKey quantizationBitsOptionKey:quantizationBitsOptionKey
+			 quantizationGroupSizeOptionKey:quantizationGroupSizeOptionKey contextLengthOptionKey:contextLengthOptionKey
+						 cacheBitsOptionKey:cacheBitsOptionKey cacheGroupSizeOptionKey:cacheGroupSizeOptionKey
+							 draftOptionKey:draftOptionKey draftBitsOptionKey:draftBitsOptionKey
+						 residencyOptionKey:residencyOptionKey adaptersOptionKey:adaptersOptionKey cacheStage:cacheStage
+								 draftStage:draftStage adapterStage:adapterStage stagePrecisions:stagePrecisions
+						  fallbackPrecision:nil extensions:extensions];
 }
 
 - (NSArray<NSString *> *)optionKeys
@@ -711,12 +738,13 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 		}
 		keys[field] = value;
 	}
-	NSString *cacheStage = nil, *draftStage = nil, *adapterStage = nil;
+	NSString *cacheStage = nil, *draftStage = nil, *adapterStage = nil, *fallbackPrecision = nil;
 	NSDictionary<NSString *, NSString *> *stagePrecisions = nil;
 	if (![reader readString:@"cacheStage" required:NO into:&cacheStage error:error]
 		|| ![reader readString:@"draftStage" required:NO into:&draftStage error:error]
 		|| ![reader readString:@"adapterStage" required:NO into:&adapterStage error:error]
-		|| ![reader readStringDictionary:@"stagePrecisions" into:&stagePrecisions error:error]) {
+		|| ![reader readStringDictionary:@"stagePrecisions" into:&stagePrecisions error:error]
+		|| ![reader readString:@"fallbackPrecision" required:NO into:&fallbackPrecision error:error]) {
 		return nil;
 	}
 	return [[self alloc] initWithPrecisionOptionKey:keys[@"precision"] quantizationBitsOptionKey:keys[@"quantizationBits"]
@@ -726,6 +754,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 								 draftBitsOptionKey:keys[@"draftBits"] residencyOptionKey:keys[@"residency"]
 								  adaptersOptionKey:keys[@"adapters"] cacheStage:cacheStage draftStage:draftStage
 									   adapterStage:adapterStage stagePrecisions:stagePrecisions
+								  fallbackPrecision:fallbackPrecision
 										 extensions:[reader extensionsWithoutFields:NFKModelMemoryModelFields()]];
 }
 
@@ -748,6 +777,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 	if (self.stagePrecisions.count > 0) {
 		dictionary[@"stagePrecisions"] = self.stagePrecisions;
 	}
+	dictionary[@"fallbackPrecision"] = self.fallbackPrecision;
 	return [dictionary copy];
 }
 
@@ -1683,6 +1713,22 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 						  resolved:resolved budget:budget];
 }
 
+- (NSDictionary<NSString *, id> *)optionsFallingBack:(NSDictionary<NSString *, id> *)resolved
+											   given:(nullable NSDictionary<NSString *, id> *)given
+											  budget:(nullable NFKModelMemoryBudget *)budget
+											 catalog:(NFKModelCatalog *)catalog
+{
+	NSString *key = self.memoryModel.precisionOptionKey;
+	NSString *fallback = self.memoryModel.fallbackPrecision;
+	if (key == nil || fallback == nil || budget == nil || given[key] != nil
+		|| [self estimateForResolvedOptions:resolved memoryBudget:budget catalog:catalog].fits) {
+		return resolved;
+	}
+	NSMutableDictionary<NSString *, id> *options = [resolved mutableCopy];
+	options[key] = fallback;
+	return [self estimateForResolvedOptions:options memoryBudget:budget catalog:catalog].fits ? options : resolved;
+}
+
 - (NFKModelMemoryEstimate *)estimateWithLoads:(NSArray<NFKModelStageLoad *> *)loads
 									requested:(NSString *)requested
 									 overhead:(NSInteger)overhead
@@ -2546,7 +2592,8 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	if (resolved == nil || ![self verifyAdaptersInResolvedOptions:resolved error:error]) {
 		return nil;
 	}
-	return [self estimateForResolvedOptions:resolved memoryBudget:budget catalog:catalog];
+	return [self estimateForResolvedOptions:[self optionsFallingBack:resolved given:options budget:budget catalog:catalog]
+							   memoryBudget:budget catalog:catalog];
 }
 
 #pragma mark Constraints

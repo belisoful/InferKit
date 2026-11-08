@@ -1018,6 +1018,84 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 						  @"the 9 GiB left resident and the 4 GiB expert cache of a paged load without a budget");
 }
 
+// The decoder with float32 as its default precision and the checkpoint's as its fallback.
+- (NFKModelDescriptor *)decoderFallingBack
+{
+	NSMutableDictionary<NSString *, id> *dictionary = [[self decoderWithOverhead:0].dictionaryRepresentation mutableCopy];
+	NSMutableArray *options = [NSMutableArray array];
+	for (NSDictionary *option in dictionary[@"options"]) {
+		NSMutableDictionary *copy = [option mutableCopy];
+		if ([copy[@"key"] isEqual:NFKModelLoadOptionPrecision]) {
+			copy[@"default"] = NFKModelPrecisionFloat32;
+		}
+		[options addObject:copy];
+	}
+	dictionary[@"options"] = options;
+	NSMutableDictionary *memoryModel = [dictionary[@"memoryModel"] mutableCopy];
+	memoryModel[@"fallbackPrecision"] = NFKModelPrecisionCheckpoint;
+	dictionary[@"memoryModel"] = memoryModel;
+	NSError *error = nil;
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:dictionary error:&error];
+	XCTAssertNotNil(descriptor, @"%@", error);
+	return descriptor;
+}
+
+- (void)testAnUnstatedPrecisionFallsBackOnlyWhereTheDefaultDoesNotFitAndTheFallbackDoes
+{
+	NFKModelDescriptor *decoder = [self decoderFallingBack];
+	NSInteger wide = [decoder estimatedMemoryForOptions:nil error:NULL].peakByteCount;
+	NSInteger narrow = [decoder estimatedMemoryForOptions:@{ NFKModelLoadOptionPrecision: NFKModelPrecisionCheckpoint }
+													error:NULL].peakByteCount;
+	XCTAssertGreaterThan(wide, narrow);
+	NFKModelMemoryBudget *holdsWide = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:
+									   [NFKModelMemoryBudget leastWorkingSetHoldingByteCount:wide]];
+	NFKModelMemoryBudget *holdsNarrow = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:
+										 [NFKModelMemoryBudget leastWorkingSetHoldingByteCount:narrow]];
+	NFKModelMemoryBudget *holdsNeither = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:
+										  [NFKModelMemoryBudget leastWorkingSetHoldingByteCount:narrow / 2]];
+	NFKModelMemoryEstimate *kept = [decoder estimatedMemoryForOptions:nil memoryBudget:holdsWide error:NULL];
+	XCTAssertEqualObjects(kept.resolvedOptions[NFKModelLoadOptionPrecision], NFKModelPrecisionFloat32);
+	NFKModelMemoryEstimate *fallen = [decoder estimatedMemoryForOptions:nil memoryBudget:holdsNarrow error:NULL];
+	XCTAssertTrue(fallen.fits);
+	XCTAssertEqualObjects(fallen.resolvedOptions[NFKModelLoadOptionPrecision], NFKModelPrecisionCheckpoint);
+	XCTAssertEqual(fallen.peakByteCount, narrow);
+	NFKModelMemoryEstimate *stated = [decoder estimatedMemoryForOptions:@{ NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32 }
+														   memoryBudget:holdsNarrow error:NULL];
+	XCTAssertFalse(stated.fits);
+	XCTAssertEqualObjects(stated.resolvedOptions[NFKModelLoadOptionPrecision], NFKModelPrecisionFloat32);
+	NFKModelMemoryEstimate *refused = [decoder estimatedMemoryForOptions:nil memoryBudget:holdsNeither error:NULL];
+	XCTAssertFalse(refused.fits);
+	XCTAssertEqualObjects(refused.resolvedOptions[NFKModelLoadOptionPrecision], NFKModelPrecisionFloat32);
+}
+
+- (void)testABuildLoadsAtTheFallbackAndAStatedPrecisionIsRefused
+{
+	NFKModelDescriptor *decoder = [self decoderFallingBack];
+	NSInteger narrow = [decoder estimatedMemoryForOptions:@{ NFKModelLoadOptionPrecision: NFKModelPrecisionCheckpoint }
+													error:NULL].peakByteCount;
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	[catalog addDescriptor:decoder];
+	catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:
+							[NFKModelMemoryBudget leastWorkingSetHoldingByteCount:narrow]];
+	NSError *error = nil;
+	NFKModelBuildRequest *request = [catalog buildRequestForModelIdentifier:decoder.identifier options:nil location:nil
+																	  error:&error];
+	XCTAssertNotNil(request, @"%@", error);
+	XCTAssertEqualObjects(request.loadOptions[NFKModelLoadOptionPrecision], NFKModelPrecisionCheckpoint);
+	XCTAssertEqual(request.memoryEstimate.peakByteCount, narrow);
+	XCTAssertNil([catalog buildRequestForModelIdentifier:decoder.identifier
+												 options:@{ NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32 }
+												location:nil error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorDoesNotFit);
+}
+
+- (void)testTheFallbackPrecisionRoundTripsThroughTheDictionary
+{
+	NFKModelMemoryModel *model = [self decoderFallingBack].memoryModel;
+	XCTAssertEqualObjects(model.fallbackPrecision, NFKModelPrecisionCheckpoint);
+	XCTAssertEqualObjects(model.dictionaryRepresentation[@"fallbackPrecision"], NFKModelPrecisionCheckpoint);
+}
+
 - (void)testDerivingInACatalogFindsTheDraftThere
 {
 	NFKModelStageFacts *draftStage = [NFKModelStageFacts stageWithIdentifier:@"decoder"

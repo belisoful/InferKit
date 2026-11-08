@@ -52,6 +52,29 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
         }
     }
 
+    func testAFloat32DefaultFallsBackToThePublishedPrecisionOnlyWhereItDoesNotFit() throws {
+        let decoder = try descriptor("gemma-4-12b-it")
+        let small = NFKModelMemoryBudget(workingSetByteCount: 11_453_246_122)
+        let large = NFKModelMemoryBudget(workingSetByteCount: 26_800_000_000)
+        let fallen = try decoder.estimatedMemory(forOptions: nil, memoryBudget: small)
+        XCTAssertTrue(fallen.fits)
+        XCTAssertEqual(fallen.resolvedOptions[NFKModelLoadOptionPrecision] as? String, NFKModelPrecisionCheckpoint)
+        let kept = try decoder.estimatedMemory(forOptions: nil, memoryBudget: large)
+        XCTAssertTrue(kept.fits)
+        XCTAssertEqual(kept.resolvedOptions[NFKModelLoadOptionPrecision] as? String, NFKModelPrecisionFloat32)
+        let stated = try decoder.estimatedMemory(forOptions: [NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32],
+                                                 memoryBudget: small)
+        XCTAssertFalse(stated.fits)
+        XCTAssertEqual(stated.resolvedOptions[NFKModelLoadOptionPrecision] as? String, NFKModelPrecisionFloat32)
+    }
+
+    func testOnlyTheFamiliesHeldToTheirBFloat16ReferencesFallBack() throws {
+        let falling = NFKMLXModelDescriptors.modelDescriptors()
+            .filter { $0.memoryModel?.fallbackPrecision != nil }.map(\.identifier).sorted()
+        XCTAssertEqual(falling, ["gemma-4-12b-it", "gemma-4-31b-it", "gemma-4-e2b-it", "gemma-4-e4b-it", "pixtral-12b",
+                                 "qwen3-vl-2b", "qwen3-vl-32b", "qwen3-vl-8b"])
+    }
+
     func testEveryEntryThatPagesStatesItsExperts() throws {
         for entry in NFKMLXModelDescriptors.entries where entry.residencies.contains(NFKModelResidencyPaged) {
             let stages = try XCTUnwrap(try descriptor(entry.identifier).defaultVariant?.memoryFacts?.stages, entry.identifier)

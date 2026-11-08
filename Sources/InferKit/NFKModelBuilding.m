@@ -530,13 +530,15 @@ static NSURL * _Nullable NFKModelLocationThroughHub(NFKHFHub *hub, NFKModelSourc
 	}];
 	NFKModelVariant *variant = [descriptor variantWithIdentifier:[loadOptions[NFKModelLoadOptionVariant] description] ?: @""]
 		?: descriptor.defaultVariant;
-	NFKModelMemoryEstimate *estimate = [descriptor estimateForResolvedOptions:loadOptions memoryBudget:self.memoryBudget
-																	  catalog:self];
 	BOOL ignoresBudget = [given[NFKModelLoadOptionIgnoreMemoryBudget] respondsToSelector:@selector(boolValue)]
 		&& [given[NFKModelLoadOptionIgnoreMemoryBudget] boolValue];
+	NSDictionary<NSString *, id> *fittedOptions = ignoresBudget ? loadOptions
+		: [descriptor optionsFallingBack:loadOptions given:given budget:self.memoryBudget catalog:self];
+	NFKModelMemoryEstimate *estimate = [descriptor estimateForResolvedOptions:fittedOptions memoryBudget:self.memoryBudget
+																	  catalog:self];
 	if (!estimate.fits && !ignoresBudget) {
 		if (error != NULL) {
-			*error = [self doesNotFitErrorFor:descriptor estimate:estimate loadOptions:loadOptions profile:profile];
+			*error = [self doesNotFitErrorFor:descriptor estimate:estimate loadOptions:fittedOptions profile:profile];
 		}
 		return nil;
 	}
@@ -560,7 +562,7 @@ static NSURL * _Nullable NFKModelLocationThroughHub(NFKHFHub *hub, NFKModelSourc
 		}
 		return nil;
 	}
-	return [[NFKModelBuildRequest alloc] initWithDescriptor:descriptor variant:variant loadOptions:loadOptions
+	return [[NFKModelBuildRequest alloc] initWithDescriptor:descriptor variant:variant loadOptions:fittedOptions
 											requestDefaults:requestDefaults location:located memoryEstimate:estimate
 													catalog:self];
 }

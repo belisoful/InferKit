@@ -179,6 +179,8 @@ struct NFKMLXRepositoryJudgment {
                                    registryName: entry.registryName, source: source())]
         // The template's profile and plan are fixed before the family changes, since both are keyed by it.
         var load = NFKMLXLoadProfile.profile(for: template) ?? .plain
+        // The family's bfloat16 measurements do not cover another repository's weights.
+        load.fallbackPrecision = nil
         if loadsAsStored {
             load.precisions = []
             load.defaultPrecision = NFKModelPrecisionCheckpoint

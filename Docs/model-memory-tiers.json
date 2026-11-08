@@ -453,7 +453,7 @@
     },
     "gemma-4-12b-it/gemma-4-12b-it" : {
       "8" : "streamed 6170820616 refused",
-      "16" : "streamed 6170820616 refused",
+      "16" : "streamed 5411529607 fits",
       "24" : "streamed 9917230948 fits",
       "32" : "streamed 18069685351 fits"
     },
@@ -466,19 +466,19 @@
     "gemma-4-31b-it/gemma-4-31b-it" : {
       "8" : "streamed 12212219080 refused",
       "16" : "streamed 12212219080 refused",
-      "24" : "streamed 12212219080 refused",
+      "24" : "streamed 10188358216 fits",
       "32" : "streamed 18430507184 fits"
     },
     "gemma-4-e2b-it/gemma-4-e2b-it" : {
       "8" : "streamed 13536419592 refused",
       "16" : "streamed 13536419592 refused",
-      "24" : "streamed 13536419592 refused",
+      "24" : "resident 10246357958 fits",
       "32" : "streamed 18324948888 fits"
     },
     "gemma-4-e4b-it/gemma-4-e4b-it" : {
       "8" : "streamed 16830566152 refused",
       "16" : "streamed 16830566152 refused",
-      "24" : "streamed 16830566152 refused",
+      "24" : "streamed 10165992214 fits",
       "32" : "streamed 18437726488 fits"
     },
     "gemma4-multimodal/gemma-4-e2b-it" : {
@@ -999,7 +999,7 @@
     },
     "pixtral-12b/pixtral-12b" : {
       "8" : "streamed 9289678848 refused",
-      "16" : "streamed 9289678848 refused",
+      "16" : "streamed 5190119424 fits",
       "24" : "streamed 9289678848 fits",
       "32" : "streamed 18014158848 fits"
     },
@@ -1076,14 +1076,14 @@
       "32" : "resident 2383106048 fits"
     },
     "qwen3-vl-2b/qwen3-vl-2b-instruct" : {
-      "8" : "streamed 3275184128 refused",
+      "8" : "streamed 2342296064 fits",
       "16" : "streamed 5288624128 fits",
       "24" : "resident 8510128128 fits",
       "32" : "resident 8510128128 fits"
     },
     "qwen3-vl-8b/qwen3-vl-8b-instruct" : {
       "8" : "streamed 8827780032 refused",
-      "16" : "streamed 8827780032 refused",
+      "16" : "streamed 5185675744 fits",
       "24" : "streamed 9599565760 fits",
       "32" : "streamed 18089208768 fits"
     },
@@ -1096,7 +1096,7 @@
     "qwen3-vl-32b/qwen3-vl-32b-instruct" : {
       "8" : "streamed 12505172928 refused",
       "16" : "streamed 12505172928 refused",
-      "24" : "streamed 12505172928 refused",
+      "24" : "streamed 10153373152 fits",
       "32" : "streamed 18356352960 fits"
     },
     "qwen3-vl-embedding-2b/qwen3-vl-embedding-2b" : {

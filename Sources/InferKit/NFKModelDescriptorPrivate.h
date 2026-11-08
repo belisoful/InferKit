@@ -148,6 +148,13 @@ typedef id _Nullable (^NFKModelElementReader)(id element, NSString *path, NSErro
 
 @interface NFKModelDescriptor (NFKModelMemoryInternal)
 
+/*! The resolved options with the precision at the memory model's fallback, where given states no precision,
+	the default does not fit the budget, and the fallback does. */
+- (NSDictionary<NSString *, id> *)optionsFallingBack:(NSDictionary<NSString *, id> *)resolved
+											   given:(nullable NSDictionary<NSString *, id> *)given
+											  budget:(nullable NFKModelMemoryBudget *)budget
+											 catalog:(NFKModelCatalog *)catalog;
+
 /*! The estimate for load options already resolved, defaults filled. */
 - (NFKModelMemoryEstimate *)estimateForResolvedOptions:(NSDictionary<NSString *, id> *)resolved
 										  memoryBudget:(nullable NFKModelMemoryBudget *)budget

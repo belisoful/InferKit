@@ -848,7 +848,11 @@ The measurement:
 - A variant with memory facts takes `residentBytes`, `peakBytes`, and `minimumMemoryBytes` from the
   core's estimate at the default options (`descriptorByDerivingMemoryFiguresInCatalog:`): the plan's
   precisions, a decoder's key-value cache at 4096 positions, and `automatic` residency, which without a
-  budget holds the largest stage. The minimum of an entry that pages reads its `paged` choice instead: the
+  budget holds the largest stage. Gemma 4's dense sizes, Qwen3-VL's dense sizes, and Pixtral default to float32
+  and name the published precision as `fallbackPrecision`, the families the bf16 program holds to their floors;
+  the builder and `estimatedMemory(forOptions:memoryBudget:)` take it for a caller who states no precision where
+  float32 does not fit and the published precision does (developer decision, 2026-11-08). A repository the runner
+  matches takes no fallback, and a factory or a registry call without the builder keeps float32. The minimum of an entry that pages reads its `paged` choice instead: the
   bytes left resident and an expert cache of up to 4 GiB. A variant without facts keeps `NFKMLXVariantFigures`: the bytes at the
   plan's precisions and `NFKMLXResidencyBudget.leastWorkingSet(holding:)` of the largest stage. A
   model's requirement is the least of its variants' figures, set after the derivation.

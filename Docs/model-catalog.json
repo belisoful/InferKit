@@ -13583,6 +13583,7 @@
       "memoryModel" : {
         "draft" : "draftModel",
         "draftBits" : "draftBits",
+        "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -14393,6 +14394,7 @@
       "memoryModel" : {
         "draft" : "draftModel",
         "draftBits" : "draftBits",
+        "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -14868,6 +14870,7 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
+        "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -15245,6 +15248,7 @@
       "memoryModel" : {
         "draft" : "draftModel",
         "draftBits" : "draftBits",
+        "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -36428,6 +36432,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -44135,6 +44140,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -44593,6 +44599,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -44837,6 +44844,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
       },

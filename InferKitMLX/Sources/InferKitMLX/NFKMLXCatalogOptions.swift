@@ -112,6 +112,9 @@ struct NFKMLXLoadProfile {
     var keyValue: NFKMLXKeyValueRule? = nil
     /// True where the factory takes a draft model for speculative decoding.
     var drafts = false
+    /// The precision a load takes where the caller states none and the default does not fit the budget:
+    /// the published one, for a family held to its bfloat16 reference that defaults to float32.
+    var fallbackPrecision: String? = nil
     /// The stages that take a wider precision where the budget holds it, keyed by stage identifier.
     var widenedStages: [String: String] = [:]
     /// The stages whose repeated layers a streamed load leaves in the release and a quantized load packs,
@@ -145,10 +148,11 @@ struct NFKMLXLoadProfile {
     /// TranslateGemma, Qwen3-VL, Pixtral.
     static func streamedDecoder(precisions: [String], defaultPrecision: String, contextLength: Int?,
                                 keyValue: NFKMLXKeyValueRule?, drafts: Bool = false, heldLayerCount: Int = 0,
-                                tasks: Set<String>) -> NFKMLXLoadProfile {
+                                fallbackPrecision: String? = nil, tasks: Set<String>) -> NFKMLXLoadProfile {
         var profile = decoder(precisions: precisions, defaultPrecision: defaultPrecision, contextLength: contextLength,
                               keyValue: keyValue, drafts: drafts, tasks: tasks)
         profile.heldLayerCount = heldLayerCount
+        profile.fallbackPrecision = fallbackPrecision
         return profile
     }
 
@@ -231,7 +235,8 @@ struct NFKMLXLoadProfile {
         // and a smaller one drafts for it. The 26B-A4B mixture keeps its own paged profile on its entry.
         "gemma4": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                     defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
-                                    drafts: true, tasks: [NFKModelTaskTextGeneration])],
+                                    drafts: true, fallbackPrecision: NFKModelPrecisionCheckpoint,
+                                    tasks: [NFKModelTaskTextGeneration])],
         "granite-4.0-h": [.pagedMixture()],
         "nemotron-h": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                         defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,
@@ -240,9 +245,11 @@ struct NFKMLXLoadProfile {
         // pass reads. The Qwen3-VL mixture keeps its own paged profile on its entry.
         "qwen3-vl": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                       defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
+                                      fallbackPrecision: NFKModelPrecisionCheckpoint,
                                       tasks: [NFKModelTaskVisionQuestionAnswering])],
         "pixtral": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                      defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
+                                     fallbackPrecision: NFKModelPrecisionCheckpoint,
                                      tasks: [NFKModelTaskVisionQuestionAnswering])],
         "qwen4-exp": [.pagedMixture()],
         "mamba2": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
@@ -376,7 +383,8 @@ extension NFKMLXLoadProfile {
                 draftBitsOptionKey: drafting ? NFKModelLoadOptionDraftBits : nil,
                 residencyOptionKey: residency ? NFKModelLoadOptionResidency : nil,
                 adaptersOptionKey: adapters ? NFKModelLoadOptionAdapters : nil,
-                cacheStage: nil, draftStage: nil, adapterStage: nil, stagePrecisions: fixedPrecisions, extensions: nil)
+                cacheStage: nil, draftStage: nil, adapterStage: nil, stagePrecisions: fixedPrecisions,
+                fallbackPrecision: precision ? fallbackPrecision : nil, extensions: nil)
         }
         declaration.presets = presets(for: entry, options: declaration.options)
         return declaration

@@ -475,6 +475,7 @@ option. The variant comes from the `variant` option.
 | `draftStage` | string | The stage of this model a draft for another model loads. Every stage when absent. |
 | `adapterStage` | string | The stage whose weights the adapters run beside. The last stage when absent. |
 | `stagePrecisions` | object of string | The precision of each stage the precision option does not change, keyed by stage. |
+| `fallbackPrecision` | string | The precision a load takes where the caller states none, the default does not fit the budget, and this one does. Absent where the default stands. |
 
 ### The estimate
 
@@ -733,7 +734,9 @@ model's identifier, or `model@preset`, and the option values an app collected:
 3. The model's requirements and the chosen choices' are checked against this machine
    (`NFKModelCatalogErrorUnavailable`).
 4. The estimate is checked against the catalog's `memoryBudget` (`NFKModelCatalogErrorDoesNotFit`, the
-   estimate under `NFKModelMemoryEstimateKey`). The budget is `+[NFKModelMemoryBudget currentBudget]`
+   estimate under `NFKModelMemoryEstimateKey`). A precision the caller did not state takes the memory
+   model's `fallbackPrecision` where the default does not fit and the fallback does; the request's load
+   options and estimate name the precision it took. The budget is `+[NFKModelMemoryBudget currentBudget]`
    until an app sets one, such as a known host's, and setting nil restores it. `ignoreMemoryBudget` YES
    skips the refusal; an app sets it only when its user asks. The refusal carries the way out:
    - another combination fits → the first in the [constraints](#constraints) order, over the requested

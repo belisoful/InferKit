@@ -108,6 +108,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### An unstated precision falls back where the default does not fit
+
+- `NFKModelMemoryModel.fallbackPrecision` names the precision a build or a budgeted estimate takes where the
+  caller states no precision, the default does not fit the budget, and the fallback does. A stated precision
+  stands. The request's load options and estimate name the precision taken.
+
 #### A mixture's minimum memory counts its experts paged
 
 - `descriptorByDerivingMemoryFigures` gives a variant whose residency option offers `paged` the minimum of that
@@ -2018,6 +2024,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Gemma 4, Qwen3-VL, and Pixtral fall back to the published precision
+
+- The dense sizes of these families keep float32 as their default and load as published where float32 does not
+  fit the budget and the published precision does. Through the catalog's builder this admits Qwen3-VL 2B on an
+  8 GB Mac, Gemma 4 12B, Qwen3-VL 8B, and Pixtral 12B on 16 GB, and Gemma 4 E2B, E4B, and 31B and Qwen3-VL 32B on
+  24 GB. A stated float32 stands and is refused where it does not fit.
 
 #### The catalog states the layers and experts more models stream and page
 

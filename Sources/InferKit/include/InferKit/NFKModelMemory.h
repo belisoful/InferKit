@@ -372,6 +372,9 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 @property (nonatomic, readonly, copy, nullable) NSString *adapterStage;
 /*! The precision of each stage the precision option does not change, keyed by stage identifier. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, NSString *> *stagePrecisions;
+/*! The precision a load takes where the caller states none, the default does not fit the budget, and this
+	one does. nil where the default stands. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *fallbackPrecision;
 /*! The fields of the model's dictionary this version does not read, written back as they came. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *extensions;
 
@@ -390,14 +393,32 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 								draftStage:(nullable NSString *)draftStage
 							  adapterStage:(nullable NSString *)adapterStage
 						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
+						 fallbackPrecision:(nullable NSString *)fallbackPrecision
 								extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+
+/*! A memory model with every field but fallbackPrecision, which it leaves nil. */
+- (instancetype)initWithPrecisionOptionKey:(nullable NSString *)precisionOptionKey
+				 quantizationBitsOptionKey:(nullable NSString *)quantizationBitsOptionKey
+			quantizationGroupSizeOptionKey:(nullable NSString *)quantizationGroupSizeOptionKey
+					contextLengthOptionKey:(nullable NSString *)contextLengthOptionKey
+						cacheBitsOptionKey:(nullable NSString *)cacheBitsOptionKey
+				   cacheGroupSizeOptionKey:(nullable NSString *)cacheGroupSizeOptionKey
+							draftOptionKey:(nullable NSString *)draftOptionKey
+						draftBitsOptionKey:(nullable NSString *)draftBitsOptionKey
+						residencyOptionKey:(nullable NSString *)residencyOptionKey
+						 adaptersOptionKey:(nullable NSString *)adaptersOptionKey
+								cacheStage:(nullable NSString *)cacheStage
+								draftStage:(nullable NSString *)draftStage
+							  adapterStage:(nullable NSString *)adapterStage
+						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
+								extensions:(nullable NSDictionary<NSString *, id> *)extensions;
 
 /*! The keys of every option the model names, in a fixed order. */
 @property (nonatomic, readonly, copy) NSArray<NSString *> *optionKeys;
 
 /*! Reads a memory model from its dictionary, whose fields are precision, quantizationBits,
 	quantizationGroupSize, contextLength, cacheBits, cacheGroupSize, draft, draftBits, residency,
-	adapters, cacheStage, draftStage, adapterStage, and stagePrecisions. Returns nil and sets error when a field has the wrong
+	adapters, cacheStage, draftStage, adapterStage, stagePrecisions, and fallbackPrecision. Returns nil and sets error when a field has the wrong
 	type. */
 + (nullable instancetype)memoryModelWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 /*! The memory model as its dictionary. */
