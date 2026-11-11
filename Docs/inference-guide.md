@@ -1586,6 +1586,21 @@ Each of these unlocks a category rather than a model.
   (`std_bias`/`std_scale` after the pooler, which no released size enables) is implemented and exercised
   at the tiny configuration, so nothing in the family remains.
 
+- **A cost gate for paid generation — planned, not started.** A remote image or video run spends money,
+  and nothing today prices it before it runs or limits it. Four parts, on the backend and provider path:
+  - Quote: an optional backend method, beside `tokenCountForRequest:error:`, estimates a request's cost from
+    its model, duration, resolution, and count, in a named currency, and states when it cannot estimate.
+    A provider's own price endpoint is read where one exists. A price table is dated and names its source.
+  - Confirm: the quote is available before the run, through the backend and the served routes, so a caller
+    can show it.
+  - Cap: an opt-in request parameter holds a per-call limit. A quote over the limit, or a run with a limit
+    and no quote, is refused before any spend. Without the parameter a run behaves as it does today.
+  - Actual: the result reports what the run cost where the provider says, with the duration and frame rate
+    it delivered, which can differ from the request.
+
+  Approving a spend and keeping a budget across calls stay with the application, which holds the user and
+  the session. Local models cost nothing here and need no quote.
+
 ### Released sizes
 
 - **Every size of every shipped family — SHIPPED.** An audit of the model list against each family's
