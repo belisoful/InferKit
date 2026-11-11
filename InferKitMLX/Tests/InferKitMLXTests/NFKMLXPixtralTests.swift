@@ -178,6 +178,57 @@ final class NFKMLXPixtralTests: XCTestCase {
         }
     }
 
+    /// Two PEFT adapters over the tiny release's decoder, saved by `save_pretrained` beside the record
+    /// (`run_reference.py pixtral_tiny_adapters`), held at 0.8 and 0.5 against PEFT's adapters active together:
+    /// the logits, the adapters' own change to them, and the release's former `language_model.model.` layout.
+    func testHeldAdaptersMatchPEFTOnTinyWeights() throws {
+        try requireMLXRuntime()
+        let env = NFKMLXValidationConfig.environment
+        guard let directory = env["IK_VAL_PIXTRAL_TINY"], let recordPath = env["IK_PARITY_PIXTRAL_TINY_ADAPTERS"] else {
+            throw XCTSkip("set IK_VAL_PIXTRAL_TINY and IK_PARITY_PIXTRAL_TINY_ADAPTERS (run_reference.py pixtral_tiny_adapters)")
+        }
+        let rec = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: recordPath)).arrays
+        let folder = URL(fileURLWithPath: recordPath).deletingPathExtension().appendingPathExtension("adapters")
+        let strengths = rec["strengths"]!.asArray(Float.self)
+        let adapters = strengths.enumerated().map { index, strength in
+            (url: folder.appendingPathComponent("adapter\(index)/adapter_model.safetensors"), strength: strength)
+        }
+        // The tiny release carries no tokenizer, so its decoder loads alone and holds the adapters as the model does.
+        let decoder = try NFKMLXPixtral.decoder(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertEqual(try NFKMLXDecoderAdapters.hold(adapters, in: decoder, modulePath: NFKMLXPixtral.adapterModulePath),
+                       strengths)
+        let ids = MLXArray(rec["input_ids"]!.asType(.int32).asArray(Int32.self)).reshaped([1, -1])
+        func logits(at run: [Float]) -> MLXArray {
+            let logits = NFKMLXAdapterRun.$strengths.withValue(run) { decoder(ids)[0] }
+            eval(logits)
+            return logits
+        }
+        let adapted = logits(at: strengths), base = logits(at: strengths.map { _ in 0 })
+        let reference = rec["output"]!, referenceBase = rec["base_output"]!
+        print("pixtral-tiny-adapters: logit cosine \(cosine(adapted, reference)), "
+              + "the adapters' change \(cosine(adapted - base, reference - referenceBase))")
+        XCTAssertGreaterThan(cosine(adapted, reference), 0.99999)
+        XCTAssertGreaterThan(cosine(adapted - base, reference - referenceBase), 0.9999)
+        XCTAssertEqual(adapted.argMax(axis: -1).asArray(Int32.self), reference.argMax(axis: -1).asArray(Int32.self))
+
+        // The same adapter under the layout transformers wrote before 4.52 reaches the same layers.
+        let arrays = try MLX.loadArrays(url: adapters[0].url)
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("pixtral-adapter-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try MLX.save(arrays: Dictionary(uniqueKeysWithValues: arrays.map {
+            ($0.key.replacingOccurrences(of: "base_model.model.model.language_model.", with: "base_model.model.language_model.model."), $0.value)
+        }), url: scratch.appendingPathComponent("adapter_model.safetensors"))
+        try FileManager.default.copyItem(at: adapters[0].url.deletingLastPathComponent().appendingPathComponent("adapter_config.json"),
+                                         to: scratch.appendingPathComponent("adapter_config.json"))
+        let former = try NFKMLXPixtral.decoder(directoryURL: URL(fileURLWithPath: directory))
+        try NFKMLXDecoderAdapters.hold([(scratch.appendingPathComponent("adapter_model.safetensors"), 1)], in: former,
+                                       modulePath: NFKMLXPixtral.adapterModulePath)
+        let mine = NFKMLXAdapterRun.$strengths.withValue([1]) { former(ids)[0] }
+        let theirs = NFKMLXAdapterRun.$strengths.withValue([1, 0]) { decoder(ids)[0] }
+        XCTAssertLessThan(abs(mine - theirs).max().item(Float.self), 1e-6)
+    }
+
     /// The streamed decoder at `precision` over the fused sequence of a `run_reference.py
     /// pixtral_fused_layerwise` record (`recordKey`), given the `run_pixtral` record's projected features as
     /// the oracle was: the record, the fused input, every layer's state, and the logits.

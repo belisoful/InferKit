@@ -232,6 +232,16 @@ public final class NFKMLXTranslateGemma: NSObject {
                                                             residency: residency))
     }
 
+    /// Builds the backend from a release directory with released LoRA adapters held beside its decoder at
+    /// their strengths (``NFKMLXGemma3/holdAdapters(_:in:)``); a run's `NFKParameterAdapterStrengths` sets
+    /// them. Introduced in InferKit 0.4.0.
+    static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                        adapters: [(url: URL, strength: Float)]) throws -> NFKMLXTranslationBackend {
+        let translator = try translator(directoryURL: directoryURL, precision: precision, residency: residency)
+        return try NFKMLXTranslationBackend.holding(adapters, in: translator.model.decoder, translator: translator,
+                                                    modulePath: NFKMLXGemma3.adapterModulePath)
+    }
+
     /// Builds the backend from a release with a smaller release drafting for it. Introduced in InferKit
     /// 0.4.0.
     @objc(backendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)

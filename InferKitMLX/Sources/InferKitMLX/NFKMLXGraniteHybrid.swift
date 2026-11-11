@@ -248,6 +248,8 @@ final class NFKMLXGraniteCache {
 final class NFKMLXGranitePromptCache: NFKMLXConversationState {
     private(set) var tokens: [Int] = []
     private var kept: NFKMLXGraniteCache?
+    /// The strengths of the held adapters the kept prefill was computed at, or nil for a model that holds none.
+    var adapterStrengths: [Float]?
 
     var allocatedBytes: Int { kept?.allocatedBytes ?? 0 }
 

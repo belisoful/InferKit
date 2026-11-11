@@ -22,9 +22,23 @@ extension NFKMLXQwen3VL {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         let info: [String: Any]? = streamedLayerCount > 0 ? [NFKModelInfoResidency: NFKModelResidencyStreamed] : nil
-        return NFKMLXGenerationBackend.imageQuestion(identifier: Self.modelName, modelInfo: info) { [self] image, question, maxTokens in
+        return NFKMLXGenerationBackend.imageQuestion(identifier: Self.modelName, modelInfo: info,
+                                                     adapterStrengths: adapterStrengths) { [self] image, question, maxTokens in
             try answer(image: image, question: question, maxTokens: maxTokens)
         }
+    }
+
+    /// Holds released LoRA adapters beside the decoder's layers, unmerged, at their strengths
+    /// (``NFKMLXDecoderAdapters``: PEFT's and mlx-lm's layouts), which ``inferenceBackend()`` runs and a
+    /// request's `NFKParameterAdapterStrengths` changes. transformers' `model.language_model.` reads as the
+    /// decoder; an adapter of the vision tower is refused.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for a decoder that streams layers, and
+    ///   `NFKMLXError.loRANotApplicable` for an adapter the decoder cannot hold, before any layer changes.
+    func holdAdapters(_ adapters: [(url: URL, strength: Float)]) throws {
+        guard !adapters.isEmpty else { return }
+        try textDecoder.requireHeldLayers(for: "hold adapters")
+        adapterStrengths = try NFKMLXDecoderAdapters.hold(adapters, in: textDecoder)
     }
 
     /// Builds the model from a downloaded release directory, as ``model(directoryURL:)`` does, and returns

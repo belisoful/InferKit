@@ -35,19 +35,21 @@ enum NFKMLXDecoderAdapters {
     /// Holds each adapter beside `model`'s layers at its strength, in load order, and returns the strengths.
     /// `modulePath` turns a layer's stored name, read as above, into `model`'s module path, or nil for a layer
     /// `model` does not have: Whisper's adapters name transformers' modules, which the port names as OpenAI does.
+    /// `inert` names a module path whose adapter is left out because the reference computes nothing from that
+    /// layer: Gemma 3n's key and value projections on a layer that reads another layer's keys and values.
     ///
     /// - Throws: `NFKMLXError.loRANotApplicable` when a file is in neither layout, has no configuration beside
     ///   it, is a DoRA, carries whole layers (`modules_to_save`), or adapts a layer `model` lacks or one that is
     ///   not linear. Every adapter is read before any layer changes.
     @discardableResult
     static func hold(_ adapters: [(url: URL, strength: Float)], in model: Module,
-                     modulePath: (String) -> String? = { $0 }) throws -> [Float] {
+                     modulePath: (String) -> String? = { $0 }, inert: (String) -> Bool = { _ in false }) throws -> [Float] {
         guard !adapters.isEmpty else { return [] }
         let layers = Dictionary(model.leafModules().flattened(), uniquingKeysWith: { first, _ in first })
         var detours = [String: [NFKMLXLowRankDetour]]()
         for (index, adapter) in adapters.enumerated() {
             for (path, detour) in try read(adapter.url, adapter: index, strength: adapter.strength, layers: layers,
-                                           modulePath: modulePath) {
+                                           modulePath: modulePath, inert: inert) {
                 detours[path, default: []].append(detour)
             }
         }
@@ -57,7 +59,8 @@ enum NFKMLXDecoderAdapters {
 
     /// The detours one adapter file places, by layer path, their arrays at the type of the layer they adapt.
     static func read(_ url: URL, adapter: Int, strength: Float, layers: [String: Module],
-                     modulePath: (String) -> String? = { $0 }) throws -> [(String, NFKMLXLowRankDetour)] {
+                     modulePath: (String) -> String? = { $0 },
+                     inert: (String) -> Bool = { _ in false }) throws -> [(String, NFKMLXLowRankDetour)] {
         let name = url.lastPathComponent
         let arrays = try MLX.loadArrays(url: url)
         let configuration = try self.configuration(beside: url)
@@ -79,6 +82,9 @@ enum NFKMLXDecoderAdapters {
                 }
                 let scale = peft.preciseScaling(layerPath(stored), rank: down.dim(0)) ?? 1
                 let path = try mapped(stored, modulePath, name: name)
+                if inert(path) {
+                    continue
+                }
                 placed.append((path, try detour(down: down, up: up, scale: scale, adapter: adapter, strength: strength,
                                                 path: path, layers: layers, name: name)))
             }
@@ -96,6 +102,9 @@ enum NFKMLXDecoderAdapters {
                     throw NFKMLXError.loRANotApplicable("\(name) holds \(key) without its lora_b half")
                 }
                 let path = try mapped(stored, modulePath, name: name)
+                if inert(path) {
+                    continue
+                }
                 placed.append((path, try detour(down: a.transposed(1, 0), up: b.transposed(1, 0), scale: scale,
                                                 adapter: adapter, strength: strength, path: path, layers: layers,
                                                 name: name)))

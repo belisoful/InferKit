@@ -209,6 +209,60 @@ final class NFKMLXDecoderAdapterTests: XCTestCase {
                        "a GGUF decoder reads no adapter file")
     }
 
+    func testTheGemmaVisionAndHybridDecodersTakeAdaptersTrainedOnTheirRepositories() throws {
+        NFKMLXReferenceModels.registerAll()
+        let descriptors = Dictionary(uniqueKeysWithValues: NFKMLXModelDescriptors.modelDescriptors().map { ($0.identifier, $0) })
+        let expected: [String: [String]] = [
+            "gemma-4-e2b-it": ["google/gemma-4-E2B-it"],
+            "gemma-3n-e2b-it": ["google/gemma-3n-E2B-it"],
+            NFKMLXQwen3VL.modelName: ["Qwen/Qwen3-VL-2B-Instruct"],
+            NFKMLXPixtral.modelName: ["mistral-experimental/pixtral-12b", "mistral-community/pixtral-12b"],
+            NFKMLXGraniteHybrid.graniteModelName: ["ibm-granite/granite-4.0-h-1b"],
+            NFKMLXNemotronH.nemotronModelName: ["nvidia/NVIDIA-Nemotron-Nano-9B-v2"],
+            NFKMLXMamba.mambaModelName: ["mistralai/Mamba-Codestral-7B-v0.1"],
+        ]
+        for (identifier, repositories) in expected {
+            let descriptor = try XCTUnwrap(descriptors[identifier], identifier)
+            XCTAssertEqual(descriptor.adapterBases, repositories, identifier)
+            XCTAssertNotNil(descriptor.option(withKey: NFKParameterAdapterStrengths), identifier)
+            XCTAssertTrue(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: identifier)
+                .contains(NFKModelLoadOptionAdapters), identifier)
+        }
+    }
+
+    func testAnInertLayersHalvesAreLeftOutAndAnyOtherMissingLayerRefused() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let query = halves(51, inputs: 64, outputs: 64)
+        let file = try adapter(["model.layers.0.self_attn.q_proj": query,
+                                "model.layers.1.self_attn.k_proj_unused": halves(53, inputs: 64, outputs: 32)],
+                               layout: .peft, configuration: ["r": 4, "lora_alpha": 4])
+        XCTAssertThrowsError(try NFKMLXDecoderAdapters.hold([(file, 1)], in: net), "a layer the model lacks")
+        let strengths = try NFKMLXDecoderAdapters.hold([(file, 1)], in: net, inert: { $0.hasSuffix("k_proj_unused") })
+        XCTAssertEqual(strengths, [1])
+        XCTAssertTrue(net.model.layers[0].attention.queryProjection is NFKMLXAdaptedLinear)
+    }
+
+    func testGemma3AndTheTranslatorsTakeAdaptersTrainedOnTheirRepositories() throws {
+        NFKMLXReferenceModels.registerAll()
+        let descriptors = Dictionary(uniqueKeysWithValues: NFKMLXModelDescriptors.modelDescriptors().map { ($0.identifier, $0) })
+        let expected: [String: [String]] = [
+            "gemma-3-1b-it": ["google/gemma-3-1b-it"],
+            "translategemma": ["google/translategemma-4b-it", "google/translategemma-12b-it", "google/translategemma-27b-it"],
+            "madlad400-3b-mt": ["google/madlad400-3b-mt"],
+            "seed-x": [NFKMLXSeedXVariant.ppo.repository, NFKMLXSeedXVariant.instruct.repository],
+            "hy-mt1.5": ["tencent/HY-MT1.5-1.8B", "tencent/HY-MT1.5-7B"],
+            "hy-mt2-30b-a3b": ["tencent/Hy-MT2-30B-A3B"],
+        ]
+        for (identifier, repositories) in expected {
+            let descriptor = try XCTUnwrap(descriptors[identifier], identifier)
+            XCTAssertEqual(descriptor.adapterBases, repositories, identifier)
+            XCTAssertNotNil(descriptor.option(withKey: NFKParameterAdapterStrengths), identifier)
+            XCTAssertTrue(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: identifier)
+                .contains(NFKModelLoadOptionAdapters), identifier)
+        }
+    }
+
     // A transformers Whisper adapter names transformers' modules; the port names them as OpenAI does.
     func testAWhisperAdapterReachesTheLayersItsTransformersNamesMean() throws {
         try requireMLXRuntime()

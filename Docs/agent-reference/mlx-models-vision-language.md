@@ -93,7 +93,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   vision features fed in): logit cosine 0.99999999998, argmax 80/80, the first continuation token
   matching. The shared-decoder change was re-verified against the dense Qwen3 (0.99999999999), SmolVLM
   (argmax 1140/1140), and Qwen3-Embedding (0.99999999999) records. `NFKMLXQwen3VLImageProcessor` is the
-  `smart_resize` + patchify input adapter. A dense size streams the decoder layers it cannot hold
+  `smart_resize` + patchify input adapter. Qwen3-VL and Pixtral hold released LoRA adapters beside the decoder
+  through the `adapters` load option (`holdAdapters(_:)` on each model, read by `inferenceBackend()`); see
+  `mlx-models-language.md` ("Held adapters on every other decoder family"). A dense size streams the decoder layers it cannot hold
   (`decoder(directoryURL:precision:residency:)`, `modelWithDirectoryURL:precision:residency:error:`),
   so the 8B at float32 and the 32B run on this machine; the released 2B decoder streamed with half its
   layers held computes the held decoder's hidden states exactly (`NFKMLXDenseStreamingTests`). The 8B

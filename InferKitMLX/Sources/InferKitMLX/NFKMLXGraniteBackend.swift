@@ -97,8 +97,10 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
-         NFKMLXGenerationParameterKey.toolCallFormat, NFKParameterConversationKey]
+        let keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
+                                 NFKParameterSeed, NFKParameterTools, NFKMLXGenerationParameterKey.toolCallFormat,
+                                 NFKParameterConversationKey]
+        return adapterStrengths.isEmpty ? keys : keys.union([NFKParameterAdapterStrengths])
     }
 
     /// The bytes the conversations' prompt caches may hold together.
@@ -172,7 +174,17 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     /// request, and the usage. Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage, NFKOutputFinishReason]) }
 
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    var adapterStrengths: [Float] = []
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        // The held adapters read the run's strengths as each pass builds its graph.
+        try NFKMLXAdapterRun.$strengths.withValue(try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)) {
+            try run(request)
+        }
+    }
+
+    private func run(_ request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var sampling = NFKMLXStepSampling(release: releaseSampling)
         sampling.read(request)
         var maximumTokens: Int?
@@ -269,7 +281,15 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
             }
             return (produced, limit, 0)
         }
-        let kept = conversation.map { name in conversations.states.state(for: name) { NFKMLXGranitePromptCache() } }
+        // A conversation's prefill computed at other adapter strengths starts over.
+        let strengths = NFKMLXAdapterRun.strengths
+        let kept = conversation.map { name in
+            conversations.states.state(for: name, isUsable: { $0.adapterStrengths == strengths }) {
+                let made = NFKMLXGranitePromptCache()
+                made.adapterStrengths = strengths
+                return made
+            }
+        }
         defer {
             if let conversation {
                 // A failed evaluation left a prefill no later prompt may extend.
@@ -395,13 +415,15 @@ extension NFKMLXGraniteHybrid {
     /// Builds the backend from a release directory, held as `residency` says, reporting `identifier`: the
     /// name the registry builds it under.
     static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                        identifier: String) throws -> any NFKInferenceBackend {
+                        identifier: String, adapters: [(url: URL, strength: Float)] = []) throws -> any NFKInferenceBackend {
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("the Granite release has no readable tokenizer")
         }
         let net = makeNet(try configuration(fromDirectory: directoryURL))
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency)
-        return NFKMLXGraniteBackend(net: net, tokenizer: tokenizer, identifier: identifier,
-                                    releaseDirectoryURL: directoryURL)
+        let backend = NFKMLXGraniteBackend(net: net, tokenizer: tokenizer, identifier: identifier,
+                                           releaseDirectoryURL: directoryURL)
+        backend.adapterStrengths = try NFKMLXDecoderAdapters.hold(adapters, in: net)
+        return backend
     }
 }

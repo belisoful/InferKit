@@ -284,7 +284,9 @@ public final class NFKMLXPixtral: NSObject {
 
     private let visionNet: NFKMLXPixtralVisionNet
     private let connector: NFKMLXPixtralConnector
-    private let textDecoder: NFKMLXLanguageNet
+    let textDecoder: NFKMLXLanguageNet
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    var adapterStrengths: [Float] = []
     private let tokenizer: NFKTokenizer
     private let processor: NFKMLXPixtralImageProcessor
     private let endTokens: Set<Int>

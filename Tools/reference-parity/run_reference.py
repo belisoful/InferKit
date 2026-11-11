@@ -4462,12 +4462,106 @@ def run_qwen3_adapters(image, checkpoint):
     carries the strengths, the token ids of the prompt and the greedy continuation the adapted model writes, and
     the logits at every position of that whole sequence, so each position's adapted prediction is compared.
     """
+    return _causal_lm_adapters(checkpoint, "IK_QWEN3_ADAPTERS")
+
+
+def run_gemma3_adapters(image, checkpoint):
+    """Gemma 3 with released LoRA adapters active together, as `run_qwen3_adapters` runs Qwen3.
+
+    `--checkpoint` is a text release DIRECTORY (gemma-3-1b-it). `IK_GEMMA3_ADAPTERS` lists the adapters in
+    `IK_QWEN3_ADAPTERS`' form. The tokenizer places `<bos>` before the prompt, as the port's raw prompt does.
+    """
+    return _causal_lm_adapters(checkpoint, "IK_GEMMA3_ADAPTERS")
+
+
+def run_gemma4_adapters(image, checkpoint):
+    """Gemma 4 with released LoRA adapters active together, as `run_qwen3_adapters` runs Qwen3, plus `base_output`.
+
+    `--checkpoint` is a release DIRECTORY (gemma-4-E2B-it), loaded through `AutoModelForCausalLM` at float32 as
+    `run_gemma4` loads it. `IK_GEMMA4_ADAPTERS` lists the adapters in `IK_QWEN3_ADAPTERS`' form. An adapter names
+    the decoder's layers from the class it was trained on (`model.language_model.layers.N`, or `layers.N` for the
+    bare text model); each is read through a copy whose keys name the loaded model's own decoder layers and whose
+    `target_modules` lists the leaf names it adapts (`_retargeted_adapter`). `base_output` holds the same logits
+    with every adapter at scale 0.
+    """
+    return _retargeted_decoder_adapters(checkpoint, "IK_GEMMA4_ADAPTERS")
+
+
+def run_gemma3n_adapters(image, checkpoint):
+    """Gemma 3n with released LoRA adapters active, as `run_gemma4_adapters` runs Gemma 4: `--checkpoint` is a
+    release DIRECTORY (gemma-3n-E2B-it) and `IK_GEMMA3N_ADAPTERS` lists the adapters. transformers computes nothing
+    from the key and value projections of a layer that reads an earlier layer's keys and values, so an adapter's
+    halves for them leave the record unchanged."""
+    return _retargeted_decoder_adapters(checkpoint, "IK_GEMMA3N_ADAPTERS")
+
+
+def _retargeted_decoder_adapters(checkpoint, variable):
+    """`run_gemma4_adapters`' record for the release at `checkpoint` and the adapters `variable` lists."""
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    base = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    prefix = next(name[: -len("layers.0.self_attn.q_proj")] for name, _ in base.named_modules()
+                  if name.endswith("layers.0.self_attn.q_proj") and "tower" not in name)
+    os.environ[variable + "_RETARGETED"] = ";".join(
+        _retargeted_adapter(path, prefix) + "=" + strength
+        for path, strength in (entry.rsplit("=", 1) for entry in os.environ[variable].split(";") if entry))
+    model, strengths, scale = _peft_stack(base, variable + "_RETARGETED")
+
+    prompt = "Summarize: The committee met on Tuesday to review the budget and agreed to delay the vote."
+    ids = tokenizer(prompt, return_tensors="pt").input_ids
+    with torch.no_grad():
+        generated = model.generate(ids, max_new_tokens=16, do_sample=False, pad_token_id=tokenizer.eos_token_id)
+        logits = model(generated).logits[0]
+        scale([0.0] * len(strengths))
+        base_logits = model(generated).logits[0]
+    globals()["_extra"] = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": generated[0, ids.shape[1]:].to(torch.int32).contiguous(),
+        "strengths": torch.tensor(strengths, dtype=torch.float32),
+        "base_output": base_logits.float().contiguous(),
+    }
+    return logits.float().contiguous()
+
+
+def _retargeted_adapter(path, prefix):
+    """A copy of the PEFT adapter at `path` in a fresh temporary directory, its decoder keys under `prefix` (the
+    loaded model's path to its decoder's `layers`) and its `target_modules` the leaf names its keys adapt, so PEFT
+    places each half on the layer the adapter names whatever class it was trained on. Returns the copy's path."""
+    import tempfile
+    from safetensors.torch import load_file, save_file
+
+    tensors = load_file(path)
+    renamed = {}
+    for key, tensor in tensors.items():
+        name = key[len("base_model.model."):] if key.startswith("base_model.model.") else key
+        for stored in ("model.language_model.", "language_model.model.", "model."):
+            if name.startswith(stored + "layers."):
+                name = name[len(stored):]
+                break
+        if not name.startswith("layers."):
+            raise ValueError(f"{key} names no decoder layer")
+        renamed["base_model.model." + prefix + name] = tensor.contiguous()
+    with open(os.path.join(os.path.dirname(path), "adapter_config.json")) as handle:
+        configuration = json.load(handle)
+    configuration["target_modules"] = sorted({key.split(".lora_")[0].rsplit(".", 1)[1] for key in renamed})
+    configuration["exclude_modules"] = r".*tower.*"
+    directory = tempfile.mkdtemp(prefix="ik-adapter-")
+    save_file(renamed, os.path.join(directory, "adapter_model.safetensors"))
+    with open(os.path.join(directory, "adapter_config.json"), "w") as handle:
+        json.dump(configuration, handle)
+    return os.path.join(directory, "adapter_model.safetensors")
+
+
+def _causal_lm_adapters(checkpoint, variable):
+    """A causal language model with the adapters `variable` lists active through PEFT; see `run_qwen3_adapters`."""
     import torch
     from peft import PeftModel
     from peft.tuners.lora import LoraLayer
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    entries = [entry.rsplit("=", 1) for entry in os.environ["IK_QWEN3_ADAPTERS"].split(";") if entry]
+    entries = [entry.rsplit("=", 1) for entry in os.environ[variable].split(";") if entry]
     directories = [os.path.dirname(path) for path, _ in entries]
     strengths = [float(strength) for _, strength in entries]
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
@@ -22586,6 +22680,196 @@ def run_madlad(image, checkpoint):
                                source_lang, target_lang)
 
 
+def _peft_stack(base, variable):
+    """`base` with the adapters `variable` lists (`<adapter_model.safetensors path>=<strength>` joined by `;`, each
+    with its `adapter_config.json` beside it) loaded through PEFT, all active, and a setter of their scales: the
+    model, the strengths, and `scale(values)`, which gives each adapter its value as `set_adapters`' weights do."""
+    from peft import PeftModel
+    from peft.tuners.lora import LoraLayer
+
+    entries = [entry.rsplit("=", 1) for entry in os.environ[variable].split(";") if entry]
+    directories = [os.path.dirname(path) for path, _ in entries]
+    strengths = [float(strength) for _, strength in entries]
+    model = PeftModel.from_pretrained(base, directories[0], adapter_name="adapter0")
+    for index, directory in enumerate(directories[1:], start=1):
+        model.load_adapter(directory, adapter_name=f"adapter{index}")
+    names = [f"adapter{index}" for index in range(len(directories))]
+    model.base_model.set_adapter(names)
+
+    def scale(values):
+        for module in model.modules():
+            if isinstance(module, LoraLayer):
+                for name, value in zip(names, values):
+                    if name in module.scaling:
+                        module.set_scale(name, value)
+
+    scale(strengths)
+    model.eval()
+    return model, strengths, scale
+
+
+def run_qwen3vl_adapters(image, checkpoint):
+    """Qwen3-VL with released LoRA adapters over its decoder active together, each at its own strength, through
+    PEFT (`_peft_stack` over `IK_QWEN3VL_ADAPTERS`), at float32, on `run_qwen3vl`'s image prompt. The record
+    carries `run_qwen3vl`'s decoder inputs (the input ids, the grid, the merged vision output, and the three
+    deepstack features, which the adapters leave alone), the adapted logits, the adapted model's greedy
+    continuation (16 tokens), the strengths, and `base_output`, the logits with every adapter at scale 0."""
+    import numpy as np
+    import torch
+    from PIL import Image
+    from transformers import AutoModelForImageTextToText, AutoProcessor
+
+    processor = AutoProcessor.from_pretrained(checkpoint)
+    base = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    model, strengths, scale = _peft_stack(base, "IK_QWEN3VL_ADAPTERS")
+    pil = Image.fromarray((image * 255).astype(np.uint8))
+    prompt = ("<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>What is in this image?"
+              "<|im_end|>\n<|im_start|>assistant\n")
+    inputs = processor(text=[prompt], images=[pil], return_tensors="pt")
+    visual = base.model.visual
+    with torch.no_grad():
+        # transformers 5.x returns a BaseModelOutputWithDeepstackFeatures: the merged output is its pooler_output.
+        vision_out = visual(inputs["pixel_values"], grid_thw=inputs["image_grid_thw"], return_dict=True)
+        embeds, deepstack = vision_out.pooler_output, vision_out.deepstack_features
+        logits = model(**inputs).logits[0]
+        generated = model.generate(**inputs, max_new_tokens=16, do_sample=False)
+        scale([0.0] * len(strengths))
+        base_logits = model(**inputs).logits[0]
+    extra = {
+        "image_grid_thw": inputs["image_grid_thw"].to(torch.int32).contiguous(),
+        "vision_output": embeds.contiguous(),
+        "input_ids": inputs["input_ids"][0].to(torch.int32).contiguous(),
+        "continuation": generated[0, inputs["input_ids"].shape[1]:].to(torch.int32).contiguous(),
+        "strengths": torch.tensor(strengths, dtype=torch.float32),
+        "base_output": base_logits.contiguous(),
+    }
+    for index, feature in enumerate(deepstack):
+        extra[f"deepstack_{index}"] = feature.contiguous()
+    globals()["_extra"] = extra
+    return logits.contiguous()
+
+
+def run_pixtral_tiny_adapters(image, checkpoint):
+    """Two PEFT LoRA adapters made over the tiny Pixtral release's decoder (`run_pixtral_tiny`'s directory,
+    `--checkpoint`), saved beside the record, then active together at 0.8 and 0.5, at float32.
+
+    No released adapter targets this release, so PEFT makes them, each half drawn rather than zeroed
+    (`init_lora_weights=False`): one over the query and value projections at r 4 and alpha 8, one over every
+    decoder projection at r 8 and alpha 16 with rsLoRA scaling. Each is saved by `save_pretrained` to
+    `<output stem>.adapters/adapter<N>/`, the layout a released PEFT adapter has. The record carries the
+    strengths, the token ids, the logits over them, and `base_output`, the logits with both adapters at scale 0.
+    """
+    import torch
+    from peft import LoraConfig, get_peft_model
+    from transformers import LlavaForConditionalGeneration
+
+    output = next(argument for argument in sys.argv[1:] if argument.endswith(".safetensors"))
+    folder = os.path.splitext(os.path.abspath(output))[0] + ".adapters"
+    configurations = [
+        LoraConfig(r=4, lora_alpha=8, target_modules=r".*language_model.*\.(q_proj|v_proj)", init_lora_weights=False),
+        LoraConfig(r=8, lora_alpha=16, use_rslora=True, init_lora_weights=False,
+                   target_modules=r".*language_model.*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj)"),
+    ]
+    for index, configuration in enumerate(configurations):
+        torch.manual_seed(31 + index)
+        made = get_peft_model(LlavaForConditionalGeneration.from_pretrained(checkpoint, dtype=torch.float32), configuration)
+        made.save_pretrained(os.path.join(folder, f"adapter{index}"))
+    paths = [os.path.join(folder, f"adapter{index}", "adapter_model.safetensors") for index in range(2)]
+    os.environ["IK_PIXTRAL_ADAPTERS"] = f"{paths[0]}=0.8;{paths[1]}=0.5"
+    base = LlavaForConditionalGeneration.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    model, strengths, scale = _peft_stack(base, "IK_PIXTRAL_ADAPTERS")
+    input_ids = torch.tensor([[1, 5, 7, 9, 11, 13, 2, 17, 19]], dtype=torch.long)
+    with torch.no_grad():
+        logits = model(input_ids=input_ids).logits[0]
+        scale([0.0] * len(strengths))
+        base_logits = model(input_ids=input_ids).logits[0]
+    globals()["_extra"] = {
+        "strengths": torch.tensor(strengths, dtype=torch.float32),
+        "input_ids": input_ids[0].to(torch.int32).contiguous(),
+        "base_output": base_logits.contiguous(),
+    }
+    return logits.contiguous()
+
+
+def run_generated_decoder_adapters(image, checkpoint):
+    """Two PEFT LoRA adapters made over a causal decoder that no released adapter targets, saved beside the
+    record, then active together at 0.8 and 0.5, at float32 (`AutoModelForCausalLM`, `--checkpoint` a release
+    DIRECTORY).
+
+    PEFT draws both halves (`init_lora_weights=False`). The first adapts the modules `IK_GENERATED_ADAPTER_TARGETS`'
+    first pattern matches at r 4 and alpha 8, the second those its second pattern matches at r 8 and alpha 16
+    with rsLoRA scaling; by default the attention query and value projections, then every attention, feed-forward,
+    and Mamba projection. Each is saved by `save_pretrained` to `<output stem>.adapters/adapter<N>/`. The record
+    carries the strengths, the prompt's token ids, the logits over them, and `base_output`, the logits with both
+    adapters at scale 0."""
+    import torch
+    from peft import LoraConfig, get_peft_model
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    output = next(argument for argument in sys.argv[1:] if argument.endswith(".safetensors"))
+    folder = os.path.splitext(os.path.abspath(output))[0] + ".adapters"
+    patterns = os.environ.get("IK_GENERATED_ADAPTER_TARGETS", ";".join([
+        r".*\.(q_proj|v_proj)$",
+        r".*\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj|in_proj|out_proj|input_linear|output_linear)$",
+    ])).split(";")
+    configurations = [LoraConfig(r=4, lora_alpha=8, target_modules=patterns[0], init_lora_weights=False),
+                      LoraConfig(r=8, lora_alpha=16, use_rslora=True, target_modules=patterns[1], init_lora_weights=False)]
+    for index, configuration in enumerate(configurations):
+        torch.manual_seed(41 + index)
+        made = get_peft_model(AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.float32), configuration)
+        made.save_pretrained(os.path.join(folder, f"adapter{index}"))
+        del made
+    paths = [os.path.join(folder, f"adapter{index}", "adapter_model.safetensors") for index in range(2)]
+    os.environ["IK_GENERATED_ADAPTERS"] = f"{paths[0]}=0.8;{paths[1]}=0.5"
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    base = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    model, strengths, scale = _peft_stack(base, "IK_GENERATED_ADAPTERS")
+    ids = tokenizer("Summarize: The committee met on Tuesday to review the budget and agreed to delay the vote.",
+                    return_tensors="pt").input_ids
+    with torch.no_grad():
+        logits = model(ids).logits[0]
+        scale([0.0] * len(strengths))
+        base_logits = model(ids).logits[0]
+    globals()["_extra"] = {
+        "strengths": torch.tensor(strengths, dtype=torch.float32),
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "base_output": base_logits.float().contiguous(),
+    }
+    return logits.float().contiguous()
+
+
+def run_madlad_adapters(image, checkpoint):
+    """MADLAD-400 (google/madlad400-3b-mt) with released LoRA adapters active together, each at its own strength,
+    through PEFT (`_peft_stack` over `IK_MADLAD_ADAPTERS`), at float32. The source is `TRANSLATION_PROBES["en"][1]`
+    behind the `<2xx>` marker of MADLAD_ADAPTER_TARGET (default `dv`, the first adapter's language). The record
+    carries the strengths, the source ids, the adapted model's greedy output (64 tokens at most), its decoder
+    input, the teacher-forced logits over it, and `base_output`, the same logits with every adapter at scale 0."""
+    from transformers import AutoTokenizer, T5ForConditionalGeneration
+
+    target_lang = os.environ.get("MADLAD_ADAPTER_TARGET", "dv")
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint, use_fast=True)
+    base = T5ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    model, strengths, scale = _peft_stack(base, "IK_MADLAD_ADAPTERS")
+    input_ids = torch.tensor([tokenizer("<2" + target_lang + "> " + TRANSLATION_PROBES["en"][1]).input_ids])
+    attention = torch.ones_like(input_ids)
+    with torch.no_grad():
+        greedy = model.generate(input_ids=input_ids, attention_mask=attention, num_beams=1, do_sample=False,
+                                max_new_tokens=64)
+        decoder_input = greedy[:, :-1]
+        logits = model(input_ids=input_ids, attention_mask=attention, decoder_input_ids=decoder_input).logits
+        scale([0.0] * len(strengths))
+        base_logits = model(input_ids=input_ids, attention_mask=attention, decoder_input_ids=decoder_input).logits
+    print("greedy:", tokenizer.decode(greedy[0], skip_special_tokens=True))
+    globals()["_extra"] = {
+        "strengths": torch.tensor(strengths, dtype=torch.float32),
+        "source_ids": input_ids[0].to(torch.int32).contiguous(),
+        "greedy": greedy[0].to(torch.int32).contiguous(),
+        "decoder_input": decoder_input[0].to(torch.int32).contiguous(),
+        "base_output": base_logits[0].contiguous(),
+    }
+    return logits[0].contiguous()
+
+
 def run_madlad_layerwise(image, checkpoint):
     """`run_madlad` for a release too large to hold whole at its precision (the 7B is 33 GB of float32):
     the same model class, entry points, and record, with each T5 block's weights read from the release as
@@ -25549,7 +25833,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_adapters": run_qwen3_adapters, "whisper_adapters": run_whisper_adapters, "flux_adapters": run_flux_adapters, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "style_transfer_training": run_style_transfer_training, "adain_training": run_adain_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "qwen3_5_cached": run_qwen3_5_cached, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_adapters": run_qwen3_adapters, "gemma3_adapters": run_gemma3_adapters, "gemma4_adapters": run_gemma4_adapters, "gemma3n_adapters": run_gemma3n_adapters, "qwen3vl_adapters": run_qwen3vl_adapters, "pixtral_tiny_adapters": run_pixtral_tiny_adapters, "madlad_adapters": run_madlad_adapters, "generated_decoder_adapters": run_generated_decoder_adapters, "whisper_adapters": run_whisper_adapters, "flux_adapters": run_flux_adapters, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "style_transfer_training": run_style_transfer_training, "adain_training": run_adain_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "qwen3_5_cached": run_qwen3_5_cached, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,

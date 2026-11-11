@@ -133,12 +133,16 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
     private let contextLength: Int?
     /// The sampling the release's generation config sets: step 3 of ``NFKMLXGenerationOptions``' sampling order.
     private let releaseSampling: NFKMLXReleaseSampling?
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    private let adapterStrengths: [Float]
 
-    init(model: NFKMLXGemma3n, identifier: String, contextLength: Int? = nil, releaseSampling: NFKMLXReleaseSampling? = nil) {
+    init(model: NFKMLXGemma3n, identifier: String, contextLength: Int? = nil, releaseSampling: NFKMLXReleaseSampling? = nil,
+         adapterStrengths: [Float] = []) {
         holder = NFKGemma3nHolder(model)
         self.identifier = identifier
         self.contextLength = contextLength
         self.releaseSampling = releaseSampling
+        self.adapterStrengths = adapterStrengths
         super.init()
     }
 
@@ -146,7 +150,9 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed]
+        let keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
+                                 NFKParameterSeed]
+        return adapterStrengths.isEmpty ? keys : keys.union([NFKParameterAdapterStrengths])
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -198,6 +204,7 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
             options.seed = value.uint64Value
         }
 
+        let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
         let gemma = holder.model
         let (ids, image, waveform) = try prompt(for: request)
         options.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: ids.count,
@@ -205,9 +212,12 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
 
         generationLock.lock(); defer { generationLock.unlock() }
         var produced = [Int]()
-        try gemma.generate(tokens: ids, image: image, audio: waveform, options: options) { token in
-            produced.append(token)
-            return onToken?(token, produced) ?? true
+        // The held adapters read the run's strengths as each pass builds its graph.
+        try NFKMLXAdapterRun.$strengths.withValue(strengths) {
+            try gemma.generate(tokens: ids, image: image, audio: waveform, options: options) { token in
+                produced.append(token)
+                return onToken?(token, produced) ?? true
+            }
         }
         return NFKInferenceResult(outputs: [
             NFKOutputText: gemma.decode(produced),
@@ -326,13 +336,33 @@ extension NFKMLXGemma3n {
         return decode(produced)
     }
 
-    /// A text-generation backend around a released directory.
+    /// A text-generation backend around a released directory, with `adapters` held beside its decoder at their
+    /// strengths (`holdAdapters(_:in:)`); a run's `NFKParameterAdapterStrengths` sets them.
     public static func backend(directoryURL directory: URL,
-                               precision: NFKMLXWeightPrecision = .float32) throws
+                               precision: NFKMLXWeightPrecision = .float32,
+                               adapters: [(url: URL, strength: Float)] = []) throws
         -> any NFKInferenceBackend {
-        NFKMLXGemma3nBackend(model: try load(directoryURL: directory, precision: precision),
-                             identifier: modelName, contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory),
-                            releaseSampling: NFKMLXReleaseSampling(directoryURL: directory))
+        let gemma = try load(directoryURL: directory, precision: precision)
+        return NFKMLXGemma3nBackend(model: gemma, identifier: modelName,
+                                    contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory),
+                                    releaseSampling: NFKMLXReleaseSampling(directoryURL: directory),
+                                    adapterStrengths: try holdAdapters(adapters, in: gemma))
+    }
+
+    /// Holds released LoRA adapters beside `gemma`'s decoder layers, unmerged, and returns their strengths in
+    /// load order (``NFKMLXDecoderAdapters``, each layer read through ``NFKMLXGemma3/adapterModulePath(_:)``).
+    /// transformers keeps key and value projections on the layers that read an earlier layer's keys and values
+    /// and computes nothing from them; the port leaves them out, and an adapter's halves for them are left out
+    /// with them. An adapter of the vision or audio tower is refused. Introduced in InferKit 0.4.0.
+    static func holdAdapters(_ adapters: [(url: URL, strength: Float)], in gemma: NFKMLXGemma3n) throws -> [Float] {
+        guard !adapters.isEmpty else { return [] }
+        let decoder = gemma.model.decoder
+        return try NFKMLXDecoderAdapters.hold(adapters, in: decoder, modulePath: NFKMLXGemma3.adapterModulePath) { path in
+            let parts = path.split(separator: ".")
+            guard parts.count == 4, parts[0] == "layers", parts[2] == "self_attn", parts[3] == "k_proj" || parts[3] == "v_proj",
+                  let layer = Int(parts[1]), decoder.layers.indices.contains(layer) else { return false }
+            return decoder.layers[layer].attention.sharesKeyValues
+        }
     }
 
     @objc(backendWithDirectoryURL:error:)

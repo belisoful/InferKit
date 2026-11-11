@@ -359,6 +359,11 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
 
 ## Customization
 
+Released LoRA adapters load beside TranslateGemma's, MADLAD's, Seed-X's, and HY-MT's weights, unmerged, through
+the `adapters` load option; `NFKMLXTranslationBackend.holding(_:in:translator:modulePath:)` builds the backend
+and its run reads `NFKParameterAdapterStrengths`. The reader, the name mapping, and the parity figures are in
+`mlx-models-language.md` ("Held adapters on every other decoder family").
+
 All three ship LoRA on the decoder's query and value projections (`decoder.layers.N.*.q_proj` /
 `.v_proj`; T5 `decoder.block.N.*.q` / `.v`), the encoder frozen, through `NFKMLXMarian.fineTune`,
 `NFKMLXM2M100.fineTune`, and `NFKMLXMADLAD.fineTune` over `NFKMLXTranslationObjective`, and

@@ -88,6 +88,9 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     /// Introduced in InferKit 0.4.0.
     public private(set) var lastSpeculativeReport = NFKMLXSpeculativeReport()
 
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    var adapterStrengths: [Float] = []
+
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXGemmaTokenizer, identifier: String,
          expertStore: NFKMLXExpertStore? = nil, layerStream: NFKMLXLayerStream? = nil,
          draft: ((MLXArray) -> MLXArray)? = nil, modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
@@ -145,12 +148,16 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     }
 
     /// The request parameters the backend reads, with `NFKMLXGenerationParameterKey.draftTokens` where
-    /// a draft model proposes tokens. Introduced in InferKit 0.4.0.
+    /// a draft model proposes tokens and `NFKParameterAdapterStrengths` where the model holds adapters.
+    /// Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
         var keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
                                  NFKParameterSeed, NFKParameterTools, NFKMLXGenerationParameterKey.toolCallFormat]
         if hasDraftModel {
             keys.insert(NFKMLXGenerationParameterKey.draftTokens)
+        }
+        if !adapterStrengths.isEmpty {
+            keys.insert(NFKParameterAdapterStrengths)
         }
         return keys
     }
@@ -163,6 +170,13 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage, NFKOutputFinishReason]) }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        // The held adapters read the run's strengths as each pass builds its graph.
+        try NFKMLXAdapterRun.$strengths.withValue(try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)) {
+            try run(request)
+        }
+    }
+
+    private func run(_ request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var sampling = NFKMLXStepSampling(release: releaseSampling)
         sampling.read(request)
         var maximumTokens: Int?
@@ -334,18 +348,43 @@ public extension NFKMLXGemmaLanguage {
     /// Introduced in InferKit 0.4.0.
     static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision = .float32,
                         residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: residency, adapters: [])
+    }
+
+    /// `backend(directoryURL:precision:residency:)` with released LoRA adapters held beside the decoder's layers,
+    /// unmerged, at their strengths (`NFKMLXDecoderAdapters`: PEFT's and mlx-lm's layouts, read through
+    /// `NFKMLXGemma3.adapterModulePath(_:)`); a run's `NFKParameterAdapterStrengths` sets them. A decoder that
+    /// streams layers holds none.
+    internal static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                                 adapters: [(url: URL, strength: Float)]) throws -> any NFKInferenceBackend {
         let configURL = directoryURL.appendingPathComponent("config.json")
         // A Gemma 3 release (`gemma3` / `gemma3_text`) has its own decoder and a cached generation loop.
         if NFKMLXGemma3.isGemma3(configURL: configURL) {
-            return try NFKMLXGemma3.backend(directoryURL: directoryURL, precision: precision)
+            return try NFKMLXGemma3.backend(directoryURL: directoryURL, precision: precision, adapters: adapters)
         }
         guard let tokenizer = NFKMLXGemmaTokenizer(directoryURL: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("the Gemma release has no readable tokenizer.json")
         }
         let decoder = try textDecoder(directoryURL: directoryURL, precision: precision, residency: residency, streams: true)
-        return NFKMLXGemmaBackend(logits: decoder.logits, tokenizer: tokenizer, identifier: modelName,
-                                  expertStore: decoder.expertStore, layerStream: decoder.layerStream,
-                                  modules: [decoder.module], releaseDirectoryURL: directoryURL)
+        let backend = NFKMLXGemmaBackend(logits: decoder.logits, tokenizer: tokenizer, identifier: modelName,
+                                         expertStore: decoder.expertStore, layerStream: decoder.layerStream,
+                                         modules: [decoder.module], releaseDirectoryURL: directoryURL)
+        backend.adapterStrengths = try holdAdapters(adapters, in: decoder.module, layerStream: decoder.layerStream)
+        return backend
+    }
+
+    /// Holds `adapters` beside a Gemma 4 decoder's layers and returns their strengths in load order.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for a decoder that streams layers, and
+    ///   `NFKMLXError.loRANotApplicable` for an adapter the decoder cannot hold, before any layer changes.
+    internal static func holdAdapters(_ adapters: [(url: URL, strength: Float)], in decoder: Module,
+                                      layerStream: NFKMLXLayerStream?) throws -> [Float] {
+        guard !adapters.isEmpty else { return [] }
+        guard layerStream == nil else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(modelName) holds adapters beside layers held in memory; load it with a residency that holds every layer")
+        }
+        return try NFKMLXDecoderAdapters.hold(adapters, in: decoder, modulePath: NFKMLXGemma3.adapterModulePath)
     }
 
     /// Builds a text-generation backend from a Gemma 4 release with a smaller Gemma 4 release of the same
@@ -362,6 +401,15 @@ public extension NFKMLXGemmaLanguage {
     /// `residency` plans it against what the draft leaves of the working set. Introduced in InferKit 0.4.0.
     static func backend(directoryURL: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision = .float32,
                         residency: NFKMLXResidency = .automatic, draftBits: Int? = 4) throws -> NFKMLXGemmaBackend {
+        try backend(directoryURL: directoryURL, draftDirectoryURL: draftDirectoryURL, precision: precision,
+                    residency: residency, draftBits: draftBits, adapters: [])
+    }
+
+    /// The drafted backend with released LoRA adapters held beside the release's decoder (not the draft's) at
+    /// their strengths, as `backend(directoryURL:precision:residency:adapters:)` holds them.
+    internal static func backend(directoryURL: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                                 residency: NFKMLXResidency, draftBits: Int?,
+                                 adapters: [(url: URL, strength: Float)]) throws -> NFKMLXGemmaBackend {
         let configURL = directoryURL.appendingPathComponent("config.json")
         guard !NFKMLXGemma3.isGemma3(configURL: configURL),
               !NFKMLXGemma3.isGemma3(configURL: draftDirectoryURL.appendingPathComponent("config.json")) else {
@@ -388,9 +436,11 @@ public extension NFKMLXGemmaLanguage {
                 "the draft's vocabulary has \(draft.vocabularySize) entries where the model's has "
                 + "\(decoder.vocabularySize); a draft must share the model's vocabulary")
         }
-        return NFKMLXGemmaBackend(logits: decoder.logits, tokenizer: tokenizer, identifier: modelName,
-                                  expertStore: decoder.expertStore, layerStream: decoder.layerStream, draft: draft.logits,
-                                  modules: [decoder.module], releaseDirectoryURL: directoryURL)
+        let backend = NFKMLXGemmaBackend(logits: decoder.logits, tokenizer: tokenizer, identifier: modelName,
+                                         expertStore: decoder.expertStore, layerStream: decoder.layerStream,
+                                         draft: draft.logits, modules: [decoder.module], releaseDirectoryURL: directoryURL)
+        backend.adapterStrengths = try holdAdapters(adapters, in: decoder.module, layerStream: decoder.layerStream)
+        return backend
     }
 
     /// The Objective-C entry for a release with a smaller release drafting for it, the draft at 4 bits;

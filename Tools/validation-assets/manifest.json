@@ -628,6 +628,96 @@
       "note": "An Igbo adapter for Whisper small (theelvace/whisper-small-igbo, MIT), PEFT layout over the query and value projections, rank 32; its adapter_config.json (977 B, same revision) sits beside it. The second adapter of the IK_PARITY_WHISPER_ADAPTERS stack, at strength 0.6."
     },
     {
+      "key": "LORA_GEMMA3_1B_REASONING",
+      "file": "lora/gemma3-1b-reasoning-grpo/adapter_model.safetensors",
+      "bytes": 208780928,
+      "url": "https://huggingface.co/codelion/gemma-3-1b-it-reasoning-grpo-lora/resolve/eb4c1f578b93d143e99b8c0c58d6e5c0b531cb8f/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_GEMMA3_1B_REASONING"
+      ],
+      "note": "A GRPO reasoning adapter for Gemma 3 1B IT (codelion/gemma-3-1b-it-reasoning-grpo-lora, apache-2.0), PEFT layout over every attention and feed-forward projection, rank 64, lora_alpha 128, stored at float32; its adapter_config.json (903 B, same revision) sits beside it. Held beside the GEMMA3_1B release at strength 0.8 and stacked with LORA_GEMMA3_1B_TOOL_ROUTER at 0.6, measured against PEFT with both active at float32 (run_reference.py gemma3_adapters under the ltxtrain env with IK_GEMMA3_ADAPTERS='<reasoning>=0.8;<router>=0.6' -> IK_PARITY_GEMMA3_ADAPTERS)."
+    },
+    {
+      "key": "LORA_GEMMA3_1B_TOOL_ROUTER",
+      "file": "lora/gemma3-1b-tool-router/adapter_model.safetensors",
+      "bytes": 26139992,
+      "url": "https://huggingface.co/Jayteare/gemma-gcp-tool-router-1-3-lora/resolve/457a8de38a74de3551d86e89977d3e19de6ab50d/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_GEMMA3_1B_TOOL_ROUTER"
+      ],
+      "note": "A tool-routing adapter for Gemma 3 1B IT (Jayteare/gemma-gcp-tool-router-1-3-lora, apache-2.0), PEFT layout over every attention and feed-forward projection, rank 16, lora_alpha 32, stored at bfloat16; its adapter_config.json (1,099 B, same revision) sits beside it. The second adapter of the IK_PARITY_GEMMA3_ADAPTERS stack, at strength 0.6."
+    },
+    {
+      "key": "LORA_QWEN3_VL_2B_VISPROBE",
+      "file": "lora/qwen3-vl-2b-visprobe/adapter_model.safetensors",
+      "bytes": 34922600,
+      "url": "https://huggingface.co/chenyeikai/VisProbe-Qwen3-VL-2B-LoRA/resolve/28b121de00ae5b2fbac0a0484a749769e6fb7eba/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_QWEN3_VL_2B_VISPROBE"
+      ],
+      "note": "An adapter for Qwen3-VL 2B Instruct (chenyeikai/VisProbe-Qwen3-VL-2B-LoRA, apache-2.0), PEFT layout over the decoder's attention and feed-forward projections under model.language_model., rank 8, lora_alpha 16; its adapter_config.json (1,180 B, same revision) sits beside it. Held beside the QWEN3_VL_2B decoder at strength 0.7 and stacked with LORA_QWEN3_VL_2B_RECEIPTS at 0.5, measured against PEFT on run_qwen3vl's image prompt at float32 (run_reference.py qwen3vl_adapters under the ltxtrain env with IK_QWEN3VL_ADAPTERS='<visprobe>=0.7;<receipts>=0.5' -> IK_PARITY_QWEN3_VL_ADAPTERS)."
+    },
+    {
+      "key": "LORA_QWEN3_VL_2B_RECEIPTS",
+      "file": "lora/qwen3-vl-2b-receipts/adapter_model.safetensors",
+      "bytes": 69788264,
+      "url": "https://huggingface.co/N-Mehdi/qwen3-vl-2b-receipts-lora/resolve/d1aa48cc912dbc3339f587bb7958aa0f6da0adb2/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_QWEN3_VL_2B_RECEIPTS"
+      ],
+      "note": "A receipt-reading adapter for Qwen3-VL 2B Instruct (N-Mehdi/qwen3-vl-2b-receipts-lora, apache-2.0), PEFT layout over the decoder's attention and feed-forward projections, rank 16, lora_alpha 32; its adapter_config.json (1,152 B, same revision) sits beside it. The second adapter of the IK_PARITY_QWEN3_VL_ADAPTERS stack, at strength 0.5."
+    },
+    {
+      "key": "LORA_GEMMA4_E2B_DUPLEX",
+      "file": "lora/gemma4-e2b-duplex/adapter_model.safetensors",
+      "bytes": 96693360,
+      "url": "https://huggingface.co/dockhardman/gemma-4-E2B-duplex/resolve/d82d553af5ba49306e5e4e2d337d953cbed73573/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_GEMMA4_E2B_DUPLEX"
+      ],
+      "note": "An adapter for Gemma 4 E2B IT (dockhardman/gemma-4-E2B-duplex, apache-2.0), PEFT layout over the decoder's projections under model.language_model., rank 16, lora_alpha 32; the layers that read an earlier layer's keys and values carry no key or value projection and no adapter for one. Its adapter_config.json (1,198 B, same revision) sits beside it. Held beside the GEMMA4 (E2B) decoder at strength 0.8 and stacked with LORA_GEMMA4_E2B_D1A at 0.6, measured against PEFT at float32 (run_reference.py gemma4_adapters under the ltxtrain env with IK_GEMMA4_ADAPTERS='<duplex>=0.8;<d1a>=0.6' -> IK_PARITY_GEMMA4_ADAPTERS)."
+    },
+    {
+      "key": "LORA_GEMMA4_E2B_D1A",
+      "file": "lora/gemma4-e2b-d1a/adapter_model.safetensors",
+      "bytes": 96684752,
+      "url": "https://huggingface.co/JohnP1/d1a-e2b-it/resolve/0b96589e3140efe5467a2a9d28eb3f3db262209c/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_GEMMA4_E2B_D1A"
+      ],
+      "note": "An adapter for Gemma 4 E2B IT (JohnP1/d1a-e2b-it, apache-2.0) trained on the bare text model, so its layers are named layers.N rather than model.language_model.layers.N; PEFT layout, rank 16, lora_alpha 32; its adapter_config.json (1,167 B, same revision) sits beside it. The second adapter of the IK_PARITY_GEMMA4_ADAPTERS stack, at strength 0.6."
+    },
+    {
+      "key": "LORA_GEMMA3N_E2B_BAMBARA",
+      "file": "lora/gemma3n-e2b-bambara/adapter_model.safetensors",
+      "bytes": 338228512,
+      "url": "https://huggingface.co/sudoping01/bambara-llm-exp3/resolve/012c5a3d2ae5e2096c60d577ebf2fd0f64d91037/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_GEMMA3N_E2B_BAMBARA"
+      ],
+      "note": "A Bambara adapter for Gemma 3n E2B IT (sudoping01/bambara-llm-exp3, Gemma terms), PEFT layout over every attention and feed-forward projection of the decoder, rank 64, lora_alpha 128, the key and value projections of the layers that read an earlier layer's keys and values included, which transformers computes nothing from; its adapter_config.json (903 B, same revision) sits beside it. Held beside the GEMMA3N_E2B decoder at strength 0.8, measured against PEFT at float32 (run_reference.py gemma3n_adapters under the ltxtrain env with IK_GEMMA3N_ADAPTERS='<bambara>=0.8' -> IK_PARITY_GEMMA3N_ADAPTERS)."
+    },
+    {
+      "key": "LORA_MADLAD_EN_DV",
+      "file": "lora/madlad-3b-en-dv-news/adapter_model.safetensors",
+      "bytes": 377655120,
+      "url": "https://huggingface.co/str33t/madlad400-3b-mt-en-dv-news-v1/resolve/a6cc3641840ae629bbc590554b7bf8c2b1ffa9b0/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_MADLAD_EN_DV"
+      ],
+      "note": "An English-to-Dhivehi news adapter for MADLAD-400 3B (str33t/madlad400-3b-mt-en-dv-news-v1, apache-2.0), PEFT layout over every attention and feed-forward projection of the encoder and decoder under T5's names, rank 32, lora_alpha 64; its adapter_config.json (1,172 B, same revision) sits beside it. Held beside the MADLAD400_3B_MT release at strength 0.7 and stacked with LORA_MADLAD_FON_FR at 0.5, measured against PEFT at float32 into Dhivehi (run_reference.py madlad_adapters under the ltxtrain env with IK_MADLAD_ADAPTERS='<en-dv>=0.7;<fon-fr>=0.5' -> IK_PARITY_MADLAD_ADAPTERS)."
+    },
+    {
+      "key": "LORA_MADLAD_FON_FR",
+      "file": "lora/madlad-3b-fon-french/adapter_model.safetensors",
+      "bytes": 37803600,
+      "url": "https://huggingface.co/Zelyanoth/traduction_fon_french/resolve/056ff9dc470900e83b58dfea4ea6b4b3efbb0e83/adapter_model.safetensors",
+      "config": [
+        "IK_VAL_LORA_MADLAD_FON_FR"
+      ],
+      "note": "A Fon-to-French adapter for MADLAD-400 3B (Zelyanoth/traduction_fon_french, apache-2.0), PEFT layout over the query and value projections of every attention, cross-attention included, rank 16, lora_alpha 32; its adapter_config.json (640 B, same revision) sits beside it. The second adapter of the IK_PARITY_MADLAD_ADAPTERS stack, at strength 0.5."
+    },
+    {
       "key": "LORA_FLUX_SUPER_REALISM",
       "file": "lora/flux-super-realism/super-realism.safetensors",
       "bytes": 612747744,

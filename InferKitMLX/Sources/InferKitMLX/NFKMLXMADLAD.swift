@@ -658,6 +658,16 @@ public final class NFKMLXMADLAD: NSObject {
         NFKMLXTranslationBackend(translator: try translator(directoryURL: directoryURL, half: half, residency: residency))
     }
 
+    /// Builds the backend from a release directory with released LoRA adapters held beside its encoder's and
+    /// decoder's layers at their strengths, under transformers' T5 names (`encoder.block.N.layer.0.SelfAttention.q`,
+    /// `decoder.block.N.layer.2.DenseReluDense.wo`); a run's `NFKParameterAdapterStrengths` sets them.
+    /// Introduced in InferKit 0.4.0.
+    static func backend(directoryURL: URL, half: Bool, residency: NFKMLXResidency,
+                        adapters: [(url: URL, strength: Float)]) throws -> NFKMLXTranslationBackend {
+        let translator = try translator(directoryURL: directoryURL, half: half, residency: residency)
+        return try NFKMLXTranslationBackend.holding(adapters, in: translator.net, translator: translator)
+    }
+
     /// Downloads a release (`google/madlad400-3b-mt`) and builds the backend. Blocking on the network.
     @objc(backendWithRepo:revision:cacheDirectoryURL:halfPrecision:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?, half: Bool) throws -> any NFKInferenceBackend {

@@ -454,3 +454,89 @@ final class NFKMLXGemma3Tests: XCTestCase {
                        "a system message prefixes the first user turn, as the release's template does")
     }
 }
+
+// MARK: Held adapters
+
+extension NFKMLXGemma3Tests {
+
+    /// A PEFT adapter directory holding `layers`' `[rank, inputs]` and `[outputs, rank]` halves under
+    /// transformers' names, with its `adapter_config.json`, removed when the test ends.
+    private func peftAdapter(_ layers: [String: (down: MLXArray, up: MLXArray)], alpha: Int = 8) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("gemma3-adapter-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        var arrays = [String: MLXArray]()
+        for (path, halves) in layers {
+            arrays["base_model.model.\(path).lora_A.weight"] = halves.down
+            arrays["base_model.model.\(path).lora_B.weight"] = halves.up
+        }
+        let file = directory.appendingPathComponent("adapter_model.safetensors")
+        try MLX.save(arrays: arrays, url: file)
+        try JSONSerialization.data(withJSONObject: ["peft_type": "LORA", "r": 4, "lora_alpha": alpha])
+            .write(to: directory.appendingPathComponent("adapter_config.json"))
+        return file
+    }
+
+    private func halves(_ seed: UInt64, inputs: Int, outputs: Int) -> (down: MLXArray, up: MLXArray) {
+        (MLXRandom.normal([4, inputs], key: MLXRandom.key(seed)) * 0.2,
+         MLXRandom.normal([outputs, 4], key: MLXRandom.key(seed + 100)) * 0.2)
+    }
+
+    func testAGemma3AdapterReachesTheDecoderUnderEachTransformersName() throws {
+        let model = try tinyModel()
+        eval(model.decoder)
+        let query = halves(1, inputs: 64, outputs: 64)
+        let file = try peftAdapter(["model.layers.0.self_attn.q_proj": query,
+                                    "model.language_model.layers.1.mlp.down_proj": halves(3, inputs: 96, outputs: 64),
+                                    "language_model.model.layers.2.self_attn.v_proj": halves(5, inputs: 64, outputs: 32)])
+        let x = MLXRandom.normal([1, 3, 64], key: MLXRandom.key(7))
+        let before = model.decoder.layers[0].attention.queryProjection(x)
+        eval(before)
+        XCTAssertEqual(try NFKMLXGemma3.holdAdapters([(file, 0.5)], in: model), [0.5])
+        XCTAssertTrue(model.decoder.layers[0].attention.queryProjection is NFKMLXAdaptedLinear)
+        XCTAssertTrue(model.decoder.layers[1].feedForward.down is NFKMLXAdaptedLinear)
+        XCTAssertTrue(model.decoder.layers[2].attention.valueProjection is NFKMLXAdaptedLinear)
+        let detour = matmul(matmul(x, query.down.transposed(1, 0)), query.up.transposed(1, 0)) * (0.5 * 2)
+        let after = model.decoder.layers[0].attention.queryProjection(x)
+        XCTAssertLessThan(abs(after - (before + detour)).max().item(Float.self), 1e-5)
+
+        let vision = try peftAdapter(["model.vision_tower.vision_model.encoder.layers.0.self_attn.q_proj":
+                                        halves(9, inputs: 64, outputs: 64)])
+        XCTAssertThrowsError(try NFKMLXGemma3.holdAdapters([(vision, 1)], in: try tinyModel()),
+                             "the vision tower holds no adapter")
+    }
+
+    func testTheBackendRunsHeldAdaptersAtEachRequestsStrength() throws {
+        let plain = try tinyModel()
+        eval(plain.decoder)
+        let adapted = try tinyModel()
+        adapted.decoder.update(parameters: plain.decoder.parameters())
+        let file = try peftAdapter(["model.layers.0.self_attn.q_proj": halves(11, inputs: 64, outputs: 64),
+                                    "model.layers.2.mlp.up_proj": halves(13, inputs: 64, outputs: 96)], alpha: 64)
+        let backend = NFKMLXGemma3Backend(model: adapted, identifier: "tiny",
+                                          adapterStrengths: try NFKMLXGemma3.holdAdapters([(file, 1)], in: adapted))
+        let base = NFKMLXGemma3Backend(model: plain, identifier: "tiny")
+        XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterAdapterStrengths))
+        XCTAssertFalse(base.supportedParameterKeys.contains(NFKParameterAdapterStrengths))
+
+        func run(_ backend: NFKMLXGemma3Backend, _ strengths: [Float]?, prompt: String = "Hi Hi", maxTokens: Int = 4,
+                 conversation: String? = nil) throws -> (text: String, cached: Int) {
+            var parameters: [String: Any] = [NFKParameterTemperature: 0, NFKParameterMaxTokens: maxTokens]
+            parameters[NFKParameterAdapterStrengths] = strengths?.map { NSNumber(value: $0) }
+            parameters[NFKParameterConversationKey] = conversation
+            let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: prompt],
+                                                                           parameters: parameters))
+            let usage = try XCTUnwrap(result.output(forKey: NFKOutputUsage) as? [String: Int])
+            return (try XCTUnwrap(result.output(forKey: NFKOutputText) as? String), try XCTUnwrap(usage[NFKUsageCachedTokens]))
+        }
+        XCTAssertEqual(try run(backend, [0]).text, try run(base, nil).text, "strength 0 runs the base decoder")
+        XCTAssertThrowsError(try run(backend, [1, 1]), "one strength per held adapter")
+
+        // One reply token, so the next turn rolls back at most one position, which the tiny window keeps.
+        XCTAssertEqual(try run(backend, [1], prompt: "Hi", maxTokens: 1, conversation: "a").cached, 0)
+        XCTAssertGreaterThan(try run(backend, [1], maxTokens: 1, conversation: "a").cached, 0,
+                             "the same strengths reuse the cache")
+        XCTAssertEqual(try run(backend, [0.5], prompt: "Hi Hi Hi", maxTokens: 1, conversation: "a").cached, 0,
+                       "other strengths start the cache over")
+    }
+}

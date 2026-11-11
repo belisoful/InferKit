@@ -860,6 +860,7 @@ extension NFKMLXCatalogLanguage {
                 parameters: toolDecoderOptions() + [conversationKeyOption()],
                 residencies: residencies(routesExperts: release.routesExperts))
             entry.modelTypes = ["granitemoehybrid"]
+            entry.takesAdapters(trainedOn: [release.repository])
             return entry
         }
     }
@@ -877,6 +878,7 @@ extension NFKMLXCatalogLanguage {
             license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
             parameters: toolDecoderOptions(), residencies: streamedResidencies)
         entry.modelTypes = ["nemotron_h"]
+        entry.takesAdapters(trainedOn: [repository])
         return entry
     }
 
@@ -893,6 +895,7 @@ extension NFKMLXCatalogLanguage {
             license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
             parameters: toolDecoderOptions(), residencies: streamedResidencies)
         entry.modelTypes = ["nemotron_h"]
+        entry.takesAdapters(trainedOn: [repository])
         return entry
     }
 
@@ -909,6 +912,7 @@ extension NFKMLXCatalogLanguage {
             parameters: samplingOptions(nil) + [maxTokensOption(), seedOption()], residencies: streamedResidencies)
         // A state-space decoder has no position table; Mistral states retrieval tested to 256k tokens.
         entry.outputTokenLimit = 262_144
+        entry.takesAdapters(trainedOn: ["mistralai/Mamba-Codestral-7B-v0.1"])
         return entry
     }
 }
@@ -935,6 +939,7 @@ extension NFKMLXCatalogLanguage {
                                                             optional: NFKMLXGemma3.optionalFiles,
                                                             weights: NFKMLXGemma3.weightFiles))],
             license: license(release.repository), residencies: streamedResidencies, modelTypes: release.modelTypes)
+        entry.takesAdapters(trainedOn: [release.repository])
         // The gated sizes with a vision tower (4B, 12B, 27B) hold 128K positions, which no measurement reads.
         if release.readsImages {
             entry.outputTokenLimit = 131_072
@@ -943,7 +948,7 @@ extension NFKMLXCatalogLanguage {
     }
 
     fileprivate static func gemma3nEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
-        NFKMLXCatalogEntry(
+        var entry = NFKMLXCatalogEntry(
             identifier: release.name, displayName: release.displayName, family: release.family,
             summary: "\(release.displayName), a Gemma 3n decoder that reads text, an image, and a recording.",
             registryName: release.name,
@@ -956,6 +961,8 @@ extension NFKMLXCatalogLanguage {
                                                             optional: NFKMLXGemma3n.optionalFiles,
                                                             weights: NFKMLXGemma3n.weightFiles))],
             license: license(release.repository), modelTypes: release.modelTypes)
+        entry.takesAdapters(trainedOn: [release.repository])
+        return entry
     }
 
     fileprivate static func gemma4Entry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
@@ -975,6 +982,7 @@ extension NFKMLXCatalogLanguage {
         if release.routesExperts {
             entry.load = .pagedMixture()
         }
+        entry.takesAdapters(trainedOn: [release.repository])
         return entry
     }
 
@@ -1002,7 +1010,7 @@ extension NFKMLXCatalogLanguage {
         let name = NFKMLXTranslateGemma.modelName
         let files = releaseFiles(required: NFKMLXTranslateGemma.requiredFiles,
                                  optional: NFKMLXTranslateGemma.optionalFiles, weights: NFKMLXTranslateGemma.weightFiles)
-        return NFKMLXCatalogEntry(
+        var entry = NFKMLXCatalogEntry(
             identifier: name, displayName: "TranslateGemma", family: "gemma3",
             summary: "TranslateGemma, Gemma 3 fine-tuned to translate between the languages its chat template lists.",
             registryName: name, tasks: [NFKModelTaskTranslation],
@@ -1012,6 +1020,8 @@ extension NFKMLXCatalogLanguage {
                               isDefault: size == "4b", files: files)
             },
             license: gemmaTerms, residencies: streamedResidencies)
+        entry.takesAdapters(trainedOn: ["4b", "12b", "27b"].map { "google/translategemma-\($0)-it" })
+        return entry
     }
 
     fileprivate static var seedXEntry: NFKMLXCatalogEntry {
@@ -1030,6 +1040,7 @@ extension NFKMLXCatalogLanguage {
                               files: files),
             ],
             license: license(NFKMLXSeedXVariant.ppo.repository), residencies: streamedResidencies)
+        entry.takesAdapters(trainedOn: [NFKMLXSeedXVariant.ppo.repository, NFKMLXSeedXVariant.instruct.repository])
         entry.outputTokenLimit = 32_768     // the Mistral configuration's max_position_embeddings
         return entry
     }
@@ -1072,6 +1083,7 @@ extension NFKMLXCatalogLanguage {
             },
             license: license(variants[0].repository), residencies: streamedResidencies,
             modelTypes: [NFKMLXHunyuanDense.modelType])
+        entry.takesAdapters(trainedOn: variants.map(\.repository))
         entry.outputTokenLimit = positions  // the Hunyuan configuration's max_position_embeddings
         return entry
     }
@@ -1091,6 +1103,7 @@ extension NFKMLXCatalogLanguage {
             variants: [familyVariant(name, variant.repository, displayName: "Hy-MT2 30B-A3B", isDefault: true, files: files)],
             license: license(variant.repository), residencies: residencies(routesExperts: true),
             modelTypes: [NFKMLXHunyuanMoE.modelType])
+        entry.takesAdapters(trainedOn: [variant.repository])
         entry.outputTokenLimit = 262_144    // the hy_v3 configuration's max_position_embeddings
         return entry
     }
@@ -1180,16 +1193,21 @@ extension NFKMLXCatalogLanguage {
             entry.load = .pagedMixture(tasks: [NFKModelTaskVisionQuestionAnswering])
         }
         entry.modelTypes = release.modelTypes
+        entry.takesAdapters(trainedOn: [release.repository])
         return entry
     }
 
     fileprivate static var pixtralEntry: NFKMLXCatalogEntry {
-        imageQuestionEntry(NFKMLXLanguageRelease(name: NFKMLXPixtral.modelName, displayName: "Pixtral 12B",
-                                                 repository: "mistral-experimental/pixtral-12b", family: "pixtral"),
-                           summary: "Pixtral 12B, a 2D-rotary vision encoder and a Mistral NeMo decoder answering a question about an image.",
-                           files: releaseFiles(required: NFKMLXPixtral.requiredFiles, optional: NFKMLXPixtral.optionalFiles,
-                                               weights: NFKMLXPixtral.weightFiles),
-                           residencies: streamedResidencies)
+        var entry = imageQuestionEntry(
+            NFKMLXLanguageRelease(name: NFKMLXPixtral.modelName, displayName: "Pixtral 12B",
+                                  repository: "mistral-experimental/pixtral-12b", family: "pixtral"),
+            summary: "Pixtral 12B, a 2D-rotary vision encoder and a Mistral NeMo decoder answering a question about an image.",
+            files: releaseFiles(required: NFKMLXPixtral.requiredFiles, optional: NFKMLXPixtral.optionalFiles,
+                                weights: NFKMLXPixtral.weightFiles),
+            residencies: streamedResidencies)
+        // The release's former name, which adapters trained before the move name as their base.
+        entry.takesAdapters(trainedOn: ["mistral-experimental/pixtral-12b", "mistral-community/pixtral-12b"])
+        return entry
     }
 
     fileprivate static var phi4MMEntry: NFKMLXCatalogEntry {
@@ -1289,6 +1307,7 @@ extension NFKMLXCatalogLanguage {
                                                             optional: NFKMLXMADLAD.optionalFiles,
                                                             weights: NFKMLXMADLAD.weightFiles))],
             license: license(release.repository), residencies: streamedResidencies)
+        entry.takesAdapters(trainedOn: [release.repository])
         entry.outputTokenLimit = 512        // the T5 configuration's n_positions, the length it was trained to
         return entry
     }

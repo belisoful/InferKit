@@ -733,6 +733,64 @@ final class NFKMLXTranslationTests: XCTestCase {
         try checkMADLAD(weightsKey: "IK_VAL_MADLAD", recordKey: "IK_PARITY_MADLAD", half: false, name: "madlad")
     }
 
+    /// Two released madlad400-3b-mt adapters held beside the encoder and decoder at their own strengths, one over
+    /// every attention and feed-forward projection and one over the query and value projections, against PEFT's
+    /// adapters active together at those strengths, at float32 (`run_reference.py madlad_adapters`): the
+    /// teacher-forced logits over the adapted model's greedy output, the adapters' own change to them, and the
+    /// greedy tokens.
+    func testMADLADHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release("IK_VAL_MADLAD", "IK_PARITY_MADLAD_ADAPTERS")
+        let env = NFKMLXValidationConfig.environment
+        guard let newsPath = env["IK_VAL_LORA_MADLAD_EN_DV"], let fonPath = env["IK_VAL_LORA_MADLAD_FON_FR"] else {
+            throw XCTSkip("set IK_VAL_LORA_MADLAD_EN_DV and IK_VAL_LORA_MADLAD_FON_FR")
+        }
+        let strengths = record["strengths"]!.asArray(Float.self)
+        let adapters = zip([newsPath, fonPath], strengths).map { (url: URL(fileURLWithPath: $0), strength: $1) }
+        let backend = try NFKMLXMADLAD.backend(directoryURL: directory, half: false, residency: .resident, adapters: adapters)
+        XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterAdapterStrengths))
+        let translator = try XCTUnwrap(backend.translator as? NFKMLXMADLADTranslator)
+        let sourceIds = try XCTUnwrap(translator.sourceIds(for: Self.sentences[1], target: "dv"))
+        XCTAssertEqual(sourceIds, ints(record["source_ids"]!), "source ids")
+
+        let net = translator.net
+        let source = MLXArray(sourceIds.map { Int32($0) }).reshaped([1, sourceIds.count])
+        let decoderInput = record["decoder_input"]!.reshaped([1, -1])
+        func logits(at run: [Float]) -> MLXArray {
+            let logits = NFKMLXAdapterRun.$strengths.withValue(run) {
+                net.decode(decoderInput, memory: net.encode(source), cache: net.makeCache())[0]
+            }
+            eval(logits)
+            return logits
+        }
+        let adapted = logits(at: strengths)
+        let base = logits(at: strengths.map { _ in 0 })
+        let reference = record["output"]!, referenceBase = record["base_output"]!
+        let similarity = cosine(adapted, reference)
+        let change = cosine(adapted - base, reference - referenceBase)
+        print("VALIDATION PARITY madlad-adapters: strengths \(strengths), logit cosine \(similarity), "
+              + "the adapters' change \(change), base \(cosine(base, referenceBase))")
+        XCTAssertEqual(adapted.argMax(axis: -1).asArray(Int32.self), reference.argMax(axis: -1).asArray(Int32.self))
+        XCTAssertGreaterThan(similarity, 0.99999)
+        XCTAssertGreaterThan(change, 0.9999, "the adapters change the logits as PEFT's do")
+
+        var decoding = translator.defaultDecoding
+        decoding.maxTokens = 64
+        decoding.beams = 1
+        let greedy = NFKMLXAdapterRun.$strengths.withValue(strengths) {
+            NFKMLXSeq2SeqDecoder.generate(net, source: sourceIds, decoding: decoding)
+        }
+        XCTAssertEqual(greedy, generated(ints(record["greedy"]!), endToken: decoding.endToken), "greedy tokens")
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: Self.sentences[1]],
+                                          parameters: [NFKParameterTargetLanguage: "dv", NFKParameterMaxTokens: 64,
+                                                       NFKParameterAdapterStrengths: [0, 0]])
+        let off = try XCTUnwrap(backend.runInference(for: request).output(forKey: NFKOutputText) as? String)
+        let baseTranslation = try NFKMLXAdapterRun.$strengths.withValue([0, 0]) {
+            try translator.translate(Self.sentences[1], from: "en", to: "dv", decoding: decoding)
+        }
+        XCTAssertEqual(off, baseTranslation, "a run at strength 0 translates as the base model")
+    }
+
     /// The 7B loaded `half` against a bfloat16 record (`MADLAD_DTYPE=bfloat16`): two bfloat16 stacks,
     /// held to the tolerances the TranslateGemma 12B set.
     func testMADLAD7BMatchesTheReference() throws {
@@ -823,6 +881,40 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(translator.code(for: "pt-br"), "pt-BR")
         XCTAssertNil(translator.code(for: "xx"))
         XCTAssertTrue(translator.supports(language: "en-GB"))
+    }
+
+    func testTheTranslationBackendRunsHeldAdaptersAtEachRequestsStrength() throws {
+        let translator = try tinyTranslateGemma()
+        let plain = try tinyTranslateGemma()
+        eval(plain.model.decoder)
+        translator.model.decoder.update(parameters: plain.model.decoder.parameters())
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("translation-adapter-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("adapter_model.safetensors")
+        try MLX.save(arrays: [
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_A.weight": MLXRandom.normal([4, 64], key: MLXRandom.key(1)) * 0.2,
+            "base_model.model.model.layers.0.self_attn.q_proj.lora_B.weight": MLXRandom.normal([64, 4], key: MLXRandom.key(2)) * 0.2,
+        ], url: file)
+        try JSONSerialization.data(withJSONObject: ["peft_type": "LORA", "r": 4, "lora_alpha": 32])
+            .write(to: directory.appendingPathComponent("adapter_config.json"))
+
+        let backend = try NFKMLXTranslationBackend.holding([(file, 1)], in: translator.model.decoder, translator: translator,
+                                                           modulePath: NFKMLXGemma3.adapterModulePath)
+        let base = try NFKMLXTranslationBackend.holding([], in: plain.model.decoder, translator: plain)
+        XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterAdapterStrengths))
+        XCTAssertFalse(base.supportedParameterKeys.contains(NFKParameterAdapterStrengths), "a model without adapters")
+        XCTAssertTrue(translator.model.decoder.layers[0].attention.queryProjection is NFKMLXAdaptedLinear)
+
+        func translate(_ backend: NFKMLXTranslationBackend, _ strengths: [Float]?) throws -> String {
+            var parameters: [String: Any] = [NFKParameterSourceLanguage: "en", NFKParameterTargetLanguage: "de",
+                                             NFKParameterMaxTokens: 3]
+            parameters[NFKParameterAdapterStrengths] = strengths?.map { NSNumber(value: $0) }
+            let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "Hi"], parameters: parameters))
+            return try XCTUnwrap(result.output(forKey: NFKOutputText) as? String)
+        }
+        XCTAssertEqual(try translate(backend, [0]), try translate(base, nil), "strength 0 translates as the base model")
+        XCTAssertThrowsError(try translate(backend, [1, 1]), "one strength per held adapter")
     }
 
     func testTranslateGemmaReadsTheLanguageTableFromTheTemplate() throws {

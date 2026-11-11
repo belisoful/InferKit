@@ -83,7 +83,9 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed]
+        let keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
+                                 NFKParameterSeed]
+        return adapterStrengths.isEmpty ? keys : keys.union([NFKParameterAdapterStrengths])
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -92,7 +94,17 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage, NFKOutputFinishReason] }
 
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    var adapterStrengths: [Float] = []
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        // The held adapters read the run's strengths as each pass builds its graph.
+        try NFKMLXAdapterRun.$strengths.withValue(try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)) {
+            try run(request)
+        }
+    }
+
+    private func run(_ request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var sampling = NFKMLXStepSampling(release: releaseSampling)
         sampling.read(request)
         var maximumTokens: Int?
@@ -192,14 +204,22 @@ public extension NFKMLXMamba {
     }
 
     internal static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                                 budget: Int) throws -> NFKMLXMambaBackend {
+                                 budget: Int, adapters: [(url: URL, strength: Float)] = []) throws -> NFKMLXMambaBackend {
         guard let tokenizer = NFKMLXMistralTokenizer(directoryURL: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("the Mamba release has no readable tokenizer.json")
         }
         let net = makeNet(try configuration(fromDirectory: directoryURL))
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency, budget: budget)
-        return NFKMLXMambaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
-                                  modules: [net], releaseDirectoryURL: directoryURL, layerStream: net.layerStream)
+        let backend = NFKMLXMambaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
+                                         modules: [net], releaseDirectoryURL: directoryURL, layerStream: net.layerStream)
+        if !adapters.isEmpty {
+            guard net.layerStream == nil else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "\(modelName) holds adapters beside layers held in memory; load it with a residency that holds every layer")
+            }
+            backend.adapterStrengths = try NFKMLXDecoderAdapters.hold(adapters, in: net)
+        }
+        return backend
     }
 
     /// The Objective-C entry: builds a Mamba text-generation backend from a release directory.

@@ -2041,6 +2041,34 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Every remaining decoder family holds LoRA adapters beside its weights
+
+- Gemma 3, Gemma 4, Gemma 3n, Qwen3-VL, Pixtral, Nemotron-H, Granite 4.0-H, and Codestral Mamba take the
+  `adapters` load option, as do the translators TranslateGemma, MADLAD-400, Seed-X, and HY-MT. Each entry lists
+  its repositories under `adapterBases` and declares `NFKParameterAdapterStrengths`. The adapters stay unmerged
+  beside the decoder's linear layers, through the reader the Qwen3 decoders use: PEFT's and mlx-lm's layouts,
+  each scaled by the `adapter_config.json` beside the file.
+- Each family reads transformers' layer names as the port names them: a multimodal release's
+  `model.language_model.` and the earlier `language_model.model.`, Nemotron-H's `backbone.`, and a Gemma adapter
+  trained on the bare text model's `layers.`. An adapter of a vision or audio tower is refused. Gemma 3n's key and
+  value projections on a layer that reads an earlier layer's keys and values are left out, since transformers
+  computes nothing from them and the port does not hold them.
+- A run's strengths reach the translators through `NFKMLXTranslationBackend` and the image-question models
+  through `NFKMLXGenerationBackend`. Gemma 3's and Granite's kept conversation caches serve only the strengths
+  they were computed at. A decoder that streams layers refuses adapters.
+- Measured against PEFT with the adapters active together at float32. Released adapters, stacked two at a time
+  except Gemma 3n's one:
+  - Gemma 3 1B: logit cosine 0.99999999999.
+  - Gemma 4 E2B: 0.99999999998.
+  - Gemma 3n E2B: 0.99999998.
+  - Qwen3-VL 2B on an image prompt: 0.99999999999.
+  - MADLAD-400 3B into Dhivehi: 1.0, the adapters' change 1.0, at the test's float32 cosine.
+- Measured the same way with two adapters PEFT made, since none is released for these bases:
+  - Granite 4.0-H 1B: 0.99999781, the adapters' own change 0.99999984.
+  - Nemotron Nano 9B v2, cut to fifteen layers: 0.99999999995.
+  - HY-MT1.5 1.8B: 0.99999999998.
+  - A tiny Pixtral: 1.0, the adapters' change 1.0, at the test's float32 cosine.
+
 #### GTCRN, DeepFilterNet3, and FRCRN stream
 
 - `NFKMLXGTCRNBackend` and `NFKMLXDeepFilterNetBackend` open live streams that answer each sample as the

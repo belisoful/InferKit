@@ -2711,6 +2711,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "mistralai/Mamba-Codestral-7B-v0.1"
+      ],
       "displayName" : "Codestral Mamba",
       "engine" : "mlx",
       "family" : "mamba2",
@@ -2744,6 +2747,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -2793,6 +2797,16 @@
           "kind" : "integer",
           "stage" : "request",
           "title" : "Seed"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -2851,6 +2865,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -11404,6 +11426,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-3-12b-it"
+      ],
       "displayName" : "Gemma 3 12B IT",
       "engine" : "mlx",
       "family" : "gemma3",
@@ -11445,6 +11470,7 @@
         "url" : "https://ai.google.dev/gemma/terms"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -11516,6 +11542,16 @@
           "title" : "Draft tokens"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -11572,6 +11608,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -11730,6 +11774,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-3-1b-it"
+      ],
       "displayName" : "Gemma 3 1B IT",
       "engine" : "mlx",
       "family" : "gemma3",
@@ -11771,6 +11818,7 @@
         "url" : "https://ai.google.dev/gemma/terms"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -11842,6 +11890,16 @@
           "title" : "Draft tokens"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -11898,6 +11956,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -12057,6 +12123,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-3-270m-it"
+      ],
       "displayName" : "Gemma 3 270M IT",
       "engine" : "mlx",
       "family" : "gemma3",
@@ -12098,6 +12167,7 @@
         "url" : "https://ai.google.dev/gemma/terms"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -12169,6 +12239,16 @@
           "title" : "Draft tokens"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -12225,6 +12305,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -12372,6 +12460,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-3-27b-it"
+      ],
       "displayName" : "Gemma 3 27B IT",
       "engine" : "mlx",
       "family" : "gemma3",
@@ -12413,6 +12504,7 @@
         "url" : "https://ai.google.dev/gemma/terms"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -12484,6 +12576,16 @@
           "title" : "Draft tokens"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -12540,6 +12642,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -12698,6 +12808,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-3-4b-it"
+      ],
       "displayName" : "Gemma 3 4B IT",
       "engine" : "mlx",
       "family" : "gemma3",
@@ -12739,6 +12852,7 @@
         "url" : "https://ai.google.dev/gemma/terms"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -12810,6 +12924,16 @@
           "title" : "Draft tokens"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -12866,6 +12990,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -13024,6 +13156,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-3n-E2B-it"
+      ],
       "displayName" : "Gemma 3n E2B IT",
       "engine" : "mlx",
       "family" : "gemma3n",
@@ -13073,6 +13208,7 @@
         "url" : "https://ai.google.dev/gemma/terms"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "modelTypes" : [
@@ -13126,6 +13262,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -13151,6 +13297,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -13300,6 +13454,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-3n-E4B-it"
+      ],
       "displayName" : "Gemma 3n E4B IT",
       "engine" : "mlx",
       "family" : "gemma3n",
@@ -13349,6 +13506,7 @@
         "url" : "https://ai.google.dev/gemma/terms"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision"
       },
       "modelTypes" : [
@@ -13402,6 +13560,16 @@
           "title" : "Seed"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "memory" : {
@@ -13427,6 +13595,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -13576,6 +13752,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-4-12B-it"
+      ],
       "displayName" : "Gemma 4 12B IT",
       "engine" : "mlx",
       "family" : "gemma4",
@@ -13609,6 +13788,7 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "fallbackPrecision" : "checkpoint",
@@ -13717,6 +13897,16 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -13868,6 +14058,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Draft quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -14044,6 +14242,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-4-26B-A4B-it"
+      ],
       "displayName" : "Gemma 4 26B-A4B IT",
       "engine" : "mlx",
       "family" : "gemma4",
@@ -14077,6 +14278,7 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "residency" : "residency",
         "stagePrecisions" : {
           "decoder" : "float32"
@@ -14189,6 +14391,16 @@
           "title" : "Tool-call format"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -14218,6 +14430,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -14387,6 +14607,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-4-31B-it"
+      ],
       "displayName" : "Gemma 4 31B IT",
       "engine" : "mlx",
       "family" : "gemma4",
@@ -14420,6 +14643,7 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "fallbackPrecision" : "checkpoint",
@@ -14531,6 +14755,16 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -14690,6 +14924,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Draft quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -14865,6 +15107,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-4-E2B-it"
+      ],
       "displayName" : "Gemma 4 E2B IT",
       "engine" : "mlx",
       "family" : "gemma4",
@@ -14898,6 +15143,7 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
@@ -15009,6 +15255,16 @@
           "title" : "Tool-call format"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -15065,6 +15321,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -15241,6 +15505,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/gemma-4-E4B-it"
+      ],
       "displayName" : "Gemma 4 E4B IT",
       "engine" : "mlx",
       "family" : "gemma4",
@@ -15274,6 +15541,7 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "fallbackPrecision" : "checkpoint",
@@ -15385,6 +15653,16 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -15528,6 +15806,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Draft quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -16801,6 +17087,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "ibm-granite/granite-4.0-h-1b"
+      ],
       "displayName" : "Granite 4.0-H 1B",
       "engine" : "mlx",
       "family" : "granite-4.0-h",
@@ -16832,6 +17121,9 @@
         "name" : "Apache License 2.0",
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "adapters" : "adapters"
       },
       "modelTypes" : [
         "granitemoehybrid"
@@ -16945,6 +17237,24 @@
           "kind" : "text",
           "stage" : "request",
           "title" : "Conversation key"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -17117,6 +17427,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "ibm-granite/granite-4.0-h-tiny"
+      ],
       "displayName" : "Granite 4.0-H Tiny",
       "engine" : "mlx",
       "family" : "granite-4.0-h",
@@ -17150,6 +17463,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -17266,6 +17580,16 @@
           "title" : "Conversation key"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -17295,6 +17619,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -19237,6 +19569,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "tencent/Hunyuan-MT-7B"
+      ],
       "displayName" : "Hunyuan-MT",
       "engine" : "mlx",
       "family" : "hy-mt",
@@ -19262,6 +19597,7 @@
         "url" : "https://huggingface.co/tencent/Hunyuan-MT-7B/blob/main/License.txt"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
@@ -19319,6 +19655,16 @@
           "kind" : "boolean",
           "stage" : "request",
           "title" : "Split sentences"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -19444,6 +19790,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Weight quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -19576,6 +19930,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "tencent/Hunyuan-MT-Chimera-7B"
+      ],
       "displayName" : "Hunyuan-MT-Chimera",
       "engine" : "mlx",
       "family" : "hy-mt",
@@ -19601,6 +19958,7 @@
         "url" : "https://huggingface.co/tencent/Hunyuan-MT-Chimera-7B/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
@@ -19657,6 +20015,16 @@
           "kind" : "number",
           "stage" : "request",
           "title" : "Length penalty"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -19782,6 +20150,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Weight quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -19914,6 +20290,10 @@
       ]
     },
     {
+      "adapterBases" : [
+        "tencent/HY-MT1.5-1.8B",
+        "tencent/HY-MT1.5-7B"
+      ],
       "displayName" : "HY-MT1.5",
       "engine" : "mlx",
       "family" : "hy-mt",
@@ -19939,6 +20319,7 @@
         "url" : "https://huggingface.co/tencent/HY-MT1.5-1.8B/blob/main/License.txt"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
@@ -19996,6 +20377,16 @@
           "kind" : "boolean",
           "stage" : "request",
           "title" : "Split sentences"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -20231,6 +20622,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Weight quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -20448,6 +20847,10 @@
       ]
     },
     {
+      "adapterBases" : [
+        "tencent/Hy-MT2-1.8B",
+        "tencent/Hy-MT2-7B"
+      ],
       "displayName" : "Hy-MT2",
       "engine" : "mlx",
       "family" : "hy-mt",
@@ -20473,6 +20876,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
@@ -20530,6 +20934,16 @@
           "kind" : "boolean",
           "stage" : "request",
           "title" : "Split sentences"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -20765,6 +21179,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Weight quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -20982,6 +21404,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "tencent/Hy-MT2-30B-A3B"
+      ],
       "displayName" : "Hy-MT2 30B-A3B",
       "engine" : "mlx",
       "family" : "hy-mt",
@@ -21007,6 +21432,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
@@ -21064,6 +21490,16 @@
           "kind" : "boolean",
           "stage" : "request",
           "title" : "Split sentences"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -21189,6 +21625,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Weight quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -28085,6 +28529,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/madlad400-3b-mt"
+      ],
       "displayName" : "MADLAD-400 3B-MT",
       "engine" : "mlx",
       "family" : "madlad",
@@ -28110,6 +28557,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -28163,6 +28611,16 @@
           "kind" : "boolean",
           "stage" : "request",
           "title" : "Split sentences"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -28221,6 +28679,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -28347,6 +28813,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/madlad400-7b-mt"
+      ],
       "displayName" : "MADLAD-400 7B-MT",
       "engine" : "mlx",
       "family" : "madlad",
@@ -28372,6 +28841,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -28425,6 +28895,16 @@
           "kind" : "boolean",
           "stage" : "request",
           "title" : "Split sentences"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -28483,6 +28963,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -32300,6 +32788,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
+      ],
       "displayName" : "Nemotron 3 Nano 4B",
       "engine" : "mlx",
       "family" : "nemotron-h",
@@ -32332,6 +32823,7 @@
         "url" : "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -32442,6 +32934,16 @@
           "title" : "Tool-call format"
         },
         {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
+        },
+        {
           "choices" : [
             {
               "title" : "Automatic",
@@ -32498,6 +33000,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -32681,6 +33191,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "nvidia/NVIDIA-Nemotron-Nano-9B-v2"
+      ],
       "displayName" : "Nemotron Nano 2",
       "engine" : "mlx",
       "family" : "nemotron-h",
@@ -32713,6 +33226,7 @@
         "url" : "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "precision" : "precision",
@@ -32823,6 +33337,16 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -32966,6 +33490,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Draft quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -36441,6 +36973,10 @@
       ]
     },
     {
+      "adapterBases" : [
+        "mistral-experimental/pixtral-12b",
+        "mistral-community/pixtral-12b"
+      ],
       "displayName" : "Pixtral 12B",
       "engine" : "mlx",
       "family" : "pixtral",
@@ -36474,6 +37010,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
@@ -36489,6 +37026,16 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -36547,6 +37094,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -44149,6 +44704,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "Qwen/Qwen3-VL-2B-Instruct"
+      ],
       "displayName" : "Qwen3-VL 2B Instruct",
       "engine" : "mlx",
       "family" : "qwen3-vl",
@@ -44182,6 +44740,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
@@ -44200,6 +44759,16 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -44258,6 +44827,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -44395,6 +44972,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "Qwen/Qwen3-VL-30B-A3B-Instruct"
+      ],
       "displayName" : "Qwen3-VL 30B-A3B Instruct",
       "engine" : "mlx",
       "family" : "qwen3-vl",
@@ -44428,6 +45008,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "residency" : "residency",
         "stagePrecisions" : {
           "decoder" : "float32"
@@ -44447,6 +45028,16 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -44478,6 +45069,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -44608,6 +45207,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "Qwen/Qwen3-VL-32B-Instruct"
+      ],
       "displayName" : "Qwen3-VL 32B Instruct",
       "engine" : "mlx",
       "family" : "qwen3-vl",
@@ -44641,6 +45243,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
@@ -44659,6 +45262,16 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -44717,6 +45330,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -44853,6 +45474,9 @@
       ]
     },
     {
+      "adapterBases" : [
+        "Qwen/Qwen3-VL-8B-Instruct"
+      ],
       "displayName" : "Qwen3-VL 8B Instruct",
       "engine" : "mlx",
       "family" : "qwen3-vl",
@@ -44886,6 +45510,7 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "fallbackPrecision" : "checkpoint",
         "precision" : "precision",
         "residency" : "residency"
@@ -44904,6 +45529,16 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -44962,6 +45597,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -60599,6 +61242,10 @@
       ]
     },
     {
+      "adapterBases" : [
+        "ByteDance-Seed/Seed-X-PPO-7B",
+        "ByteDance-Seed/Seed-X-Instruct-7B"
+      ],
       "displayName" : "Seed-X",
       "engine" : "mlx",
       "family" : "seed-x",
@@ -60623,6 +61270,7 @@
         "url" : "https://huggingface.co/ByteDance-Seed/Seed-X-PPO-7B/blob/main/LICENSE"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
@@ -60677,6 +61325,16 @@
           "kind" : "boolean",
           "stage" : "request",
           "title" : "Split sentences"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -60912,6 +61570,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Weight quantization"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [
@@ -68701,6 +69367,11 @@
       ]
     },
     {
+      "adapterBases" : [
+        "google/translategemma-4b-it",
+        "google/translategemma-12b-it",
+        "google/translategemma-27b-it"
+      ],
       "displayName" : "TranslateGemma",
       "engine" : "mlx",
       "family" : "gemma3",
@@ -68726,6 +69397,7 @@
         "url" : "https://ai.google.dev/gemma/terms"
       },
       "memoryModel" : {
+        "adapters" : "adapters",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -68778,6 +69450,16 @@
           "kind" : "boolean",
           "stage" : "request",
           "title" : "Split sentences"
+        },
+        {
+          "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
+          "key" : "adapterStrengths",
+          "kind" : "number-list",
+          "maximum" : 2,
+          "minimum" : -2,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Adapter strengths"
         },
         {
           "choices" : [
@@ -68892,6 +69574,14 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "group" : "Loading",
+          "help" : "LoRA adapters held beside the weights, in order: an array of {path, strength}, each path a safetensors file and strength 1 as trained. The adapters stack, and a request changes their strengths through adapterStrengths without a reload.",
+          "key" : "adapters",
+          "kind" : "json",
+          "stage" : "load",
+          "title" : "Adapters"
         }
       ],
       "outputModalities" : [

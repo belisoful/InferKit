@@ -247,18 +247,22 @@ extension NFKMLXGenerationBackend {
 
     /// A backend that answers a question about an image: it reads `NFKInputImage` and `NFKInputPrompt`,
     /// both required, bounds the answer by `NFKParameterMaxTokens` (``defaultAnswerTokens``), and returns
-    /// the text `answer` produces under `NFKOutputText`; an error `answer` throws fails the request.
-    static func imageQuestion(identifier: String, modelInfo: [String: Any]? = nil,
+    /// the text `answer` produces under `NFKOutputText`; an error `answer` throws fails the request. A model
+    /// that holds adapters, loaded at `adapterStrengths`, reads `NFKParameterAdapterStrengths` as well.
+    static func imageQuestion(identifier: String, modelInfo: [String: Any]? = nil, adapterStrengths: [Float] = [],
                               answer: @escaping (_ image: CGImage, _ question: String, _ maxTokens: Int) throws -> String)
         -> NFKMLXGenerationBackend {
         NFKMLXGenerationBackend(identifier: identifier, inputKeys: [NFKInputImage, NFKInputPrompt],
-                                parameterKeys: [NFKParameterMaxTokens],
+                                parameterKeys: adapterStrengths.isEmpty ? [NFKParameterMaxTokens]
+                                    : [NFKParameterMaxTokens, NFKParameterAdapterStrengths],
                                 outputKeys: [NFKOutputText], modelInfo: modelInfo) { request, job in
             let image = try requiredImage(request, NFKInputImage)
             let question = try requiredText(request, NFKInputPrompt)
             let maxTokens = max(number(request, NFKParameterMaxTokens)?.intValue ?? defaultAnswerTokens, 0)
+            let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
             job.reportProgress(0)
-            let text = try answer(image, question, maxTokens)
+            // The held adapters read the run's strengths as each pass builds its graph.
+            let text = try NFKMLXAdapterRun.$strengths.withValue(strengths) { try answer(image, question, maxTokens) }
             if job.status == .cancelled { return nil }
             job.reportProgress(1)
             return NFKInferenceResult(outputs: [NFKOutputText: text])

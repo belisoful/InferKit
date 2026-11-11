@@ -84,6 +84,55 @@ final class NFKMLXGemmaConversationTests: XCTestCase {
         NFKInferenceRequest(inputs: [NFKInputMessages: Self.messages], parameters: [NFKParameterMaxTokens: 2])
     }
 
+    /// A PEFT adapter directory holding `layers`' `[rank, inputs]` and `[outputs, rank]` halves at rank 4.
+    private func peftAdapter(_ layers: [String: (inputs: Int, outputs: Int)]) throws -> URL {
+        let directory = try temporaryDirectory()
+        var arrays = [String: MLXArray]()
+        for (index, (path, shape)) in layers.sorted(by: { $0.key < $1.key }).enumerated() {
+            arrays["base_model.model.\(path).lora_A.weight"] = MLXRandom.normal([4, shape.inputs], key: MLXRandom.key(UInt64(index))) * 0.3
+            arrays["base_model.model.\(path).lora_B.weight"] = MLXRandom.normal([shape.outputs, 4], key: MLXRandom.key(UInt64(index + 50))) * 0.3
+        }
+        let file = directory.appendingPathComponent("adapter_model.safetensors")
+        try MLX.save(arrays: arrays, url: file)
+        try JSONSerialization.data(withJSONObject: ["peft_type": "LORA", "r": 4, "lora_alpha": 32])
+            .write(to: directory.appendingPathComponent("adapter_config.json"))
+        return file
+    }
+
+    func testAGemma4BackendRunsHeldAdaptersAtEachRequestsStrength() throws {
+        try requireMLXRuntime()
+        let plain = decoder()
+        eval(plain)
+        let adapted = decoder()
+        adapted.update(parameters: plain.parameters())
+        // A conditional release's adapter names `model.language_model.`; one trained on the bare text model, `layers.`.
+        let file = try peftAdapter(["model.language_model.layers.0.self_attn.q_proj": (16, 16),
+                                    "layers.1.mlp.down_proj": (32, 16)])
+        let strengths = try NFKMLXGemmaLanguage.holdAdapters([(file, 1)], in: adapted, layerStream: nil)
+        XCTAssertEqual(strengths, [1])
+        XCTAssertTrue(adapted.layers[0].attention.queryProjection is NFKMLXAdaptedLinear)
+        XCTAssertTrue(adapted.layers[1].feedForward.down is NFKMLXAdaptedLinear)
+
+        let markers = Self.gemma3Markers
+        let backend = NFKMLXGemmaBackend(logits: { adapted($0) }, tokenizer: try tokenizer(markers), identifier: "gemma4")
+        backend.adapterStrengths = strengths
+        let base = NFKMLXGemmaBackend(logits: { plain($0) }, tokenizer: try tokenizer(markers), identifier: "gemma4")
+        XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterAdapterStrengths))
+        XCTAssertFalse(base.supportedParameterKeys.contains(NFKParameterAdapterStrengths))
+        func run(_ backend: NFKMLXGemmaBackend, _ strengths: [Float]?) throws -> String {
+            var parameters: [String: Any] = [NFKParameterTemperature: 0, NFKParameterMaxTokens: 4]
+            parameters[NFKParameterAdapterStrengths] = strengths?.map { NSNumber(value: $0) }
+            let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"], parameters: parameters))
+            return try XCTUnwrap(result.output(forKey: NFKOutputText) as? String)
+        }
+        XCTAssertEqual(try run(backend, [0]), try run(base, nil), "strength 0 runs the base decoder")
+        XCTAssertThrowsError(try run(backend, [1, 1]), "one strength per held adapter")
+
+        let towers = try peftAdapter(["model.vision_tower.encoder.layers.0.self_attn.q_proj": (16, 16)])
+        XCTAssertThrowsError(try NFKMLXGemmaLanguage.holdAdapters([(towers, 1)], in: decoder(), layerStream: nil),
+                             "the text decoder holds no tower's adapter")
+    }
+
     func testAGemma4ConversationWithoutATemplateTakesTheReleaseTurnFormat() throws {
         XCTAssertEqual(try NFKMLXGemmaLanguage.conversationText(Self.messages, template: nil), Self.rendered)
         XCTAssertThrowsError(try NFKMLXGemmaLanguage.conversationText(

@@ -146,6 +146,10 @@ quarter of the floor.
   bf16 and are held to their released headers by shape through the 4B's configuration reader —
   decoder, vision tower, and projector together, 1065 / 1247 tensors, 0 missing, 0 mismatched,
   0 unaccounted. Gemma 3n is `gemma3n`, a separate family, and is refused here — `NFKMLXGemma3n` runs it.
+  **Held adapters**: Gemma 3, Gemma 4, and Gemma 3n hold released PEFT and mlx-lm adapters beside the decoder
+  through the `adapters` load option (`NFKMLXGemma3.holdAdapters(_:in:)`,
+  `NFKMLXGemmaLanguage.holdAdapters(_:in:layerStream:)`, `NFKMLXGemma3n.holdAdapters(_:in:)`); see
+  `mlx-models-language.md` ("Held adapters on every other decoder family").
   **Customization ships** at 270M, 1B, and 4B (`NFKMLXGemma3Training.swift`):
   `NFKMLXGemma3Language.fineTune` adapts `q_proj` and `v_proj` with LoRA, PEFT's default for
   `gemma3_text`, over `NFKMLXCausalLanguageObjective`. Measured against transformers 5.16's

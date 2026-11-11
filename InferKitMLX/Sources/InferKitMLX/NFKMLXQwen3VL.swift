@@ -457,7 +457,9 @@ public final class NFKMLXQwen3VL: NSObject {
     static let weightFiles = ["model.safetensors", "model.safetensors.index.json"]
 
     private let visionNet: NFKMLXQwen3VLVisionNet
-    private let textDecoder: NFKMLXLanguageNet
+    let textDecoder: NFKMLXLanguageNet
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    var adapterStrengths: [Float] = []
     private let tokenizer: NFKTokenizer
     private let processor: NFKMLXQwen3VLImageProcessor
     private let endTokens: Set<Int>

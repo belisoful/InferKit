@@ -20,16 +20,26 @@ import MLX
 /// - the dense and mixture decoders (``NFKMLXLanguage``): residency, precision, a runtime weight
 ///   quantization of 2 to 8 bits at group size 64, a draft model and its bits, the context length and
 ///   cache settings as generation defaults, and the adapters held beside its weights;
-/// - Gemma 3, TranslateGemma, and Nemotron-H: residency, precision, a draft model and its bits;
+/// - Gemma 3: residency, precision, a draft model and its bits, and the adapters held beside its decoder;
+/// - TranslateGemma: residency, precision, a draft model and its bits, and the adapters held beside its decoder;
+/// - Nemotron-H: residency, precision, a draft model and its bits, and the adapters held beside its weights;
 /// - Qwen3.5 (and 3.6 and 3.8): residency, precision, a runtime weight quantization of 2 to 8 bits held
 ///   resident, a draft model and its bits, the context length and cache settings as generation defaults,
 ///   and the adapters held beside its weights;
-/// - Gemma 3n: precision;
+/// - Gemma 3n: precision, and the adapters held beside its decoder;
 /// - Whisper: precision, and the adapters held beside its weights;
 /// - Stable Diffusion (each release, and each released adapter merged into its base): precision, and the
 ///   adapters held beside its weights;
-/// - Gemma 4, Qwen4-Exp, Granite 4.0-H, Codestral Mamba, MADLAD-400, and Open-Jev: residency and precision;
-/// - Qwen3-VL and pplx-decider: residency, precision, and a runtime weight quantization of the decoder;
+/// - MADLAD-400: residency, precision, and the adapters held beside its encoder and decoder;
+/// - Seed-X and HY-MT: residency, precision, a runtime weight quantization of the decoder, and the adapters
+///   held beside its weights;
+/// - Gemma 4: residency, precision, a draft model and its bits, and the adapters held beside its decoder;
+/// - Granite 4.0-H and Codestral Mamba: residency, precision, and the adapters held beside its weights;
+/// - Qwen4-Exp and Open-Jev: residency and precision;
+/// - Qwen3-VL: residency, precision, a runtime weight quantization of the decoder, and the adapters held
+///   beside it;
+/// - pplx-decider: residency, precision, and a runtime weight quantization of the decoder;
+/// - Pixtral: residency, precision, and the adapters held beside its decoder;
 /// - DeepSeek V4: residency, and each other value whose key names an ``NFKMLXDeepSeekLoadOptions``
 ///   property, set by key-value coding;
 /// - FLUX.1: residency, and the adapters held beside its transformer;
@@ -131,41 +141,48 @@ enum NFKMLXOptionRegistrations {
     /// Gemma 3, Gemma 3n, and the Gemma 4 text decoders.
     private static func registerGemma() {
         let gemma3 = registryNames(families: ["gemma3"], where: lists(NFKModelTaskTextGeneration))
-        registerDirectoryModels(gemma3, consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
+        registerDirectoryModels(gemma3, consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                                                    NFKModelLoadOptionAdapters])) {
             url, _, options in
             let precision = options.precision ?? .checkpoint
             guard let draftURL = options.draftURL else {
-                return try NFKMLXGemma3.backend(directoryURL: url, precision: precision, residency: options.residency)
+                return try NFKMLXGemma3.backend(directoryURL: url, precision: precision, residency: options.residency,
+                                                adapters: options.adapters())
             }
             let model = try NFKMLXGemma3.model(directoryURL: url, draftDirectoryURL: draftURL, precision: precision,
                                                residency: options.residency, draftBits: options.draftBits(orDefault: 4))
             return NFKMLXGemma3Backend(model: model, identifier: NFKMLXGemma3.modelName,
                                        contextLength: NFKMLXModelDescription.contextLength(inDirectory: url),
-                                       releaseSampling: NFKMLXReleaseSampling(directoryURL: url))
+                                       releaseSampling: NFKMLXReleaseSampling(directoryURL: url),
+                                       adapterStrengths: try NFKMLXGemma3.holdAdapters(options.adapters(), in: model))
         }
-        registerDirectoryModels(registryNames(families: ["gemma3n"]), consumes: [NFKModelLoadOptionPrecision]) {
-            url, _, options in
-            try NFKMLXGemma3n.backend(directoryURL: url, precision: options.precision ?? .checkpoint)
+        registerDirectoryModels(registryNames(families: ["gemma3n"]),
+                                consumes: [NFKModelLoadOptionPrecision, NFKModelLoadOptionAdapters]) { url, _, options in
+            try NFKMLXGemma3n.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
+                                      adapters: options.adapters())
         }
         let gemma4 = registryNames(families: ["gemma4"]) { !$0.tasks.contains(NFKModelTaskTranscription) }
-        registerDirectoryModels(gemma4, consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
+        registerDirectoryModels(gemma4, consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                                                    NFKModelLoadOptionAdapters])) {
             url, _, options in
             guard let draftURL = options.draftURL else {
                 return try NFKMLXGemmaLanguage.backend(directoryURL: url, precision: options.precision ?? .float32,
-                                                       residency: options.residency)
+                                                       residency: options.residency, adapters: options.adapters())
             }
             return try NFKMLXGemmaLanguage.backend(directoryURL: url, draftDirectoryURL: draftURL,
                                                    precision: options.precision ?? .float32, residency: options.residency,
-                                                   draftBits: options.draftBits(orDefault: 4))
+                                                   draftBits: options.draftBits(orDefault: 4), adapters: options.adapters())
         }
     }
 
     /// Codestral Mamba, Qwen3.5, Qwen4-Exp, Nemotron Nano 2, Granite 4.0-H, Qwen3-VL, pplx-decider, and Pixtral.
     private static func registerOtherDecoders() {
         registerDirectoryModels(registryNames(families: ["mamba2"]),
-                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in
+                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                           NFKModelLoadOptionAdapters]) { url, _, options in
             try NFKMLXMamba.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
-                                    residency: options.residency)
+                                    residency: options.residency, budget: NFKMLXResidencyBudget.current(),
+                                    adapters: options.adapters())
         }
         registerDirectoryModels(registryNames(families: ["qwen3.5"]),
                                 consumes: draftKeys.union(quantizationKeys).union(generationKeys)
@@ -194,22 +211,27 @@ enum NFKMLXOptionRegistrations {
                                        residency: options.residency)
         }
         registerDirectoryModels(registryNames(families: ["nemotron-h"]),
-                                consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
+                                consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                                           NFKModelLoadOptionAdapters])) {
             url, name, options in
             try NFKMLXNemotronH.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
                                         residency: options.residency, budget: NFKMLXResidencyBudget.current(),
                                         identifier: name, draftDirectoryURL: options.draftURL,
-                                        draftBits: options.draftBits(orDefault: 4))
+                                        draftBits: options.draftBits(orDefault: 4), adapters: options.adapters())
         }
         registerDirectoryModels(registryNames(families: ["granite-4.0-h"]),
-                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, name, options in
+                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                           NFKModelLoadOptionAdapters]) { url, name, options in
             try NFKMLXGraniteHybrid.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
-                                            residency: options.residency, identifier: name)
+                                            residency: options.residency, identifier: name, adapters: options.adapters())
         }
         let qwen3VL = registryNames(families: ["qwen3-vl"], where: lists(NFKModelTaskVisionQuestionAnswering))
-        registerDirectoryModels(qwen3VL, consumes: quantizationKeys.union([NFKModelLoadOptionResidency,
-                                                                         NFKModelLoadOptionPrecision])) { url, _, options in
-            try NFKMLXQwen3VL.model(directoryURL: url, loadOptions: options).inferenceBackend()
+        registerDirectoryModels(qwen3VL, consumes: quantizationKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                                                         NFKModelLoadOptionAdapters])) { url, _, options in
+            // The adapters go in after the load quantization, which would replace an adapted layer with a plain one.
+            let model = try NFKMLXQwen3VL.model(directoryURL: url, loadOptions: options)
+            try model.holdAdapters(options.adapters())
+            return model.inferenceBackend()
         }
         registerDirectoryModels(registryNames(families: ["pplx-decider"]),
                                 consumes: quantizationKeys.union([NFKModelLoadOptionResidency,
@@ -217,9 +239,12 @@ enum NFKMLXOptionRegistrations {
             try NFKMLXPplxDecider.decider(directoryURL: url, loadOptions: options).makeBackend()
         }
         registerDirectoryModels(registryNames(families: ["pixtral"]),
-                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in
-            try NFKMLXPixtral.backend(directoryURL: url, precision: options.precision ?? .float32,
-                                      residency: options.residency)
+                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                           NFKModelLoadOptionAdapters]) { url, _, options in
+            let model = try NFKMLXPixtral.model(directoryURL: url, precision: options.precision ?? .float32,
+                                                residency: options.residency)
+            try model.holdAdapters(options.adapters())
+            return model.inferenceBackend()
         }
     }
 
@@ -227,32 +252,39 @@ enum NFKMLXOptionRegistrations {
     private static func registerTranslation() {
         let translateGemma = registryNames(families: ["gemma3"], where: lists(NFKModelTaskTranslation))
         registerDirectoryModels(translateGemma,
-                                consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
+                                consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                                           NFKModelLoadOptionAdapters])) {
             url, _, options in
             let precision = options.precision ?? .checkpoint
             guard let draftURL = options.draftURL else {
                 return try NFKMLXTranslateGemma.backend(directoryURL: url, precision: precision,
-                                                        residency: options.residency)
+                                                        residency: options.residency, adapters: options.adapters())
             }
-            return NFKMLXTranslationBackend(translator: try NFKMLXTranslateGemma.translator(
+            let translator = try NFKMLXTranslateGemma.translator(
                 directoryURL: url, draftDirectoryURL: draftURL, precision: precision, residency: options.residency,
-                draftBits: options.draftBits(orDefault: 4)))
+                draftBits: options.draftBits(orDefault: 4))
+            return try NFKMLXTranslationBackend.holding(options.adapters(), in: translator.model.decoder,
+                                                        translator: translator, modulePath: NFKMLXGemma3.adapterModulePath)
         }
         registerDirectoryModels(registryNames(families: ["madlad"]),
-                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in
-            try NFKMLXMADLAD.backend(directoryURL: url, half: options.halfPrecision ?? true, residency: options.residency)
+                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                           NFKModelLoadOptionAdapters]) { url, _, options in
+            try NFKMLXMADLAD.backend(directoryURL: url, half: options.halfPrecision ?? true, residency: options.residency,
+                                     adapters: options.adapters())
         }
         registerDirectoryModels(registryNames(families: ["seed-x"]),
-                                consumes: quantizationKeys.union([NFKModelLoadOptionResidency,
-                                                                  NFKModelLoadOptionPrecision])) { url, _, options in
-            NFKMLXTranslationBackend(translator: try NFKMLXSeedX.translator(directoryURL: url, loadOptions: options))
+                                consumes: quantizationKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                                                  NFKModelLoadOptionAdapters])) { url, _, options in
+            // The adapters go in after the load quantization, which would replace an adapted layer with a plain one.
+            let translator = try NFKMLXSeedX.translator(directoryURL: url, loadOptions: options)
+            return try NFKMLXTranslationBackend.holding(options.adapters(), in: translator.net, translator: translator)
         }
         for (name, release) in NFKMLXHYMT.registryNames {
             registerDirectoryModels([name],
-                                    consumes: quantizationKeys.union([NFKModelLoadOptionResidency,
-                                                                      NFKModelLoadOptionPrecision])) { url, _, options in
-                NFKMLXTranslationBackend(translator: try NFKMLXHYMT.translator(directoryURL: url, release: release,
-                                                                                loadOptions: options))
+                                    consumes: quantizationKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision,
+                                                                      NFKModelLoadOptionAdapters])) { url, _, options in
+                let translator = try NFKMLXHYMT.translator(directoryURL: url, release: release, loadOptions: options)
+                return try NFKMLXTranslationBackend.holding(options.adapters(), in: translator.net, translator: translator)
             }
         }
     }

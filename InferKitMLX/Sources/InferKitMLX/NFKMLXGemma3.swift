@@ -324,6 +324,8 @@ final class NFKMLXGemma3PromptCache: NFKMLXConversationState {
     private(set) var sharedPrefixLength = 0
     let kinds: [NFKMLXGemmaAttentionKind]
     let slidingWindow: Int
+    /// The strengths of the held adapters the cached rows were computed at, or nil for a model that holds none.
+    var adapterStrengths: [Float]?
 
     init(kinds: [NFKMLXGemmaAttentionKind], slidingWindow: Int) {
         self.kinds = kinds

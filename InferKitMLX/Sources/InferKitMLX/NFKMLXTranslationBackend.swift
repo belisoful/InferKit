@@ -6,6 +6,7 @@
 import Foundation
 import InferKit
 import MLX
+import MLXNN
 import NaturalLanguage
 
 /// The request keys the translation backends read beyond the core's.
@@ -81,10 +82,31 @@ public protocol NFKMLXTranslationRefiner: NFKMLXTranslator {
 @objc(NFKMLXTranslationBackend)
 public final class NFKMLXTranslationBackend: NSObject, NFKInferenceBackend {
     public let translator: any NFKMLXTranslator
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    private(set) var adapterStrengths: [Float] = []
 
     public init(translator: any NFKMLXTranslator) {
         self.translator = translator
         super.init()
+    }
+
+    /// A backend over `translator` with released LoRA adapters held beside `net`'s layers, unmerged, at their
+    /// strengths (``NFKMLXDecoderAdapters``: PEFT's and mlx-lm's layouts), each layer read through
+    /// `modulePath`. `NFKParameterAdapterStrengths` sets a run's strengths.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for a translator that streams layers, and
+    ///   `NFKMLXError.loRANotApplicable` for an adapter the network cannot hold, before any layer changes.
+    static func holding(_ adapters: [(url: URL, strength: Float)], in net: Module, translator: any NFKMLXTranslator,
+                        modulePath: (String) -> String? = { $0 }) throws -> NFKMLXTranslationBackend {
+        let backend = NFKMLXTranslationBackend(translator: translator)
+        guard !adapters.isEmpty else { return backend }
+        guard translator.layerStreams.isEmpty else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(translator.identifier) holds adapters beside layers held in memory; load it with a residency that "
+                + "holds every layer")
+        }
+        backend.adapterStrengths = try NFKMLXDecoderAdapters.hold(adapters, in: net, modulePath: modulePath)
+        return backend
     }
 
     @objc public var isReady: Bool { true }
@@ -98,11 +120,15 @@ public final class NFKMLXTranslationBackend: NSObject, NFKInferenceBackend {
     /// pass of a decoder-only model. Introduced in InferKit 0.4.0.
     @objc public var streamedBytesPerPass: Int { translator.layerStreams.reduce(0) { $0 + $1.bytesPerPass } }
 
-    /// The request parameters the backend reads.
+    /// The request parameters the backend reads, with `NFKParameterAdapterStrengths` where the model holds
+    /// adapters.
     @objc public var supportedParameterKeys: Set<String> {
-        let keys: Set<String> = [NFKParameterSourceLanguage, NFKParameterTargetLanguage, NFKParameterMaxTokens,
+        var keys: Set<String> = [NFKParameterSourceLanguage, NFKParameterTargetLanguage, NFKParameterMaxTokens,
                                  NFKMLXTranslationParameterKey.beamCount, NFKMLXTranslationParameterKey.lengthPenalty,
                                  NFKMLXTranslationParameterKey.splitsSentences]
+        if !adapterStrengths.isEmpty {
+            keys.insert(NFKParameterAdapterStrengths)
+        }
         guard (translator as? any NFKMLXTranslationRefiner)?.refinesCandidates == true else { return keys }
         return keys.union([NFKMLXTranslationParameterKey.candidateTranslations])
     }
@@ -115,6 +141,13 @@ public final class NFKMLXTranslationBackend: NSObject, NFKInferenceBackend {
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        // The held adapters read the run's strengths as each pass builds its graph.
+        try NFKMLXAdapterRun.$strengths.withValue(try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)) {
+            try run(request)
+        }
+    }
+
+    private func run(_ request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let text = request.prompt else {
             throw NFKMLXError.unsupportedInput
         }

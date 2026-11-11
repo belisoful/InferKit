@@ -1133,7 +1133,7 @@ runs the strengths set at load. A path that is missing, not a safetensors file, 
 | `stable-diffusion-xl` | `NFKModelAdapterBaseStableDiffusionXL` | SDXL and its distillations |
 | `flux-1` | `NFKModelAdapterBaseFlux1` | FLUX.1 |
 | `stable-diffusion-3` | `NFKModelAdapterBaseStableDiffusion3` | Stable Diffusion 3.x |
-| a Hugging Face repository, such as `Qwen/Qwen3-0.6B` | none | that release: the language decoders and Whisper list their own repository |
+| a Hugging Face repository, such as `Qwen/Qwen3-0.6B` | none | that release: the language, vision-language, and translation decoders and Whisper list their own repositories |
 
 A language decoder's adapter names its base as the `base_model_name_or_path` of the `adapter_config.json`
 beside it, and the decoder reads its scaling from that file, so a decoder adapter loads with its

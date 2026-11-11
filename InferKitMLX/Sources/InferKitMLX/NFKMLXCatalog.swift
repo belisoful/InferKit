@@ -212,6 +212,15 @@ extension NFKModelOption {
     }
 }
 
+extension NFKMLXCatalogEntry {
+    /// Declares the adapters the entry holds at load: those trained on `repositories`, each of which an adapter
+    /// names as its base, and the strengths one request gives them.
+    mutating func takesAdapters(trainedOn repositories: [String]) {
+        adapterBases = repositories
+        parameters.append(.adapterStrengths)
+    }
+}
+
 extension NFKModelLicense {
 
     /// A license with an SPDX identifier, or none, and the page its text is published on.

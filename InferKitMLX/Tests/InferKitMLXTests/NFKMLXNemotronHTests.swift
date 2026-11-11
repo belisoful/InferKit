@@ -55,6 +55,28 @@ final class NFKMLXNemotronHTests: XCTestCase {
         try NFKMLXWeights.apply(weights, to: net)
     }
 
+    func testAnAdapterNamingTransformersBackboneReachesTheModelsLayers() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXNemotronH.makeNet(tinyConfiguration)
+        eval(net)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("nemotron-adapter-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("adapter_model.safetensors")
+        try MLX.save(arrays: [
+            "base_model.model.backbone.layers.3.mixer.q_proj.lora_A.weight": MLXRandom.normal([4, 64], key: MLXRandom.key(1)),
+            "base_model.model.backbone.layers.3.mixer.q_proj.lora_B.weight": MLXRandom.normal([64, 4], key: MLXRandom.key(2)),
+            "base_model.model.backbone.layers.1.mixer.up_proj.lora_A.weight": MLXRandom.normal([4, 64], key: MLXRandom.key(3)),
+            "base_model.model.backbone.layers.1.mixer.up_proj.lora_B.weight": MLXRandom.normal([96, 4], key: MLXRandom.key(4)),
+        ], url: file)
+        try JSONSerialization.data(withJSONObject: ["peft_type": "LORA", "r": 4, "lora_alpha": 8])
+            .write(to: directory.appendingPathComponent("adapter_config.json"))
+        XCTAssertEqual(try NFKMLXNemotronH.holdAdapters([(file, 0.5)], in: net), [0.5])
+        let layers = Dictionary(net.leafModules().flattened(), uniquingKeysWith: { first, _ in first })
+        XCTAssertTrue(layers["model.layers.3.mixer.q_proj"] is NFKMLXAdaptedLinear)
+        XCTAssertTrue(layers["model.layers.1.mixer.up_proj"] is NFKMLXAdaptedLinear)
+    }
+
     func testParameterNamesFollowTheModuleLayout() throws {
         try requireMLXRuntime()
         let names = Set(NFKMLXNemotronH.makeNet(tinyConfiguration).parameters().flattened().map(\.0))

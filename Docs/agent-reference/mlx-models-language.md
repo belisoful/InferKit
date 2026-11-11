@@ -64,6 +64,56 @@ attention and feed-forward.
     logit cosine 0.99999999999, worst difference 5.3e-05, every position's argmax the reference's, and the
     backend writes the reference's continuation at the strengths a request sets. At strength 0 the same
     record reads 0.98955.
+- Held adapters on every other decoder family (2026-11-10): Gemma 3 and TranslateGemma, Gemma 4, Gemma 3n,
+  Qwen3-VL, Pixtral, Nemotron-H, Granite 4.0-H, Codestral Mamba, MADLAD-400, Seed-X, and HY-MT take the `adapters`
+  load option through the same `NFKMLXDecoderAdapters.hold`, each with a `modulePath` from transformers' names to
+  the port's:
+  - Gemma 3, Gemma 4, Gemma 3n (`NFKMLXGemma3.adapterModulePath`): `model.` and `language_model.model.` are
+    dropped, and `layers.` (an adapter trained on the bare text model) is read as is. `layerPath` has already read
+    `model.language_model.` as `model.`.
+  - Pixtral (`NFKMLXPixtral.adapterModulePath`): the `LlavaForConditionalGeneration` layout's `language_model.`
+    is dropped. Nemotron-H: `backbone.` reads as `model.`. Qwen3-VL, Granite, Mamba, MADLAD, Seed-X, HY-MT: as
+    named.
+  - `hold(…, inert:)` leaves out a module path whose adapter the reference computes nothing from. transformers
+    keeps `k_proj` and `v_proj` on Gemma 3n's layers that read an earlier layer's keys and values; the port
+    builds none there (`NFKGemma3nAttention.sharesKeyValues`), and a released adapter carries halves for them.
+  - Any other missing layer is refused, a vision or audio tower's included.
+  - The run's strengths: `NFKMLXTranslationBackend` wraps its run for all four translators, and
+    `NFKMLXGenerationBackend.imageQuestion(…, adapterStrengths:)` for Qwen3-VL and Pixtral. Gemma 3's
+    `NFKMLXGemma3PromptCache` and Granite's `NFKMLXGranitePromptCache` keep the strengths their rows were
+    computed at; a run at other strengths starts the conversation over. Every family refuses adapters while
+    layers stream.
+  - Gemma 4's public `backend(directoryURL:precision:residency:)` and its drafted form keep their signatures;
+    internal overloads take the adapters, so the DocC links to the public forms resolve.
+  - Parity, PEFT's adapters active together at float32 (`run_reference.py gemma3_adapters`, `gemma4_adapters`,
+    `gemma3n_adapters`, `qwen3vl_adapters`, `madlad_adapters`, `generated_decoder_adapters`,
+    `pixtral_tiny_adapters`). The record carries `base_output` at strength 0, so the adapters' own change compares
+    apart from the base network's distance:
+    - Gemma 3 1B, `codelion/gemma-3-1b-it-reasoning-grpo-lora` (r 64) at 0.8 and
+      `Jayteare/gemma-gcp-tool-router-1-3-lora` (r 16, stored bfloat16) at 0.6: logit cosine 0.99999999999 over
+      36 positions, worst difference 1.2e-4, every argmax the reference's; strength 0 reads 0.98537.
+    - Gemma 4 E2B, `dockhardman/gemma-4-E2B-duplex` at 0.8 and `JohnP1/d1a-e2b-it` (named `layers.N`) at 0.6:
+      0.99999999998, the adapters' change 0.99999999998. The oracle reads each adapter through a copy whose keys
+      and `target_modules` name the loaded model's decoder (`_retargeted_adapter`), which is what the port's
+      `modulePath` does.
+    - Gemma 3n E2B, `sudoping01/bambara-llm-exp3` (r 64) at 0.8: 0.99999998, the adapter's change 0.99999994.
+      Recorded under `llmvenv` (transformers 4.57.6), whose `timm` Gemma3nModel's vision tower needs.
+    - Qwen3-VL 2B, `chenyeikai/VisProbe-Qwen3-VL-2B-LoRA` at 0.7 and `N-Mehdi/qwen3-vl-2b-receipts-lora` at 0.5, on
+      `run_qwen3vl`'s image prompt with its recorded vision features: 0.99999999999, the change 0.99999999998, the
+      cached generation the reference's 16 tokens. transformers 5.x returns the vision tower's merged output as
+      `pooler_output`; `[0]` is the pre-merger states.
+    - MADLAD-400 3B, `str33t/madlad400-3b-mt-en-dv-news-v1` (every projection, r 32) at 0.7 and
+      `Zelyanoth/traduction_fon_french` (q and v, r 16) at 0.5, into Dhivehi: teacher-forced logits over the adapted model's 19-token greedy output 1.0000001 and the adapters' change 1.0000007 at the test's float32 cosine (base 0.9999999), the greedy tokens the reference's. The record is
+      llmvenv's (transformers 4.57.6), where MADLAD's references are made. Under transformers 5.17 the float32 T5
+      forward departs from 4.57's: the base logits read 0.884 against the port and the adapted greedy loops on two
+      tokens (`records/madlad-adapters.safetensors`, kept unkeyed).
+    - Made adapters, two per base (`init_lora_weights=False`, r 4 / alpha 8 over q and v at 0.8, r 8 / alpha 16
+      rsLoRA over every projection at 0.5), saved beside the record as `<stem>.adapters/adapter<N>/`: Granite
+      4.0-H 1B 0.99999781 (change 0.99999984); Nemotron-H cut to fifteen layers 0.99999999995 (PEFT refuses
+      `out_proj` and `conv1d` on a Mamba model, so the second pattern leaves them out); HY-MT1.5 1.8B
+      0.99999999998; the tiny Pixtral 1.0 with the adapters' change 1.0 at the test's float32 cosine (`testHeldAdaptersMatchPEFTOnTinyWeights`, which also reads the first adapter renamed to the `language_model.model.` layout and finds the same layers within 1e-6).
+    - Not measured: Codestral Mamba and Seed-X, whose 7B releases do not fit float32 on this machine; their
+      layers are the plain linears the measured families hold.
 - `NFKMLXRoPEScaling` — the rotary frequency scaling a release declares (`rope_scaling`), shared by the
   dense decoder and DeepSeek. At reference parity against `transformers`' own `ROPE_INIT_FUNCTIONS`
   for `linear`, `yarn`, `llama3`, and `longrope` across ten configurations (worst relative frequency

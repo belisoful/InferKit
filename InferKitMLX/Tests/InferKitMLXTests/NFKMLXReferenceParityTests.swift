@@ -6731,6 +6731,236 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                        "the backend writes the reference's continuation")
     }
 
+    // Two released gemma-3-1b-it adapters held beside the decoder at their own strengths, one at float32 and one
+    // at bfloat16, both over every attention and feed-forward projection, against PEFT's adapters active together
+    // at those strengths, at float32: the logits over the prompt and the adapted model's greedy continuation.
+    func testGemma3HeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA3_ADAPTERS"], let directory = config["IK_VAL_GEMMA3_1B"],
+              let reasoning = config["IK_VAL_LORA_GEMMA3_1B_REASONING"],
+              let router = config["IK_VAL_LORA_GEMMA3_1B_TOOL_ROUTER"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3_ADAPTERS, IK_VAL_GEMMA3_1B, IK_VAL_LORA_GEMMA3_1B_REASONING, and "
+                          + "IK_VAL_LORA_GEMMA3_1B_TOOL_ROUTER")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self)
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        let reference = try XCTUnwrap(arrays["output"])
+        let release = URL(fileURLWithPath: directory)
+        let adapters = [URL(fileURLWithPath: reasoning), URL(fileURLWithPath: router)]
+        XCTAssertEqual(strengths.count, adapters.count, "the record holds one strength per adapter")
+
+        let model = try NFKMLXGemma3.model(directoryURL: release, precision: .float32, residency: .resident)
+        XCTAssertEqual(try NFKMLXGemma3.holdAdapters(zip(adapters, strengths).map { (url: $0, strength: $1) }, in: model),
+                       strengths)
+        let sequence = tokens + continuation
+        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
+        func logits(at run: [Float]) -> MLXArray {
+            let logits = NFKMLXAdapterRun.$strengths.withValue(run) {
+                model.decoder(MLXArray(sequence).reshaped([1, sequence.count]))[0]
+            }
+            eval(logits)
+            return logits
+        }
+        let adapted = logits(at: strengths)
+        XCTAssertEqual(adapted.shape, reference.shape)
+        let similarity = cosine(adapted.reshaped([-1]).asArray(Float.self).map(Double.init), theirs)
+        let worst = abs(adapted - reference).max().item(Float.self)
+        print("VALIDATION PARITY gemma3-adapters: \(sequence.count) positions at strengths \(strengths), "
+              + "logit cosine \(similarity), worst |difference| \(worst)")
+        XCTAssertEqual(adapted.argMax(axis: -1).asArray(Int32.self), reference.argMax(axis: -1).asArray(Int32.self),
+                       "every position predicts the reference's token")
+        let control = cosine(logits(at: strengths.map { _ in 0 }).reshaped([-1]).asArray(Float.self).map(Double.init), theirs)
+        print("VALIDATION PARITY gemma3-adapters: control at strength 0: logit cosine \(control)")
+        XCTAssertLessThan(control, similarity, "the record tells the adapted model from the base")
+        XCTAssertGreaterThan(similarity, 0.99999999999)
+
+        let prompt = "Summarize: The committee met on Tuesday to review the budget and agreed to delay the vote."
+        XCTAssertEqual(model.promptTokens(prompt).map(Int32.init), tokens, "the oracle's prompt")
+        NFKMLXReferenceModels.registerAll()
+        let backend = try NFKMLXModelRegistry.backend(named: "gemma-3-1b-it", weightsURL: release, options: [
+            NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32,
+            NFKModelLoadOptionAdapters: adapters.map { [NFKModelAdapterPath: $0.path, NFKModelAdapterStrength: 1] },
+        ])
+        XCTAssertTrue(backend.supportedParameterKeys?.contains(NFKParameterAdapterStrengths) == true)
+        let result = try backend.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputPrompt: prompt],
+            parameters: [NFKParameterTemperature: 0, NFKParameterMaxTokens: continuation.count,
+                         NFKParameterAdapterStrengths: strengths.map { NSNumber(value: $0) }]))
+        let written = try XCTUnwrap(result.output(forKey: NFKOutputText) as? String)
+        XCTAssertEqual(written, model.decode(continuation.map(Int.init)), "the backend writes the reference's continuation")
+    }
+
+    // Two released gemma-4-E2B-it adapters held beside the decoder at their own strengths, one naming the conditional
+    // model's `model.language_model.` layers and one the bare text model's `layers.`, against PEFT's adapters active
+    // together at those strengths at float32 (`run_reference.py gemma4_adapters`): the logits over the prompt and the
+    // adapted model's greedy continuation, and the adapters' own change to them.
+    func testGemma4HeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA4_ADAPTERS"], let directory = config["IK_VAL_GEMMA4"],
+              let duplex = config["IK_VAL_LORA_GEMMA4_E2B_DUPLEX"], let d1a = config["IK_VAL_LORA_GEMMA4_E2B_D1A"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA4_ADAPTERS, IK_VAL_GEMMA4, IK_VAL_LORA_GEMMA4_E2B_DUPLEX, and "
+                          + "IK_VAL_LORA_GEMMA4_E2B_D1A")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self)
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        let reference = try XCTUnwrap(arrays["output"]), referenceBase = try XCTUnwrap(arrays["base_output"])
+        let release = URL(fileURLWithPath: directory)
+        let adapters = zip([duplex, d1a], strengths).map { (url: URL(fileURLWithPath: $0), strength: $1) }
+
+        // The float32 decoder is released before the backend loads its own, so one copy is held at a time.
+        do {
+            let net = NFKMLXGemmaLanguage.makeNet(try NFKMLXGemmaLanguage.configuration(
+                fromHuggingFace: release.appendingPathComponent("config.json")))
+            try NFKMLXGemmaLanguage.loadWeights(into: net, fromDirectory: release)
+            XCTAssertEqual(try NFKMLXGemmaLanguage.holdAdapters(adapters, in: net, layerStream: nil), strengths)
+            let sequence = MLXArray(tokens + continuation).reshaped([1, tokens.count + continuation.count])
+            func logits(at run: [Float]) -> MLXArray {
+                let logits = NFKMLXAdapterRun.$strengths.withValue(run) { net(sequence)[0] }
+                eval(logits)
+                return logits
+            }
+            let adapted = logits(at: strengths)
+            let base = logits(at: strengths.map { _ in 0 })
+            XCTAssertEqual(adapted.shape, reference.shape)
+            func values(_ array: MLXArray) -> [Double] { array.reshaped([-1]).asArray(Float.self).map(Double.init) }
+            let similarity = cosine(values(adapted), values(reference))
+            let change = cosine(values(adapted - base), values(reference - referenceBase))
+            print("VALIDATION PARITY gemma4-adapters: \(tokens.count + continuation.count) positions at strengths \(strengths), "
+                  + "logit cosine \(similarity), the adapters' change \(change), base \(cosine(values(base), values(referenceBase)))")
+            XCTAssertEqual(adapted.argMax(axis: -1).asArray(Int32.self), reference.argMax(axis: -1).asArray(Int32.self),
+                           "every position predicts the reference's token")
+            XCTAssertGreaterThan(similarity, 0.9999999999)
+            XCTAssertGreaterThan(change, 0.9999, "the adapters change the logits as PEFT's do")
+        }
+        NFKMLXGPU.clearCache()
+
+        // The backend, at the release's bfloat16 (float32 held resident exceeds a 32 GB Mac's working set), holds the
+        // adapters, reads the prompt as the oracle's tokenizer did, and runs at a request's strengths.
+        let backend = try XCTUnwrap(try NFKMLXGemmaLanguage.backend(directoryURL: release, precision: .checkpoint,
+                                                                    residency: .resident, adapters: adapters)
+                                    as? NFKMLXGemmaBackend)
+        XCTAssertEqual(backend.adapterStrengths, strengths)
+        XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterAdapterStrengths))
+        let request = NFKInferenceRequest(
+            inputs: [NFKInputPrompt: "Summarize: The committee met on Tuesday to review the budget and agreed to delay the vote."],
+            parameters: [NFKParameterTemperature: 0, NFKParameterMaxTokens: 1,
+                         NFKParameterAdapterStrengths: strengths.map { NSNumber(value: $0) }])
+        // The release's tokenizer adds no <bos> to a raw prompt; the backend opens a raw prompt with it.
+        let tokenizer = try XCTUnwrap(NFKMLXGemmaTokenizer(directoryURL: release))
+        let bos = try XCTUnwrap(tokenizer.id(forToken: "<bos>"))
+        XCTAssertEqual(try backend.tokens(for: request), [bos] + tokens.map(Int.init), "the oracle's prompt after <bos>")
+        XCTAssertNotNil(try backend.runInference(for: request).output(forKey: NFKOutputText) as? String)
+    }
+
+    // A released gemma-3n-E2B-it adapter over every attention and feed-forward projection held beside the decoder,
+    // against PEFT's adapter at that strength at float32 (`run_reference.py gemma3n_adapters`): the logits over the
+    // prompt and the adapted model's greedy continuation, and the adapter's own change to them. Its halves for the
+    // key and value projections of the layers that read an earlier layer's keys and values are left out, as
+    // transformers computes nothing from those projections.
+    func testGemma3nHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_GEMMA3N_ADAPTERS"], let directory = config["IK_VAL_GEMMA3N_E2B"],
+              let bambara = config["IK_VAL_LORA_GEMMA3N_E2B_BAMBARA"] else {
+            throw XCTSkip("set IK_PARITY_GEMMA3N_ADAPTERS, IK_VAL_GEMMA3N_E2B, and IK_VAL_LORA_GEMMA3N_E2B_BAMBARA")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let tokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self)
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        let reference = try XCTUnwrap(arrays["output"]), referenceBase = try XCTUnwrap(arrays["base_output"])
+        let release = URL(fileURLWithPath: directory)
+        let gemma = try NFKMLXGemma3n.load(directoryURL: release, precision: .float32)
+        XCTAssertEqual(try NFKMLXGemma3n.holdAdapters([(URL(fileURLWithPath: bambara), strengths[0])], in: gemma), strengths)
+        let sequence = MLXArray(tokens + continuation).reshaped([1, tokens.count + continuation.count])
+        func logits(at run: [Float]) -> MLXArray {
+            let logits = NFKMLXAdapterRun.$strengths.withValue(run) { gemma.model.decoder(sequence)[0] }
+            eval(logits)
+            return logits
+        }
+        let adapted = logits(at: strengths), base = logits(at: [0])
+        func values(_ array: MLXArray) -> [Double] { array.reshaped([-1]).asArray(Float.self).map(Double.init) }
+        let similarity = cosine(values(adapted), values(reference))
+        let change = cosine(values(adapted - base), values(reference - referenceBase))
+        print("VALIDATION PARITY gemma3n-adapters: strengths \(strengths), logit cosine \(similarity), "
+              + "the adapter's change \(change), base \(cosine(values(base), values(referenceBase)))")
+        XCTAssertEqual(adapted.argMax(axis: -1).asArray(Int32.self), reference.argMax(axis: -1).asArray(Int32.self),
+                       "every position predicts the reference's token")
+        XCTAssertGreaterThan(similarity, 0.99999)
+        XCTAssertGreaterThan(change, 0.9999, "the adapter changes the logits as PEFT's does")
+    }
+
+    /// Holds the two adapters `run_reference.py generated_decoder_adapters` made beside the record at `recordKey`
+    /// and compares the logits `forward` gives over its tokens, at its strengths and at 0, with PEFT's: the
+    /// adapted logits and the adapters' own change to them.
+    private func checkGeneratedAdapters(recordKey: String, name: String,
+                                        hold: ([(url: URL, strength: Float)]) throws -> [Float],
+                                        forward: (MLXArray) -> MLXArray) throws {
+        guard let path = config[recordKey] else { throw XCTSkip("set \(recordKey)") }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let folder = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("adapters")
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        let adapters = strengths.enumerated().map { index, strength in
+            (url: folder.appendingPathComponent("adapter\(index)/adapter_model.safetensors"), strength: strength)
+        }
+        XCTAssertEqual(try hold(adapters), strengths)
+        let tokens = MLXArray(try XCTUnwrap(arrays["tokens"]).asArray(Int32.self)).reshaped([1, -1])
+        func logits(at run: [Float]) -> MLXArray {
+            let logits = NFKMLXAdapterRun.$strengths.withValue(run) { forward(tokens)[0] }
+            eval(logits)
+            return logits
+        }
+        let adapted = logits(at: strengths), base = logits(at: strengths.map { _ in 0 })
+        let reference = try XCTUnwrap(arrays["output"]), referenceBase = try XCTUnwrap(arrays["base_output"])
+        func values(_ array: MLXArray) -> [Double] { array.reshaped([-1]).asArray(Float.self).map(Double.init) }
+        let similarity = cosine(values(adapted), values(reference))
+        let change = cosine(values(adapted - base), values(reference - referenceBase))
+        print("VALIDATION PARITY \(name)-adapters: strengths \(strengths), logit cosine \(similarity), "
+              + "the adapters' change \(change), base \(cosine(values(base), values(referenceBase)))")
+        XCTAssertEqual(adapted.argMax(axis: -1).asArray(Int32.self), reference.argMax(axis: -1).asArray(Int32.self),
+                       "every position predicts the reference's token")
+        XCTAssertGreaterThan(similarity, 0.99999)
+        XCTAssertGreaterThan(change, 0.9999, "the adapters change the logits as PEFT's do")
+    }
+
+    // Granite 4.0-H 1B's Mamba-2, attention, and shared feed-forward projections with two PEFT adapters held
+    // beside them (`generated_decoder_adapters` on IK_VAL_GRANITE).
+    func testGraniteHybridHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_GRANITE"] else { throw XCTSkip("set IK_VAL_GRANITE") }
+        let release = URL(fileURLWithPath: directory)
+        let net = NFKMLXGraniteHybrid.makeNet(try NFKMLXGraniteHybrid.configuration(fromDirectory: release))
+        try NFKMLXGraniteHybrid.loadWeights(into: net, fromDirectory: release, precision: .float32)
+        try checkGeneratedAdapters(recordKey: "IK_PARITY_GRANITE_ADAPTERS", name: "granite-4.0-h-1b",
+                                   hold: { try NFKMLXDecoderAdapters.hold($0, in: net) }, forward: { net($0) })
+    }
+
+    // Nemotron Nano 9B v2 cut to fifteen layers, whose Mamba-2, attention, and MLP projections transformers names
+    // under `backbone.`, with two PEFT adapters held beside them (`generated_decoder_adapters` on
+    // IK_VAL_NEMOTRON_CUT15).
+    func testNemotronHHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_NEMOTRON_CUT15"] else { throw XCTSkip("set IK_VAL_NEMOTRON_CUT15") }
+        let release = URL(fileURLWithPath: directory)
+        let net = NFKMLXNemotronH.makeNet(try NFKMLXNemotronH.configuration(fromDirectory: release))
+        try NFKMLXNemotronH.loadWeights(into: net, fromDirectory: release, precision: .float32)
+        try checkGeneratedAdapters(recordKey: "IK_PARITY_NEMOTRON_H_ADAPTERS", name: "nemotron-h-cut15",
+                                   hold: { try NFKMLXNemotronH.holdAdapters($0, in: net) }, forward: { net($0) })
+    }
+
+    // HY-MT1.5 1.8B, the dense Hunyuan decoder the translation backend runs, with two PEFT adapters held beside it
+    // (`generated_decoder_adapters` on IK_VAL_HYMT15_1_8B).
+    func testHYMTHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_HYMT15_1_8B"] else { throw XCTSkip("set IK_VAL_HYMT15_1_8B") }
+        let (net, _) = try NFKMLXLanguage.loadedReleaseWithTokenizer(at: URL(fileURLWithPath: directory), precision: .float32)
+        try checkGeneratedAdapters(recordKey: "IK_PARITY_HYMT_ADAPTERS", name: "hy-mt1.5-1.8b",
+                                   hold: { try NFKMLXDecoderAdapters.hold($0, in: net) }, forward: { net($0) })
+    }
+
     // Two released whisper-small adapters held beside the weights at their own strengths, one over the attention
     // and feed-forward projections and one over the query and value projections, against PEFT's adapters active
     // together at those strengths, at float32. The port reads transformers' log-mel as given and the record's
@@ -7348,6 +7578,63 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                                maxTokens: continuation.count, endTokens: [])
         print("VALIDATION PARITY qwen3vl-decoder: continuation \(generated == continuation ? "exact" : "\(generated) vs \(continuation)")")
         XCTAssertEqual(generated, continuation, "the cached generation matches the reference continuation")
+    }
+
+    // Two released Qwen3-VL-2B-Instruct adapters held beside the decoder at their own strengths, against PEFT's
+    // adapters active together at those strengths at float32 (`run_reference.py qwen3vl_adapters`), on the image
+    // prompt of the decoder test above with its recorded vision features: the logits, the adapters' own change to
+    // them, and the cached greedy continuation.
+    func testQwen3VLHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_QWEN3_VL_ADAPTERS"], let directory = config["IK_VAL_QWEN3_VL"],
+              let visProbe = config["IK_VAL_LORA_QWEN3_VL_2B_VISPROBE"],
+              let receipts = config["IK_VAL_LORA_QWEN3_VL_2B_RECEIPTS"] else {
+            throw XCTSkip("set IK_PARITY_QWEN3_VL_ADAPTERS, IK_VAL_QWEN3_VL, IK_VAL_LORA_QWEN3_VL_2B_VISPROBE, and "
+                          + "IK_VAL_LORA_QWEN3_VL_2B_RECEIPTS")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let inputIds = try XCTUnwrap(arrays["input_ids"]).asArray(Int32.self).map(Int.init)
+        let g = try XCTUnwrap(arrays["image_grid_thw"]).asArray(Int32.self).map(Int.init)
+        let visionOutput = try XCTUnwrap(arrays["vision_output"])
+        let deepstack = try (0 ..< 3).map { try XCTUnwrap(arrays["deepstack_\($0)"]) }
+        let reference = try XCTUnwrap(arrays["output"]), referenceBase = try XCTUnwrap(arrays["base_output"])
+        let continuation = try XCTUnwrap(arrays["continuation"]).asArray(Int32.self).map(Int.init)
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        let release = URL(fileURLWithPath: directory)
+
+        let decoder = try NFKMLXQwen3VL.decoder(directoryURL: release)
+        let adapters = zip([visProbe, receipts], strengths).map { (url: URL(fileURLWithPath: $0), strength: $1) }
+        XCTAssertEqual(try NFKMLXDecoderAdapters.hold(adapters, in: decoder), strengths)
+        func logits(at run: [Float]) -> MLXArray {
+            let logits = NFKMLXAdapterRun.$strengths.withValue(run) {
+                NFKMLXQwen3VL.logits(decoder: decoder, inputIds: inputIds, visionFeatures: visionOutput,
+                                     deepstack: deepstack, gridT: g[0], gridH: g[1], gridW: g[2])[0]
+            }
+            eval(logits)
+            return logits
+        }
+        let adapted = logits(at: strengths)
+        let base = logits(at: strengths.map { _ in 0 })
+        func values(_ array: MLXArray) -> [Double] { array.reshaped([-1]).asArray(Float.self).map(Double.init) }
+        let similarity = cosine(values(adapted), values(reference))
+        let change = cosine(values(adapted - base), values(reference - referenceBase))
+        print("VALIDATION PARITY qwen3vl-adapters: strengths \(strengths), logit cosine \(similarity), "
+              + "the adapters' change \(change), base \(cosine(values(base), values(referenceBase)))")
+        XCTAssertEqual(adapted.argMax(axis: -1).asArray(Int32.self), reference.argMax(axis: -1).asArray(Int32.self),
+                       "every position predicts the reference's token")
+        XCTAssertGreaterThan(similarity, 0.9999)
+        XCTAssertGreaterThan(change, 0.999, "the adapters change the logits as PEFT's do")
+        let generated = NFKMLXAdapterRun.$strengths.withValue(strengths) {
+            NFKMLXQwen3VL.generate(decoder: decoder, inputIds: inputIds, visionFeatures: visionOutput, deepstack: deepstack,
+                                   gridT: g[0], gridH: g[1], gridW: g[2], maxTokens: continuation.count, endTokens: [])
+        }
+        XCTAssertEqual(generated, continuation, "the cached generation writes the adapted reference's continuation")
+
+        NFKMLXReferenceModels.registerAll()
+        let backend = try NFKMLXModelRegistry.backend(named: NFKMLXQwen3VL.modelName, weightsURL: release, options: [
+            NFKModelLoadOptionAdapters: adapters.map { [NFKModelAdapterPath: $0.url.path, NFKModelAdapterStrength: 1] },
+        ])
+        XCTAssertTrue(backend.supportedParameterKeys?.contains(NFKParameterAdapterStrengths) == true)
     }
 
     // The Qwen3-VL image processor's layout: a 256×256 image smart-resizes to itself (a multiple of

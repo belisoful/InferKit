@@ -106,6 +106,9 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
         if hasDraftModel {
             keys.insert(NFKMLXGenerationParameterKey.draftTokens)
         }
+        if !adapterStrengths.isEmpty {
+            keys.insert(NFKParameterAdapterStrengths)
+        }
         return keys
     }
 
@@ -116,7 +119,17 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
     /// request, and the usage. Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage, NFKOutputFinishReason]) }
 
+    /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
+    var adapterStrengths: [Float] = []
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        // The held adapters read the run's strengths as each pass builds its graph.
+        try NFKMLXAdapterRun.$strengths.withValue(try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)) {
+            try run(request)
+        }
+    }
+
+    private func run(_ request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var sampling = NFKMLXStepSampling(release: releaseSampling)
         sampling.read(request)
         var maximumTokens: Int?
@@ -276,7 +289,7 @@ public extension NFKMLXNemotronH {
 
     internal static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
                                  budget: Int, identifier: String = nemotronModelName, draftDirectoryURL: URL? = nil,
-                                 draftBits: Int? = 4) throws -> NFKMLXNemotronBackend {
+                                 draftBits: Int? = 4, adapters: [(url: URL, strength: Float)] = []) throws -> NFKMLXNemotronBackend {
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("the Nemotron release has no readable tokenizer")
         }
@@ -303,9 +316,28 @@ public extension NFKMLXNemotronH {
         let net = makeNet(configuration)
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
                         budget: budget > 0 ? Swift.max(budget - draftBytes, 1) : 0, reserving: draftBytes)
-        return NFKMLXNemotronBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: identifier,
-                                     modules: [net], releaseDirectoryURL: directoryURL, layerStream: net.layerStream,
-                                     draft: draft.map { draft in { draft($0) } })
+        let backend = NFKMLXNemotronBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: identifier,
+                                            modules: [net], releaseDirectoryURL: directoryURL, layerStream: net.layerStream,
+                                            draft: draft.map { draft in { draft($0) } })
+        backend.adapterStrengths = try holdAdapters(adapters, in: net)
+        return backend
+    }
+
+    /// Holds released LoRA adapters beside `net`'s layers, unmerged, and returns their strengths in load order
+    /// (`NFKMLXDecoderAdapters`: PEFT's and mlx-lm's layouts, each with its `adapter_config.json`). transformers
+    /// names the stack `backbone.`, which the port names `model.`.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for a decoder that streams layers, and
+    ///   `NFKMLXError.loRANotApplicable` for an adapter the decoder cannot hold, before any layer changes.
+    internal static func holdAdapters(_ adapters: [(url: URL, strength: Float)], in net: NFKMLXNemotronHNet) throws -> [Float] {
+        guard !adapters.isEmpty else { return [] }
+        guard net.layerStream == nil else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(nemotronModelName) holds adapters beside layers held in memory; load it with a residency that holds every layer")
+        }
+        return try NFKMLXDecoderAdapters.hold(adapters, in: net) { path in
+            path.hasPrefix("backbone.") ? "model." + path.dropFirst("backbone.".count) : path
+        }
     }
 
     /// The Objective-C entry: builds a Nemotron Nano 2 text-generation backend from a release directory.
