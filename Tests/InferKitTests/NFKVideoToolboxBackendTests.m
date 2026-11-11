@@ -178,6 +178,108 @@
 	XCTAssertEqual(CVPixelBufferGetHeight(middle), (size_t)240);
 }
 
+/*! The horizontal center of the bright square in a BGRA frame. */
+- (double)squareCenterOf:(CVPixelBufferRef)frame
+{
+	CVPixelBufferLockBaseAddress(frame, kCVPixelBufferLock_ReadOnly);
+	const uint8_t *base = CVPixelBufferGetBaseAddress(frame);
+	size_t stride = CVPixelBufferGetBytesPerRow(frame);
+	double sum = 0, weight = 0;
+	for (size_t y = 60; y < 100; y++) {
+		for (size_t x = 0; x < CVPixelBufferGetWidth(frame); x++) {
+			double value = base[y * stride + 4 * x + 1];
+			value = value > 40 ? value - 30 : 0;
+			sum += value * (double)x;
+			weight += value;
+		}
+	}
+	CVPixelBufferUnlockBaseAddress(frame, kCVPixelBufferLock_ReadOnly);
+	return sum / weight;
+}
+
+// The square's center moves from 79.5 to 159.5, so the frame at a timestep shows how far along it landed.
+- (void)testATimestepPlacesTheFrameAtThatPoint
+{
+	NFKVideoToolboxBackend *backend = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskFrameInterpolation];
+	if (!backend.isReady) {
+		return;
+	}
+	CVPixelBufferRef previous = [self frameOfWidth:320 height:240 shiftedBy:0];
+	CVPixelBufferRef next = [self frameOfWidth:320 height:240 shiftedBy:80];
+	NSArray *frames = @[ (__bridge id)previous, (__bridge id)next ];
+	CVPixelBufferRelease(previous);
+	CVPixelBufferRelease(next);
+	for (NSNumber *timestep in @[ @0.2, @0.4, @0.8 ]) {
+		NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImages: frames }
+																   parameters:@{ NFKParameterTimestep: timestep }];
+		NFKInferenceResult *result = [self resultOfRunning:backend request:request];
+		if (result == nil) {
+			return;
+		}
+		double reached = ([self squareCenterOf:(__bridge CVPixelBufferRef)[result outputForKey:NFKOutputImage]] - 79.5) / 80.0;
+		XCTAssertEqualWithAccuracy(reached, timestep.doubleValue, 0.02, @"a point off the eighths is reached");
+	}
+	NFKInferenceResult *middle = [self resultOfRunning:backend request:[self requestWithFrames:frames]];
+	if (middle != nil) {
+		double reached = ([self squareCenterOf:(__bridge CVPixelBufferRef)[middle outputForKey:NFKOutputImage]] - 79.5) / 80.0;
+		XCTAssertEqualWithAccuracy(reached, 0.5, 0.02, @"no timestep gives the middle");
+	}
+}
+
+- (void)testATimestepAtEitherEndAnswersThatFrame
+{
+	NFKVideoToolboxBackend *backend = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskFrameInterpolation];
+	if (!backend.isReady) {
+		return;
+	}
+	CVPixelBufferRef previous = [self frameOfWidth:320 height:240 shiftedBy:0];
+	CVPixelBufferRef next = [self frameOfWidth:320 height:240 shiftedBy:80];
+	NSArray *frames = @[ (__bridge id)previous, (__bridge id)next ];
+	CVPixelBufferRelease(previous);
+	CVPixelBufferRelease(next);
+	NSDictionary<NSNumber *, NSNumber *> *centers = @{ @0: @79.5, @1: @159.5, @(-2): @79.5, @3: @159.5 };
+	for (NSNumber *timestep in centers) {
+		NSError *error = nil;
+		NFKInferenceResult *result = [backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputImages: frames }
+																								parameters:@{ NFKParameterTimestep: timestep }]
+															   error:&error];
+		XCTAssertNotNil(result, @"%@", error);
+		XCTAssertEqualWithAccuracy([self squareCenterOf:(__bridge CVPixelBufferRef)[result outputForKey:NFKOutputImage]],
+								   centers[timestep].doubleValue, 0.01, @"timestep %@", timestep);
+	}
+}
+
+- (void)testATimestepThatIsNotAFiniteNumberIsRefused
+{
+	NFKVideoToolboxBackend *backend = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskFrameInterpolation];
+	XCTAssertEqualObjects(backend.supportedParameterKeys, [NSSet setWithObject:NFKParameterTimestep]);
+	XCTAssertEqualObjects([NFKVideoToolboxBackend backend].supportedParameterKeys, [NSSet set]);
+	CVPixelBufferRef frame = [self frameOfWidth:320 height:240 shiftedBy:0];
+	NSArray *frames = @[ (__bridge id)frame, (__bridge id)frame ];
+	CVPixelBufferRelease(frame);
+	for (id timestep in @[ @"middle", @(NAN) ]) {
+		NSError *error = nil;
+		XCTAssertNil([backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputImages: frames }
+																				 parameters:@{ NFKParameterTimestep: timestep }]
+											   error:&error]);
+		XCTAssertEqual(error.code, kNFKError_InferenceUnsupported, @"%@", timestep);
+		XCTAssertTrue([error.localizedDescription containsString:@"NFKParameterTimestep"], @"%@", error);
+	}
+}
+
+- (void)testTheCatalogDeclaresTheTimestep
+{
+	NFKModelOption *option = [[NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"videotoolbox-frame-interpolation"]
+							  optionWithKey:NFKParameterTimestep];
+	XCTAssertEqualObjects(option.kind, NFKModelOptionKindNumber);
+	XCTAssertEqualObjects(option.stage, NFKModelOptionStageRequest);
+	XCTAssertEqualObjects(option.defaultValue, @0.5);
+	XCTAssertEqualObjects(option.minimum, @0);
+	XCTAssertEqualObjects(option.maximum, @1);
+	XCTAssertTrue([option.key.lowercaseString hasSuffix:@"timestep"]);
+	XCTAssertEqualObjects(NFKModelValueTypeForKey(NFKParameterTimestep), NFKModelValueTypeNumber);
+}
+
 - (void)testStillFramesPackAsNoMotion
 {
 	NFKVideoToolboxBackend *backend = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskOpticalFlow];

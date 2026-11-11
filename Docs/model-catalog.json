@@ -16626,7 +16626,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -30130,7 +30130,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -30970,7 +30970,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -38614,7 +38614,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -39436,7 +39436,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -40282,7 +40282,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -41212,7 +41212,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -42156,7 +42156,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -43006,7 +43006,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -43960,7 +43960,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -52100,7 +52100,7 @@
         {
           "default" : 0.5,
           "help" : "Where the frame lands between the first frame (0) and the second (1).",
-          "key" : "NFKMLXParameterTimestep",
+          "key" : "timestep",
           "kind" : "number",
           "maximum" : 1,
           "minimum" : 0,
@@ -64860,7 +64860,7 @@
           "title" : "Draft tokens"
         },
         {
-          "default" : false,
+          "default" : true,
           "group" : "Cache",
           "help" : "Keeps the key-value cache between requests, so a prompt that extends the last one prefills only its tail.",
           "key" : "NFKMLXParameterReusesPromptCache",
@@ -72746,7 +72746,16 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "default" : 0.5,
+          "help" : "Where the frame lands between the first frame (0) and the second (1). Without one, the middle frame from the fastest path.",
+          "key" : "timestep",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Timestep"
+        }
       ],
       "outputModalities" : [
         "image"
@@ -72771,7 +72780,7 @@
 
       ],
       "standIn" : false,
-      "summary" : "Synthesizes the frame between two frames.",
+      "summary" : "Synthesizes a frame at any point between two frames.",
       "tasks" : [
         "frame-interpolation"
       ],

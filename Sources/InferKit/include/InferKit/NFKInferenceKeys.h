@@ -91,6 +91,9 @@ extern NSString * const NFKParameterSteps;
 extern NSString * const NFKParameterGuidanceScale;
 /*! The image-to-image denoising strength, 0 to 1 (NSNumber). */
 extern NSString * const NFKParameterStrength;
+/*! Where a frame interpolator places its frame between two frames, from 0 at the first to 1 at the second
+	(NSNumber). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterTimestep;
 /*! Each loaded adapter's strength for this request (NSArray of NSNumber), in the order of the
 	NFKModelLoadOptionAdapters load option. A request without it runs at the strengths set at load.
 	Introduced in InferKit 0.4.0. */

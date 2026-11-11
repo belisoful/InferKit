@@ -68,6 +68,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKParameterSteps,
 	(const void *)&NFKParameterGuidanceScale,
 	(const void *)&NFKParameterStrength,
+	(const void *)&NFKParameterTimestep,
 	(const void *)&NFKParameterAdapterStrengths,
 	(const void *)&NFKParameterWidth,
 	(const void *)&NFKParameterHeight,

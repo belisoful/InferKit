@@ -18,9 +18,11 @@
 #if TARGET_OS_TV
 	#define NFK_VT_HAS_SUPER_RESOLUTION 0
 	#define NFK_VT_HAS_OPTICAL_FLOW 0
+	#define NFK_VT_HAS_FRAME_RATE_CONVERSION 0
 #else
 	#define NFK_VT_HAS_SUPER_RESOLUTION 1
 	#define NFK_VT_HAS_OPTICAL_FLOW 1
+	#define NFK_VT_HAS_FRAME_RATE_CONVERSION 1
 #endif
 
 @implementation NFKVideoToolboxBackend
@@ -63,6 +65,11 @@
 - (NSSet<NSString *> *)supportedOutputKeys
 {
 	return [NSSet setWithObject:NFKOutputImage];
+}
+
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	return self.task == NFKVideoToolboxTaskFrameInterpolation ? [NSSet setWithObject:NFKParameterTimestep] : [NSSet set];
 }
 
 - (BOOL)isReady
@@ -225,63 +232,142 @@
 - (nullable NFKInferenceResult *)runInterpolationForRequest:(NFKInferenceRequest *)request
 													  error:(NSError **)outError
 {
-	if (@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)) {
-		CVPixelBufferRef previous = NULL;
-		CVPixelBufferRef source = NULL;
-		if (![self framePairForRequest:request previous:&previous source:&source error:outError]) {
-			return nil;
-		}
+	id timestep = [request parameterForKey:NFKParameterTimestep];
+	if (timestep != nil && (![timestep isKindOfClass:NSNumber.class] || !isfinite([timestep doubleValue]))) {
+		[self failWithError:outError code:kNFKError_InferenceUnsupported reason:@"NFKParameterTimestep must be a finite number"];
+		return nil;
+	}
+	CVPixelBufferRef previous = NULL;
+	CVPixelBufferRef source = NULL;
+	if (![self framePairForRequest:request previous:&previous source:&source error:outError]) {
+		return nil;
+	}
+	NFKInferenceResult *result = [self interpolateFrom:previous to:source timestep:timestep error:outError];
+	CVPixelBufferRelease(previous);
+	CVPixelBufferRelease(source);
+	return result;
+}
 
+/*! The frame at timestep between two frames, or the middle frame for a nil timestep. */
+- (nullable NFKInferenceResult *)interpolateFrom:(CVPixelBufferRef)previous
+											  to:(CVPixelBufferRef)source
+										timestep:(nullable NSNumber *)timestep
+										   error:(NSError **)outError
+{
+	if (timestep == nil) {
+		return [self interpolateAtLowLatencyFrom:previous to:source phase:0.5 error:outError];
+	}
+	double phase = timestep.doubleValue;
+	if (phase <= 0 || phase >= 1) {
+		if (@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)) {
+			return [self resultWithBufferConvertedToBGRA:phase <= 0 ? previous : source error:outError];
+		}
+		[self failWithError:outError code:kNFKError_InferenceUnsupported reason:@"interpolation needs macOS 26, iOS 26, or tvOS 26"];
+		return nil;
+	}
+#if NFK_VT_HAS_FRAME_RATE_CONVERSION
+	if (@available(macOS 26.0, iOS 26.0, *)) {
+		if (VTFrameRateConversionConfiguration.isSupported) {
+			return [self convertFrameRateFrom:previous to:source phase:phase error:outError];
+		}
+	}
+#endif
+	return [self interpolateAtLowLatencyFrom:previous to:source phase:phase error:outError];
+}
+
+- (nullable NFKInferenceResult *)interpolateAtLowLatencyFrom:(CVPixelBufferRef)previous
+														  to:(CVPixelBufferRef)source
+													   phase:(double)phase
+													   error:(NSError **)outError
+{
+	if (@available(macOS 26.0, iOS 26.0, tvOS 26.0, *)) {
 		VTLowLatencyFrameInterpolationConfiguration *configuration =
 			[[VTLowLatencyFrameInterpolationConfiguration alloc] initWithFrameWidth:(NSInteger)CVPixelBufferGetWidth(source)
 																		frameHeight:(NSInteger)CVPixelBufferGetHeight(source)
 														 numberOfInterpolatedFrames:1];
 		if (configuration == nil) {
-			CVPixelBufferRelease(previous);
-			CVPixelBufferRelease(source);
 			[self failWithError:outError
 						   code:kNFKError_InferenceUnsupported
 						 reason:@"the interpolator does not take this frame size"];
 			return nil;
 		}
-
 		CVPixelBufferRef previousReading = [self buffer:previous transferredToAttributes:configuration.sourcePixelBufferAttributes];
 		CVPixelBufferRef sourceReading = [self buffer:source transferredToAttributes:configuration.sourcePixelBufferAttributes];
-		CVPixelBufferRef middle = [self bufferMatchingAttributes:configuration.destinationPixelBufferAttributes fallback:source];
+		CVPixelBufferRef destination = [self bufferMatchingAttributes:configuration.destinationPixelBufferAttributes fallback:source];
 		// The two frames must differ in presentation time, and the interpolated frame sits between.
 		VTFrameProcessorFrame *previousFrame = [self frameWithBuffer:previousReading time:CMTimeMake(0, 600)];
 		VTFrameProcessorFrame *sourceFrame = [self frameWithBuffer:sourceReading time:CMTimeMake(600, 600)];
-		VTFrameProcessorFrame *middleFrame = [self frameWithBuffer:middle time:CMTimeMake(300, 600)];
-		if (previousReading == NULL || sourceReading == NULL || middle == NULL ||
-			previousFrame == nil || sourceFrame == nil || middleFrame == nil) {
-			CVPixelBufferRelease(previous);
-			CVPixelBufferRelease(source);
-			CVPixelBufferRelease(previousReading);
-			CVPixelBufferRelease(sourceReading);
-			CVPixelBufferRelease(middle);
+		VTFrameProcessorFrame *destinationFrame = [self frameWithBuffer:destination time:CMTimeMakeWithSeconds(phase, 600000)];
+		NFKInferenceResult *result = nil;
+		if (previousFrame != nil && sourceFrame != nil && destinationFrame != nil) {
+			VTLowLatencyFrameInterpolationParameters *parameters =
+				[[VTLowLatencyFrameInterpolationParameters alloc] initWithSourceFrame:sourceFrame
+																		previousFrame:previousFrame
+																   interpolationPhase:@[ @(phase) ]
+																	destinationFrames:@[ destinationFrame ]];
+			result = [self runConfiguration:configuration parameters:parameters outputs:nil error:outError];
+			if (result != nil) {
+				result = [self resultWithBufferConvertedToBGRA:destination error:outError];
+			}
+		} else {
 			[self failWithError:outError code:kNFKError_InferenceBackendFailure reason:@"the frames could not be allocated"];
-			return nil;
 		}
-
-		VTLowLatencyFrameInterpolationParameters *parameters =
-			[[VTLowLatencyFrameInterpolationParameters alloc] initWithSourceFrame:sourceFrame
-																	previousFrame:previousFrame
-															   interpolationPhase:@[ @0.5 ]
-																destinationFrames:@[ middleFrame ]];
-		NFKInferenceResult *result = [self runConfiguration:configuration parameters:parameters outputs:nil error:outError];
-		if (result != nil) {
-			result = [self resultWithBufferConvertedToBGRA:middle error:outError];
-		}
-		CVPixelBufferRelease(previous);
-		CVPixelBufferRelease(source);
 		CVPixelBufferRelease(previousReading);
 		CVPixelBufferRelease(sourceReading);
-		CVPixelBufferRelease(middle);
+		CVPixelBufferRelease(destination);
 		return result;
 	}
 	[self failWithError:outError code:kNFKError_InferenceUnsupported reason:@"interpolation needs macOS 26, iOS 26, or tvOS 26"];
 	return nil;
 }
+
+#if NFK_VT_HAS_FRAME_RATE_CONVERSION
+- (nullable NFKInferenceResult *)convertFrameRateFrom:(CVPixelBufferRef)previous
+												   to:(CVPixelBufferRef)source
+												phase:(double)phase
+												error:(NSError **)outError API_AVAILABLE(macos(26.0), ios(26.0))
+{
+	VTFrameRateConversionConfiguration *configuration =
+		[[VTFrameRateConversionConfiguration alloc] initWithFrameWidth:(NSInteger)CVPixelBufferGetWidth(source)
+														   frameHeight:(NSInteger)CVPixelBufferGetHeight(source)
+													usePrecomputedFlow:NO
+												 qualityPrioritization:VTFrameRateConversionConfigurationQualityPrioritizationNormal
+															  revision:VTFrameRateConversionConfiguration.defaultRevision];
+	if (configuration == nil) {
+		[self failWithError:outError
+					   code:kNFKError_InferenceUnsupported
+					 reason:[NSString stringWithFormat:@"the frame rate converter does not take a %zu × %zu frame",
+							 CVPixelBufferGetWidth(source), CVPixelBufferGetHeight(source)]];
+		return nil;
+	}
+	CVPixelBufferRef previousReading = [self buffer:previous transferredToAttributes:configuration.sourcePixelBufferAttributes];
+	CVPixelBufferRef sourceReading = [self buffer:source transferredToAttributes:configuration.sourcePixelBufferAttributes];
+	CVPixelBufferRef destination = [self bufferMatchingAttributes:configuration.destinationPixelBufferAttributes fallback:source];
+	VTFrameProcessorFrame *previousFrame = [self frameWithBuffer:previousReading time:CMTimeMake(0, 600)];
+	VTFrameProcessorFrame *sourceFrame = [self frameWithBuffer:sourceReading time:CMTimeMake(600, 600)];
+	VTFrameProcessorFrame *destinationFrame = [self frameWithBuffer:destination time:CMTimeMakeWithSeconds(phase, 600000)];
+	NFKInferenceResult *result = nil;
+	if (previousFrame != nil && sourceFrame != nil && destinationFrame != nil) {
+		VTFrameRateConversionParameters *parameters =
+			[[VTFrameRateConversionParameters alloc] initWithSourceFrame:previousFrame
+															   nextFrame:sourceFrame
+															 opticalFlow:nil
+													  interpolationPhase:@[ @(phase) ]
+														  submissionMode:VTFrameRateConversionParametersSubmissionModeRandom
+													   destinationFrames:@[ destinationFrame ]];
+		result = [self runConfiguration:configuration parameters:parameters outputs:nil error:outError];
+		if (result != nil) {
+			result = [self resultWithBufferConvertedToBGRA:destination error:outError];
+		}
+	} else {
+		[self failWithError:outError code:kNFKError_InferenceBackendFailure reason:@"the frames could not be allocated"];
+	}
+	CVPixelBufferRelease(previousReading);
+	CVPixelBufferRelease(sourceReading);
+	CVPixelBufferRelease(destination);
+	return result;
+}
+#endif
 
 - (nullable NFKInferenceResult *)runOpticalFlowForRequest:(NFKInferenceRequest *)request
 													error:(NSError **)outError

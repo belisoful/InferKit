@@ -193,7 +193,7 @@ static BOOL NFKAppleIncludesMachineChoices = YES;
 		}],
 		[self engineWithIdentifier:@"videotoolbox-frame-interpolation" displayName:@"VideoToolbox Frame Interpolation"
 							family:@"apple-videotoolbox"
-						   summary:@"Synthesizes the frame between two frames."
+						   summary:@"Synthesizes a frame at any point between two frames."
 							 tasks:@[ NFKModelTaskFrameInterpolation ] providerClassName:nil
 				 minimumOSVersions:@{ @"macOS": @"26.0", @"iOS": @"26.0", @"tvOS": @"26.0" }
 						   builder:^id<NFKInferenceBackend> {
@@ -334,6 +334,7 @@ static BOOL NFKAppleIncludesMachineChoices = YES;
 		@"vision-tracking": ^NSArray<NFKModelOption *> *{ return [NFKAppleModelDescriptors objectTrackingOptions]; },
 		@"vision-tracking-trajectory": ^NSArray<NFKModelOption *> *{ return [NFKAppleModelDescriptors trajectoryOptions]; },
 		@"videotoolbox-super-resolution": ^NSArray<NFKModelOption *> *{ return [NFKAppleModelDescriptors superResolutionOptions]; },
+		@"videotoolbox-frame-interpolation": ^NSArray<NFKModelOption *> *{ return [NFKAppleModelDescriptors frameInterpolationOptions]; },
 		@"videotoolbox-optical-flow": ^NSArray<NFKModelOption *> *{ return [NFKAppleModelDescriptors opticalFlowOptions]; },
 		@"apple-speech": ^NSArray<NFKModelOption *> *{ return [NFKAppleModelDescriptors speechRecognitionOptions]; },
 		@"sound-analysis": ^NSArray<NFKModelOption *> *{ return [NFKAppleModelDescriptors soundAnalysisOptions]; },
@@ -577,6 +578,15 @@ static BOOL NFKAppleIncludesMachineChoices = YES;
 						  help:@"The upscaling factor. 0 takes the smallest factor the machine offers; a factor it "
 							   @"does not offer is refused by name."
 				  defaultValue:@0 minimum:@0 maximum:nil step:@1] ];
+}
+
++ (NSArray<NFKModelOption *> *)frameInterpolationOptions
+{
+	return @[ [[NFKModelOption alloc] initWithKey:NFKParameterTimestep kind:NFKModelOptionKindNumber title:@"Timestep"
+											 help:@"Where the frame lands between the first frame (0) and the second (1). Without "
+												  @"one, the middle frame from the fastest path."
+									 defaultValue:@0.5 minimum:@0 maximum:@1 step:nil choices:nil stage:nil
+											group:nil extensions:nil] ];
 }
 
 + (NSArray<NFKModelOption *> *)opticalFlowOptions

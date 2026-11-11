@@ -649,7 +649,7 @@ public final class NFKMLXRIFEv4: NSObject {
     /// The request parameter (NSNumber, `0...1`) that places the interpolated frame between the two
     /// inputs. A value outside the range clamps to it; leaving it out interpolates the midpoint.
     /// Introduced in InferKit 0.4.0.
-    @objc public static let timestepKey = "NFKMLXParameterTimestep"
+    @objc public static let timestepKey = NFKParameterTimestep
 
     static func makeNet() -> NFKMLXRIFEv4Net { NFKMLXRIFEv4Net() }
 

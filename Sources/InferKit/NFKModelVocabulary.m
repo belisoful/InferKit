@@ -189,6 +189,7 @@ static NSDictionary<NSString *, NSString *> *NFKRequestKeyValueTypes(void)
 			NFKParameterSteps:						NFKModelValueTypeInteger,
 			NFKParameterGuidanceScale:				NFKModelValueTypeNumber,
 			NFKParameterStrength:					NFKModelValueTypeNumber,
+			NFKParameterTimestep:					NFKModelValueTypeNumber,
 			NFKParameterAdapterStrengths:			NFKModelValueTypeJSON,
 			NFKParameterWidth:						NFKModelValueTypeInteger,
 			NFKParameterHeight:						NFKModelValueTypeInteger,

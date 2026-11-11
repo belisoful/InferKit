@@ -214,7 +214,20 @@ headers:
   input, is a quarter per axis; whether that ratio holds at other frame sizes or on other silicon is
   unverified, so do not compute the size from it.
 - Interpolation rejects two frames that share a presentation timestamp, so the pair is stamped 0 and
-  600 in a 600 timescale with the interpolated frame at 300.
+  600 in a 600 timescale with the interpolated frame at its phase between them.
+- `NFKParameterTimestep` chooses the processor. Measured 2026-11-10, M1 Max, macOS 26.6, a square moving
+  80 pixels:
+  - `VTLowLatencyFrameInterpolation` rounds a phase to the nearest eighth at every
+    `numberOfInterpolatedFrames` from 1 to 4 (0.4 lands at 0.361, 0.8 at 0.777, the positions it gives
+    0.375 and 0.75), runs in about 48 ms at 1280 × 720, and fails at 1920 × 1080 with "Processor is not
+    initialized".
+  - `VTFrameRateConversion` reaches any phase within 0.002 (0.4 at 0.398, 0.8 at 0.801) and takes
+    1920 × 1080, at about 470 ms a run at either size, most of it the session each run starts. The first
+    run on a machine takes about 12 s.
+    It takes up to 8192 × 4320 (7680 × 4320 and 8192 × 4320 measured, the phase within 0.007), and a
+    larger frame is refused by size. The first run at a new size takes 10–18 s.
+  - A request that names a timestep runs the converter, and one that names none stays on the low-latency
+    path. tvOS has no converter, so there the timestep rounds to eighths.
 - The packed flow map follows `NFKMLXRAFT`: red and green carry `0.5 + component / (2 * flowScale)`
   with `flowScale` 32 by default, blue is zero. A consumer decodes with
   `(value - 0.5) * 2 * flowScale` and reads either engine the same way. Changing the default is a

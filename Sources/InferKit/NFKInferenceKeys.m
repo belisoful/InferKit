@@ -36,6 +36,7 @@ NSString * const NFKParameterAudioOutput		= @"audioOutput";
 NSString * const NFKParameterSteps			= @"steps";
 NSString * const NFKParameterGuidanceScale	= @"guidanceScale";
 NSString * const NFKParameterStrength		= @"strength";
+NSString * const NFKParameterTimestep		= @"timestep";
 NSString * const NFKParameterAdapterStrengths	= @"adapterStrengths";
 NSString * const NFKParameterWidth			= @"width";
 NSString * const NFKParameterHeight			= @"height";

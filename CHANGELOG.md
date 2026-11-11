@@ -118,6 +118,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### VideoToolbox interpolates at any point between two frames
+
+- `NFKParameterTimestep` places an interpolated frame between two frames, from 0 at the first to 1 at the
+  second. `videotoolbox-frame-interpolation` declares it as a request option.
+- `NFKVideoToolboxBackend` runs a request that names a timestep through VideoToolbox's frame rate converter,
+  which reaches any point and takes 1920 × 1080. A request without one keeps the faster low-latency
+  interpolator and its middle frame. On tvOS, which has only that interpolator, the point rounds to the
+  nearest eighth.
+
 #### A live transcription's tentative words have a key
 
 - `NFKOutputTentativeText` (`tentativeText`) carries the transcript a live transcription holds past its
@@ -2040,6 +2049,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### RIFE v4 reads the core's timestep key
+
+- `NFKMLXRIFEv4.timestepKey` is `NFKParameterTimestep`, the key every frame interpolator reads. Its value
+  changes from `NFKMLXParameterTimestep` to `timestep`.
 
 #### A keyless request continues the conversation its prompt extends
 

@@ -16,7 +16,7 @@ NS_ASSUME_NONNULL_BEGIN
 	@abstract   Which frame processor the backend runs.
 	@constant   NFKVideoToolboxTaskSuperResolution  Upscales one frame by scaleFactor (macOS 26,
 				iOS 26).
-	@constant   NFKVideoToolboxTaskFrameInterpolation  Synthesizes the frame between two (macOS 26,
+	@constant   NFKVideoToolboxTaskFrameInterpolation  Synthesizes a frame between two (macOS 26,
 				iOS 26, tvOS 26).
 	@constant   NFKVideoToolboxTaskOpticalFlow  Estimates motion between two frames (macOS 15.4,
 				iOS 26).
@@ -35,8 +35,14 @@ typedef NS_ENUM(NSInteger, NFKVideoToolboxTask) {
 
 				Upscaling reads NFKInputImage and returns the larger frame under NFKOutputImage.
 				Interpolation and flow read two frames under NFKInputImages, previous first, and
-				return one frame under NFKOutputImage: the synthesized middle frame, or the motion
-				field. Every processor reads a pixel format of its own, so a frame is converted on
+				return one frame under NFKOutputImage: the synthesized frame, or the motion field.
+				Interpolation places its frame by NFKParameterTimestep:
+				- absent → the middle frame, from the low-latency interpolator, the fastest path;
+				- between 0 and 1 → the frame at that point, from the frame rate converter, which takes
+				  any point and any frame size the processor allows. tvOS has only the low-latency
+				  interpolator, which rounds the point to the nearest eighth;
+				- 0 or below → the first frame, and 1 or above → the second.
+				Every processor reads a pixel format of its own, so a frame is converted on
 				the way in and the result is converted back to BGRA. A flow field comes back at the
 				processor's own resolution, which is smaller than the frame, so a caller scales it.
 
