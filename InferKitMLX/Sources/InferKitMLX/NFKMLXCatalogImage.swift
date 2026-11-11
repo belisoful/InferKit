@@ -1693,7 +1693,61 @@ enum NFKMLXCatalogImage {
                             files: [file(NFKMLXStableFast3D.weightsFileName),
                                     NFKModelFile(path: NFKMLXStableFast3D.gridFileName, byteCount: nil, sha256: nil, role: NFKModelFileRoleWeights,
                                                  optional: false, repository: nil, revision: nil, url: NFKMLXStableFast3D.gridURL,
-                                                 extensions: nil)]))]
+                                                 extensions: nil)])),
+         trellis(.imageLarge, "TRELLIS (image)", summary: "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from one image."),
+         trellis(.textBase, "TRELLIS text (base)", summary: "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 768-wide flows."),
+         trellis(.textLarge, "TRELLIS text (large)", summary: "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 1024-wide flows."),
+         trellis(.textXLarge, "TRELLIS text (xlarge)", summary: "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 1280-wide flows.")]
+    }
+
+    /// A TRELLIS release: its own flows, the image release's decoders, and its conditioner (DINOv2's
+    /// checkpoint for the image release, CLIP ViT-L/14 for the text ones).
+    static func trellis(_ variant: NFKMLXTrellisVariant, _ displayName: String, summary: String) -> NFKMLXCatalogEntry {
+        let spec = NFKMLXTrellisFactory.specification(variant)
+        func checkpoint(_ name: String, repository: String? = nil, revision: String? = nil) -> [NFKModelFile] {
+            ["ckpts/\(name).json", "ckpts/\(name).safetensors"].map { path in
+                repository.map { .file(path, role: role(of: path), repository: $0, revision: revision) } ?? file(path)
+            }
+        }
+        var files = [file("pipeline.json")] + spec.checkpoints.flatMap { checkpoint($0) }
+        let input: NFKModelPort
+        if spec.isImage {
+            files.append(NFKModelFile(path: NFKMLXTrellisFactory.encoderFileName, byteCount: nil, sha256: nil, role: NFKModelFileRoleWeights,
+                                      optional: false, repository: nil, revision: nil, url: NFKMLXTrellisFactory.encoderURL, extensions: nil))
+            input = imageInput("The object, cut out on transparency: the image is cropped to its alpha's box and widened by a fifth. An opaque image is used whole.")
+        } else {
+            files += NFKMLXTrellisFactory.decoderCheckpoints.flatMap {
+                checkpoint($0, repository: NFKMLXTrellisFactory.imageRepo, revision: NFKMLXTrellisFactory.imageRevision)
+            }
+            files += NFKMLXTrellisFactory.clipFiles.map {
+                .file($0, role: role(of: $0), repository: NFKMLXTrellisFactory.clipRepo, revision: NFKMLXTrellisFactory.clipRevision)
+            }
+            input = .input(NFKInputPrompt, required: true, title: "Prompt", help: "The object to generate.")
+        }
+        let guidance: Double = spec.isImage ? 5 : 7.5
+        let note = spec.isImage
+            ? "DINOv2 ViT-L/14 with registers (dinov2_vitl14_reg4_pretrain.pth) is Meta's, under Apache-2.0."
+            : "The decoders are microsoft/TRELLIS-image-large's, under MIT; the text conditioner is openai/clip-vit-large-patch14, under MIT."
+        return model(spec.name, displayName, family: "trellis", summary: summary,
+                     tasks: [spec.isImage ? NFKModelTaskImageTo3D : NFKModelTaskTextTo3D],
+                     inputs: [input],
+                     outputs: [.output(NFKOutputMesh, required: true, title: "Mesh",
+                                       help: "The object as a FlexiCubes mesh with a color per vertex, y up, facing +z."),
+                               .output(NFKOutputGaussianSplats, required: true, title: "Gaussians",
+                                       help: "The object as 32 Gaussians per occupied voxel, in the mesh's frame.")],
+                     parameters: [
+                         .option(NFKMLXTrellisParameterKey.structureSteps, kind: NFKModelOptionKindInteger, title: "Structure steps",
+                                 help: "The sparse-structure stage's sampling steps.", defaultValue: 25, minimum: 1, maximum: 100),
+                         .option(NFKMLXTrellisParameterKey.latentSteps, kind: NFKModelOptionKindInteger, title: "Latent steps",
+                                 help: "The structured-latent stage's sampling steps.", defaultValue: 25, minimum: 1, maximum: 100),
+                         .option(NFKMLXTrellisParameterKey.structureGuidance, kind: NFKModelOptionKindNumber, title: "Structure guidance",
+                                 help: "The sparse-structure stage's classifier-free guidance strength.", defaultValue: guidance, minimum: 0),
+                         .option(NFKMLXTrellisParameterKey.latentGuidance, kind: NFKModelOptionKindNumber, title: "Latent guidance",
+                                 help: "The structured-latent stage's classifier-free guidance strength.", defaultValue: guidance, minimum: 0),
+                     ],
+                     license: .mit(url: "https://huggingface.co/\(spec.repo)", note: note),
+                     source: .hub(spec.repo, revision: spec.revision, layout: NFKModelSourceLayoutDirectory, files: files),
+                     residencies: stagedResidencies)
     }
 
     static var generators: [NFKMLXCatalogEntry] {

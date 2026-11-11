@@ -13,6 +13,7 @@
 #import <InferKit/NFKImageCoding.h>
 #import <InferKit/NFKMIDISequence.h>
 #import <InferKit/NFKMesh.h>
+#import <InferKit/NFKGaussianSplats.h>
 #import <InferKit/NFKDecisionQuestion.h>
 #import <InferKit/NFKErrors.h>
 #import <AVFoundation/AVFoundation.h>
@@ -152,6 +153,9 @@ static NSString * _Nullable NFKValueCodingSingular(NSString *valueType)
 	}
 	if ([valueType isEqualToString:NFKModelValueTypeMesh]) {
 		return [NFKMesh meshWithContentsOfURL:url error:error];
+	}
+	if ([valueType isEqualToString:NFKModelValueTypeGaussianSplats]) {
+		return [NFKGaussianSplats splatsWithContentsOfURL:url error:error];
 	}
 	NSData *data = [NSData dataWithContentsOfURL:url options:0 error:error];
 	if (data == nil) {

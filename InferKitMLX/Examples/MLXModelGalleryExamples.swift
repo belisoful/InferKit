@@ -104,6 +104,37 @@ final class MLXModelGalleryExamples: XCTestCase {
         let textured = try stableFast3D.runInference(for: NFKInferenceRequest(
             inputs: [NFKInputImage: Self.solid(64)], parameters: [NFKMLXStableFast3DParameterKey.textureResolution: 64]))
         XCTAssertNotNil(textured.mesh, "a mesh under NFKOutputMesh, textured with a material when it holds a surface")
+
+        // TRELLIS generates in two sampled stages; random networks at a small geometry and two steps each keep
+        // the run short. The release builds from its directory and DINOv2's checkpoint.
+        var geometry = NFKMLXTrellisConfiguration()
+        geometry.imageSize = 28
+        geometry.encoderPositionGrid = 2
+        geometry.encoderWidth = 32
+        geometry.encoderDepth = 1
+        geometry.encoderHeads = 2
+        geometry.encoderHidden = 64
+        geometry.conditionWidth = 32
+        geometry.structureResolution = 4
+        geometry.flowWidth = 64
+        geometry.flowBlocks = 1
+        geometry.flowHeads = 2
+        geometry.flowHidden = 128
+        geometry.decoderChannels = [32, 32]
+        geometry.decoderResidualBlocks = 1
+        geometry.decoderMiddleBlocks = 1
+        geometry.latentFlowIOWidth = 32
+        geometry.decoderWidth = 256
+        geometry.decoderBlocks = 2
+        geometry.decoderHeads = 2
+        geometry.decoderWindow = 4
+        let trellis = NFKMLXTrellisFactory.backend(randomWeightsAt: geometry)
+        XCTAssertEqual(trellis.backendIdentifier, "trellis-image-large")
+        let generated = try trellis.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputImage: Self.solid(64)],
+            parameters: [NFKMLXTrellisParameterKey.structureSteps: 2, NFKMLXTrellisParameterKey.latentSteps: 2,
+                         NFKMLXTrellisParameterKey.outputs: [NFKOutputGaussianSplats]]))
+        XCTAssertNotNil(generated.gaussianSplats, "Gaussians under NFKOutputGaussianSplats")
     }
 
     // MARK: Depth (image → grayscale depth)

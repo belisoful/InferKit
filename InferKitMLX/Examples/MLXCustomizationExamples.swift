@@ -1558,6 +1558,35 @@ final class MLXCustomizationExamples: XCTestCase {
 
     /// A call that documents what it throws has to let a caller act on it, so the error type is part
     /// of the customization surface.
+    func testExampleFineTuningTRELLIS() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory.appendingPathComponent("trellis-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release's structure flow and encoder and pairs each object's image condition
+        // with its mesh's latent; a small random flow and one example stand in.
+        var geometry = NFKMLXTrellisConfiguration()
+        geometry.structureResolution = 4
+        geometry.structureChannels = 2
+        geometry.flowWidth = 32
+        geometry.flowBlocks = 1
+        geometry.flowHeads = 2
+        geometry.flowHidden = 64
+        geometry.frequencyWidth = 16
+        geometry.conditionWidth = 16
+        let flow = try NFKMLXTrellis.structureFlow(weightsURL: nil, configuration: geometry)
+        let example = NFKMLXTrellisStructureExample(condition: MLXRandom.normal([1, 7, 16]), latent: MLXRandom.normal([1, 4, 4, 4, 2]))
+        let history = try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: [example],
+                                                                      trainable: .attentionLoRA(rank: 4, alpha: 4), steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXLoRA.merge(into: flow)
+        try NFKMLXWeights.save(flow, to: tuned)
+        let reloaded = try NFKMLXTrellis.structureFlow(weightsURL: tuned, configuration: geometry)
+        XCTAssertEqual(reloaded.configuration.flowWidth, 32)
+    }
+
     func testAFullyFrozenModelReportsThatNothingWouldTrain() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")

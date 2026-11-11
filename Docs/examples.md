@@ -21,7 +21,8 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Text → image and image → image](#text--image-and-image--image) — MLX Stable Diffusion
 - [Image → image](#image--image) — bring-your-own MLX, Core ML
 - [Image → image + mask](#image--image--mask) — matting
-- [Image → 3D object](#image--3d-object) — TripoSR, Stable Fast 3D, `NFKMesh`, `NFKMeshMaterial`
+- [Image → 3D object](#image--3d-object) — TripoSR, Stable Fast 3D, TRELLIS, `NFKMesh`, `NFKMeshMaterial`,
+  `NFKGaussianSplats`
 - [Many tensors in and out](#many-tensors-in-and-out)
 - [Diffusion: upscale, depth, inpaint](#diffusion-upscale-depth-inpaint) — bring-your-own MLX diffusion
 - [Text → video](#text--video) — LTX-Video, LTX-2 (with its soundtrack), and Wan, staged
@@ -61,7 +62,7 @@ the following cells; each links to its example.
 | text + image | image | `NFKMLXBackend` (image-to-image) | [Image → image](#text--image-and-image--image) |
 | image | image | `NFKMLXModuleBackend`, `NFKMLXRealESRGAN` (upscale), `NFKMLXDepthAnything` (depth), `NFKMLXNAFNet` (restore), `NFKCoreMLBackend` | [Image → image](#image--image) |
 | image (+ hint) | image + mask | `NFKMLXMattingBackend`, `NFKMLXU2Net` (bg removal), `NFKMLXSAM` (segment) | [Image → image + mask](#image--image--mask) |
-| image | mesh | `NFKMLXTripoSR` (one image to a 3D object), `NFKMLXStableFast3D` (one image to a textured 3D object) | [Image → 3D object](#image--3d-object) |
+| image | mesh | `NFKMLXTripoSR` (one image to a 3D object), `NFKMLXStableFast3D` (one image to a textured 3D object), `NFKMLXTrellisFactory` (one image or a prompt to a mesh and Gaussians) | [Image → 3D object](#image--3d-object) |
 | image + mask | image | `NFKMLXLaMa` (inpaint) | [LaMa inpainting](#lama-inpainting-mtimlxlama-a-shipped-mlx-model) |
 | image(s) | image(s) | `NFKMLXTensorBackend`, `NFKMLXRIFE` (frame interpolation), `NFKMLXRAFT` (optical flow) | [Many tensors](#many-tensors-in-and-out) |
 | image (+ mask) | image | `NFKMLXDiffusionBackend` (upscale, depth, inpaint) | [Diffusion](#diffusion-upscale-depth-inpaint) |
@@ -2361,6 +2362,38 @@ the backend does not; pass a cut-out, such as a foreground mask from the core's 
 textures are PNG unless `.textureFormat` asks for the release's JPEG, the atlas is
 `.textureResolution` on a side (1024), and `.estimateIllumination` adds the illumination head's 24
 light amplitudes under `NFKMLXStableFast3DOutputKey.illuminationAmplitudes`.
+
+TRELLIS (`NFKMLXTrellisFactory`) generates the object in two sampled stages and returns it twice: an
+`NFKMesh` with a color per vertex under `NFKOutputMesh`, and 3D Gaussians as an `NFKGaussianSplats` under
+`NFKOutputGaussianSplats`. The image release reads its directory (`microsoft/TRELLIS-image-large`) and
+DINOv2 ViT-L/14 with registers (`dinov2_vitl14_reg4_pretrain.pth`, from Meta's server); the download
+factory fetches both.
+
+```swift
+let trellis = try NFKMLXTrellisFactory.backend(directoryURL: releaseDirectoryURL, encoderWeightsURL: dinov2URL,
+                                               residency: .automatic)
+let generated = try trellis.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: photo],
+                                                                  parameters: [NFKParameterSeed: 42]))
+try generated.mesh!.write(to: outputDirectory.appendingPathComponent("object.glb"))
+try generated.gaussianSplats!.write(to: outputDirectory.appendingPathComponent("object.ply"))
+```
+
+<!-- objc-check: given NSURL *outputDirectory; NSURL *releaseDirectoryURL; NSURL *dinov2URL; -->
+```objc
+id<NFKInferenceBackend> trellis = [NFKMLXTrellisFactory backendWithDirectoryURL:releaseDirectoryURL encoderWeightsURL:dinov2URL
+                                                                     residency:NFKMLXResidencyAutomatic error:&error];
+NFKInferenceResult *generated = [trellis runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)photo }] error:&error];
+NFKGaussianSplats *splats = generated.gaussianSplats;
+[splats writeToURL:[outputDirectory URLByAppendingPathComponent:@"object.ply"] error:&error];
+```
+
+The image is cropped to its alpha's box widened by a fifth and resized to 518, as the release prepares it;
+an opaque image is used whole, so pass a cut-out. A text release reads a prompt under `NFKInputPrompt`
+instead: `backendWithVariant:directoryURL:imageReleaseDirectoryURL:textEncoderDirectoryURL:residency:error:`
+takes its directory, the image release's (whose decoders it shares), and CLIP ViT-L/14's
+(`openai/clip-vit-large-patch14`). `NFKMLXTrellisParameterKey` sets each stage's steps (25) and guidance
+(5 for the image release, 7.5 for text), and `.outputs` limits the decoding to one of the two keys. The
+Gaussians' PLY is the layout 3D Gaussian splatting viewers read, in their frame.
 
 ## Image → image + mask
 
@@ -6012,6 +6045,35 @@ Notes:
 - A checkpoint without an optimizer-state file records the model's parameters alone, so a resumed
   `Adam` run starts its moment estimates at zero and takes its first updates several times too large.
   "Resuming, validating, and training in half precision" above records the optimizer's state as well.
+
+### Fine-tuning TRELLIS on your own objects
+
+TRELLIS trains its flows on the release's rectified-flow objective. The structure stage trains on device
+from your images and meshes: the release's structure encoder turns each mesh's surface voxels into the
+latent the flow learns to produce from the image. LoRA on the attention projections is the default.
+
+```swift
+let pipeline = try NFKMLXTrellisPipeline.image(directoryURL: releaseDirectory, encoderWeightsURL: dinov2URL)
+let encoder = try NFKMLXTrellis.structureEncoder(weightsURL: releaseDirectory.appendingPathComponent("ckpts/ss_enc_conv3d_16l8_fp16.safetensors"))
+let examples = try myObjects.map { object in
+    NFKMLXTrellisStructureExample(
+        condition: try pipeline.condition(prepared: pipeline.preparedImage(rgba: object.rgba, width: object.width,
+                                                                          height: object.height)).condition,
+        latent: NFKMLXTrellisTraining.structureLatent(of: object.mesh, encoder: encoder))
+}
+let flow = try NFKMLXTrellis.structureFlow(weightsURL: releaseDirectory.appendingPathComponent("ckpts/ss_flow_img_dit_L_16l8_fp16.safetensors"))
+try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: examples, steps: 500)
+try NFKMLXLoRA.merge(into: flow)
+try NFKMLXWeights.save(flow, to: tunedFlowURL)
+let tuned = try NFKMLXTrellisFactory.backend(directoryURL: releaseDirectory, encoderWeightsURL: dinov2URL,
+                                             structureFlowWeightsURL: tunedFlowURL, latentFlowWeightsURL: nil,
+                                             residency: .automatic)
+```
+
+The defaults are the release trainers': AdamW at 1e-4, the condition dropped to zeros one step in ten, times
+drawn logit-normal around 1, and the gradient clipped to norm 1. `fineTuneLatentFlow` trains the
+appearance stage the same way on structured latents, which the release's toolkit encodes offline from
+rendered views.
 
 ## Dynamic backend discovery (optional engines)
 

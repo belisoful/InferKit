@@ -29829,6 +29829,400 @@ def run_sf3d_twins(image, checkpoint):
 CHECKPOINT_MODELS["sf3d_twins"] = run_sf3d_twins
 
 
+def _trellis_setting(key):
+    """A path from ~/.inferkit-validation.json, the key file winning over the environment."""
+    with open(os.path.expanduser("~/.inferkit-validation.json")) as handle:
+        return json.load(handle).get(key) or os.environ[key]
+
+
+def _trellis_pipeline(checkpoint, text=False):
+    """`TrellisImageTo3DPipeline.from_pretrained` on the release directory, on the CPU at float32, or
+    `TrellisTextTo3DPipeline.from_pretrained` with `text`.
+
+    The `trellis` package comes from IK_TRELLIS_SRC (microsoft/TRELLIS at 193e050, with FlexiCubes at
+    815e075). `trellis_shims/`, beside this script, stands in for what the release needs CUDA or an
+    unused dependency for: `spconv` runs submanifold convolution as one gather GEMM with spconv's
+    neighbor order, `flash_attn` runs torch SDPA per sequence, `kaolin` keeps only `check_tensor`, and
+    `easydict` is the small dictionary it names. `rembg`, `open3d`, `plyfile`, and `utils3d` raise when
+    called: the recorded path imports them and never calls them. Every checkpoint's `use_fp16` is
+    forced off. DINOv2 builds from IK_DINOV2_SRC and loads IK_VAL_DINOV2_VITL14_REG, the file
+    `torch.hub` would download. `JeffreyXiang/TRELLIS-image-large/` names (the text releases read their
+    decoders from it) resolve to IK_VAL_TRELLIS_IMAGE_LARGE. The text pipeline's CLIP text tower and
+    tokenizer load from IK_VAL_CLIP_L14_HF, and its `.cuda()` calls keep the CPU. Returns the pipeline
+    and the `trellis.modules.sparse` module."""
+    import types
+    shims = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trellis_shims")
+    for path in (shims, _trellis_setting("IK_TRELLIS_SRC")):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    os.environ["ATTN_BACKEND"] = "sdpa"
+    os.environ["SPARSE_BACKEND"] = "spconv"
+    os.environ["SPARSE_ATTN_BACKEND"] = "flash_attn"
+
+    from safetensors.torch import load_file
+    import trellis.models as trellis_models
+    from trellis.representations.gaussian import gaussian_model
+    from trellis.representations.mesh import cube2mesh
+    from trellis.representations.mesh.flexicubes import flexicubes
+
+    cube2mesh.SparseFeatures2Mesh.__init__.__defaults__ = ("cpu", 64, True)
+    flexicubes.FlexiCubes.__init__.__defaults__ = ("cpu",)
+    gaussian_model.Gaussian.__init__.__defaults__ = (0, 0.0, 0.01, 0.1, "exp", "cpu")
+    # Gaussian.setup_functions places its bias constants with an unconditional .cuda().
+    torch.Tensor.cuda = lambda self, *args, **kwargs: self
+
+    remote_prefix = "JeffreyXiang/TRELLIS-image-large/"
+
+    def from_pretrained(path, **kwargs):
+        if path.startswith(remote_prefix):
+            path = os.path.join(_trellis_setting("IK_VAL_TRELLIS_IMAGE_LARGE"), path[len(remote_prefix):])
+        with open(f"{path}.json") as handle:
+            config = json.load(handle)
+        config["args"]["use_fp16"] = False
+        model = getattr(trellis_models, config["name"])(**config["args"], **kwargs)
+        model.load_state_dict(load_file(f"{path}.safetensors"))
+        return model.float().eval()
+
+    trellis_models.from_pretrained = from_pretrained
+    hub_load = torch.hub.load
+
+    def local_hub_load(repo, name, pretrained=True, **kwargs):
+        model = hub_load(_trellis_setting("IK_DINOV2_SRC"), name, source="local", pretrained=False)
+        weights = torch.load(_trellis_setting("IK_VAL_DINOV2_VITL14_REG"), map_location="cpu", weights_only=True)
+        model.load_state_dict(weights)
+        return model.float().eval()
+
+    torch.hub.load = local_hub_load
+    from trellis.modules import sparse
+    if text:
+        from trellis.pipelines import trellis_text_to_3d
+        clip = _trellis_setting("IK_VAL_CLIP_L14_HF")
+        clip_model, tokenizer = trellis_text_to_3d.CLIPTextModel, trellis_text_to_3d.AutoTokenizer
+        trellis_text_to_3d.CLIPTextModel = types.SimpleNamespace(from_pretrained=lambda name: clip_model.from_pretrained(clip))
+        trellis_text_to_3d.AutoTokenizer = types.SimpleNamespace(from_pretrained=lambda name: tokenizer.from_pretrained(clip))
+        torch.nn.Module.cuda = lambda self, *args, **kwargs: self
+        pipeline = trellis_text_to_3d.TrellisTextTo3DPipeline.from_pretrained(checkpoint)
+        for name in ("slat_decoder_gs", "slat_decoder_rf", "slat_decoder_mesh"):
+            del pipeline.models[name]
+    else:
+        from trellis.pipelines import TrellisImageTo3DPipeline
+        pipeline = TrellisImageTo3DPipeline.from_pretrained(checkpoint)
+    pipeline.to(torch.device("cpu"))
+    return pipeline, sparse
+
+
+def run_trellis(image, checkpoint):
+    """TRELLIS image to 3D end to end, seam by seam, on the subject plate given an alpha that cuts out its
+    ellipse, following `TrellisImageTo3DPipeline.run` at the release's own sampler parameters and seed 1.
+
+    The record holds the RGBA input and the prepared image, the DINOv2 condition, the first four and the
+    last forward of both flow models (`x`, `t`, `cond`, `out`; the first four cover both halves of two
+    guided steps, the last an unguided step), each stage's noise and sampled latent, the occupancy logits
+    and coordinates, the structured latent before and after denormalization, and for each decoder its
+    output layer's features and its result. The output is the denormalized structured latent's features.
+    Models a later stage does not read are released as each stage ends, because the decoders' activations
+    grow with the occupied voxels.
+    """
+    import gc
+    from PIL import Image
+
+    pipeline, sparse = _trellis_pipeline(checkpoint)
+    models = pipeline.models
+    extra = {}
+
+    def release(name):
+        # A recorded forward closes over its own model, so only the collector frees it.
+        del models[name]
+        gc.collect()
+
+    release("slat_decoder_rf")
+
+    def put(name, value):
+        if isinstance(value, sparse.SparseTensor):
+            extra[f"{name}.coords"] = value.coords.int()
+            value = value.feats
+        extra[name] = value.detach()
+
+    def record_forwards(model, prefix):
+        calls = {"count": 0, "last": None}
+        original = model.forward
+
+        def forward(x, t, cond, **kwargs):
+            out = original(x, t, cond, **kwargs)
+            if calls["count"] < 4:
+                for field, value in (("x", x), ("t", t), ("cond", cond), ("out", out)):
+                    put(f"{prefix}.call{calls['count']}.{field}", value)
+            calls["count"] += 1
+            calls["last"] = (x, t, cond, out)
+            return out
+
+        model.forward = forward
+        return calls
+
+    def record_decoder(decoder, name, slat):
+        features = {}
+        hook = decoder.out_layer.register_forward_hook(lambda module, inputs, output: features.setdefault("out", output))
+        result = decoder(slat)[0]
+        hook.remove()
+        put(f"{name}_decoder_out", features["out"])
+        return result
+
+    height, width = image.shape[:2]
+    y, x = np.mgrid[0:height, 0:width].astype(np.float32)
+    inside = (((y - height / 2) / (height * 0.3)) ** 2 + ((x - width / 2) / (width * 0.22)) ** 2) <= 1.0
+    rgba = (np.concatenate([image, inside.astype(np.float32)[..., None]], axis=-1) * 255.0).astype(np.uint8)
+    put("input_rgba", torch.from_numpy(rgba))
+
+    with torch.no_grad():
+        prepared = pipeline.preprocess_image(Image.fromarray(rgba))
+        put("prepared_image", torch.from_numpy(np.array(prepared)))
+        cond = pipeline.get_cond([prepared])
+        put("cond", cond["cond"])
+        release("image_cond_model")
+
+        torch.manual_seed(1)
+        flow = models["sparse_structure_flow_model"]
+        calls = record_forwards(flow, "ss_flow")
+        noise = torch.randn(1, flow.in_channels, flow.resolution, flow.resolution, flow.resolution)
+        put("ss_noise", noise)
+        latent = pipeline.sparse_structure_sampler.sample(
+            flow, noise, **cond, **pipeline.sparse_structure_sampler_params, verbose=False).samples
+        for field, value in zip(("x", "t", "cond", "out"), calls["last"]):
+            put(f"ss_flow.last.{field}", value)
+        put("ss_latent", latent)
+        del flow
+        calls.clear()
+        release("sparse_structure_flow_model")
+        logits = models["sparse_structure_decoder"](latent)
+        put("ss_logits", logits)
+        coords = torch.argwhere(logits > 0)[:, [0, 2, 3, 4]].int()
+        put("coords", coords)
+        print(f"trellis: {coords.shape[0]} occupied voxels")
+        release("sparse_structure_decoder")
+
+        flow = models["slat_flow_model"]
+        calls = record_forwards(flow, "slat_flow")
+        noise = sparse.SparseTensor(feats=torch.randn(coords.shape[0], flow.in_channels), coords=coords)
+        put("slat_noise", noise)
+        slat = pipeline.slat_sampler.sample(flow, noise, **cond, **pipeline.slat_sampler_params, verbose=False).samples
+        for field, value in zip(("x", "t", "cond", "out"), calls["last"]):
+            put(f"slat_flow.last.{field}", value)
+        put("slat_normalized", slat)
+        del flow
+        calls.clear()
+        release("slat_flow_model")
+        std = torch.tensor(pipeline.slat_normalization["std"])[None]
+        mean = torch.tensor(pipeline.slat_normalization["mean"])[None]
+        slat = slat * std + mean
+        put("slat", slat)
+
+        gaussian = record_decoder(models["slat_decoder_gs"], "gaussian", slat)
+        for field in ("_xyz", "_features_dc", "_scaling", "_rotation", "_opacity"):
+            put(f"gaussian{field}", getattr(gaussian, field))
+        for field in ("get_xyz", "get_features", "get_scaling", "get_rotation", "get_opacity"):
+            put(f"gaussian.{field}", getattr(gaussian, field))
+        del gaussian
+        release("slat_decoder_gs")
+
+        mesh = record_decoder(models["slat_decoder_mesh"], "mesh", slat)
+        put("mesh_vertices", mesh.vertices)
+        put("mesh_faces", mesh.faces.int())
+        put("mesh_vertex_attrs", mesh.vertex_attrs)
+
+    globals()["_extra"] = {k: v.contiguous().clone() for k, v in extra.items()}
+    return slat.feats
+
+
+CHECKPOINT_MODELS["trellis"] = run_trellis
+
+
+TRELLIS_TEXT_PROMPT = "A wooden chair with a red cushion"
+
+
+def _trellis_text(image, checkpoint):
+    """`TrellisTextTo3DPipeline` through the structured latent, seam by seam, on `TRELLIS_TEXT_PROMPT` at the
+    release's sampler parameters and seed 1, as `TrellisTextTo3DPipeline.run` draws them.
+
+    The pipeline loads CLIP ViT-L/14's text tower and tokenizer from IK_VAL_CLIP_L14_HF (the transformers
+    release `openai/clip-vit-large-patch14` names) and its decoders from IK_VAL_TRELLIS_IMAGE_LARGE, which
+    are the image release's own and are measured there. The record holds the prompt's token ids, the
+    condition and the empty prompt's condition (the unconditional half), the first four and the last
+    forward of both flow models, each stage's noise and sampled latent, the occupancy logits and
+    coordinates, and the structured latent before and after denormalization. `image` unused."""
+    pipeline, sparse = _trellis_pipeline(checkpoint, text=True)
+    models = pipeline.models
+    extra = {}
+
+    def put(name, value):
+        if isinstance(value, sparse.SparseTensor):
+            extra[f"{name}.coords"] = value.coords.int()
+            value = value.feats
+        extra[name] = value.detach()
+
+    def record_forwards(model, prefix):
+        calls = {"count": 0, "last": None}
+        original = model.forward
+
+        def forward(x, t, cond, **kwargs):
+            out = original(x, t, cond, **kwargs)
+            if calls["count"] < 4:
+                for field, value in (("x", x), ("t", t), ("cond", cond), ("out", out)):
+                    put(f"{prefix}.call{calls['count']}.{field}", value)
+            calls["count"] += 1
+            calls["last"] = (x, t, cond, out)
+            return out
+
+        model.forward = forward
+        return calls
+
+    with torch.no_grad():
+        tokens = pipeline.text_cond_model["tokenizer"]([TRELLIS_TEXT_PROMPT], max_length=77, padding="max_length",
+                                                       truncation=True, return_tensors="pt")["input_ids"]
+        put("prompt_tokens", tokens.int())
+        cond = pipeline.get_cond([TRELLIS_TEXT_PROMPT])
+        put("cond", cond["cond"])
+        put("neg_cond", cond["neg_cond"])
+
+        torch.manual_seed(1)
+        flow = models["sparse_structure_flow_model"]
+        calls = record_forwards(flow, "ss_flow")
+        noise = torch.randn(1, flow.in_channels, flow.resolution, flow.resolution, flow.resolution)
+        put("ss_noise", noise)
+        latent = pipeline.sparse_structure_sampler.sample(
+            flow, noise, **cond, **pipeline.sparse_structure_sampler_params, verbose=False).samples
+        for field, value in zip(("x", "t", "cond", "out"), calls["last"]):
+            put(f"ss_flow.last.{field}", value)
+        put("ss_latent", latent)
+        logits = models["sparse_structure_decoder"](latent)
+        put("ss_logits", logits)
+        coords = torch.argwhere(logits > 0)[:, [0, 2, 3, 4]].int()
+        put("coords", coords)
+        print(f"trellis text: {coords.shape[0]} occupied voxels")
+
+        flow = models["slat_flow_model"]
+        calls = record_forwards(flow, "slat_flow")
+        noise = sparse.SparseTensor(feats=torch.randn(coords.shape[0], flow.in_channels), coords=coords)
+        put("slat_noise", noise)
+        slat = pipeline.slat_sampler.sample(flow, noise, **cond, **pipeline.slat_sampler_params, verbose=False).samples
+        for field, value in zip(("x", "t", "cond", "out"), calls["last"]):
+            put(f"slat_flow.last.{field}", value)
+        put("slat_normalized", slat)
+        std = torch.tensor(pipeline.slat_normalization["std"])[None]
+        mean = torch.tensor(pipeline.slat_normalization["mean"])[None]
+        put("slat", slat * std + mean)
+
+    globals()["_extra"] = {k: v.contiguous().clone() for k, v in extra.items()}
+    return (slat * std + mean).feats
+
+
+CHECKPOINT_MODELS["trellis_text"] = _trellis_text
+
+
+def run_trellis_objectives(image, checkpoint):
+    """TRELLIS's training objectives and its structure encoder on identical tensors, through the release's
+    own trainer code.
+
+    The structure encoder (`ss_enc_conv3d_16l8_fp16`, as `dataset_toolkits/encode_ss_latent.py` runs it
+    with `sample_posterior=False`) encodes a 64³ occupancy of two overlapping spheres. The dense objective
+    is `FlowMatchingCFGTrainer.training_losses` over the released structure flow, with that encoding as
+    x₀; the sparse one is `SparseFlowMatchingCFGTrainer.training_losses` over the released latent flow,
+    on the spheres' surface voxels with seeded features. Each runs at t = 0.3 and 0.85 (`sample_t`
+    fixed), with seeded noise (`randn_like` replaced by a draw from a private generator, recorded), a
+    seeded condition, and `p_uncond` 0 and 1 (the unconditional case swaps in the zero condition). The
+    record holds the occupancy, the encoder's mean and log-variance, every input, the prediction, the
+    target, and the mean squared error. `image` unused."""
+    import types
+    pipeline, sparse = _trellis_pipeline(checkpoint)
+
+    class UnusedWriter:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("the objectives never log")
+
+    # The trainers import TensorBoard's writer for logging; these calls never construct one.
+    sys.modules.setdefault("torch.utils.tensorboard", types.SimpleNamespace(SummaryWriter=UnusedWriter))
+    from trellis.trainers.flow_matching.flow_matching import FlowMatchingCFGTrainer
+    from trellis.trainers.flow_matching.sparse_flow_matching import SparseFlowMatchingCFGTrainer
+    from trellis import models as trellis_models
+
+    extra = {}
+    side = 64
+    grid = torch.stack(torch.meshgrid(*[torch.arange(side, dtype=torch.float32)] * 3, indexing="ij"), -1)
+    inside = ((grid - torch.tensor([28.0, 32.0, 30.0])).norm(dim=-1) < 17) | ((grid - torch.tensor([40.0, 30.0, 36.0])).norm(dim=-1) < 11)
+    occupancy = inside.float()[None, None]
+    extra["ss_occupancy"] = occupancy
+    encoder = trellis_models.from_pretrained(os.path.join(checkpoint, "ckpts/ss_enc_conv3d_16l8_fp16"))
+    generator = torch.Generator().manual_seed(7)
+    with torch.no_grad():
+        latent, mean, logvar = encoder(occupancy, sample_posterior=False, return_raw=True)
+    extra["ss_encoded"] = latent
+    extra["ss_encoded_logvar"] = logvar
+
+    def trainer(cls, denoiser, p_uncond):
+        # The conditioning mixins add the zero condition inside `get_cond`, as the image mixin does.
+        conditioned = type(cls.__name__, (cls,), {
+            "get_cond": lambda self, cond, **kwargs: cls.get_cond(self, cond, neg_cond=torch.zeros_like(cond), **kwargs)})
+        instance = conditioned.__new__(conditioned)
+        instance.sigma_min = 1e-5
+        instance.t_schedule = {"name": "logitNormal", "args": {"mean": 1.0, "std": 1.0}}
+        instance.p_uncond = p_uncond
+        instance.training_models = {"denoiser": denoiser}
+        return instance
+
+    def run(prefix, cls, denoiser, x0, cond, t_value, p_uncond):
+        noise_feats = x0.feats if isinstance(x0, sparse.SparseTensor) else x0
+        noise = torch.randn(noise_feats.shape, generator=generator)
+        instance = trainer(cls, denoiser, p_uncond)
+        instance.sample_t = types.MethodType(lambda self, batch: torch.full((batch,), t_value), instance)
+        captured = {}
+        original = denoiser.forward
+
+        def forward(x, t, c, **kwargs):
+            out = original(x, t, c, **kwargs)
+            captured.update(x=x, t=t, cond=c, out=out)
+            return out
+
+        denoiser.forward = forward
+        real_randn_like = torch.randn_like
+        torch.randn_like = lambda tensor, *args, **kwargs: noise.clone()
+        try:
+            with torch.no_grad():
+                terms, _ = instance.training_losses(x0, cond=cond)
+        finally:
+            torch.randn_like = real_randn_like
+            denoiser.forward = original
+        target = (1 - 1e-5) * noise - noise_feats
+        extra[f"{prefix}.noise"] = noise
+        extra[f"{prefix}.t"] = torch.tensor([t_value])
+        extra[f"{prefix}.cond"] = captured["cond"]
+        extra[f"{prefix}.x_t"] = captured["x"].feats if isinstance(captured["x"], sparse.SparseTensor) else captured["x"]
+        extra[f"{prefix}.pred"] = captured["out"].feats if isinstance(captured["out"], sparse.SparseTensor) else captured["out"]
+        extra[f"{prefix}.target"] = target
+        extra[f"{prefix}.mse"] = terms["mse"].reshape(1)
+
+    cond = torch.randn(1, 1374, 1024, generator=generator)
+    extra["cond"] = cond
+    structure_flow = pipeline.models["sparse_structure_flow_model"]
+    for index, (t_value, p_uncond) in enumerate([(0.3, 0.0), (0.85, 1.0)]):
+        run(f"dense{index}", FlowMatchingCFGTrainer, structure_flow, latent, cond, t_value, p_uncond)
+
+    shell = inside & ~torch.nn.functional.max_pool3d((~inside).float()[None, None], 3, 1, 1)[0, 0].bool()
+    coords = torch.argwhere(shell).int()
+    coords = torch.cat([torch.zeros(coords.shape[0], 1, dtype=torch.int32), coords], dim=1)
+    x0 = sparse.SparseTensor(feats=torch.randn(coords.shape[0], 8, generator=generator), coords=coords)
+    extra["slat_x0"] = x0.feats
+    extra["slat_x0.coords"] = coords
+    latent_flow = pipeline.models["slat_flow_model"]
+    for index, (t_value, p_uncond) in enumerate([(0.3, 0.0), (0.85, 1.0)]):
+        run(f"sparse{index}", SparseFlowMatchingCFGTrainer, latent_flow, x0, cond, t_value, p_uncond)
+    print(f"trellis objectives: dense {extra['dense0.mse'].item()} {extra['dense1.mse'].item()}, "
+          f"sparse {extra['sparse0.mse'].item()} {extra['sparse1.mse'].item()}, {coords.shape[0]} voxels")
+    globals()["_extra"] = {k: v.detach().contiguous().clone() for k, v in extra.items()}
+    return latent
+
+
+CHECKPOINT_MODELS["trellis_objectives"] = run_trellis_objectives
+
+
 def _ltx2_diffusion_decoder_tiny(**over):
     from diffusers import LTX2VideoDiffusionDecoderModel
 

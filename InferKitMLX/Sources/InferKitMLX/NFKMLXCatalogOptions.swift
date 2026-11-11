@@ -282,6 +282,9 @@ struct NFKMLXLoadProfile {
         "stable-fast-3d": [NFKMLXLoadProfile(tasks: [NFKModelTaskImageTo3D],
                                              precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16],
                                              defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true)],
+        // The two flows' linear layers pack to 2 to 8 bits; the published float16 is not offered unmeasured.
+        "trellis": [NFKMLXLoadProfile(tasks: [NFKModelTaskImageTo3D, NFKModelTaskTextTo3D], precisions: [NFKModelPrecisionFloat32],
+                                      defaultPrecision: NFKModelPrecisionFloat32, quantizes: true)],
         "flux": [.diffusionPipeline()],
         // The text encoder and umT5 widen to float32 where the budget holds them.
         "flux2": [.diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32])],

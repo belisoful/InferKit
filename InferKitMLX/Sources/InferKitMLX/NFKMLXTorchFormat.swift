@@ -639,6 +639,9 @@ enum NFKMLXTorchFormat {
             guard let wrapped = node.args.first else { return nil }
             return tensor(from: wrapped)
         }
+        if node.module == "torch._tensor", node.name == "_rebuild_from_type_v2" {
+            return typedTensor(node)
+        }
         guard node.module == "torch._utils",
               node.name == "_rebuild_tensor_v2" || node.name == "_rebuild_tensor",
               node.args.count >= 4,
@@ -652,6 +655,21 @@ enum NFKMLXTorchFormat {
         }
         return Tensor(shape: shape, stride: stride, scalarType: storage.scalarType, storage: storage,
                       byteOffset: Int(elementOffset) * storage.scalarType.elementSize)
+    }
+
+    /// `_rebuild_from_type_v2(func, type, args, state)`, which torch writes for a tensor that carries Python
+    /// attributes (DINOv2's checkpoints mark each one `_has_been_cloned`). For a plain `torch.Tensor` or
+    /// `Parameter` the tensor is `func(*args)`, and the state only sets attributes, so it is not read. A
+    /// subclass type stays unread: its class may reinterpret the values.
+    private static func typedTensor(_ node: NFKMLXPickleOpaque) -> Tensor? {
+        guard node.args.count == 4,
+              case .global(let module, let name) = node.args[0],
+              case .global(let typeModule, let typeName) = node.args[1],
+              [("torch", "Tensor"), ("torch.nn.parameter", "Parameter")].contains(where: { $0 == (typeModule, typeName) }),
+              case .tuple(let arguments) = node.args[2] else {
+            return nil
+        }
+        return tensor(from: .opaque(NFKMLXPickleOpaque(module: module, name: name, args: arguments)))
     }
 
     private static func integers(_ value: NFKMLXPickleValue) -> [Int]? {

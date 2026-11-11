@@ -5933,6 +5933,126 @@
       "note": "Stable Fast 3D (stabilityai/stable-fast-3d, Stability AI Community License, gated: accept the terms on Hugging Face), 4.02 GB float32: one checkpoint holding the camera embedder, the modulated DINOv2-large tokenizer, the triplane token bank, the two-stream backbone, the upsampler, the decoder heads, the OpenCLIP ViT-B/32 material estimator (with its unused text tower), and the illumination head. The tetrahedral grid `160_tets.npz` comes from the release's code repository at ff21fc4 (sha256 1f4be37efc604d28d55a1a78c2aabefeeab7e63149f541aa45f9dd858ee35bb9) and sits beside the checkpoint. The parity record comes from `run_reference.py sf3d --plate subject --size 512 --checkpoint <this directory>` under the `sf3d` oracle environment. `run_reference.py sf3d_twins` with the same arguments probes the reference's own sensitivity: its downstream from its scene code perturbed four times at 1.42e-6 relative, which moves 18 to 33 atlas faces."
     },
     {
+      "key": "TRELLIS_IMAGE_LARGE",
+      "repo": "microsoft/TRELLIS-image-large",
+      "revision": "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+      "directory": "TRELLIS-image-large",
+      "files": [
+        "README.md",
+        "pipeline.json",
+        "ckpts/ss_enc_conv3d_16l8_fp16.json",
+        "ckpts/ss_enc_conv3d_16l8_fp16.safetensors",
+        "ckpts/ss_flow_img_dit_L_16l8_fp16.json",
+        "ckpts/ss_flow_img_dit_L_16l8_fp16.safetensors",
+        "ckpts/slat_flow_img_dit_L_64l8p2_fp16.json",
+        "ckpts/slat_flow_img_dit_L_64l8p2_fp16.safetensors",
+        "ckpts/ss_dec_conv3d_16l8_fp16.json",
+        "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+        "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.json",
+        "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.safetensors",
+        "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.json",
+        "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TRELLIS_IMAGE_LARGE": "",
+        "IK_PARITY_TRELLIS": "trellis/trellis-reference.safetensors"
+      },
+      "note": "TRELLIS image-large (microsoft/TRELLIS-image-large, MIT), float16 checkpoints the port reads at float32: the structure encoder (customization), both flows, and the structure, mesh, and Gaussian decoders. The text releases read their decoders from this directory. The parity record comes from `run_reference.py trellis --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment, which reads IK_TRELLIS_SRC, IK_DINOV2_SRC, and DINOV2_VITL14_REG4."
+    },
+    {
+      "key": "DINOV2_VITL14_REG4",
+      "directory": "dinov2-vitl14-reg4",
+      "files": [],
+      "inputs": [
+        {
+          "file": "dinov2_vitl14_reg4_pretrain.pth",
+          "url": "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_pretrain.pth",
+          "bytes": 1217607321
+        }
+      ],
+      "config": {
+        "IK_VAL_DINOV2_VITL14_REG": "dinov2_vitl14_reg4_pretrain.pth"
+      },
+      "note": "DINOv2 ViT-L/14 with four registers (Meta, Apache-2.0), 1.22 GB float32, the checkpoint TRELLIS image-large loads through torch.hub. `NFKMLXTrellis.imageEncoder(weightsURL:)` reads the .pth through the native torch reader."
+    },
+    {
+      "key": "TRELLIS_TEXT_BASE",
+      "repo": "microsoft/TRELLIS-text-base",
+      "revision": "f8e8cf00c40d53dea26b718e49169ce83cf24c67",
+      "directory": "TRELLIS-text-base",
+      "files": [
+        "README.md",
+        "pipeline.json",
+        "ckpts/ss_flow_txt_dit_B_16l8_fp16.json",
+        "ckpts/ss_flow_txt_dit_B_16l8_fp16.safetensors",
+        "ckpts/slat_flow_txt_dit_B_64l8p2_fp16.json",
+        "ckpts/slat_flow_txt_dit_B_64l8p2_fp16.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TRELLIS_TEXT_BASE": "",
+        "IK_PARITY_TRELLIS_TEXT_BASE": "trellis/trellis-text-base-reference.safetensors"
+      },
+      "note": "TRELLIS text-base (microsoft/TRELLIS-text-base, MIT): the two flows; its decoders are TRELLIS_IMAGE_LARGE's and its conditioner CLIP_L14_HF. The parity record comes from `run_reference.py trellis_text --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment."
+    },
+    {
+      "key": "TRELLIS_TEXT_LARGE",
+      "repo": "microsoft/TRELLIS-text-large",
+      "revision": "4aad9f4a110329a410974d7f41ce5333a9a1fc87",
+      "directory": "TRELLIS-text-large",
+      "files": [
+        "README.md",
+        "pipeline.json",
+        "ckpts/ss_flow_txt_dit_L_16l8_fp16.json",
+        "ckpts/ss_flow_txt_dit_L_16l8_fp16.safetensors",
+        "ckpts/slat_flow_txt_dit_L_64l8p2_fp16.json",
+        "ckpts/slat_flow_txt_dit_L_64l8p2_fp16.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TRELLIS_TEXT_LARGE": "",
+        "IK_PARITY_TRELLIS_TEXT_LARGE": "trellis/trellis-text-large-reference.safetensors"
+      },
+      "note": "TRELLIS text-large (microsoft/TRELLIS-text-large, MIT): the two flows; its decoders are TRELLIS_IMAGE_LARGE's and its conditioner CLIP_L14_HF. The parity record comes from `run_reference.py trellis_text --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment."
+    },
+    {
+      "key": "TRELLIS_TEXT_XLARGE",
+      "repo": "microsoft/TRELLIS-text-xlarge",
+      "revision": "e0b00432b8e3a8ecee0df806ab1df9f7281f2be4",
+      "directory": "TRELLIS-text-xlarge",
+      "files": [
+        "README.md",
+        "pipeline.json",
+        "ckpts/ss_flow_txt_dit_XL_16l8_fp16.json",
+        "ckpts/ss_flow_txt_dit_XL_16l8_fp16.safetensors",
+        "ckpts/slat_flow_txt_dit_XL_64l8p2_fp16.json",
+        "ckpts/slat_flow_txt_dit_XL_64l8p2_fp16.safetensors"
+      ],
+      "config": {
+        "IK_VAL_TRELLIS_TEXT_XLARGE": "",
+        "IK_PARITY_TRELLIS_TEXT_XLARGE": "trellis/trellis-text-xlarge-reference.safetensors"
+      },
+      "note": "TRELLIS text-xlarge (microsoft/TRELLIS-text-xlarge, MIT): the two flows; its decoders are TRELLIS_IMAGE_LARGE's and its conditioner CLIP_L14_HF. The parity record comes from `run_reference.py trellis_text --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment."
+    },
+    {
+      "key": "CLIP_L14_HF",
+      "repo": "openai/clip-vit-large-patch14",
+      "revision": "32bd64288804d66eefd0ccbe215aa642df71cc41",
+      "directory": "clip-vit-large-patch14",
+      "files": [
+        "config.json",
+        "merges.txt",
+        "model.safetensors",
+        "preprocessor_config.json",
+        "special_tokens_map.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_CLIP_L14_HF": ""
+      },
+      "note": "CLIP ViT-L/14 as transformers publishes it (OpenAI, MIT), the text conditioner the TRELLIS text releases load by name; the port reads its text tower and tokenizer."
+    },
+    {
       "key": "STABLE_AUDIO_OPEN",
       "repo": "stabilityai/stable-audio-open-1.0",
       "directory": "stable-audio-open-1.0",
@@ -6537,6 +6657,16 @@
       "modes": [
         "sf3d",
         "sf3d_twins"
+      ]
+    },
+    "trellis": {
+      "interpreter": "~/.inferkit-validation/sf3dvenv/bin/python3",
+      "why": "TRELLIS's `trellis` package (IK_TRELLIS_SRC, microsoft/TRELLIS at 193e050 with FlexiCubes at 815e075, stored at /Volumes/InferKit Models/inferkit-validation/sources/refsrc/trellis-193e050) and DINOv2 (IK_DINOV2_SRC) run on the sf3d environment's torch 2.14.1. Its CUDA and unused dependencies are replaced by Tools/reference-parity/trellis_shims, so the environment needs no further packages.",
+      "rebuild": "The sf3d environment's rebuild.",
+      "modes": [
+        "trellis",
+        "trellis_text",
+        "trellis_objectives"
       ]
     },
     "ltxtrain": {
@@ -7369,6 +7499,12 @@
   ],
   "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record`, a path under the validation root or an absolute path for a record kept outside it, its key is registered in ~/.inferkit-validation.json by hand, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",
   "training_records": [
+    {
+      "key": "IK_PARITY_TRELLIS_OBJECTIVES",
+      "record": "trellis/trellis-objectives.safetensors",
+      "environment": "trellis",
+      "command": "trellis_objectives --plate subject --size 512 --checkpoint \"/Volumes/InferKit Models/InferKit/validation/TRELLIS-image-large\""
+    },
     {
       "key": "IK_PARITY_GTCRN_LOSS",
       "record": "raw/gtcrn/loss-record.safetensors",

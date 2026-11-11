@@ -370,6 +370,10 @@ extern NSString * const NFKOutputTempo;
     triangle mesh. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKOutputMesh;
 
+/*! Generated Gaussians (NFKGaussianSplats), for a 3D-generation backend that turns an image or a
+    prompt into a Gaussian splatting scene. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputGaussianSplats;
+
 /*! A decision model's typed answers (NSDictionary of NFKDecisionAnswer keyed as NFKInputQuestions
 	was), for a backend that judges a state rather than generating text. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKOutputAnswers;

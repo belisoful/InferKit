@@ -15,6 +15,7 @@
 @class NFKMIDISequence;
 @class NFKMusicBeat;
 @class NFKMesh;
+@class NFKGaussianSplats;
 @class NFKDecisionAnswer;
 
 NS_ASSUME_NONNULL_BEGIN
@@ -72,6 +73,10 @@ NS_ASSUME_NONNULL_BEGIN
 /*! Convenience for NFKOutputMesh: the generated object, or nil when absent or of another type.
 	Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, nullable) NFKMesh *mesh;
+
+/*! Convenience for NFKOutputGaussianSplats: the generated Gaussians, or nil when absent or of another
+	type. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, nullable) NFKGaussianSplats *gaussianSplats;
 
 /*! Convenience for NFKOutputAnswers: a decision model's typed answers keyed as the questions were,
 	or nil when absent or not a dictionary. Introduced in InferKit 0.4.0. */

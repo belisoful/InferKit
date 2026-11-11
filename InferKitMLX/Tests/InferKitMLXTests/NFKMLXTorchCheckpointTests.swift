@@ -189,6 +189,29 @@ final class NFKMLXTorchCheckpointTests: XCTestCase {
         }
     }
 
+    func testATensorRebuiltFromItsTypeReadsAsTheTensor() throws {
+        let root = TorchOps.dict([
+            ("w", TorchOps.typedTensor(type: ("torch", "Tensor"), key: "0", numel: 4, shape: [2, 2], stride: [2, 1])),
+            ("p", TorchOps.typedTensor(type: ("torch.nn.parameter", "Parameter"), key: "0", numel: 4, shape: [2], stride: [1])),
+        ])
+        let contents = try NFKMLXTorchFormat.read(data: zipCheckpoint(root: root, storages: [("0", floatBytes([1, 2, 3, 4]))]))
+        XCTAssertEqual(contents.tensors["w"]?.shape, [2, 2])
+        XCTAssertEqual(try contents.bytes(for: contents.tensors["w"]!), floatBytes([1, 2, 3, 4]))
+        XCTAssertEqual(try contents.bytes(for: contents.tensors["p"]!), floatBytes([1, 2]))
+    }
+
+    func testATensorSubclassRebuiltFromItsTypeIsRefused() throws {
+        let root = TorchOps.dict([
+            ("w", TorchOps.typedTensor(type: ("some.pkg", "ScaledTensor"), key: "0", numel: 2, shape: [2], stride: [1])),
+        ])
+        let archive = zipCheckpoint(root: root, storages: [("0", floatBytes([1, 2]))])
+        XCTAssertThrowsError(try NFKMLXTorchFormat.read(data: archive)) { error in
+            guard case NFKMLXError.unsupportedConfiguration = error else {
+                return XCTFail("expected unsupportedConfiguration, got \(error)")
+            }
+        }
+    }
+
     func testAStatelessOpaqueRootIsStillRefused() throws {
         // A constructed object with no module state cannot be walked, so it is refused by class name
         // (the TorchScript / unknown-wrapper path).
@@ -597,6 +620,18 @@ private enum TorchOps {
         let identifier = tuple([unicode("storage"), global("torch", "FloatStorage"),
                                 unicode(rootKey), unicode("cpu"), int(numel), viewOps]) + [0x51]
         return .raw(rebuild(identifier: identifier, offset: offset, shape: shape, stride: stride))
+    }
+
+    /// `_rebuild_from_type_v2(_rebuild_tensor_v2, type, args, {"_has_been_cloned": True})`, the form a
+    /// tensor carrying a Python attribute pickles to.
+    static func typedTensor(type: (String, String), key: String, numel: Int, shape: [Int], stride: [Int]) -> Value {
+        let identifier = tuple([unicode("storage"), global("torch", "FloatStorage"),
+                                unicode(key), unicode("cpu"), int(numel)]) + [0x51]
+        let arguments = tuple([identifier, int(0), tuple(shape.map(int)), tuple(stride.map(int)), [0x89], [0x7d]])
+        let state: [UInt8] = [0x7d] + unicode("_has_been_cloned") + [0x88, 0x73]
+        return .raw(global("torch._tensor", "_rebuild_from_type_v2")
+            + tuple([global("torch._utils", "_rebuild_tensor_v2"), global(type.0, type.1), arguments, state])
+            + [0x52])
     }
 
     private static func rebuild(identifier: [UInt8], offset: Int, shape: [Int], stride: [Int]) -> [UInt8] {

@@ -1903,6 +1903,30 @@
       "24" : "streamed 10271768800 fits",
       "32" : "streamed 17703942880 fits"
     },
+    "trellis-image-large/default" : {
+      "8" : "staged 6858156913 refused",
+      "16" : "staged 6858156913 refused",
+      "24" : "resident 6858156913 fits",
+      "32" : "resident 6858156913 fits"
+    },
+    "trellis-text-base/default" : {
+      "8" : "staged 4091284300 refused",
+      "16" : "resident 4091284300 fits",
+      "24" : "resident 4091284300 fits",
+      "32" : "resident 4091284300 fits"
+    },
+    "trellis-text-large/default" : {
+      "8" : "staged 7250355020 refused",
+      "16" : "staged 7250355020 refused",
+      "24" : "resident 7250355020 fits",
+      "32" : "resident 7250355020 fits"
+    },
+    "trellis-text-xlarge/default" : {
+      "8" : "staged 10926728524 refused",
+      "16" : "staged 10926728524 refused",
+      "24" : "staged 10926728524 refused",
+      "32" : "resident 10926728524 fits"
+    },
     "triposr/default" : {
       "8" : "resident 1677246742 fits",
       "16" : "resident 1677246742 fits",

@@ -44,7 +44,7 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 63 |
+| `ships` | 64 |
 | `trainable`, no recipe yet | 43 |
 | `offline` | 40 |
 | `uncertain` | 0 |
@@ -93,6 +93,7 @@ Demucs, and HT Demucs ship.
 | `NFKMLXDepthAnything3` | untrainable | — | internal | The repository at 3d835ec carries inference, benchmark, and streaming code only, with no loss and no training script. |
 | `NFKMLXTripoSR` | untrainable | — | public | The repository at 107cefd carries inference code only; the paper's rendering loss has no published training script to measure against. `network(weightsURL:configuration:)` is public for an offline recipe. |
 | `NFKMLXStableFast3D` | untrainable | — | public | The repository at ff21fc4 carries inference code only; the paper's multi-stage objective (rendering, material, and illumination losses through a differentiable rasterizer) has no published training script to measure against. `network(weightsURL:configuration:)` is public for an offline recipe. |
+| `NFKMLXTrellisTraining` | ships | LoRA | public | The release's `FlowMatchingCFGTrainer` and `SparseFlowMatchingCFGTrainer` objectives on both flows; the structure stage trains on device from images and meshes (the release's structure encoder, `ss_enc_conv3d_16l8_fp16`), the latent stage from structured latents the release's offline toolkit encodes from 150 rendered views. `.all` is the reference's full fine-tune. |
 | `NFKMLXResNetBackbone` | n/a | — | internal | A shared backbone with no objective of its own. |
 
 ## Detection and pose

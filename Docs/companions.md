@@ -416,6 +416,15 @@ models.
   loads directly beside the grid (`160_tets.npz`, from the release's code repository); the atlas size,
   the density threshold, the foreground framing, the texture format, and the illumination estimate are
   request parameters (`NFKMLXStableFast3DParameterKey`).
+- **`NFKMLXTrellisFactory`** — TRELLIS, a generator of a 3D object from one image (`trellis-image-large`)
+  or a prompt (`trellis-text-base`, `-large`, `-xlarge`) in two rectified-flow stages: a transformer over a
+  dense 16³ latent decoded to a 64³ occupancy, then a transformer over a structured latent on the occupied
+  voxels, with sparse convolution on each side. Swin decoders turn the latent into 3D Gaussians and into
+  FlexiCubes features at 256³. The backend returns an `NFKMesh` with a color per vertex under
+  `NFKOutputMesh` and an `NFKGaussianSplats` under `NFKOutputGaussianSplats`, both y up. DINOv2 ViT-L/14
+  with registers conditions the image release and CLIP ViT-L/14's text tower the text ones; the stages load
+  together or one at a time (`NFKMLXResidency`). `NFKMLXTrellisTraining` fine-tunes either flow with LoRA or
+  in full on the release's objective.
 - **`NFKMLXU2Net`** — a real single-forward background remover: the U²-Net nested-U saliency network
   in MLXNN, run through the matting backend (plate → foreground + alpha cutout). Full `u2net` + light `u2netp`.
 - **`NFKMLXBiRefNet`** — high-resolution background removal (MIT): a Swin-v1-L backbone, a neck that

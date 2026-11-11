@@ -70413,6 +70413,1452 @@
       ]
     },
     {
+      "displayName" : "TRELLIS (image)",
+      "engine" : "mlx",
+      "family" : "trellis",
+      "id" : "trellis-image-large",
+      "inputModalities" : [
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "The object, cut out on transparency: the image is cropped to its alpha's box and widened by a fifth. An opaque image is used whole.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "MIT",
+        "name" : "MIT License",
+        "note" : "DINOv2 ViT-L/14 with registers (dinov2_vitl14_reg4_pretrain.pth) is Meta's, under Apache-2.0.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/microsoft/TRELLIS-image-large"
+      },
+      "memoryModel" : {
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "model" : "float32"
+        }
+      },
+      "options" : [
+        {
+          "default" : 25,
+          "help" : "The sparse-structure stage's sampling steps.",
+          "key" : "trellisStructureSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Structure steps"
+        },
+        {
+          "default" : 25,
+          "help" : "The structured-latent stage's sampling steps.",
+          "key" : "trellisLatentSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Latent steps"
+        },
+        {
+          "default" : 5,
+          "help" : "The sparse-structure stage's classifier-free guidance strength.",
+          "key" : "trellisStructureGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Structure guidance"
+        },
+        {
+          "default" : 5,
+          "help" : "The structured-latent stage's classifier-free guidance strength.",
+          "key" : "trellisLatentGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Latent guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6858156913,
+                "residentBytes" : 6858156913
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6858156913,
+                "residentBytes" : 6858156913
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 6858156913,
+                "residentBytes" : 6858156913
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3095723441,
+                "residentBytes" : 3095723441
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2775516337,
+                "residentBytes" : 2775516337
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2615412785,
+                "residentBytes" : 2615412785
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2455309233,
+                "residentBytes" : 2455309233
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2295205681,
+                "residentBytes" : 2295205681
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2135102129,
+                "residentBytes" : 2135102129
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "mesh",
+        "gaussianSplats"
+      ],
+      "outputs" : [
+        {
+          "help" : "The object as a FlexiCubes mesh with a color per vertex, y up, facing +z.",
+          "key" : "mesh",
+          "required" : true,
+          "title" : "Mesh",
+          "valueType" : "mesh"
+        },
+        {
+          "help" : "The object as 32 Gaussians per occupied voxel, in the mesh's frame.",
+          "key" : "gaussianSplats",
+          "required" : true,
+          "title" : "Gaussians",
+          "valueType" : "gaussianSplats"
+        }
+      ],
+      "registryName" : "trellis-image-large",
+      "requirements" : {
+        "minimumMemoryBytes" : 13121322599,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged"
+      ],
+      "standIn" : false,
+      "summary" : "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from one image.",
+      "tasks" : [
+        "image-to-3d"
+      ],
+      "variants" : [
+        {
+          "displayName" : "TRELLIS (image)",
+          "downloadBytes" : 4053083907,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 4037882117,
+                  "checkpoint" : 4052948913,
+                  "float32" : 6858156913
+                },
+                "id" : "model",
+                "quantizableElements" : 1280828416,
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 13121322599,
+          "peakBytes" : 6858156913,
+          "precision" : "float16",
+          "registryName" : "trellis-image-large",
+          "residentBytes" : 6858156913,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1987,
+                "optional" : false,
+                "path" : "pipeline.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 385,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_img_dit_L_16l8_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 1130770840,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_img_dit_L_16l8_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "96dc6bfd4136fd950af564dd16b4ae533c9ba6af8f26c670646b2a9f2789b1db"
+              },
+              {
+                "bytes" : 442,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_img_dit_L_64l8p2_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 1203755136,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_img_dit_L_64l8p2_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "693fb2a58ad497bd222007301eeec49d14d60f8c12d2f2f00c221fa747b4c66c"
+              },
+              {
+                "bytes" : 245,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 147591972,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "1c76d4a40519aa2d711cc263a8404105231ac26db31d946bed48b84fee79009a"
+              },
+              {
+                "bytes" : 372,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 181903412,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "3e87aba94b5786407eb06d0502c1ed0885a0027a3f2b8537bfe15b0a92c01859"
+              },
+              {
+                "bytes" : 843,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 171450952,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "38c84bcef5ce0af1f48b1b5558dabc7575a13346043c41a7e0610f1fa619a161"
+              },
+              {
+                "bytes" : 1217607321,
+                "optional" : false,
+                "path" : "dinov2_vitl14_reg4_pretrain.pth",
+                "role" : "weights",
+                "url" : "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_pretrain.pth"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "microsoft/TRELLIS-image-large",
+            "requiresConversion" : false,
+            "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96"
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "TRELLIS text (base)",
+      "engine" : "mlx",
+      "family" : "trellis",
+      "id" : "trellis-text-base",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The object to generate.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "MIT",
+        "name" : "MIT License",
+        "note" : "The decoders are microsoft/TRELLIS-image-large's, under MIT; the text conditioner is openai/clip-vit-large-patch14, under MIT.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/microsoft/TRELLIS-text-base"
+      },
+      "memoryModel" : {
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "model" : "float32"
+        }
+      },
+      "options" : [
+        {
+          "default" : 25,
+          "help" : "The sparse-structure stage's sampling steps.",
+          "key" : "trellisStructureSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Structure steps"
+        },
+        {
+          "default" : 25,
+          "help" : "The structured-latent stage's sampling steps.",
+          "key" : "trellisLatentSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Latent steps"
+        },
+        {
+          "default" : 7.5,
+          "help" : "The sparse-structure stage's classifier-free guidance strength.",
+          "key" : "trellisStructureGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Structure guidance"
+        },
+        {
+          "default" : 7.5,
+          "help" : "The structured-latent stage's classifier-free guidance strength.",
+          "key" : "trellisLatentGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Latent guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4091284300,
+                "residentBytes" : 4091284300
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4091284300,
+                "residentBytes" : 4091284300
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4091284300,
+                "residentBytes" : 4091284300
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1529650444,
+                "residentBytes" : 1529650444
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1311639052,
+                "residentBytes" : 1311639052
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1202633356,
+                "residentBytes" : 1202633356
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1093627660,
+                "residentBytes" : 1093627660
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 984621964,
+                "residentBytes" : 984621964
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 875616268,
+                "residentBytes" : 875616268
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "mesh",
+        "gaussianSplats"
+      ],
+      "outputs" : [
+        {
+          "help" : "The object as a FlexiCubes mesh with a color per vertex, y up, facing +z.",
+          "key" : "mesh",
+          "required" : true,
+          "title" : "Mesh",
+          "valueType" : "mesh"
+        },
+        {
+          "help" : "The object as 32 Gaussians per occupied voxel, in the mesh's frame.",
+          "key" : "gaussianSplats",
+          "required" : true,
+          "title" : "Gaussians",
+          "valueType" : "gaussianSplats"
+        }
+      ],
+      "registryName" : "trellis-text-base",
+      "requirements" : {
+        "minimumMemoryBytes" : 9626551295,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged"
+      ],
+      "standIn" : false,
+      "summary" : "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 768-wide flows.",
+      "tasks" : [
+        "text-to-3d"
+      ],
+      "variants" : [
+        {
+          "displayName" : "TRELLIS text (base)",
+          "downloadBytes" : 2913134738,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2045643486,
+                  "checkpoint" : 2911490444,
+                  "float32" : 4091284300
+                },
+                "id" : "model",
+                "quantizableElements" : 872045568,
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 9626551295,
+          "parameterCount" : 1022820741,
+          "peakBytes" : 4091284300,
+          "precision" : "float32",
+          "registryName" : "trellis-text-base",
+          "residentBytes" : 4091284300,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 2131,
+                "optional" : false,
+                "path" : "pipeline.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 383,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_txt_dit_B_16l8_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 327736456,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_txt_dit_B_16l8_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "a9fa7a2c5deae18307ebfcb29c955b11130e4eb1a88de05c384104c493dee3ff"
+              },
+              {
+                "bytes" : 440,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_txt_dit_B_64l8p2_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 372419896,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_txt_dit_B_64l8p2_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "36312c77a150947041638c0a1eb382be73d5381e086ea0bfa2ba9525af4408ad"
+              },
+              {
+                "bytes" : 245,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.json",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "other"
+              },
+              {
+                "bytes" : 147591972,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "weights",
+                "sha256" : "1c76d4a40519aa2d711cc263a8404105231ac26db31d946bed48b84fee79009a"
+              },
+              {
+                "bytes" : 372,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.json",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "other"
+              },
+              {
+                "bytes" : 181903412,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.safetensors",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "weights",
+                "sha256" : "3e87aba94b5786407eb06d0502c1ed0885a0027a3f2b8537bfe15b0a92c01859"
+              },
+              {
+                "bytes" : 843,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.json",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "other"
+              },
+              {
+                "bytes" : 171450952,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.safetensors",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "weights",
+                "sha256" : "38c84bcef5ce0af1f48b1b5558dabc7575a13346043c41a7e0610f1fa619a161"
+              },
+              {
+                "bytes" : 1710540580,
+                "optional" : false,
+                "path" : "model.safetensors",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "weights",
+                "sha256" : "a2bf730a0c7debf160f7a6b50b3aaf3703e7e88ac73de7a314903141db026dcb"
+              },
+              {
+                "bytes" : 961143,
+                "optional" : false,
+                "path" : "vocab.json",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "merges.txt",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 905,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 389,
+                "optional" : false,
+                "path" : "special_tokens_map.json",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "microsoft/TRELLIS-text-base",
+            "requiresConversion" : false,
+            "revision" : "f8e8cf00c40d53dea26b718e49169ce83cf24c67"
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "TRELLIS text (large)",
+      "engine" : "mlx",
+      "family" : "trellis",
+      "id" : "trellis-text-large",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The object to generate.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "MIT",
+        "name" : "MIT License",
+        "note" : "The decoders are microsoft/TRELLIS-image-large's, under MIT; the text conditioner is openai/clip-vit-large-patch14, under MIT.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/microsoft/TRELLIS-text-large"
+      },
+      "memoryModel" : {
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "model" : "float32"
+        }
+      },
+      "options" : [
+        {
+          "default" : 25,
+          "help" : "The sparse-structure stage's sampling steps.",
+          "key" : "trellisStructureSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Structure steps"
+        },
+        {
+          "default" : 25,
+          "help" : "The structured-latent stage's sampling steps.",
+          "key" : "trellisLatentSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Latent steps"
+        },
+        {
+          "default" : 7.5,
+          "help" : "The sparse-structure stage's classifier-free guidance strength.",
+          "key" : "trellisStructureGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Structure guidance"
+        },
+        {
+          "default" : 7.5,
+          "help" : "The structured-latent stage's classifier-free guidance strength.",
+          "key" : "trellisLatentGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Latent guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7250355020,
+                "residentBytes" : 7250355020
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7250355020,
+                "residentBytes" : 7250355020
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 7250355020,
+                "residentBytes" : 7250355020
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2421212556,
+                "residentBytes" : 2421212556
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2010221708,
+                "residentBytes" : 2010221708
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1804726284,
+                "residentBytes" : 1804726284
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1599230860,
+                "residentBytes" : 1599230860
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1393735436,
+                "residentBytes" : 1393735436
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1188240012,
+                "residentBytes" : 1188240012
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "mesh",
+        "gaussianSplats"
+      ],
+      "outputs" : [
+        {
+          "help" : "The object as a FlexiCubes mesh with a color per vertex, y up, facing +z.",
+          "key" : "mesh",
+          "required" : true,
+          "title" : "Mesh",
+          "valueType" : "mesh"
+        },
+        {
+          "help" : "The object as 32 Gaussians per occupied voxel, in the mesh's frame.",
+          "key" : "gaussianSplats",
+          "required" : true,
+          "title" : "Gaussians",
+          "valueType" : "gaussianSplats"
+        }
+      ],
+      "registryName" : "trellis-text-large",
+      "requirements" : {
+        "minimumMemoryBytes" : 13582732137,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged"
+      ],
+      "standIn" : false,
+      "summary" : "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 1024-wide flows.",
+      "tasks" : [
+        "text-to-3d"
+      ],
+      "variants" : [
+        {
+          "displayName" : "TRELLIS text (large)",
+          "downloadBytes" : 4497172636,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 3625178846,
+                  "checkpoint" : 4495478668,
+                  "float32" : 7250355020
+                },
+                "id" : "model",
+                "quantizableElements" : 1643963392,
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 13582732137,
+          "parameterCount" : 1812588421,
+          "peakBytes" : 7250355020,
+          "precision" : "float16",
+          "registryName" : "trellis-text-large",
+          "residentBytes" : 7250355020,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 2131,
+                "optional" : false,
+                "path" : "pipeline.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 384,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_txt_dit_L_16l8_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 1105604976,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_txt_dit_L_16l8_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "fbe712778a6a62fb7df44467972939b3c33e503fd971076caa4cd673e1aa37a3"
+              },
+              {
+                "bytes" : 441,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_txt_dit_L_64l8p2_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 1178589272,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_txt_dit_L_64l8p2_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "3e6609ba6ce2d9e6442a04c06043b0f927bdc5bc21d34795b72811d668a401e3"
+              },
+              {
+                "bytes" : 245,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.json",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "other"
+              },
+              {
+                "bytes" : 147591972,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "weights",
+                "sha256" : "1c76d4a40519aa2d711cc263a8404105231ac26db31d946bed48b84fee79009a"
+              },
+              {
+                "bytes" : 372,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.json",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "other"
+              },
+              {
+                "bytes" : 181903412,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.safetensors",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "weights",
+                "sha256" : "3e87aba94b5786407eb06d0502c1ed0885a0027a3f2b8537bfe15b0a92c01859"
+              },
+              {
+                "bytes" : 843,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.json",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "other"
+              },
+              {
+                "bytes" : 171450952,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.safetensors",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "weights",
+                "sha256" : "38c84bcef5ce0af1f48b1b5558dabc7575a13346043c41a7e0610f1fa619a161"
+              },
+              {
+                "bytes" : 1710540580,
+                "optional" : false,
+                "path" : "model.safetensors",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "weights",
+                "sha256" : "a2bf730a0c7debf160f7a6b50b3aaf3703e7e88ac73de7a314903141db026dcb"
+              },
+              {
+                "bytes" : 961143,
+                "optional" : false,
+                "path" : "vocab.json",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "merges.txt",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 905,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 389,
+                "optional" : false,
+                "path" : "special_tokens_map.json",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "microsoft/TRELLIS-text-large",
+            "requiresConversion" : false,
+            "revision" : "4aad9f4a110329a410974d7f41ce5333a9a1fc87"
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "TRELLIS text (xlarge)",
+      "engine" : "mlx",
+      "family" : "trellis",
+      "id" : "trellis-text-xlarge",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The object to generate.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "MIT",
+        "name" : "MIT License",
+        "note" : "The decoders are microsoft/TRELLIS-image-large's, under MIT; the text conditioner is openai/clip-vit-large-patch14, under MIT.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/microsoft/TRELLIS-text-xlarge"
+      },
+      "memoryModel" : {
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "model" : "float32"
+        }
+      },
+      "options" : [
+        {
+          "default" : 25,
+          "help" : "The sparse-structure stage's sampling steps.",
+          "key" : "trellisStructureSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Structure steps"
+        },
+        {
+          "default" : 25,
+          "help" : "The structured-latent stage's sampling steps.",
+          "key" : "trellisLatentSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Latent steps"
+        },
+        {
+          "default" : 7.5,
+          "help" : "The sparse-structure stage's classifier-free guidance strength.",
+          "key" : "trellisStructureGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Structure guidance"
+        },
+        {
+          "default" : 7.5,
+          "help" : "The structured-latent stage's classifier-free guidance strength.",
+          "key" : "trellisLatentGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Latent guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10926728524,
+                "residentBytes" : 10926728524
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10926728524,
+                "residentBytes" : 10926728524
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 10926728524,
+                "residentBytes" : 10926728524
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3549391948,
+                "residentBytes" : 3549391948
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2921533516,
+                "residentBytes" : 2921533516
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2607604300,
+                "residentBytes" : 2607604300
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2293675084,
+                "residentBytes" : 2293675084
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1979745868,
+                "residentBytes" : 1979745868
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1665816652,
+                "residentBytes" : 1665816652
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "mesh",
+        "gaussianSplats"
+      ],
+      "outputs" : [
+        {
+          "help" : "The object as a FlexiCubes mesh with a color per vertex, y up, facing +z.",
+          "key" : "mesh",
+          "required" : true,
+          "title" : "Mesh",
+          "valueType" : "mesh"
+        },
+        {
+          "help" : "The object as 32 Gaussians per occupied voxel, in the mesh's frame.",
+          "key" : "gaussianSplats",
+          "required" : true,
+          "title" : "Gaussians",
+          "valueType" : "gaussianSplats"
+        }
+      ],
+      "registryName" : "trellis-text-xlarge",
+      "requirements" : {
+        "minimumMemoryBytes" : 17907877436,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged"
+      ],
+      "standIn" : false,
+      "summary" : "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 1280-wide flows.",
+      "tasks" : [
+        "text-to-3d"
+      ],
+      "variants" : [
+        {
+          "displayName" : "TRELLIS text (xlarge)",
+          "downloadBytes" : 6340448625,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 5463365598,
+                  "checkpoint" : 6338729868,
+                  "float32" : 10926728524
+                },
+                "id" : "model",
+                "quantizableElements" : 2511433728,
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 17907877436,
+          "parameterCount" : 2731681797,
+          "peakBytes" : 10926728524,
+          "precision" : "float16",
+          "registryName" : "trellis-text-xlarge",
+          "residentBytes" : 10926728524,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 2133,
+                "optional" : false,
+                "path" : "pipeline.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 419,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_txt_dit_XL_16l8_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 1976327512,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_txt_dit_XL_16l8_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "154317b61e89f97270a1d34cfee52c1ce1d07c831f533b5c878a3a0e991dfc05"
+              },
+              {
+                "bytes" : 441,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_txt_dit_XL_64l8p2_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 2151142688,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_txt_dit_XL_64l8p2_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "4819e388063d58f3a7f0939836ec435fed262cd8a0565226ce8e43da1bbfa55e"
+              },
+              {
+                "bytes" : 245,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.json",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "other"
+              },
+              {
+                "bytes" : 147591972,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "weights",
+                "sha256" : "1c76d4a40519aa2d711cc263a8404105231ac26db31d946bed48b84fee79009a"
+              },
+              {
+                "bytes" : 372,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.json",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "other"
+              },
+              {
+                "bytes" : 181903412,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.safetensors",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "weights",
+                "sha256" : "3e87aba94b5786407eb06d0502c1ed0885a0027a3f2b8537bfe15b0a92c01859"
+              },
+              {
+                "bytes" : 843,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.json",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "other"
+              },
+              {
+                "bytes" : 171450952,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_gs_swin8_B_64l8gs32_fp16.safetensors",
+                "repository" : "microsoft/TRELLIS-image-large",
+                "revision" : "25e0d31ffbebe4b5a97464dd851910efc3002d96",
+                "role" : "weights",
+                "sha256" : "38c84bcef5ce0af1f48b1b5558dabc7575a13346043c41a7e0610f1fa619a161"
+              },
+              {
+                "bytes" : 1710540580,
+                "optional" : false,
+                "path" : "model.safetensors",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "weights",
+                "sha256" : "a2bf730a0c7debf160f7a6b50b3aaf3703e7e88ac73de7a314903141db026dcb"
+              },
+              {
+                "bytes" : 961143,
+                "optional" : false,
+                "path" : "vocab.json",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "merges.txt",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 905,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 389,
+                "optional" : false,
+                "path" : "special_tokens_map.json",
+                "repository" : "openai/clip-vit-large-patch14",
+                "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41",
+                "role" : "tokenizer"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "microsoft/TRELLIS-text-xlarge",
+            "requiresConversion" : false,
+            "revision" : "e0b00432b8e3a8ecee0df806ab1df9f7281f2be4"
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "TripoSR",
       "engine" : "mlx",
       "family" : "triposr",

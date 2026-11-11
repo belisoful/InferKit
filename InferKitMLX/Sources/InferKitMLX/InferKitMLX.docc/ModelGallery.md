@@ -58,12 +58,16 @@ Each writes its result under `NFKOutputImage`.
 `NFKMLXTripoSR` reconstructs an object from one image and emits an `NFKMesh` under `NFKOutputMesh`:
 positions, triangles, and a color per vertex, written as OBJ, PLY, or GLB. `NFKMLXStableFast3D` emits a
 UV-textured `NFKMesh` with an `NFKMeshMaterial` (a base color texture, a tangent-space normal texture,
-roughness, and metalness), written as GLB with the textures embedded.
+roughness, and metalness), written as GLB with the textures embedded. ``NFKMLXTrellisFactory`` generates an
+object from one image or a prompt as a vertex-colored `NFKMesh` and an `NFKGaussianSplats` under
+`NFKOutputGaussianSplats`, written as GLB and a splatting PLY.
 
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXTripoSR`` | `triposr` | single-image 3D reconstruction (vertex-colored mesh) |
 | ``NFKMLXStableFast3D`` | `stable-fast-3d` | single-image 3D reconstruction (UV-textured mesh with a PBR material) |
+| ``NFKMLXTrellisFactory`` | `trellis-image-large` | image-to-3D generation (vertex-colored mesh and 3D Gaussians) |
+| ``NFKMLXTrellisFactory`` | `trellis-text-base`, `trellis-text-large`, `trellis-text-xlarge` | text-to-3D generation (vertex-colored mesh and 3D Gaussians) |
 
 ### Image → map
 

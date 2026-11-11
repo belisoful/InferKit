@@ -7,6 +7,7 @@
 #import "NFKInferenceKeys.h"
 #import "NFKMIDISequence.h"
 #import "NFKMesh.h"
+#import "NFKGaussianSplats.h"
 #import "NFK_ARC.h"
 
 @implementation NFKInferenceResult
@@ -100,6 +101,12 @@
 {
 	id value = _outputs[NFKOutputMesh];
 	return [value isKindOfClass:NFKMesh.class] ? value : nil;
+}
+
+- (nullable NFKGaussianSplats *)gaussianSplats
+{
+	id value = _outputs[NFKOutputGaussianSplats];
+	return [value isKindOfClass:NFKGaussianSplats.class] ? value : nil;
 }
 
 - (nullable NSDictionary<NSString *, NFKDecisionAnswer *> *)answers

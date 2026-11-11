@@ -176,6 +176,7 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | TripoSR | ``NFKMLXTripoSR`` | ``NFKMLXTripoSRNet`` | `NFKMLXTripoSRConfiguration.released`; `network(weightsURL:configuration:)` builds it | `triposr` | ``NFKMLXTripoSRBackend`` |
+| TRELLIS | ``NFKMLXTrellisFactory`` | ``NFKMLXTrellisPipeline`` | `NFKMLXTrellisConfiguration.released` / `.textBase` / `.textLarge` / `.textXLarge`, read from `pipeline.json`; `NFKMLXTrellis.structureFlow(weightsURL:configuration:)` builds the trainable flow | `trellis-image-large`, `trellis-text-base`, `trellis-text-large`, `trellis-text-xlarge` | ``NFKMLXTrellisBackend`` |
 | Stable Fast 3D | ``NFKMLXStableFast3D`` | ``NFKMLXStableFast3DNet`` | `NFKMLXStableFast3DConfiguration.released`; `network(weightsURL:configuration:)` builds it | `stable-fast-3d` | ``NFKMLXStableFast3DBackend`` |
 
 ```swift
@@ -196,6 +197,16 @@ let mesh = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputIm
 ```objc
 [NFKMLXStableFast3D backendWithDirectoryURL:releaseDirectory error:&error]
 // NFKMLXStableFast3DParameterKey.textureResolution / .threshold / .foregroundRatio / .textureFormat / .estimateIllumination
+```
+
+```swift
+let backend = try NFKMLXTrellisFactory.backend(directoryURL: releaseDirectory, encoderWeightsURL: dinov2, residency: .automatic)
+let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: image]))   // result.mesh, result.gaussianSplats
+```
+
+```objc
+[NFKMLXTrellisFactory backendWithDirectoryURL:releaseDirectory encoderWeightsURL:dinov2 residency:NFKMLXResidencyAutomatic error:&error]
+// NFKMLXTrellisParameterKey.structureSteps / .latentSteps / .structureGuidance / .latentGuidance / .outputs
 ```
 
 ### Matting, segmentation, and faces

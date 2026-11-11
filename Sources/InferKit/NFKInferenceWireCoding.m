@@ -18,6 +18,7 @@
 #import <InferKit/NFKAudioSegment.h>
 #import <InferKit/NFKMIDISequence.h>
 #import <InferKit/NFKMesh.h>
+#import <InferKit/NFKGaussianSplats.h>
 #import <InferKit/NFKMIDINote.h>
 #import <InferKit/NFKMusicBeat.h>
 #import <InferKit/NFKQuadrilateral.h>
@@ -207,7 +208,8 @@ static NSArray<Class> *NFKWireArchivedClasses(void)
 {
 	return @[ NFKDetection.class, NFKKeypoint.class, NFKClassification.class, NFKAudioSegment.class,
 			  NFKMIDISequence.class, NFKMIDINote.class, NFKMusicBeat.class, NFKQuadrilateral.class,
-			  NFKDecisionAnswer.class, NFKMesh.class, NFKMeshMaterial.class, NFKMeshTexture.class ];
+			  NFKDecisionAnswer.class, NFKMesh.class, NFKMeshMaterial.class, NFKMeshTexture.class,
+			  NFKGaussianSplats.class ];
 }
 
 static NSSet<Class> *NFKWireArchiveDecodingClasses(void)

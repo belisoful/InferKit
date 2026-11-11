@@ -31,6 +31,7 @@ NSString * const NFKModelValueTypeWords				= @"words";
 NSString * const NFKModelValueTypeMIDI				= @"midi";
 NSString * const NFKModelValueTypeBeats				= @"beats";
 NSString * const NFKModelValueTypeMesh				= @"mesh";
+NSString * const NFKModelValueTypeGaussianSplats	= @"gaussianSplats";
 NSString * const NFKModelValueTypeQuestions			= @"questions";
 NSString * const NFKModelValueTypeAnswers			= @"answers";
 NSString * const NFKModelValueTypeToolCalls			= @"tool-calls";
@@ -75,6 +76,7 @@ NSString * const NFKModelTaskMusicGeneration		= @"music-generation";
 NSString * const NFKModelTaskMusicTranscription		= @"music-transcription";
 NSString * const NFKModelTaskMusicStructure			= @"music-structure";
 NSString * const NFKModelTaskImageTo3D				= @"image-to-3d";
+NSString * const NFKModelTaskTextTo3D				= @"text-to-3d";
 
 NSString * const NFKModelEngineMLX					= @"mlx";
 NSString * const NFKModelEngineApple				= @"apple";
@@ -273,6 +275,7 @@ static NSDictionary<NSString *, NSString *> *NFKResultKeyValueTypes(void)
 			NFKOutputBeats:							NFKModelValueTypeBeats,
 			NFKOutputTempo:							NFKModelValueTypeNumber,
 			NFKOutputMesh:							NFKModelValueTypeMesh,
+			NFKOutputGaussianSplats:				NFKModelValueTypeGaussianSplats,
 			NFKOutputAnswers:						NFKModelValueTypeAnswers,
 			NFKOutputReasoning:						NFKModelValueTypeText,
 			NFKOutputUsage:							NFKModelValueTypeJSON,

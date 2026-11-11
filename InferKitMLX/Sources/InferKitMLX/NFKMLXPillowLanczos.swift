@@ -7,7 +7,7 @@
 
 import Foundation
 
-// Pillow's Lanczos resize of an 8-bit RGB image (`Image.resize(…, Image.Resampling.LANCZOS)`), to the
+// Pillow's Lanczos resize of an 8-bit RGB or RGBA image (`Image.resize(…, Image.Resampling.LANCZOS)`), to the
 // integer: a reference that stretches decoded frames through PIL hands the next stage those exact bytes.
 // Each axis is a separable pass of a three-lobe Lanczos window whose support widens with the downscale
 // factor; the taps are normalized in double precision, then quantized to 22-bit fixed point, and every
@@ -52,22 +52,22 @@ enum NFKMLXPillowLanczos {
 
     static func clip8(_ value: Int32) -> UInt8 { UInt8(min(max(value >> Int32(precisionBits), 0), 255)) }
 
-    /// `rgb` (`height × width × 3`, row-major) resized to `outWidth × outHeight`.
-    static func resize(_ rgb: [UInt8], width: Int, height: Int, outWidth: Int, outHeight: Int) -> [UInt8] {
+    /// `pixels` (`height × width × channels`, row-major) resized to `outWidth × outHeight`, every channel alike.
+    static func resize(_ pixels: [UInt8], width: Int, height: Int, outWidth: Int, outHeight: Int, channels: Int = 3) -> [UInt8] {
         let half = Int32(1 << (precisionBits - 1))
-        var current = rgb, w = width
+        var current = pixels, w = width
         if outWidth != width {
             let (bounds, taps) = coefficients(inSize: width, outSize: outWidth)
-            var next = [UInt8](repeating: 0, count: height * outWidth * 3)
+            var next = [UInt8](repeating: 0, count: height * outWidth * channels)
             for y in 0 ..< height {
                 for xx in 0 ..< outWidth {
                     let (xmin, count) = bounds[xx]
-                    for channel in 0 ..< 3 {
+                    for channel in 0 ..< channels {
                         var sum = half
                         for x in 0 ..< count {
-                            sum &+= Int32(current[(y * w + x + xmin) * 3 + channel]) &* taps[xx][x]
+                            sum &+= Int32(current[(y * w + x + xmin) * channels + channel]) &* taps[xx][x]
                         }
-                        next[(y * outWidth + xx) * 3 + channel] = clip8(sum)
+                        next[(y * outWidth + xx) * channels + channel] = clip8(sum)
                     }
                 }
             }
@@ -76,21 +76,44 @@ enum NFKMLXPillowLanczos {
         }
         if outHeight != height {
             let (bounds, taps) = coefficients(inSize: height, outSize: outHeight)
-            var next = [UInt8](repeating: 0, count: outHeight * w * 3)
+            var next = [UInt8](repeating: 0, count: outHeight * w * channels)
             for yy in 0 ..< outHeight {
                 let (ymin, count) = bounds[yy]
                 for x in 0 ..< w {
-                    for channel in 0 ..< 3 {
+                    for channel in 0 ..< channels {
                         var sum = half
                         for y in 0 ..< count {
-                            sum &+= Int32(current[((y + ymin) * w + x) * 3 + channel]) &* taps[yy][y]
+                            sum &+= Int32(current[((y + ymin) * w + x) * channels + channel]) &* taps[yy][y]
                         }
-                        next[(yy * w + x) * 3 + channel] = clip8(sum)
+                        next[(yy * w + x) * channels + channel] = clip8(sum)
                     }
                 }
             }
             current = next
         }
         return current
+    }
+
+    /// `rgba` resized as Pillow resizes an RGBA image: converted to premultiplied `RGBa` (each color times
+    /// alpha / 255, rounded as Pillow's MULDIV255 rounds), resampled, and converted back (each color times
+    /// 255 over alpha, truncated and clipped; alpha 0 and 255 pass through).
+    static func resizeRGBA(_ rgba: [UInt8], width: Int, height: Int, outWidth: Int, outHeight: Int) -> [UInt8] {
+        var premultiplied = rgba
+        for pixel in 0 ..< width * height {
+            let alpha = UInt32(rgba[pixel * 4 + 3])
+            for c in 0 ..< 3 {
+                let product = UInt32(rgba[pixel * 4 + c]) * alpha + 128
+                premultiplied[pixel * 4 + c] = UInt8(((product >> 8) + product) >> 8)
+            }
+        }
+        var resized = resize(premultiplied, width: width, height: height, outWidth: outWidth, outHeight: outHeight, channels: 4)
+        for pixel in 0 ..< outWidth * outHeight {
+            let alpha = Int(resized[pixel * 4 + 3])
+            guard alpha != 0 && alpha != 255 else { continue }
+            for c in 0 ..< 3 {
+                resized[pixel * 4 + c] = UInt8(min(255, 255 * Int(resized[pixel * 4 + c]) / alpha))
+            }
+        }
+        return resized
     }
 }

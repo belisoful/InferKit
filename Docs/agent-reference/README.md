@@ -98,7 +98,8 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
   audio → MIDI and music-structure survey, the core MIDI and beat value types, Basic Pitch,
   All-In-One, and the build order behind them.
 - [mlx-models-3d-reconstruction.md](mlx-models-3d-reconstruction.md) — the core mesh and material value
-  types, TripoSR (the first image → 3D model), and Stable Fast 3D (the first textured one).
+  types and `NFKGaussianSplats`, TripoSR (the first image → 3D model), Stable Fast 3D (the first textured
+  one), and TRELLIS (the first generator: image or prompt → mesh and Gaussians, with FlexiCubes).
 
 ## InferKitFoundationModels
 

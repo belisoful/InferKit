@@ -74,6 +74,8 @@ extern NSString * const NFKModelValueTypeMIDI;
 extern NSString * const NFKModelValueTypeBeats;
 /*! A triangle mesh (NFKMesh). Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelValueTypeMesh;
+/*! Gaussians for splatting (NFKGaussianSplats). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelValueTypeGaussianSplats;
 /*! Typed questions for a decision model (NSDictionary of NFKDecisionQuestion). Introduced in
 	InferKit 0.4.0. */
 extern NSString * const NFKModelValueTypeQuestions;
@@ -168,6 +170,8 @@ extern NSString * const NFKModelTaskMusicTranscription;
 extern NSString * const NFKModelTaskMusicStructure;
 /*! Making a 3D object from one image. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelTaskImageTo3D;
+/*! Generating a 3D object from a prompt. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelTaskTextTo3D;
 
 #pragma mark Engines
 

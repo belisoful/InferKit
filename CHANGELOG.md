@@ -9,6 +9,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ## [Unreleased]
 
+### InferKit (core)
+
+#### Gaussian splats are a core value type
+
+- `NFKGaussianSplats` holds 3D Gaussians (positions, scales, rotations, opacities, and degree-0 spherical-
+  harmonic colors) in `NFKMesh`'s frame, writes and reads the binary PLY that splatting tools read, and
+  archives. A backend returns it under `NFKOutputGaussianSplats` (value type `NFKModelValueTypeGaussianSplats`;
+  `NFKInferenceResult.gaussianSplats`), and it crosses the plugin and server wire. `NFKModelTaskTextTo3D`
+  names prompt-to-object generation.
+
+### InferKitMLX (companion)
+
+#### TRELLIS generates a 3D object from an image or a prompt
+
+- `NFKMLXTrellisFactory` builds TRELLIS image-large (`trellis-image-large`, conditioned on DINOv2 ViT-L/14
+  with registers) and TRELLIS text base, large, and xlarge (`trellis-text-*`, conditioned on CLIP ViT-L/14's
+  text tower). Two rectified-flow stages sample a sparse structure and a structured latent; the backend
+  returns a vertex-colored `NFKMesh` (FlexiCubes) under `NFKOutputMesh` and `NFKGaussianSplats` under
+  `NFKOutputGaussianSplats`. The stages load together or one at a time, and the flows quantize.
+  `NFKMLXTrellisTraining` fine-tunes either flow (LoRA or full) on the release's objective, the structure
+  stage from images and meshes on device.
+- The native PyTorch reader reads a tensor pickled through `_rebuild_from_type_v2` as a plain `Tensor` or
+  `Parameter` (DINOv2's checkpoints), and still refuses a tensor subclass.
+
 ### InferKitAppleSwift (companion)
 
 #### The speech analyzer captions a live source

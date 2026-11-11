@@ -11,7 +11,9 @@ model, each texture an `NFKMeshTexture` holding an encoded PNG or JPEG and its M
 accessors, and OBJ, PLY, and GLB writers and readers. The GLB writes the material with its images in the
 binary chunk (one sampler, linear with mipmaps, repeating) and the reader reads the first primitive's
 material back; OBJ and PLY drop it. A backend returns the mesh under `NFKOutputMesh`; the catalog names
-the value type `NFKModelValueTypeMesh` and the task `NFKModelTaskImageTo3D`. On the plugin and server
+the value type `NFKModelValueTypeMesh` and the task `NFKModelTaskImageTo3D` (`NFKModelTaskTextTo3D` for a
+prompt). Gaussians travel as `NFKGaussianSplats` under `NFKOutputGaussianSplats` (value type
+`NFKModelValueTypeGaussianSplats`). On the plugin and server
 wire a mesh is a JSON object of its counts carrying its binary PLY, inline as base64 or beside the JSON
 as a file; a mesh with a material travels as its GLB instead, under `glb` or as a `.glb` file
 (`NFKWireValueObjects.m`, `NFKInferenceWireCoding.m`).
@@ -258,3 +260,119 @@ the mesh type, the surface extraction, and the writers every later port uses.
     `familyProfiles["stable-fast-3d"]` declares both. The remeshers the release offers (`triangle` through
     gpytoolbox, `quad` through pynanoinstantmeshes, both off by default) are third-party libraries the
     backend does not carry.
+- `NFKMLXTrellisFactory` (`@objc`) — TRELLIS (Microsoft, MIT), a generator of a 3D object in two rectified-flow
+  stages, returned as a vertex-colored mesh and as 3D Gaussians. Four releases: `microsoft/TRELLIS-image-large` at
+  `25e0d31f` (image in, conditioned on DINOv2 ViT-L/14 with four registers, `dinov2_vitl14_reg4_pretrain.pth`
+  from Meta's server, Apache-2.0) and `microsoft/TRELLIS-text-base` / `-large` / `-xlarge` at `f8e8cf00` /
+  `4aad9f4a` / `e0b00432` (prompt in, conditioned on the last hidden states of `openai/clip-vit-large-patch14`
+  at `32bd6428`, read by the Stable Diffusion text tower and tokenizer; their `pipeline.json` names the image
+  release's decoders). `+register` under `trellis-image-large`, `trellis-text-base`, `trellis-text-large`, and
+  `trellis-text-xlarge`. The factories: `backendWithDirectoryURL:encoderWeightsURL:residency:error:`,
+  `backendWithVariant:directoryURL:imageReleaseDirectoryURL:textEncoderDirectoryURL:residency:error:`,
+  `backendWithDirectoryURL:encoderWeightsURL:structureFlowWeightsURL:latentFlowWeightsURL:residency:error:` (a
+  fine-tune's flows in place of the release's), and the download `backendWithVariant:revision:cacheDirectoryURL:residency:`
+  with its `completionHandler:` peer. `NFKMLXTrellisPipeline` is the Swift surface (`image(…)`, `text(…)`,
+  `random(configuration:)`, the per-stage calls). `NFKMLXTrellisRelease` reads `pipeline.json` and every flow's
+  JSON and refuses a positional mode, patch, shared modulation, width split, sampler, or conditioner the port
+  does not read; the release geometry comes from those files (`NFKMLXTrellisConfiguration.textBase` and the other
+  presets state it). Inputs `NFKInputImage` or `NFKInputPrompt`; outputs `NFKOutputMesh` and
+  `NFKOutputGaussianSplats`; parameters `NFKMLXTrellisParameterKey` (steps and guidance per stage, `.outputs`) and
+  `NFKParameterSeed` (42, the release's `run` default). The sources: `NFKMLXTrellis.swift` (configuration,
+  encoder, structure flow and decoder), `NFKMLXTrellisSparse.swift` (voxel grid, sparse convolution, latent flow,
+  decoders), `NFKMLXTrellisMesh.swift` (FlexiCubes), `NFKMLXTrellisPipeline.swift`, `NFKMLXTrellisBackend.swift`,
+  and `NFKMLXTrellisTraining.swift`.
+  - Image preparation (`preprocess_image`): the alpha's box over alpha > 0.8 · 255, centered, its longer side
+    times 1.2 truncated, cropped with PIL's half-to-even rounding of a fractional box (outside the image reads
+    transparent black), resized to 518 by Pillow's Lanczos over premultiplied `RGBa` and back
+    (`NFKMLXPillowLanczos.resizeRGBA`: MULDIV255 premultiplication, truncating unpremultiplication with alpha 0
+    and 255 passing through), then each color times its alpha, truncated to 8 bits. The release runs `rembg`
+    on an opaque image; the backend uses an opaque image whole.
+  - DINOv2: the hub model's layout (`patch_embed.proj`, `blocks.N.{norm1, attn.qkv, attn.proj, ls1, norm2,
+    mlp.fc1, mlp.fc2, ls2}`); class token plus the 37 × 37 position grid, the four registers inserted after the
+    class token without positions; the condition is the last block's tokens (`x_prenorm`) normalized without an
+    affine transform: 1,374 × 1024. The `.pth` stores each tensor through `torch._tensor._rebuild_from_type_v2`
+    with a `_has_been_cloned` attribute, which the native reader reads as the plain tensor.
+  - Stage 1: `SparseStructureFlowModel` over the dense 16³ × 8 latent, one token per voxel (patch 1), absolute
+    sinusoidal positions (sines then cosines per axis, 170 frequencies an axis, zero-padded to 1024), and 24
+    modulated cross blocks: adaLN shift, scale, and gate from SiLU of the timestep embedding (cosines then sines
+    of t · 1000 over 128 frequencies), self-attention with per-head RMS-normalized queries and keys (unit
+    length times γ · √64), an affine-normalized cross-attention to the condition, tanh-approximated GELU.
+    `SparseStructureDecoder`: Conv3d with channel LayerNorm residual blocks at 512, 128, and 32 channels and a
+    3D pixel shuffle between them (output voxel (2x + a, 2y + b, 2z + d) reads channel c · 8 + a · 4 + b · 2 +
+    d), to 64³ logits; a voxel is occupied where its logit is positive, x-major.
+  - Stage 2: `SLatFlowModel` on the occupied voxels: residual blocks with submanifold 3³ convolution at 128
+    channels (256 and three blocks a side for text-xlarge), a halving to 32³ before the transformer and its
+    reversal after, with skip connections. The convolution is one gather and matrix product over 27 taps
+    (`NFKTrellisSparseConvolution`, one product per tap past 2²⁷ gathered elements); a tap reads the input at
+    the output's coordinate plus (offset − 1), x-major, as spconv 2.3.8's `calc_subm_conv_indices` pairs them,
+    and the weights are stored `[out, 3, 3, 3, in]`. The halving averages each parent's children the way
+    torch's `scatter_reduce(..., "mean")` does over the zero-filled output, which counts the zero: sum / (n + 1).
+  - Decoders, on the 64³ voxels: 12 swin blocks (window 8, shifted by 4 on odd blocks, windows grouped
+    x-major after the shift; `NFKTrellisWindowPartition` pads each window and masks the padding), LayerNorm
+    without an affine transform. The Gaussian decoder normalizes and projects to 32 Gaussians a voxel: offsets
+    tanh(o + the stored `offset_perturbation`) · 0.5 · 1.5 / 64 around the voxel center, scales softplus(s +
+    softplus⁻¹(0.004)) widened by 9e-4 in quadrature, rotations (0.1 · r + (1, 0, 0, 0)) normalized, opacities
+    σ(o + logit 0.1). The mesh decoder subdivides twice (GroupNorm of 32 groups, SiLU, the voxel split into its
+    eight children x-major, two convolutions, a 1³ convolution skip; 768 → 192 → 96 channels) and projects to
+    101 channels a voxel at 256³: eight corner SDFs, eight deformations, 21 FlexiCubes weights, eight 6-channel
+    colors.
+  - FlexiCubes (`NFKTrellisFlexiCubes`, the CPU, float32): the corner attributes average over the voxels sharing
+    a vertex (SDF + −1/256; a vertex no voxel touches reads outside), the vertices deform by
+    (1 − 1e-8) / 512 · tanh, the weights β and α read 1 + 0.99 tanh and γ 0.005 + 0.99 σ (zero where no voxel
+    covers the cube). The dual marching cubes table is derived at first use (`NFKTrellisDualCubes`): one dual
+    vertex per surface patch, crossing edges joined on every face where they share it, an ambiguous face keeping
+    its two inside corners apart, edges ascending in a group and groups ordered by the minority-sign corners
+    they enclose. A case with one ambiguous face and one dual vertex takes its complement's grouping when the cube
+    across that face is such a case too. The derivation reproduces the release's `dmc_table`, `num_vd_table`, and
+    `check_table` for all 256 cases (counts and spot cases are in `testTheDerivedDualTableHasTheReleasesCaseCounts`).
+    The extraction runs over the surface cubes alone in the reference's order: cubes x-major, dual vertices by
+    ascending count then cube, edges merged and sorted, quads from edges shared by four surface cubes (the
+    flipped ones first), each split along the larger γ product. Colors are σ of the decoder's, interpolated as
+    the vertices are. The mesh turns from the decoders' z up to glTF's frame, (x, y, z) → (x, z, −y), as the
+    release's GLB export turns it; the Gaussians take the same quarter turn, their rotations premultiplied by
+    (√½, −√½, 0, 0). The export's simplification, hole filling, and texture baking need a Gaussian rasterizer
+    (nvdiffrast); the backend returns the mesh's vertex colors instead.
+    The extraction leaves a surface open where the reference does. On a 12³ grid of voxels whose corner SDFs are
+    (√(x² + y² + z²) − 4) / 12 in float32 about the grid's center (the eight SDFs per voxel, zeros in the other 93
+    channels), the release's `SparseFeatures2Mesh(res=12, use_color=True)`, run on the CPU with the oracle's
+    `trellis_shims` (2026-11-11), gives 416 vertices and 828 faces, 2,304 of whose 2,394 directed edges meet their
+    reverse. `testFlexiCubesClosesASphere` holds the port to those figures.
+  - Sampler (`FlowEulerGuidanceIntervalSampler`): the timetable is numpy's `linspace(1, 0, steps + 1)` bent by
+    3t / (1 + 2t) in double precision, the flow evaluated at float32 t · 1000, guidance (1 + s) · v − s · v₀ where
+    t lies in the interval, x ← x − (t − t_next) · v. The noise comes from MLX's generator, so a seed does not
+    reproduce torch's sample.
+  - Oracle: `run_reference.py trellis` (the image release at 25 steps on the subject plate with an elliptical
+    alpha: every seam above, four flow forwards of each stage plus the last, 8,640 voxels, 247,172 vertices,
+    492,012 faces, 276,480 Gaussians), `trellis_text` (each text release through the structured latent on "A
+    wooden chair with a red cushion"), and `trellis_objectives`, all in the `sf3d` environment. The release's code
+    runs on the CPU at float32 (`use_fp16` forced off) with `Tools/reference-parity/trellis_shims`: spconv's
+    `SubMConv3d` as the same gather product (equal to a dense `Conv3d` within 2.1e-14), flash-attn as torch SDPA
+    per sequence, `kaolin.check_tensor` and `easydict`, and `rembg`, `open3d`, `plyfile`, `utils3d`, and `cv2` as
+    stand-ins that raise when called. FlexiCubes and the mesh extractor take the CPU device.
+  - Parity (float32 on the GPU against the reference's float32 CPU run, `NFKMLXTrellisTests`, 2026-11-11):
+    the condition 0.9999999999275 (max 3.2e-4); the structure flow 0.99999999999984, …88, …87, and
+    0.99999999999799 at its last forward; the occupancy logits 0.9999999999996767 with the 8,640 voxels identical;
+    the latent flow 0.99999999999966, …955, …981, and 0.99999999999762; the Gaussian decoder's features
+    0.999999999999205 and every field ≥ 0.9999999999743; the mesh decoder's 552,960 × 101 features
+    0.9999999999937 in the reference's voxel order; the prepared image byte for byte (804,972 bytes); FlexiCubes on the reference's
+    features the reference's mesh (247,172 vertices, identical faces, positions within 3.0e-8, colors exact); both samplers from the recorded noise over 25
+    steps 0.99999999998208 (the structure, its 8,640 voxels identical) and 0.99999999999985 (the structured
+    latent; 0.99999999999987 denormalized). Text: (run 5, 2026-11-11; the CLIP condition 0.99999999999843 and the empty prompt's 0.99999999999863 for all three, the tokens identical) text-base: structure flow 0.99999999999988, 0.99999999999989, and 0.99999999999860 at its last forward, latent flow 0.99999999999956, 0.99999999999957, 0.99999999999492, samplers over 25 steps 0.99999999998588 and 0.99999999999934; text-large: structure flow 0.99999999999988, 0.99999999999988, 0.99999999999769, latent flow 0.99999999999953, 0.99999999999955, 0.99999999999591, samplers 0.99999999987970 and 0.99999999999927; text-xlarge: structure flow 0.99999999999989, 0.99999999999989, 0.99999999999867, latent flow 0.99999999999970, 0.99999999999970, 0.99999999999828, samplers 0.99999999986941 and 0.99999999999959. The tests hold each float32 cosine above a threshold,
+    the convention of the float32 ports (TripoSR, Stable Fast 3D): 0.9999999999 for each network's forward,
+    0.999999999 for the 25-step guided sampler chains (which compound each forward's float32 differences; the text
+    releases' structure chains read 0.9999999998797 and 0.9999999998694), 0.9999999 for CLIP's condition. These are thresholds, not floors: the reference's own float32 against
+    float64 spread is not measured. Bytes, voxels, faces, and the FlexiCubes sphere's counts are held exactly.
+  - **Customization: LoRA (or full), both flows.** `NFKMLXTrellisObjective` is the trainers' rectified flow:
+    x_t = (1 − t) x₀ + (1e-5 + (1 − 1e-5) t) ε, the target (1 − 1e-5) ε − x₀, mean squared error, times σ of a
+    normal draw around 1 (`logitNormal`, mean 1, std 1), the condition replaced by zeros with probability 0.1, AdamW
+    at 1e-4 without decay, the gradient clipped to norm 1 (the release's adaptive clipper at its ceiling). The
+    release's EMA is not kept. `NFKMLXTrellisTraining.fineTuneStructureFlow` trains on device from image–mesh pairs:
+    `occupancy(of:resolution:)` voxelizes a mesh's surface in the release's normalized cube and
+    `structureLatent(of:encoder:)` encodes it with `ss_enc_conv3d_16l8_fp16` to the posterior's mean, as
+    `encode_ss_latent.py` does. `fineTuneLatentFlow` trains on structured latents the release's toolkit encodes
+    offline from 150 rendered views of DINOv2 features. Measured against `trellis_objectives`: the structure encoder's mean 0.99999999999696 and log-variance 0.99999999999837; the dense loss 0.05751151 against the trainer's 0.057511486 and 0.062691584 against 0.06269159 (x_t and the target at cosine 1.0); the sparse loss 5.9853306 against 5.985331 and 1.4090514 against 1.4090514, over 17,111 voxels.
+  - Runtime: five stages (conditioner, structure flow, structure decoder, latent flow, decoders) staged or held
+    resident (`NFKMLXResidency`; the image release holds 6.86 GB at float32); the two flows quantize to 2–8 bits
+    (`NFKModelLoadOptionQuantizationBits`). The release is published at float16 and runs it on CUDA; float16 and
+    bfloat16 are not offered until a measured floor holds them. Streaming and paging do not apply: no stage
+    exceeds a tier that holds the next.

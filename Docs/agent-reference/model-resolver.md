@@ -247,7 +247,9 @@ The loaders below read one release, or a model type no judge can tell apart, and
   the Qwen3-VL embedder and reranker, ModernBERT, DeBERTa and Open-Jev, Table Transformer, V-JEPA 2, SAM 3,
   Sa2VA, ViTPose, Seed-X (a `mistral` release prompted by its model card over 28 languages), TripoSR
   (one release, whose geometry is a `config.yaml` with no `model_type`), and Stable Fast 3D (one release,
-  a `config.yaml` with no `model_type`, and a tetrahedral grid from its code repository).
+  a `config.yaml` with no `model_type`, and a tetrahedral grid from its code repository), and TRELLIS (four
+  releases with a `pipeline.json` and per-checkpoint JSON, no `model_type`, read and refused field by field by
+  `NFKMLXTrellisRelease`).
 - The diffusers pipelines state `_class_name`, not `model_type`, so no repository matches them by type.
   Wan 2.2 Animate 2 is one of them: its two releases share one geometry and differ in the scheduler.
 

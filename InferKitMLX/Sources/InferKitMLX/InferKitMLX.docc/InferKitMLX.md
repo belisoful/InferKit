@@ -139,6 +139,23 @@ The figures have three limits:
 - ``NFKMLXStableFast3DReconstruction``
 - ``NFKMLXStableFast3DGeometry``
 - ``NFKMLXTetrahedralGrid``
+- ``NFKMLXTrellisFactory``
+- ``NFKMLXTrellisBackend``
+- ``NFKMLXTrellisVariant``
+- ``NFKMLXTrellisParameterKey``
+- ``NFKMLXTrellisPipeline``
+- ``NFKMLXTrellisConfiguration``
+- ``NFKMLXTrellisSampling``
+- ``NFKMLXTrellisOutputs``
+- ``NFKMLXTrellisResult``
+- ``NFKMLXTrellisFlowWeights``
+- ``NFKMLXTrellis``
+- ``NFKMLXTrellisImageEncoder``
+- ``NFKMLXTrellisStructureFlow``
+- ``NFKMLXTrellisStructureDecoder``
+- ``NFKMLXTrellisLatentFlow``
+- ``NFKMLXTrellisMeshDecoder``
+- ``NFKMLXTrellisGaussianDecoder``
 
 ### Image → map (depth & segmentation)
 
@@ -821,6 +838,12 @@ The figures have three limits:
 - ``NFKMLXFRCRNNet``
 - ``NFKMLXFRCRNObjective``
 - ``NFKMLXMossFormer2Objective``
+- ``NFKMLXTrellisTraining``
+- ``NFKMLXTrellisObjective``
+- ``NFKMLXTrellisTrainable``
+- ``NFKMLXTrellisStructureExample``
+- ``NFKMLXTrellisLatentExample``
+- ``NFKMLXTrellisStructureEncoder``
 
 ### Chat templates
 
