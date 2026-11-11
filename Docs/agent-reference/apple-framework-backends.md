@@ -38,6 +38,24 @@ host, at macOS 26 / iOS 26, and every type it adds is `@objc`.
   waits are bounded, as the package rule requires: `assetInstallTimeout` (600 s, `NotReady`) on the
   install, which is a download the first time a request names a locale, and `transcriptionTimeout`
   (600 s, `BackendFailure`) on the analysis. Reaching either cancels the detached task.
+- **The analyzer streams (2026-11-10).** `openLiveStream(parameters:)` (`NFKSpeechAnalyzerLiveStream.swift`)
+  opens one `SpeechAnalyzer` session per stream on an `AsyncStream<AnalyzerInput>`, with a transcriber at
+  `reportingOptions: [.volatileResults]` and `attributeOptions: [.audioTimeRange]`. The decisions:
+  - A unit's audio is converted to `bestAvailableAudioFormat(compatibleWith:)` by one `AVAudioConverter`
+    per input format, so a resampler keeps its filter state across units, and each buffer carries its
+    `bufferStartTime` counted in the analyzer's frames from the stream's first sample.
+  - The analyzer answers asynchronously and a stream answers synchronously, so a unit's result holds what
+    the transcriber reported since the unit before: finalized spans (`NFKOutputSegments`, their joined
+    text under `NFKOutputText`) and the latest volatile transcript under the core's
+    `NFKOutputTentativeText`, which a final result clears. A unit does not wait for its own audio's
+    results; they arrive in a later unit's result.
+  - Opening installs the locale's assets when the backend has not prepared it, and waits for the
+    analyzer's format under `transcriptionTimeout`. `reset` cancels the session and opens another, whose
+    times start at zero; `close` cancels it.
+  - The descriptor's live profile states 100 ms units of 16 kHz mono, the analyzer's usual format, and
+    no lookahead, since the analyzer, not the stream, decides when a span is final.
+  - `NFKSpeechAnalyzerLiveStreamTests` speaks a sentence through the system voice, streams it in 100 ms
+    units, and waits for the finalized spans; it skips where no English assets are installed.
 - **No wait in the package is unbounded (2026-10-28).** `NFKAppleWait.wait(_:seconds:cancelling:code:reason:)`,
   beside `NFKAppleOutcome`, bounds a synchronous caller's wait, cancels the detached task when the
   deadline passes, and reports it. The analyzer and both Swift Vision backends use it:

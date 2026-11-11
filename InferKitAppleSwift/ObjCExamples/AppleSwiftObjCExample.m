@@ -51,6 +51,17 @@
 	[self waitForExpectations:@[ listed ] timeout:30.0];
 }
 
+- (void)testObjectiveCOpensLiveCaptions
+{
+	NFKSpeechAnalyzerBackend *backend =
+		[[NFKSpeechAnalyzerBackend alloc] initWithLocale:[NSLocale localeWithLocaleIdentifier:@"en-US"]];
+	// id<NFKLiveStream> captions = NFKInferenceOpenLiveStream(backend, nil, &error);
+	// NFKInferenceResult *heard = [captions resultForUnit:unit error:&error];
+	// heard.segments are final; [heard outputForKey:NFKOutputTentativeText] may still change.
+	XCTAssertTrue([backend respondsToSelector:@selector(openLiveStreamWithParameters:error:)]);
+	XCTAssertTrue([backend.supportedOutputKeys containsObject:NFKOutputTentativeText]);
+}
+
 - (void)testObjectiveCReachesTheAnalyzerThroughDiscovery
 {
 	NSError *error = nil;

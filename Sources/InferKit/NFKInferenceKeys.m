@@ -102,6 +102,7 @@ NSString * const NFKOutputDetections		= @"detections";
 NSString * const NFKOutputPose				= @"pose";
 NSString * const NFKOutputClassifications	= @"classifications";
 NSString * const NFKOutputSegments			= @"segments";
+NSString * const NFKOutputTentativeText		= @"tentativeText";
 NSString * const NFKOutputLanguage			= @"language";
 NSString * const NFKOutputMIDI				= @"midi";
 NSString * const NFKOutputBeats				= @"beats";

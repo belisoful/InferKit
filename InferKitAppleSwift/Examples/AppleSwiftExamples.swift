@@ -46,6 +46,17 @@ final class AppleSwiftExamples: XCTestCase {
         XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterSourceLanguage))
     }
 
+    // Docs/examples.md: Live captions with the analyzer
+    func testExampleCaptioningALiveSource() {
+        let backend = NFKSpeechAnalyzerBackend(locale: Locale(identifier: "en-US"))
+        // let stream = try backend.openLiveStream(parameters: nil)   // installs the locale's assets first
+        // let heard = try stream.result(for: NFKInferenceRequest(inputs: [NFKInputAudio: microphoneBuffer]))
+        // heard.segments are the spans finalized since the unit before; heard.text joins them.
+        // heard.output(forKey: NFKOutputTentativeText) is the words after them the analyzer may revise.
+        XCTAssertTrue(backend.responds(to: #selector(NFKSpeechAnalyzerBackend.openLiveStream(parameters:))))
+        XCTAssertTrue(backend.supportedOutputKeys.contains(NFKOutputTentativeText))
+    }
+
     // Docs/examples.md: Discovery picks the best transcriber that is linked
     func testExampleDiscoveryPrefersTheAnalyzer() throws {
         let backend = try NFKDynamicBackend.backend(forCapability: NFKCapabilityTranscription)

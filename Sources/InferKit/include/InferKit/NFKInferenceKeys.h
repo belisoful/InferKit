@@ -229,6 +229,11 @@ extern NSString * const NFKParameterVoice;
 	InferKit 0.4.0. */
 extern NSString * const NFKParameterEmbeddingDimensions;
 
+/*! The transcript a live transcription holds past its final text (NSString): the words a recognizer has
+	heard but may still revise. Each unit's result carries the whole tentative transcript, which replaces
+	the one before; a span that becomes final arrives under NFKOutputSegments and leaves it. Introduced
+	in InferKit 0.4.0. */
+extern NSString * const NFKOutputTentativeText;
 /*! The language the input is in (NSString, a BCP-47 tag such as "en", "de", or "pt-BR"). Absent
 	means the engine detects it, which every translator here can do. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKParameterSourceLanguage;

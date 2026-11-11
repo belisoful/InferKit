@@ -1587,6 +1587,24 @@ NFKInferenceResult *read = [reader runInferenceForRequest:request error:&error];
 NSDictionary *structure = read.structured;   // paragraphs, lists, tables
 ```
 
+The analyzer captions a live source: its stream feeds one analyzer session, and each unit's result holds
+what the analyzer reported since the unit before. Final spans arrive under `NFKOutputSegments`, and the
+words after them, which the analyzer may still revise, under `NFKOutputTentativeText`:
+
+<!-- objc-check: given AVAudioPCMBuffer *microphoneBuffer = nil; -->
+```objc
+@import InferKitAppleSwift;
+NSError *error = nil;
+NFKSpeechAnalyzerBackend *speech =
+    [[NFKSpeechAnalyzerBackend alloc] initWithLocale:[NSLocale localeWithLocaleIdentifier:@"en-US"]];
+id<NFKLiveStream> captions = NFKInferenceOpenLiveStream(speech, nil, &error);   // installs the locale first
+NFKInferenceResult *heard = [captions resultForUnit:[NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: microphoneBuffer }]
+                                              error:&error];
+NSArray<NFKAudioSegment *> *final = heard.segments;           // timed from the stream's first sample
+NSString *tentative = [heard outputForKey:NFKOutputTentativeText];
+[captions close];
+```
+
 Apple's neural video processors. Upscaling and interpolation need macOS 26 on Apple silicon, and
 upscaling runs a model the system downloads once, which `prepare` asks for.
 

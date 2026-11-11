@@ -29,6 +29,8 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         var requiredOptions: Set<String> = []
         /// The engine's own title and help for a parameter, where the shared description does not fit.
         var optionDescriptions: [String: (title: String, help: String)] = [:]
+        /// How the engine runs on a live source, for an engine whose backend opens a live stream.
+        var liveProfile: NFKModelLiveProfile?
         let build: () -> any NFKInferenceBackend
     }
 
@@ -38,6 +40,10 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
                tasks: [NFKModelTaskTranscription], providerClassName: "NFKSpeechAnalyzerProvider",
                optionDescriptions: [NFKParameterSourceLanguage: (
                    "Language", "The language to transcribe, a locale identifier such as en-US. Without one, the user's current locale. A locale used the first time installs its speech assets, which is a download.")],
+               liveProfile: .audioChunkProfile(withInputKeys: [NFKInputAudio],
+                                               outputKeys: [NFKOutputSegments, NFKOutputText, NFKOutputTentativeText],
+                                               stateful: true, chunkDuration: 0.1, sampleRate: 16000, channelCount: 1,
+                                               lookaheadMilliseconds: 0, timings: nil),
                build: { NFKSpeechAnalyzerBackend() }),
         Engine(identifier: "apple-translation", displayName: "Apple Translation", family: "apple-translation",
                summary: "Translates text on device with Apple's Translation framework.",
@@ -112,8 +118,11 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         let outputKeys = backend.supportedOutputKeys ?? []
         let parameterKeys = backend.supportedParameterKeys ?? []
         let inputs = inputKeys.sorted().map { NFKModelPort(key: $0, required: inputKeys.count == 1) }
-        // Every engine here writes each key it declares on every result.
-        let outputs = outputKeys.sorted().map { NFKModelPort.outputPort(withKey: $0, required: true) }
+        // Every engine here writes each key it declares on every result, but the tentative transcript, which
+        // only a live stream writes.
+        let outputs = outputKeys.sorted().map {
+            NFKModelPort.outputPort(withKey: $0, required: $0 != NFKOutputTentativeText)
+        }
         let options = parameterKeys.sorted().map {
             option(for: $0, required: engine.requiredOptions.contains($0), description: engine.optionDescriptions[$0])
         }
@@ -148,6 +157,12 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
                                   license: license,
                                   requirements: requirements,
                                   residencies: nil,
+                                  memoryModel: nil,
+                                  presets: nil,
+                                  modelTypes: nil,
+                                  adapterBases: nil,
+                                  qualityScores: nil,
+                                  liveProfile: engine.liveProfile,
                                   standIn: false,
                                   introducedVersion: "0.4.0",
                                   extensions: nil)

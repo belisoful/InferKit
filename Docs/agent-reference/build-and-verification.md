@@ -256,8 +256,8 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    them, since this package evaluates under `swift test`; they exist so an Xcode run cannot quietly
    cover less than the command line does.
 6. `InferKitAppleSwift/` `swift build` + `swift test` when a change touches that companion. That covers
-   all 39 tests across its three test targets (29 / 6 / 4), one of which skips without an installed
-   translation model. The package carries no per-target shared schemes, so `swift test` is the run that
+   all 45 tests across its three test targets (33 / 7 / 5). One skips without an installed translation
+   model, and the analyzer's live-stream tests skip without installed English speech assets. The package carries no per-target shared schemes, so `swift test` is the run that
    covers all three targets.
 
 7. `Tools/doc-snippets/check-objc.py` when a change touches an Objective-C code block in `README.md`,

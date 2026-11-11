@@ -43,6 +43,21 @@ final class NFKAppleSwiftModelDescriptorsTests: XCTestCase {
         XCTAssertEqual(translator.option(withKey: NFKParameterSourceLanguage)?.title, "Source language")
     }
 
+    func testTheAnalyzerDeclaresALiveTranscription() throws {
+        let descriptors = NFKAppleSwiftModelDescriptors.modelDescriptors()
+        let analyzer = try XCTUnwrap(descriptors.first { $0.identifier == "apple-speech-analyzer" })
+        let live = try XCTUnwrap(analyzer.liveProfile)
+        XCTAssertEqual(live.unit, NFKModelLiveUnitAudioChunk)
+        XCTAssertEqual(live.inputKeys, [NFKInputAudio])
+        XCTAssertEqual(live.outputKeys, [NFKOutputSegments, NFKOutputText, NFKOutputTentativeText])
+        XCTAssertTrue(live.isStateful)
+        XCTAssertEqual(live.sampleRate, 16000)
+        XCTAssertEqual(live.channelCount, 1)
+        XCTAssertEqual(analyzer.outputs.first { $0.key == NFKOutputTentativeText }?.isRequired, false,
+                       "only a live stream writes the tentative transcript")
+        XCTAssertEqual(descriptors.filter { $0.liveProfile != nil }.map(\.identifier), ["apple-speech-analyzer"])
+    }
+
     func testEveryDescriptorIsASystemModelOfThisPackage() {
         for descriptor in NFKAppleSwiftModelDescriptors.modelDescriptors() {
             XCTAssertEqual(descriptor.engine, NFKModelEngineAppleSwift)
@@ -59,7 +74,7 @@ final class NFKAppleSwiftModelDescriptorsTests: XCTestCase {
     }
 
     func testTheBackendsDeclareTheOutputsTheyWrite() {
-        XCTAssertEqual(NFKSpeechAnalyzerBackend().supportedOutputKeys, [NFKOutputText, NFKOutputSegments])
+        XCTAssertEqual(NFKSpeechAnalyzerBackend().supportedOutputKeys, [NFKOutputText, NFKOutputSegments, NFKOutputTentativeText])
         XCTAssertEqual(NFKTranslationBackend().supportedOutputKeys, [NFKOutputText])
         XCTAssertEqual(NFKVisionDocumentBackend().supportedOutputKeys, [NFKOutputText, NFKOutputStructured])
         XCTAssertEqual(NFKVisionSmudgeBackend().supportedOutputKeys, [NFKOutputClassifications])

@@ -90,7 +90,9 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
 
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
 
-    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputSegments] }
+    /// The result keys the backend writes: the transcription and its spans, and on a live stream the
+    /// tentative transcript (`openLiveStream(parameters:)`).
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputSegments, NFKOutputTentativeText] }
 
     /// The request parameters the backend reads: the language to transcribe. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> { [NFKParameterSourceLanguage] }
@@ -111,6 +113,13 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
             throw error(.error_InferenceUnsupported, "NFKParameterSourceLanguage is a locale identifier such as en-US")
         }
         return Locale(identifier: identifier)
+    }
+
+    /// Installs `locale`'s assets unless this backend has prepared it.
+    func prepareIfNeeded(_ locale: Locale) throws {
+        if !isPrepared(locale) {
+            try installAssets(for: locale)
+        }
     }
 
     private func isPrepared(_ locale: Locale) -> Bool {
@@ -155,9 +164,7 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
             throw Self.error(.error_InferenceMissingInput, "no audio file is set under NFKInputAudio")
         }
         let locale = try Self.locale(for: request, default: self.locale)
-        if !isPrepared(locale) {
-            try installAssets(for: locale)
-        }
+        try prepareIfNeeded(locale)
         let outcome = NFKAppleOutcome<NFKInferenceResult>()
         let semaphore = DispatchSemaphore(value: 0)
         let task = Task.detached(priority: .userInitiated) {

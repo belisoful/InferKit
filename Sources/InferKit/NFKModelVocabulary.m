@@ -266,6 +266,7 @@ static NSDictionary<NSString *, NSString *> *NFKResultKeyValueTypes(void)
 			NFKOutputPose:							NFKModelValueTypeKeypoints,
 			NFKOutputClassifications:				NFKModelValueTypeClassifications,
 			NFKOutputSegments:						NFKModelValueTypeSegments,
+			NFKOutputTentativeText:					NFKModelValueTypeText,
 			NFKOutputLanguage:						NFKModelValueTypeText,
 			NFKOutputMIDI:							NFKModelValueTypeMIDI,
 			NFKOutputBeats:							NFKModelValueTypeBeats,

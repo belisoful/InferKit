@@ -11,6 +11,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitAppleSwift (companion)
 
+#### The speech analyzer captions a live source
+
+- `NFKSpeechAnalyzerBackend` opens a live stream (`openLiveStream(parameters:)`) that feeds one analyzer
+  session from an input sequence. Each unit's audio, in any format, is converted to the analyzer's and
+  appended, timed from the stream's first sample. A unit's result holds the spans the analyzer finalized
+  since the unit before under `NFKOutputSegments`, their transcripts joined under `NFKOutputText`, and the
+  words after them that it may still revise under `NFKOutputTentativeText`. `reset` starts a new session.
+- The `apple-speech-analyzer` descriptor carries a stateful audio-chunk live profile, and its outputs list
+  `NFKOutputTentativeText` as optional.
+
 #### The Vision document and smudge readers bound their waits
 
 - `NFKVisionDocumentBackend` and `NFKVisionSmudgeBackend` take a `responseTimeout`, 60 seconds by default.
@@ -107,6 +117,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   case and default guardrails, whatever the caller needed.
 
 ### Core (`InferKit`)
+
+#### A live transcription's tentative words have a key
+
+- `NFKOutputTentativeText` (`tentativeText`) carries the transcript a live transcription holds past its
+  final text: the words a recognizer has heard but may still revise. Each unit's result carries the whole
+  tentative transcript, which replaces the one before.
 
 #### An unstated precision falls back where the default does not fit
 
