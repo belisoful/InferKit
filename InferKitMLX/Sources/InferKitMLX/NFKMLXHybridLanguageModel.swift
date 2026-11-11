@@ -626,46 +626,58 @@ public final class NFKMLXHybridLanguageNet: Module {
     ///
     /// @discussion The prompt runs in passes of at most `limit` tokens, halved while a pass's attention scores,
     /// four bytes for each head, query, and key it sees, would pass `budget` bytes. A pass shorter than the
-    /// rest of the prompt keeps a whole number of the delta rule's 64-position chunks, so the chunked
-    /// recurrence splits where a single pass would. A failed streamed read or MLX error ends the passes.
+    /// rest of the prompt ends on a multiple of the delta rule's 64-position chunk, counted from the
+    /// sequence's start, so the chunked recurrence splits where a single pass from the start would. A pass
+    /// also ends at each of `stops`, positions of the sequence, where `atStop` sees the cache. A failed
+    /// streamed read or MLX error ends the passes.
     func prefill(_ prompt: [Int], cache: NFKMLXHybridCache, limit: Int = NFKMLXLanguageNet.defaultPrefillChunk,
-                 budget: Int = NFKMLXLanguageNet.prefillScoreBudget) -> MLXArray {
+                 budget: Int = NFKMLXLanguageNet.prefillScoreBudget, stops: [Int] = [],
+                 atStop: (NFKMLXHybridCache) -> Void = { _ in }) -> MLXArray {
         var start = 0
+        var stops = stops.drop { $0 <= cache.offset }
         var logits: MLXArray
         repeat {
-            let length = prefillPassLength(cached: cache.maskCacheLength, remaining: prompt.count - start,
-                                           limit: limit, budget: budget)
+            var length = prefillPassLength(cached: cache.maskCacheLength, remaining: prompt.count - start,
+                                           limit: limit, budget: budget, position: cache.offset)
+            if let stop = stops.first {
+                length = Swift.min(length, stop - cache.offset)
+            }
             let slice = prompt[start ..< start + length].map { Int32($0) }
             logits = lastLogits(MLXArray(slice).reshaped([1, length]), cache: cache)
             start += length
-            if start < prompt.count {
+            if cache.offset == stops.first {
+                eval(logits)
+                atStop(cache)
+                stops = stops.dropFirst()
+            } else if start < prompt.count {
                 eval(logits)                                    // free a pass's activations before the next
             }
         } while start < prompt.count && layerStream?.readFailure == nil && !NFKMLXErrorScope.hasFailed
         return logits[0]
     }
 
-    /// Generation through a cache of this decoder: a fresh cache under the window and quantization a run sets,
-    /// filled by ``prefill(_:cache:limit:budget:)``, then one token a pass.
+    /// Generation through a cache of this decoder: a cache filled by ``prefill(_:cache:limit:budget:stops:atStop:)``,
+    /// then one token a pass.
     var cachedGeneration: NFKDecoderCachedGeneration {
-        NFKDecoderCachedGeneration { [self] prompt, window, quantization in
-            let cache = NFKMLXHybridCache(configuration: configuration, window: window, quantization: quantization)
-            let logits = prefill(prompt, cache: cache)
-            return (logits, { token in self.lastLogits(token.reshaped([1, 1]), cache: cache)[0] })
-        }
+        NFKDecoderCachedGeneration(
+            configuration: configuration, elementBytes: model.norm.weight.dtype.size,
+            prefill: { [self] prompt, cache, stops, atStop in prefill(prompt, cache: cache, stops: stops, atStop: atStop) },
+            step: { [self] token, cache in lastLogits(token.reshaped([1, 1]), cache: cache)[0] })
     }
 
     /// The tokens the next prefill pass runs: the smaller of `remaining` and `limit`, halved while the scores
     /// of its queries over `cached` earlier keys and its own would pass `budget` bytes, then, short of
-    /// `remaining`, rounded down to a multiple of 64 where it holds one. At least one.
+    /// `remaining`, shortened to end on a multiple of 64 counted from position 0, where the pass is at
+    /// `position`. At least one.
     func prefillPassLength(cached: Int, remaining: Int, limit: Int,
-                           budget: Int = NFKMLXLanguageNet.prefillScoreBudget) -> Int {
+                           budget: Int = NFKMLXLanguageNet.prefillScoreBudget, position: Int = 0) -> Int {
         var length = Swift.min(remaining, limit)
         while length > 1 && configuration.headCount * length * (cached + length) * 4 > budget {
             length = (length + 1) / 2
         }
-        if length < remaining && length >= 64 {
-            length -= length % 64
+        let overrun = (position + length) % 64
+        if length < remaining && length > overrun {
+            length -= overrun
         }
         return length
     }

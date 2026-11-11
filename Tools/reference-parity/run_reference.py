@@ -10195,6 +10195,67 @@ def run_qwen3_5_cached(image, checkpoint):
     return logits.float().contiguous()
 
 
+def run_qwen3_5_conversation(image, checkpoint):
+    """Qwen3.5 over a two-turn chat, each turn a whole run of transformers' cached generation, at float32.
+
+    `--checkpoint` is a release directory (Qwen3.5-2B by default in the manifest). Turn 1 renders a system
+    prompt and a question through the release's chat template and generates `IK_QWEN35_CONVERSATION_STEPS`
+    greedy tokens. Turn 2 renders turn 1's messages, the reply as the assistant's turn, and a follow-up
+    question, which the template writes without the reply's opening `<think>` block, and generates again
+    from the whole prompt. The port continues turn 2 from what it kept of turn 1 and is compared with this
+    full re-run. The record carries both turns' prompt ids, the position each turn's generation prompt
+    starts at, both continuations, and turn 2's raw logits before each generated token. `min_new_tokens` holds
+    each turn to the step count by suppressing the end id, so a chosen token can differ from the raw argmax.
+    """
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    steps = int(os.environ.get("IK_QWEN35_CONVERSATION_STEPS", "16"))
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.float32).eval()
+    system = " ".join(["The river bends past the old mill, where the miller's daughter counts the sacks of grain "
+                       "and writes each number in a ledger bound in green cloth."] * 4)
+    first = [{"role": "system", "content": system},
+             {"role": "user", "content": "What does the miller's daughter keep her numbers in?"}]
+
+    def tokens(messages, generation):
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=generation)
+        return tokenizer(text, return_tensors="pt").input_ids
+
+    # The prompts hold `<|im_end|>`, the tokenizer's end token, which is not the end id the release's config
+    # names; given as the pad id without a mask, generate would mask every one of them.
+    def generate(ids):
+        with torch.no_grad():
+            out = model.generate(ids, attention_mask=torch.ones_like(ids), max_new_tokens=steps, min_new_tokens=steps,
+                                 do_sample=False, use_cache=True, output_logits=True, return_dict_in_generate=True,
+                                 pad_token_id=tokenizer.eos_token_id)
+        return out.sequences[0, ids.shape[1]:], torch.stack([step[0] for step in out.logits])
+
+    first_ids = tokens(first, True)
+    first_reply, _ = generate(first_ids)
+    second = first + [{"role": "assistant", "content": tokenizer.decode(first_reply, skip_special_tokens=True)},
+                      {"role": "user", "content": "And what colour is its binding?"}]
+    second_ids = tokens(second, True)
+    second_reply, logits = generate(second_ids)
+
+    def turn_start(messages, ids):
+        opening = tokens(messages, False)[0]
+        shared = 0
+        while shared < min(len(opening), ids.shape[1]) and opening[shared] == ids[0, shared]:
+            shared += 1
+        return shared
+
+    globals()["_extra"] = {
+        "turn1.tokens": first_ids[0].to(torch.int32).contiguous(),
+        "turn1.start": torch.tensor([turn_start(first, first_ids)], dtype=torch.int32),
+        "turn1.continuation": first_reply.to(torch.int32).contiguous(),
+        "turn2.tokens": second_ids[0].to(torch.int32).contiguous(),
+        "turn2.start": torch.tensor([turn_start(second, second_ids)], dtype=torch.int32),
+        "continuation": second_reply.to(torch.int32).contiguous(),
+    }
+    return logits.float().contiguous()
+
+
 def _deepseek_v41_serve_gemms(reference, net, args, tokenizer):
     """Make a float net compute its GEMMs the way the release serves them.
 
@@ -31083,6 +31144,8 @@ def run_wan_lora_musubi(image):
 
 
 MODELS["wan_lora_musubi"] = run_wan_lora_musubi
+CHECKPOINT_MODELS["qwen3_5_conversation"] = run_qwen3_5_conversation
+
 
 if __name__ == "__main__":
     sys.exit(main())

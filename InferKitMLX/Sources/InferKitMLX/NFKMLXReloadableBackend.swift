@@ -161,8 +161,10 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
     @objc public var loadOptionValues: [String: Any] { lifecycle.loadOptionValues }
 
     /// Releases the held backend, which frees its weights and caches; the next run builds it again. With
-    /// runs in flight, the backend is released when the last of them ends. Introduced in InferKit 0.4.0.
+    /// runs in flight, the backend is released when the last of them ends. An idle backend first releases its
+    /// conversation caches, which a backend that spills them writes to disk. Introduced in InferKit 0.4.0.
     @objc public func unload() {
+        _ = releaseIdleConversationCaches()
         lifecycle.unload()
     }
 

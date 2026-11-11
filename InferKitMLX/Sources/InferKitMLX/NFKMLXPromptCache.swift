@@ -226,6 +226,9 @@ final class NFKMLXConversationStates<State: NFKMLXConversationState> {
 
     var heldBytes: Int { states.values.reduce(0) { $0 + $1.allocatedBytes } }
 
+    /// Every conversation and its state, least recently used first.
+    var held: [(name: String, state: State)] { order.compactMap { name in states[name].map { (name, $0) } } }
+
     /// The conversation's state, marked most recently used. A conversation without one, or whose
     /// state `isUsable` refuses, starts a new one from `make`.
     func state(for conversation: String, isUsable: (State) -> Bool = { _ in true },
@@ -240,11 +243,14 @@ final class NFKMLXConversationStates<State: NFKMLXConversationState> {
         return made
     }
 
-    /// Evicts the least recently used conversations other than `kept` until the states fit the budget.
-    func evict(keeping kept: String? = nil) {
+    /// Evicts the least recently used conversations other than `kept` until the states fit the budget,
+    /// handing each to `releasing` as it goes.
+    func evict(keeping kept: String? = nil, releasing: (String, State) -> Void = { _, _ in }) {
         var held = heldBytes
         for conversation in order where held > byteBudget && conversation != kept {
-            held -= states[conversation]?.allocatedBytes ?? 0
+            guard let state = states[conversation] else { continue }
+            held -= state.allocatedBytes
+            releasing(conversation, state)
             remove(conversation)
         }
     }

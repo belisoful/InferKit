@@ -2041,6 +2041,26 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The hybrid decoder continues a conversation from its kept cache
+
+- `NFKMLXDecoderBackend` over a Qwen3.5 or Qwen3.8 release keeps each conversation's cache between requests, so
+  a follow-up turn prefills only what it adds. A request continues the conversation its
+  `NFKParameterConversationKey` names, or, naming none, the kept conversation its prompt shares the longest
+  prefix with. `NFKMLXGenerationParameterKey.reusesPromptCache` set to NO keeps nothing. The usage reports the
+  reused positions under `NFKUsageCachedTokens`.
+- The recurrence layers' state cannot roll back, so a conversation snapshots it at the 64-position chunk
+  boundary before each turn's generation prompt, every 4096 positions, and at each reply's end, keeping the
+  newest four. A follow-up whose template renders the last reply in other tokens than the model wrote resumes
+  from the turn-start snapshot; the attention layers' keys and values roll back to it, 8-bit ones included.
+- The conversations share a budget the memory affords beside the model, after the weights, the reserve, and
+  one run's cache at the window (`conversationCacheByteBudget`, which a caller may fix). The conversation a
+  request just ran is always kept.
+- A conversation the budget lets go, or that `releaseIdleConversationCaches` or an unload releases, is written to
+  `conversationSpillDirectoryURL`, a directory under the user's caches that only the same release and weights
+  read, within `conversationSpillByteBudget` (8 GiB). A later request continues it from disk, after a restart
+  too. A model that holds adapters writes none.
+- A prefill pass short of the prompt now ends on a multiple of 64 counted from the sequence's start, so a pass
+  that starts mid-chunk splits the delta rule where a prefill from the start splits it.
 #### The diffusion transformers hold LoRA adapters beside their weights
 
 - FLUX.2, Stable Diffusion 3 and 3.5, SANA, Z-Image, LTX-Video, and Stable Audio Open take the

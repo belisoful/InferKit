@@ -537,8 +537,9 @@ attention and feed-forward.
   recently used first, skipping the conversation that ran, so one conversation over the budget
   keeps its cache. The unnamed retained cache is separate and keeps its old rule: a request that
   does not ask for reuse drops it. A named request leaves it alone. `NFKMLXLanguageBackend`,
-  `NFKMLXGemma3Backend`, `NFKMLXDeepSeekBackend`, and `NFKMLXGraniteBackend` keep conversation caches;
-  Gemma 3n, the multimodal backends, and the prefill-only backends do not. The store is generic
+  `NFKMLXGemma3Backend`, `NFKMLXDeepSeekBackend`, `NFKMLXGraniteBackend`, and the cached
+  `NFKMLXDecoderBackend` (Qwen3.5/3.8, below) keep conversation caches; Gemma 3n, the multimodal backends,
+  and the prefill-only backends do not. The store is generic
   (`NFKMLXConversationStates<State>`) and `NFKMLXConversationKeeper` pairs it with the status
   snapshot; `NFKMLXConversation.name(of:)` reads the key for all three.
   - Gemma 3 (`NFKMLXGemma3PromptCache`) keeps rows the way the dense cache does, generated ones
@@ -642,7 +643,41 @@ attention and feed-forward.
   streamed layer whose weights move), and an attention layer reads the cache through
   `MLXFast.scaledDotProductAttention`. Through the cache the float32 2B matches the uncached pass token for
   token, worst logit cosine 0.9999999999947 over 16 steps after a 201-token prompt
-  (`IK_PARITY_QWEN3_5_CACHED`). The 27B at 4 bits with an 8-bit cache, release build, M1 Max: 13.3 tokens/s
+  (`IK_PARITY_QWEN3_5_CACHED`).
+  **Conversations (2026-11-10):** the cached `NFKMLXDecoderBackend` keeps an `NFKMLXHybridConversation` per
+  conversation in an `NFKMLXConversationKeeper`: the live `NFKMLXHybridCache`, the token ids it holds, and up to
+  four `NFKMLXHybridSnapshot`s, evaluated copies (`x * 1`, since a slice pins its pass) of every recurrence
+  layer's convolution inputs and state. Snapshot positions (`snapshotPositions`): the chunk boundary at or
+  before the turn start, each multiple of 4096 inside the prefill, and the reply's end. The turn start is where
+  the prompt's tokens part from the same messages rendered without the generation prompt. `resume(for:)`
+  continues the live cache when the prompt extends every held token, else rolls the attention slots back
+  (`rollback(by:layers:)` over the full-attention layers, since the linear slots hold no rows) to the newest
+  snapshot inside the shared prefix and restores the recurrence from it, else starts over; a window that has
+  dropped positions starts over. The reason a snapshot is needed: a turn's prompt ends `<think>\n`, and the next
+  rendering writes `<think>` then `\n\n` or the reasoning, which BPE splits differently, so exact extension
+  (the Granite/DeepSeek rule) fails one token before the old prompt's end on nearly every turn. A pass short of
+  the prompt ends on an absolute multiple of 64 (`prefillPassLength(position:)`), identical to the old rule
+  from position 0, so a resumed prefill splits the delta rule's chunks where a full one does. Lookup: the key,
+  else the unnamed conversation (`\u{0}unnamed.<UUID>`) the prompt resumes furthest into, taken only when the
+  resumed prefix is at least what the rollback discards, so one client never discards most of another's
+  conversation. Budget: `NFKMLXResidencyBudget.current()` less the weight bytes, the reserve, and
+  `NFKMLXHybridConversation.bytes` at the window (or context length), recomputed per run unless set; the
+  conversation that ran is kept. Spill: evicted, released, and unloaded conversations go to
+  `NFKMLXConversationSpill` (arrays in safetensors plus a JSON record of name, tokens, snapshot positions, and
+  options; a read removes the files; least recently written trimmed past 8 GiB) under
+  `Caches/InferKit/Conversations/<digest of release path, config.json mtime, identifier, precision and
+  quantization>`; a model holding adapters spills none. 27B sizes: one snapshot about 154 MB, the 8-bit keys and
+  values about 33 KB a token. Drafted runs keep nothing. Parity: `testTheReleasedDecoderContinuesATurnAsAFullRerunDoes`
+  (`IK_PARITY_QWEN3_5_CONVERSATION`, oracle mode `qwen3_5_conversation`): the float32 2B's second turn of a
+  templated chat (186 tokens) resumes at the turn-start snapshot 128 and gives transformers 5.17's full re-run
+  at worst logit cosine 0.9999999999908 over 16 steps, the greedy tokens equal; a fresh run of the whole prompt
+  measures the same 0.9999999999908, and the resumed run agrees with it to 0.99999999999999. The oracle passes
+  an all-ones attention mask: given `pad_token_id` `<|im_end|>`, which is not the release's configured end id,
+  `generate` masks every `<|im_end|>` in the prompt. Its `min_new_tokens` suppresses the end id before choosing,
+  so the test compares the greedy token with the raw logits' argmax. The 27B served through the chat route with no
+  conversation key (4-bit weights, a 64K window, an 8-bit cache, `IK_TIME_QWEN3_8_27B_FOLLOWUP`): a 24,806-token
+  first turn answered its first delta in 898 s (swap-bound, 16 GB of swap during that prefill), and the two
+  follow-ups, 24,869 and 25,018 of their tokens cached, in 3.2 s and 3.0 s; footprint 17.2 GB after, peak 19.5 GB. The 27B at 4 bits with an 8-bit cache, release build, M1 Max: 13.3 tokens/s
   decoding after 64 tokens, 8.9 after 23,000, a 23,000-token prefill at 64 tokens/s, peak 17.6 GiB under the
   standing limits; a debug build decodes at 8. A drafted run keeps `NFKMLXPrefillDrafting`, which re-runs the sequence: drafting
   through the cache, which would roll the recurrent state back on a rejected proposal, is not built. A

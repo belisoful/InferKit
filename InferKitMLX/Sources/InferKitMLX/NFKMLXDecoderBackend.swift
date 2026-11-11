@@ -8,6 +8,7 @@
 //  encoded as given.
 //
 
+import CryptoKit
 import Foundation
 import InferKit
 import MLX
@@ -30,13 +31,24 @@ final class NFKDecoderBackendHolder: @unchecked Sendable {
     }
 }
 
-/// Generation over a decoder that keeps its state between passes: `start` fills a fresh cache, bounded by
-/// a window and stored under a quantization where they are set, with the prompt, and returns the logits
-/// `[vocabulary]` after it and the step that runs one more token, a scalar that may be unevaluated, through
-/// the cache and returns the logits after that token.
+/// Generation over a hybrid decoder that keeps its state between passes: `prefill` runs tokens through a
+/// cache, pausing at each of a list of positions for a callback, and returns the logits `[vocabulary]` after
+/// the last; `step` runs one more token, a scalar that may be unevaluated, and returns the logits after it.
+/// `elementBytes` is the size of an activation, which the cache stores keys and values at.
 struct NFKDecoderCachedGeneration {
-    let start: (_ prompt: [Int], _ window: Int?, _ quantization: NFKMLXKeyValueCache.Quantization?)
-        -> (logits: MLXArray, step: (MLXArray) -> MLXArray)
+    let configuration: NFKMLXHybridConfiguration
+    let elementBytes: Int
+    let prefill: (_ tokens: [Int], _ cache: NFKMLXHybridCache, _ stops: [Int],
+                  _ atStop: (NFKMLXHybridCache) -> Void) -> MLXArray
+    let step: (_ token: MLXArray, _ cache: NFKMLXHybridCache) -> MLXArray
+}
+
+/// What a run asks of the kept conversations: whether it keeps one at all, the conversation its request
+/// names, and the position its generation prompt begins at, which the conversation snapshots before.
+struct NFKDecoderConversationRun {
+    let reuses: Bool
+    let name: String?
+    let turnStart: Int?
 }
 
 /// A prefill-only text-generation backend over a decoder whose forward maps token ids to logits.
@@ -48,10 +60,12 @@ struct NFKDecoderCachedGeneration {
 /// shows comes back under `NFKOutputReasoning`, split at the markers its template writes. Tools under
 /// `NFKParameterTools` render into the template, and the calls the model writes come back under
 /// `NFKOutputToolCalls`, read in the syntax the template shows (``NFKMLXToolCallFormat``). Generation stops at the
-/// tokenizer's end-of-sequence marker or at any id the release's `generation_config.json` lists. Each
-/// step re-runs the whole sequence, so a reply's cost grows with its length; a smaller release of the
-/// same vocabulary drafting for it proposes several tokens a pass (``hasDraftModel``). Run inference off
-/// the render thread. Introduced in InferKit 0.4.0.
+/// tokenizer's end-of-sequence marker or at any id the release's `generation_config.json` lists. A decoder
+/// without a cache re-runs the whole sequence each step, so a reply's cost grows with its length; a smaller
+/// release of the same vocabulary drafting for it proposes several tokens a pass (``hasDraftModel``). A
+/// cached decoder (``isCached``) keeps each conversation's cache between requests, so a follow-up turn
+/// prefills only what it adds (``conversationCacheByteBudget``). Run inference off the render thread.
+/// Introduced in InferKit 0.4.0.
 @objc(NFKMLXDecoderBackend)
 public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     private let holder: NFKDecoderBackendHolder
@@ -65,6 +79,14 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     private let releaseSampling: NFKMLXReleaseSampling?
     private let modelInfoCache = NFKMLXModelInfoCache()
     private let layerStream: NFKMLXLayerStream?
+    /// One cached generation at a time: a run moves a conversation's cache through the shared decoder.
+    private let generationLock = NSLock()
+    /// The conversations' caches, read and written under `generationLock`.
+    private let conversations = NFKMLXConversationKeeper<NFKMLXHybridConversation>(byteBudget: 0)
+    /// The budget a caller set, or nil for the budget the memory left beside the model affords.
+    private var setConversationByteBudget: Int?
+    /// Where conversations the budget lets go are written, read and written under `generationLock`.
+    private var spill: NFKMLXConversationSpill?
 
     /// How many decoder layers the model leaves in the release, read in their turn on every pass; 0
     /// where every layer is held. Introduced in InferKit 0.4.0.
@@ -105,6 +127,29 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         beginOfSequence = tokenizer.bosTokenId >= 0 ? tokenizer.bosTokenId : nil
         self.stopTokens = stopTokens
         super.init()
+        if cached != nil, let releaseDirectoryURL {
+            let weights = "\(modelInfo[NFKModelInfoPrecision] ?? "")|\(modelInfo[NFKModelInfoQuantizationBits] ?? "")"
+                + "|\(modelInfo[NFKModelInfoQuantizationGroupSize] ?? "")"
+            spill = NFKMLXConversationSpill(directory: Self.defaultSpillDirectory(release: releaseDirectoryURL,
+                                                                                  identifier: identifier, weights: weights),
+                                            byteBudget: Self.defaultSpillByteBudget)
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk where no budget is set.
+    static let defaultSpillByteBudget = 8 << 30
+
+    /// A directory under the user's caches named by a digest of the release's path, its configuration's
+    /// modification date, the model's identifier, and the weights' precision and quantization, so another
+    /// release, the same one changed, or other weights find none of these conversations.
+    static func defaultSpillDirectory(release: URL, identifier: String, weights: String) -> URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let configured = (try? release.appendingPathComponent("config.json")
+            .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)?.timeIntervalSince1970 ?? 0
+        let identity = "\(release.standardizedFileURL.path)|\(configured)|\(identifier)|\(weights)"
+        let digest = SHA256.hash(data: Data(identity.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+        return caches.appendingPathComponent("InferKit/Conversations/\(digest)", isDirectory: true)
     }
 
     /// The decoder, tokenizer, chat template, and stop ids a release directory supplies; `modules`
@@ -169,7 +214,8 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         if isCached {
             keys.formUnion([NFKMLXGenerationParameterKey.contextWindow, NFKMLXGenerationParameterKey.cacheQuantizationBits,
                             NFKMLXGenerationParameterKey.cacheQuantizationGroupSize,
-                            NFKMLXGenerationParameterKey.cacheQuantizationPerChannelKeys])
+                            NFKMLXGenerationParameterKey.cacheQuantizationPerChannelKeys,
+                            NFKParameterConversationKey, NFKMLXGenerationParameterKey.reusesPromptCache])
         }
         return keys
     }
@@ -231,14 +277,18 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             NFKMLXLanguageBackend.applyMLXParameters(from: request, to: &cacheOptions)
         }
 
-        let (promptTokens, format) = try prompt(for: request)
+        let (promptTokens, format, turnStart) = try prompt(for: request, findsTurnStart: isCached)
+        let reuses = (request.parameter(forKey: NFKMLXGenerationParameterKey.reusesPromptCache) as? NSNumber)?.boolValue ?? true
+        let continued = NFKDecoderConversationRun(reuses: reuses, name: NFKMLXConversation.name(of: request),
+                                                   turnStart: turnStart)
         let decode: ([Int]) -> String = { [holder] in holder.tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reasoningFormat = request.messages != nil ? chatTemplate.flatMap(NFKMLXReasoningFormat.detected(inChatTemplate:)) : nil
         let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
         // The held adapters read the run's strengths as each pass builds its graph.
-        let (produced, limit) = try NFKMLXAdapterRun.$strengths.withValue(strengths) {
+        let (produced, limit, cachedTokens) = try NFKMLXAdapterRun.$strengths.withValue(strengths) {
             try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                         draftTokens: draftTokens, cacheOptions: cacheOptions) { limit in
+                         draftTokens: draftTokens, cacheOptions: cacheOptions, strengths: strengths,
+                         conversation: continued) { limit in
                 job.map { job in
                     NFKMLXLanguageBackend.partialReporter(job, prompt: promptTokens, limit: limit, format: reasoningFormat,
                                                           callMarkers: NFKMLXToolCalling.templateTools(for: request) != nil ? format?.markers ?? [] : [],
@@ -254,7 +304,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             outputs[NFKOutputReasoning] = reasoning
         }
         outputs[NFKOutputFinishReason] = NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit, outputs: outputs)
-        outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+        outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cachedTokens,
                                                       outputTokens: produced.count, reasoningTokens: reasoningTokens)
         return NFKInferenceResult(outputs: outputs)
     }
@@ -263,11 +313,14 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// tools included, and tokenized as a run tokenizes it. Runs no model. Introduced in InferKit 0.4.0.
     @objc(tokenCountForRequest:error:)
     public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
-        NSNumber(value: try prompt(for: request).tokens.count)
+        NSNumber(value: try prompt(for: request, findsTurnStart: false).tokens.count)
     }
 
-    /// A run's prompt as token ids, and the syntax its calls are read in.
-    private func prompt(for request: NFKInferenceRequest) throws -> (tokens: [Int], format: NFKMLXToolCallFormat?) {
+    /// A run's prompt as token ids, the syntax its calls are read in, and, where `findsTurnStart` asks and
+    /// the prompt renders a message list through the chat template, the position its generation prompt
+    /// begins at: where the tokens part from the same messages rendered without one.
+    private func prompt(for request: NFKInferenceRequest, findsTurnStart: Bool) throws
+        -> (tokens: [Int], format: NFKMLXToolCallFormat?, turnStart: Int?) {
         var variables: [String: Any] = [:]
         if let chatTemplate, templateReadsReasoningEffort {
             variables = try NFKMLXLanguageBackend.templateVariables(for: request, template: .jinja(template: chatTemplate))
@@ -275,12 +328,28 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         }
         let format = toolCallFormat(for: request)
-        return (try tokens(for: request, toolCallFormat: format, variables: variables), format)
+        let tokens = try tokens(for: request, toolCallFormat: format, variables: variables)
+        guard findsTurnStart, let opening = try openingTokens(for: request, toolCallFormat: format, variables: variables) else {
+            return (tokens, format, nil)
+        }
+        return (tokens, format, zip(tokens, opening).prefix { $0.0 == $0.1 }.count)
     }
 
     /// The syntax the model's calls are read in: the request's, or the one the chat template shows.
     private func toolCallFormat(for request: NFKInferenceRequest) -> NFKMLXToolCallFormat? {
         NFKMLXToolCalling.format(for: request, template: chatTemplate)
+    }
+
+    /// A message list rendered through the chat template without the generation prompt, as token ids; nil
+    /// for a request without one or a release without a template.
+    private func openingTokens(for request: NFKInferenceRequest, toolCallFormat: NFKMLXToolCallFormat?,
+                               variables: [String: Any]) throws -> [Int]? {
+        guard let chatTemplate, let original = request.messages else { return nil }
+        let messages = NFKMLXToolCalling.templateMessages(original, format: toolCallFormat, source: identifier)
+        let rendered = try NFKMLXChatTemplateRenderer.render(chatTemplate, messages: messages, addGenerationPrompt: false,
+                                                             tools: NFKMLXToolCalling.templateTools(for: request),
+                                                             variables: variables)
+        return holder.tokenizer.encode(rendered).map(\.intValue)
     }
 
     /// The prompt as token ids. A message list renders through the chat template, which places its own
@@ -305,13 +374,15 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Generation. With a draft and `draftTokens` above 0, each round of proposals runs the whole sequence
-    /// through the decoder (``NFKMLXPrefillDrafting``). Otherwise a cached decoder fills its cache with the
-    /// prompt and then runs each new token alone, under the window and cache quantization `cacheOptions` set,
-    /// and a decoder without a cache runs the whole growing sequence each step. `onToken`, made for the run's
-    /// token limit, sees each token, and answering false ends the run.
+    /// through the decoder (``NFKMLXPrefillDrafting``). Otherwise a cached decoder continues the conversation
+    /// `conversation` names or the prompt's prefix finds (``cachedGenerate``), and a decoder without a cache
+    /// runs the whole growing sequence each step. `onToken`, made for the run's token limit, sees each token,
+    /// and answering false ends the run. Answers the tokens produced, the limit, and how many of the prompt's
+    /// tokens a kept cache already held.
     private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
-                          draftTokens: Int, cacheOptions: NFKMLXGenerationOptions,
-                          onToken makeOnToken: (Int) -> ((Int) -> Bool)?) throws -> (tokens: [Int], limit: Int) {
+                          draftTokens: Int, cacheOptions: NFKMLXGenerationOptions, strengths: [Float]?,
+                          conversation: NFKDecoderConversationRun,
+                          onToken makeOnToken: (Int) -> ((Int) -> Bool)?) throws -> (tokens: [Int], limit: Int, cached: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
@@ -319,27 +390,10 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
                                                   window: isCached ? cacheOptions.contextWindow : nil, source: identifier)
         let onToken = makeOnToken(limit)
         if let cached = holder.cached, holder.draft == nil || draftTokens <= 0 {
-            guard limit > 0 else { return ([], limit) }
-            let (logits, step) = cached.start(promptTokens, cacheOptions.contextWindow, cacheOptions.cacheQuantization)
-            // Each pass is built on the previous token before that token is read, so the graph of one pass is
-            // built while the GPU runs the one before it. A run that stops leaves one pass unread.
-            var token = sampling.token(logits, seed: seed, step: 0)
-            asyncEval(token)
-            for index in 0 ..< limit {
-                var following: MLXArray?
-                if index + 1 < limit {
-                    following = sampling.token(step(token), seed: seed, step: index + 1)
-                    asyncEval(following!)
-                }
-                let next = token.item(Int.self)
-                try verifyStream()
-                if stopTokens.contains(next) || NFKMLXErrorScope.hasFailed { break }
-                produced.append(next)
-                if let onToken, !onToken(next) { break }
-                guard let following else { break }
-                token = following
-            }
-            return (produced, limit)
+            guard limit > 0 else { return ([], limit, 0) }
+            return try cachedGenerate(promptTokens, cached: cached, sampling: sampling, limit: limit, seed: seed,
+                                      options: cacheOptions, strengths: strengths, conversation: conversation,
+                                      onToken: onToken)
         }
         if let draft = holder.draft, draftTokens > 0 {
             var report = NFKMLXSpeculativeReport()
@@ -348,7 +402,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
                                                        verify: verifyStream, proposals: draftTokens, sampling: sampling,
                                                        limit: max(limit, 0), seed: seed, stops: stopTokens,
                                                        report: &report, onToken: onToken),
-                    limit)
+                    limit, 0)
         }
         for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
@@ -360,8 +414,251 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             tokens.append(next)
             if let onToken, !onToken(next) { break }
         }
-        return (produced, limit)
+        return (produced, limit, 0)
     }
+
+    /// Generation through the decoder's cache: the prompt continues a kept conversation from the furthest
+    /// position it can, prefills the rest, and then runs each new token alone, under the window and cache
+    /// quantization `options` set. The conversation keeps the positions the run wrote, and snapshots its
+    /// recurrent state where ``NFKMLXHybridConversation`` places them. A run that fails discards it.
+    private func cachedGenerate(_ promptTokens: [Int], cached: NFKDecoderCachedGeneration, sampling: NFKMLXStepSampling,
+                                limit: Int, seed: UInt64?, options: NFKMLXGenerationOptions, strengths: [Float]?,
+                                conversation: NFKDecoderConversationRun,
+                                onToken: ((Int) -> Bool)?) throws -> (tokens: [Int], limit: Int, cached: Int) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        let (name, state) = conversationState(for: conversation, prompt: promptTokens, cached: cached,
+                                              options: options, strengths: strengths)
+        var finished = false
+        defer {
+            if let name {
+                if !finished {
+                    conversations.states.remove(name)
+                }
+                conversations.states.byteBudget = setConversationByteBudget ?? affordedConversationBytes(cached, options: options)
+                conversations.states.evict(keeping: name, releasing: spillConversation)
+            }
+            conversations.refresh()
+        }
+        let start = state.resume(for: promptTokens)
+        let stops = name == nil ? [] : NFKMLXHybridConversation.snapshotPositions(
+            start: start, end: promptTokens.count, turnStart: conversation.turnStart)
+        let logits = cached.prefill(Array(promptTokens[start...]), state.cache, stops) { _ in state.snapshot() }
+        state.record(Array(promptTokens[start...]))
+        try verifyStream()
+        var produced = [Int]()
+        var fed = [Int]()
+        // Each pass is built on the previous token before that token is read, so the graph of one pass is
+        // built while the GPU runs the one before it. A run that stops leaves one pass unread.
+        var token = sampling.token(logits, seed: seed, step: 0)
+        asyncEval(token)
+        for index in 0 ..< limit {
+            var following: MLXArray?
+            if index + 1 < limit {
+                following = sampling.token(cached.step(token, state.cache), seed: seed, step: index + 1)
+                asyncEval(following!)
+            }
+            let next = token.item(Int.self)
+            if following != nil {
+                fed.append(next)
+            }
+            try verifyStream()
+            if stopTokens.contains(next) || NFKMLXErrorScope.hasFailed { break }
+            produced.append(next)
+            if let onToken, !onToken(next) { break }
+            guard let following else { break }
+            token = following
+        }
+        guard !NFKMLXErrorScope.hasFailed else { return (produced, limit, start) }
+        state.record(fed)
+        if name != nil {
+            state.snapshot()
+        }
+        finished = true
+        return (produced, limit, start)
+    }
+
+    /// The conversation a run continues and the name it is kept under, or a conversation kept under no name
+    /// where the request turns reuse off. A named request continues its own conversation, from memory or
+    /// from the spill directory. A request that names none continues the unnamed conversation, in memory
+    /// or on disk, its prompt resumes furthest into, where the resumed prefix is at least as long as what
+    /// the rollback discards, so one client's prompt never discards most of another's conversation;
+    /// otherwise it starts one. A conversation built for another window, cache quantization, or adapter
+    /// strengths starts over. The weights' precision and quantization are part of the spill directory's
+    /// identity, so a spilled conversation always comes from these weights.
+    private func conversationState(for run: NFKDecoderConversationRun, prompt: [Int], cached: NFKDecoderCachedGeneration,
+                                   options: NFKMLXGenerationOptions,
+                                   strengths: [Float]?) -> (name: String?, state: NFKMLXHybridConversation) {
+        let make = {
+            NFKMLXHybridConversation(configuration: cached.configuration, window: options.contextWindow,
+                                     quantization: options.cacheQuantization, adapterStrengths: strengths)
+        }
+        let usable = { (state: NFKMLXHybridConversation) in
+            state.matches(window: options.contextWindow, quantization: options.cacheQuantization, adapterStrengths: strengths)
+        }
+        let spilled = { [spill] (name: String) in
+            spill?.take(name, configuration: cached.configuration, window: options.contextWindow,
+                        quantization: options.cacheQuantization, adapterStrengths: strengths)
+        }
+        guard run.reuses else { return (nil, make()) }
+        if let name = run.name {
+            let held = conversations.states.held.contains { $0.name == name }
+            return (name, conversations.states.state(for: name, isUsable: usable) { (held ? nil : spilled(name)) ?? make() })
+        }
+        func resumes(kept: Int, held: Int) -> Bool { kept > 0 && kept >= held - kept }
+        let inMemory = conversations.states.held
+            .filter { $0.name.hasPrefix(Self.unnamedPrefix) && usable($0.state) }
+            .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.tokens.count) }
+            .filter { resumes(kept: $0.kept, held: $0.held) }
+            .max { $0.kept < $1.kept }
+        let signature = NFKMLXHybridConversation.optionsSignature(window: options.contextWindow,
+                                                                  quantization: options.cacheQuantization,
+                                                                  adapterStrengths: strengths)
+        let onDisk = (spill?.records() ?? [])
+            .filter { $0.name.hasPrefix(Self.unnamedPrefix) && $0.options == signature }
+            .map { (name: $0.name, kept: Self.resumablePosition(prompt, tokens: $0.tokens, snapshots: $0.snapshots),
+                    held: $0.tokens.count) }
+            .filter { resumes(kept: $0.kept, held: $0.held) }
+            .max { $0.kept < $1.kept }
+        if let onDisk, onDisk.kept > inMemory?.kept ?? 0, let state = spilled(onDisk.name) {
+            return (onDisk.name, conversations.states.state(for: onDisk.name, isUsable: usable) { state })
+        }
+        let name = inMemory?.name ?? Self.unnamedPrefix + UUID().uuidString
+        return (name, conversations.states.state(for: name, isUsable: usable, make: make))
+    }
+
+    /// The position a conversation holding `tokens`, with snapshots at `snapshots`, continues `prompt` from:
+    /// what ``NFKMLXHybridConversation/resumablePosition(for:)`` answers for it once read.
+    private static func resumablePosition(_ prompt: [Int], tokens: [Int], snapshots: [Int]) -> Int {
+        let limit = min(tokens.count, max(prompt.count - 1, 0))
+        let shared = zip(tokens[..<limit], prompt).prefix { $0.0 == $0.1 }.count
+        return shared == tokens.count ? shared : snapshots.last { $0 <= shared } ?? 0
+    }
+
+    /// Writes a conversation the memory lets go to the spill directory. A conversation that cannot be written
+    /// is let go all the same.
+    /// A model that holds adapters writes none, since the directory cannot tell one set of adapters from
+    /// another at the same strengths.
+    private func spillConversation(_ name: String, _ state: NFKMLXHybridConversation) {
+        guard adapterStrengths.isEmpty else { return }
+        try? spill?.write(state, name: name)
+    }
+
+    /// The prefix of the names the backend gives conversations their requests do not name, which no
+    /// caller's key starts with.
+    private static let unnamedPrefix = "\u{0}unnamed."
+
+    /// The bytes the conversations may hold where no budget is set: the planned working set less the weights
+    /// the model holds, the reserve beside them, and the cache one run takes at the window, or at the
+    /// release's context length without one. The conversation a run just used is kept beyond it.
+    private func affordedConversationBytes(_ cached: NFKDecoderCachedGeneration, options: NFKMLXGenerationOptions) -> Int {
+        let budget = NFKMLXResidencyBudget.current()
+        let weights = modelInfo[NFKModelInfoWeightBytes] as? Int ?? 0
+        let run = NFKMLXHybridConversation.bytes(positions: options.contextWindow ?? contextLength ?? 0,
+                                                 configuration: cached.configuration,
+                                                 quantization: options.cacheQuantization, elementBytes: cached.elementBytes)
+        return max(0, budget - weights - NFKMLXResidencyBudget.reserve(forBudget: budget) - run)
+    }
+
+    // MARK: Conversation caches
+
+    /// The bytes the conversations' caches may hold together.
+    ///
+    /// @discussion A request continues the conversation its `NFKParameterConversationKey` names, or, naming
+    /// none, the kept conversation its prompt shares the longest prefix with, so a follow-up turn prefills
+    /// only what it adds. When the caches outgrow the budget, the least recently used conversations are
+    /// dropped, never the one a request just ran. Until it is set, the budget is what the memory planned
+    /// beside the model affords after one run's cache at its window, recomputed each run; setting it fixes
+    /// it, and lowering it drops down to it at once. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversations.states.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            setConversationByteBudget = newValue
+            conversations.states.byteBudget = newValue
+            conversations.states.evict(releasing: spillConversation)
+            conversations.refresh()
+        }
+    }
+
+    /// How many conversations hold a cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.count
+    }
+
+    /// The bytes the conversations' caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.heldBytes
+    }
+
+    /// Drops one named conversation's cache, in memory and on disk. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.remove(conversation)
+        spill?.remove(named: conversation)
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's cache in memory; spilled ones stay on disk. Introduced in InferKit 0.4.0.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.removeAll()
+        conversations.refresh()
+    }
+
+    /// Writes every conversation's cache to the spill directory and drops it from memory when no run is in
+    /// progress, and returns the bytes they held; returns 0 at once while a run holds them.
+    /// `NFKInferenceServer` calls it to relieve memory, and the reloadable backend before it unloads the
+    /// model. Introduced in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        let held = conversations.states.heldBytes
+        for (name, state) in conversations.states.held {
+            spillConversation(name, state)
+        }
+        conversations.states.removeAll()
+        conversations.refresh()
+        return held
+    }
+
+    /// The directory conversations the memory budget lets go are written to, so a later request continues
+    /// one without its prefill, after an unload or a restart too; nil writes none. A release-directory
+    /// backend defaults to a directory under the user's caches that only the same release and weights read.
+    /// A model that holds adapters writes none. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillDirectoryURL: URL? {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return spill?.directory
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            spill = newValue.map { NFKMLXConversationSpill(directory: $0, byteBudget: spill?.byteBudget ?? Self.defaultSpillByteBudget) }
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk; the least recently written go first past it.
+    /// Defaults to 8 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return spill?.byteBudget ?? Self.defaultSpillByteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            spill?.byteBudget = newValue
+        }
+    }
+
+    /// The conversation caches as of the last run or change: `conversation_caches`,
+    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it under
+    /// the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] { conversations.status }
 
     /// Throws a streamed layer's failed read and clears it, so the next request reads the release again.
     private func verifyStream() throws {
