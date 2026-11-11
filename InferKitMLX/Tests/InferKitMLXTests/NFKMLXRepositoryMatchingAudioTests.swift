@@ -162,4 +162,64 @@ final class NFKMLXRepositoryMatchingAudioTests: XCTestCase {
         try NFKMLXRepositoryFixture.assertRefusal(.unsupportedQuantization, try repository(configuration),
                                                   template: "wav2vec2-base-960h")
     }
+
+    // MARK: Nemotron ASR Streaming
+
+    /// A tiny cache-aware streaming recognizer's configuration: a transducer over four pieces and a blank.
+    private static func streamingConfiguration() -> [String: Any] {
+        ["model_type": "nemotron_asr_streaming", "architectures": ["NemotronAsrStreamingForRNNT"],
+         "vocab_size": 5, "blank_token_id": 4, "decoder_hidden_size": 8, "num_decoder_layers": 1, "hidden_act": "relu",
+         "max_symbols_per_step": 10,
+         "encoder_config": ["model_type": "nemotron_asr_streaming_encoder", "hidden_size": 8, "num_hidden_layers": 2,
+                            "num_attention_heads": 2, "num_key_value_heads": 2, "intermediate_size": 16,
+                            "hidden_act": "silu", "conv_kernel_size": 3, "num_mel_bins": 16,
+                            "subsampling_conv_channels": 4, "subsampling_conv_kernel_size": 3, "subsampling_conv_stride": 2,
+                            "subsampling_factor": 8, "sliding_window": 7, "supported_num_lookahead_tokens": [2, 1, 0],
+                            "default_num_lookahead_tokens": 2, "scale_input": false]]
+    }
+
+    private static func streamingTokenizer(_ type: String = "BPE") -> Data {
+        NFKMLXRepositoryFixture.json(["model": ["type": type, "vocab": ["<unk>": 0, "\u{2581}a": 1, "b": 2, "c": 3], "merges": []],
+                                      "added_tokens": [["id": 4, "content": "<blank>", "special": true]]])
+    }
+
+    private func streamingRepository(_ configuration: [String: Any] = streamingConfiguration(),
+                                     tokenizer: Data = streamingTokenizer()) throws -> NFKModelRepository {
+        let weights = NFKMLXRepositoryFixture.safetensors([("encoder.layers.0.self_attn.q_proj.weight", [8, 8]),
+                                                           ("joint.head.weight", [5, 8])], dtype: "F32", elementBytes: 4)
+        return try fixture.repository("org/streaming-asr-tiny",
+                                      files: ["config.json": NFKMLXRepositoryFixture.json(configuration),
+                                              "tokenizer.json": tokenizer, "model.safetensors": weights],
+                                      configuration: configuration,
+                                      license: NFKModelLicense(identifier: "cc-by-4.0", name: "cc-by-4.0", url: nil))
+    }
+
+    func testAStreamingRecognizerRepositoryTakesTheFamilysTemplate() throws {
+        let descriptor = try descriptor(try streamingRepository(), template: NFKMLXNemotronASR.modelName)
+        XCTAssertEqual(descriptor.family, "nemotron-asr")
+        XCTAssertEqual(descriptor.registryName, NFKMLXNemotronASR.modelName)
+        XCTAssertTrue(descriptor.tasks.contains(NFKModelTaskTranscription))
+        assertSourceWeights(descriptor, ["model.safetensors"])
+    }
+
+    func testAStreamingRecognizerTheLoaderMisreadsIsRefused() throws {
+        var durations = Self.streamingConfiguration()
+        durations["durations"] = [0, 1, 2]
+        try NFKMLXRepositoryFixture.assertRefusal(.unsupportedConfiguration, try streamingRepository(durations),
+                                                  template: NFKMLXNemotronASR.modelName)
+        var activation = Self.streamingConfiguration()
+        var encoder = activation["encoder_config"] as! [String: Any]
+        encoder["hidden_act"] = "gelu"
+        activation["encoder_config"] = encoder
+        try NFKMLXRepositoryFixture.assertRefusal(.unsupportedConfiguration, try streamingRepository(activation),
+                                                  template: NFKMLXNemotronASR.modelName)
+        var lookahead = Self.streamingConfiguration()
+        encoder = lookahead["encoder_config"] as! [String: Any]
+        encoder["supported_num_lookahead_tokens"] = [4]
+        lookahead["encoder_config"] = encoder
+        try NFKMLXRepositoryFixture.assertRefusal(.unsupportedConfiguration, try streamingRepository(lookahead),
+                                                  template: NFKMLXNemotronASR.modelName)
+        try NFKMLXRepositoryFixture.assertRefusal(.unsupportedTokenizer, try streamingRepository(tokenizer: Self.streamingTokenizer("WordPiece")),
+                                                  template: NFKMLXNemotronASR.modelName)
+    }
 }

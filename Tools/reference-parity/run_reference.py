@@ -19059,6 +19059,228 @@ def run_rf_detr_real(image, checkpoint):
     return out.logits[0].clone().contiguous()                                    # [Q, num_labels]
 
 
+def _ordered_conv_forward(module, order):
+    """A `_conv_forward` for the float32 convolution `module`, summed over its input channels in the convolution
+    order `order`: in float64 for `float64`, or for `split2` / `split4` as that many equal channel parts added in
+    order, the bias after. A grouped convolution has one input channel per output and keeps torch's sum for a
+    split."""
+    import torch.nn.functional as F
+
+    convolve = F.conv1d if isinstance(module, torch.nn.Conv1d) else F.conv2d
+    arguments = (module.stride, module.padding, module.dilation, module.groups)
+
+    def forward(x, weight, bias):
+        if order == "float64":
+            wide_bias = None if bias is None else bias.double()
+            return convolve(x.double(), weight.double(), wide_bias, *arguments).to(x.dtype)
+        if module.groups != 1:
+            return convolve(x, weight, bias, *arguments)
+        bounds = torch.linspace(0, x.shape[1], int(order[len("split"):]) + 1).round().long().tolist()
+        total = None
+        for start, end in zip(bounds, bounds[1:]):
+            if start == end:
+                continue
+            part = convolve(x[:, start:end], weight[:, start:end], None, *arguments)
+            total = part if total is None else total + part
+        if bias is not None:
+            total = total + bias.reshape((1, -1) + (1,) * (x.dim() - 2))
+        return total
+    return forward
+
+
+def _ordered_masked_attention(spec):
+    """A context in which `F.scaled_dot_product_attention` runs at float32 with an additive mask, `QKᵀ` and `P·V`
+    summed in the rerun `spec`'s products order and the softmax's sum in its moments order. `None` leaves torch's
+    own."""
+    import contextlib
+    import torch.nn.functional as F
+
+    products, softmax_order, _ = spec or (None, None, None)
+
+    def attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, enable_gqa=False):
+        if dropout_p or is_causal or enable_gqa:
+            raise ValueError("the ordered masked attention covers a float32 attention with an additive mask only")
+        scale = scale if scale is not None else query.shape[-1] ** -0.5
+        scores = _ordered_matmul(query, key.transpose(-1, -2), products).float() * scale
+        if attn_mask is not None:
+            scores = scores + attn_mask
+        weights = torch.exp(scores - scores.amax(-1, keepdim=True))
+        total = weights.sum(-1) if softmax_order is None else _moment_sum(weights, softmax_order).float()
+        return _ordered_matmul(weights / total[..., None], value, products).to(query.dtype)
+
+    @contextlib.contextmanager
+    def ordered():
+        if products is None and softmax_order is None:
+            yield
+            return
+        original = F.scaled_dot_product_attention
+        F.scaled_dot_product_attention = attention
+        try:
+            yield
+        finally:
+            F.scaled_dot_product_attention = original
+
+    return ordered()
+
+
+def _nemotron_asr_order_runs(model, features, counts, extra):
+    """`IK_PROBE_OUTPUT_ORDER_FLOOR=1`: the recognizer's float32 clip forward at each lookahead, rerun once per
+    rerun of `_SUMMATION_RERUNS`, each output kept as `encoded_R{R}.order.<name>`, and the same clip and the
+    cache-aware stream at float64 as `truth_R{R}` and `truth_streamed_R{R}`, with their gap as `truth_gap_R{R}`.
+    The float64 pair shows what the stream and the clip compute with rounding out of the way. The convolutions
+    keep their causal padding by replacing `_conv_forward`, which `_set_orders`'s `forward` would skip. `counts`
+    maps each lookahead to its feature count. Leaves `model` at float64."""
+    if os.environ.get("IK_PROBE_OUTPUT_ORDER_FLOOR") != "1":
+        return
+
+    def set_orders(spec):
+        products, moments, convolutions = spec or (None, None, None)
+        _set_orders(model, (products, moments, None))
+        for sub in model.modules():
+            sub.__dict__.pop("_conv_forward", None)
+            if isinstance(sub, (torch.nn.Conv1d, torch.nn.Conv2d)) and convolutions is not None:
+                sub._conv_forward = _ordered_conv_forward(sub, convolutions)
+
+    def clip(right, spec):
+        set_orders(spec)
+        with torch.no_grad(), _ordered_masked_attention(spec):
+            return model.get_audio_features(input_features=features[:, :counts[right]],
+                                            num_lookahead_tokens=right).last_hidden_state[0].contiguous()
+
+    for right in counts:
+        own = extra[f"encoded_R{right}"]
+        if not torch.equal(clip(right, None), own):
+            print(f"nemotron-asr R={right}: no order floor, a rerun does not reproduce the clip")
+            continue
+        farthest = 0.0
+        for name, spec in _SUMMATION_RERUNS:
+            rerun = clip(right, spec)
+            extra[f"encoded_R{right}.order.{name}"] = rerun
+            farthest = max(farthest, (rerun - own).abs().max().item())
+        print(f"nemotron-asr R={right}: farthest order rerun max |d| {farthest:.3e}")
+
+    set_orders(None)
+    model.double()
+    config = model.config.encoder_config
+    for right, count in counts.items():
+        first, later = 1 + config.subsampling_factor * right, config.subsampling_factor * (right + 1)
+        wide = features[:, :count].double()
+        with torch.no_grad():
+            whole = model.get_audio_features(input_features=wide, num_lookahead_tokens=right).last_hidden_state
+            streamed, past, padding, start = [], None, None, 0
+            while start < count:
+                size = first if start == 0 else later
+                out = model.get_audio_features(input_features=wide[:, start:start + size], past_key_values=past,
+                                               padding_cache=padding, num_lookahead_tokens=right, use_cache=True,
+                                               output_attention_mask=False)
+                past, padding = out.past_key_values, out.padding_cache
+                streamed.append(out.last_hidden_state)
+                start += size
+        stream = torch.cat(streamed, dim=1)
+        gap = (stream - whole).abs().max().item()
+        extra[f"truth_R{right}"] = whole[0].float().contiguous()
+        extra[f"truth_streamed_R{right}"] = stream[0].float().contiguous()
+        extra[f"truth_gap_R{right}"] = torch.tensor([gap], dtype=torch.float32)
+        print(f"nemotron-asr R={right}: float64 stream vs clip max |d| {gap:.3e}")
+
+
+def run_nemotron_asr_streaming(image, checkpoint):
+    """NVIDIA Nemotron ASR Streaming (`nvidia/nemotron-speech-streaming-en-0.6b`), the cache-aware
+    streaming FastConformer-RNNT, from transformers' own `NemotronAsrStreamingForRNNT` on the RELEASED
+    directory (`--checkpoint`: config.json, model.safetensors, tokenizer.json, processor_config.json).
+    The clip is the validation speech WAV (`IK_VAL_AUDIO`, 16 kHz). Runs under the `nemo` oracle env
+    (transformers 5.16.1), attention on the default `sdpa` (the eager path inverts the mask).
+
+    For each trained lookahead R the record holds the clip's features cropped to the longest
+    `1 + 8R + k * 8(R + 1)` frames the clip has (`count_R{R}`), the clip forward under the chunked mask
+    (`encoded_R{R}`), the reference's own cache-aware stream over the same chunks (`streamed_R{R}`), and
+    generate's greedy tokens with their encoder frames (`tokens_R{R}`, `frames_R{R}`) and text
+    (`text_R{R}` as UTF-8 bytes). At the release's default lookahead it also records the subsampler
+    output (`subsampled`), the first layer (`layer0`), the encoder projection (`pooler`), the
+    prediction network's output for the blank start (`prediction0`), and the joint's logits at frame 0
+    (`joint0`).
+    """
+    import wave as wavemodule
+    from transformers import AutoProcessor, NemotronAsrStreamingForRNNT
+
+    model = NemotronAsrStreamingForRNNT.from_pretrained(checkpoint, attn_implementation="sdpa",
+                                                        torch_dtype=torch.float32).eval()
+    processor = AutoProcessor.from_pretrained(checkpoint)
+    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser(VALIDATION_ROOT + "/inputs/speech.wav"))
+    with wavemodule.open(path) as handle:
+        assert handle.getframerate() == 16000 and handle.getnchannels() == 1 and handle.getsampwidth() == 2
+        pcm = np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16)
+    wave = pcm.astype(np.float32) / 32768.0
+    inputs = processor.feature_extractor(wave, sampling_rate=16000, return_tensors="pt", center=True)
+    valid = int(inputs["attention_mask"].sum())
+    features = inputs["input_features"][:, :valid]                                   # [1, F, mels]
+    config = model.config.encoder_config
+    factor = config.subsampling_factor
+    extra = {"waveform": torch.from_numpy(wave).contiguous(), "features": features[0].contiguous()}
+    print(f"nemotron-asr: {wave.shape[0]} samples, {valid} feature frames, scale_input={config.scale_input}")
+
+    seams = {}
+    model.encoder.subsampling.register_forward_hook(lambda m, i, o: seams.__setitem__("subsampled", o.detach()))
+    model.encoder.layers[0].register_forward_hook(
+        lambda m, i, o: seams.__setitem__("layer0", (o[0] if isinstance(o, tuple) else o).detach()))
+    default = config.default_num_lookahead_tokens
+    for right in config.supported_num_lookahead_tokens:
+        first, later = 1 + factor * right, factor * (right + 1)
+        chunks = 1 + max(0, (valid - first) // later)
+        count = first + (chunks - 1) * later
+        clipped = features[:, :count]
+        with torch.no_grad():
+            seams.clear()
+            offline = model.get_audio_features(input_features=clipped, num_lookahead_tokens=right)
+            if right == default:
+                extra["subsampled"] = seams["subsampled"][0].contiguous()
+                extra["layer0"] = seams["layer0"][0].contiguous()
+                extra["pooler"] = offline.pooler_output[0].contiguous()
+            streamed, past, padding, start = [], None, None, 0
+            for index in range(chunks):
+                size = first if index == 0 else later
+                out = model.get_audio_features(input_features=clipped[:, start:start + size], past_key_values=past,
+                                               padding_cache=padding, num_lookahead_tokens=right, use_cache=True,
+                                               output_attention_mask=False)
+                past, padding = out.past_key_values, out.padding_cache
+                streamed.append(out.last_hidden_state)
+                start += size
+            generated = model.generate(input_features=clipped, num_lookahead_tokens=right,
+                                       return_dict_in_generate=True)
+        sequence = generated.sequences[0]
+        durations = getattr(generated, "durations", None)
+        keep = [i for i, t in enumerate(sequence.tolist()) if t not in (model.config.blank_token_id, model.config.pad_token_id)]
+        tokens = [sequence[i].item() for i in keep]
+        if durations is not None:
+            steps = durations[0]
+            frames_all = (steps.cumsum(-1) - steps).tolist()
+            frames = [int(frames_all[i]) for i in keep]
+        else:
+            frames = []
+        text = processor.decode(sequence, skip_special_tokens=True)
+        print(f"nemotron-asr R={right}: {count} frames, {len(tokens)} tokens: {text!r}")
+        extra[f"count_R{right}"] = torch.tensor([count], dtype=torch.int64)
+        extra[f"encoded_R{right}"] = offline.last_hidden_state[0].contiguous()
+        extra[f"streamed_R{right}"] = torch.cat(streamed, dim=1)[0].contiguous()
+        extra[f"tokens_R{right}"] = torch.tensor(tokens, dtype=torch.int64)
+        extra[f"frames_R{right}"] = torch.tensor(frames, dtype=torch.int64)
+        extra[f"text_R{right}"] = torch.tensor(list(text.encode("utf-8")), dtype=torch.int64)
+        gap = (extra[f"streamed_R{right}"] - extra[f"encoded_R{right}"]).abs().max().item()
+        print(f"nemotron-asr R={right}: reference stream vs chunk-masked clip max |d| {gap:.3e}")
+
+    with torch.no_grad():
+        blank = torch.tensor([[model.config.blank_token_id]])
+        prediction = model.decoder(blank)[0, 0]
+        logits = model.joint(decoder_hidden_states=prediction[None, None, None, :],
+                             encoder_hidden_states=extra["pooler"][None, 0:1, None, :])
+    extra["prediction0"] = prediction.contiguous()
+    extra["joint0"] = logits.reshape(-1).contiguous()
+    counts = {right: extra[f"count_R{right}"].item() for right in config.supported_num_lookahead_tokens}
+    _nemotron_asr_order_runs(model, features, counts, extra)
+    globals()["_extra"] = extra
+    return extra[f"encoded_R{default}"].clone()
+
+
 def run_parakeet(image, checkpoint):
     """NVIDIA Parakeet-TDT (0.6B v2) speech recognition, from NeMo's own EncDecRNNTBPEModel on the
     RELEASED `.nemo` archive (`--checkpoint`): the FastConformer encoder (dw-striding 8x subsampling,
@@ -20140,6 +20362,48 @@ def run_gtcrn(image, checkpoint):
         globals()["_extra"][f"de{idx}"] = seams[f"de{idx}"].clone().contiguous()   # de4 aliases `decoder`
     return wav[0].contiguous()                                             # [samples]
 
+
+
+def run_nemotron_asr_streaming_loss(image):
+    """The transducer loss Nemotron ASR Streaming trains with, NeMo's own, on fixed joint logits for a batch
+    of two utterances of unequal length. Runs under the `nemo` oracle env; no weights.
+
+    The release's `model_config.yaml` sets `loss_name: default` (the numba `warprnnt_numba` kernel, which
+    log-softmaxes the joint output itself) with `fastemit_lambda: 0.005` and `clamp: -1`, and
+    `rnnt_reduction: mean_volume`. The record holds the padded logits `[B, T, U + 1, V]` (`logits`), the
+    padded labels (`labels`), the frame and label counts (`frames`, `label_lengths`), each utterance's
+    plain negative log-likelihood from both kernels with no FastEmit (`nll_numba`, `nll_pytorch`), the
+    release's loss (`loss`, FastEmit and `mean_volume`), and its gradient with respect to the logits
+    through the numba kernel (`grad`).
+    """
+    from nemo.collections.asr.losses.rnnt import RNNTLoss
+    from nemo.collections.asr.losses.rnnt_pytorch import RNNTLossPytorch
+
+    generator = torch.Generator().manual_seed(29)
+    vocabulary, blank = 17, 16
+    frames = torch.tensor([12, 9])
+    label_lengths = torch.tensor([5, 3])
+    logits = torch.randn(2, 12, 6, vocabulary, generator=generator) * 2.0
+    labels = torch.randint(0, blank, (2, 5), generator=generator)
+    labels[1, 3:] = 0
+    plain = RNNTLoss(num_classes=blank, reduction=None, loss_name="default",
+                     loss_kwargs={"fastemit_lambda": 0.0, "clamp": -1.0})
+    nll_numba = plain(log_probs=logits, targets=labels, input_lengths=frames, target_lengths=label_lengths)
+    nll_pytorch = RNNTLossPytorch(blank=blank, reduction=None)(logits, labels, frames, label_lengths)
+    release = RNNTLoss(num_classes=blank, reduction="mean_volume", loss_name="default",
+                       loss_kwargs={"fastemit_lambda": 0.005, "clamp": -1.0})
+    leaf = logits.clone().requires_grad_(True)
+    loss = release(log_probs=leaf, targets=labels, input_lengths=frames, target_lengths=label_lengths)
+    loss.backward()
+    print(f"nemotron-asr loss: plain numba {nll_numba.tolist()} pytorch {nll_pytorch.tolist()}; "
+          f"release (fastemit 0.005, mean_volume) {loss.item()}")
+    globals()["_extra"] = {
+        "logits": logits.contiguous(), "labels": labels.to(torch.int64).contiguous(),
+        "frames": frames.to(torch.int64), "label_lengths": label_lengths.to(torch.int64),
+        "nll_numba": nll_numba.detach().float().contiguous(), "nll_pytorch": nll_pytorch.detach().contiguous(),
+        "loss": loss.detach().reshape(1).clone(), "grad": leaf.grad.contiguous(),
+    }
+    return loss.detach().reshape(1).clone()
 
 
 def run_gtcrn_loss(image):
@@ -26332,7 +26596,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "flux2_text_mistral": run_flux2_text_mistral, "flux2_vae": run_flux2_vae, "ltx2": run_ltx2, "ltx2_video_vae": run_ltx2_video_vae, "ltx2_audio_vae": run_ltx2_audio_vae, "ltx2_vocoder": run_ltx2_vocoder, "ltx2_connectors": run_ltx2_connectors, "ltx2_guidance": run_ltx2_guidance, "ltx2_pipeline": run_ltx2_pipeline, "flux2": run_flux2, "muscriptor": run_muscriptor, "qwenimage21": run_qwenimage21, "qwen3vl_retrieval_loss": run_qwen3vl_retrieval_loss, "storm": run_storm, "qwen4_exp": run_qwen4_exp, "deepseek_v4_release_decode": run_deepseek_v4_release_decode, "deepseek_v4_release_decode_bf16": run_deepseek_v4_release_decode_bf16, "deepseek_v4_pro_release_decode": run_deepseek_v4_pro_release_decode, "deepseek_v4_pro_release_decode_bf16": run_deepseek_v4_pro_release_decode_bf16, "deepseek_v4_pro_dspark": run_deepseek_v4_pro_dspark, "deepseek_v4_pro_dspark_bf16": run_deepseek_v4_pro_dspark_bf16, "deepseek_v4_release": run_deepseek_v4_release, "deepseek_v4_release_bf16": run_deepseek_v4_release_bf16, "deepseek_v4_pro_release": run_deepseek_v4_pro_release, "deepseek_v4_pro_release_bf16": run_deepseek_v4_pro_release_bf16, "deepseek_v41": run_deepseek_v41, "deepseek_v41_quantized": run_deepseek_v41_quantized, "deepseek_v41_bf16": run_deepseek_v41_bf16, "deepseek_v41_bf16_plain": run_deepseek_v41_bf16_plain, "deepseek_v41_decode": run_deepseek_v41_decode, "deepseek_v41_decode_bf16": run_deepseek_v41_decode_bf16, "deepseek_v41_dspark_bf16": run_deepseek_v41_dspark_bf16, "deepseek_v41_vision_bf16": run_deepseek_v41_vision_bf16, "deepseek_v41_vl_router": run_deepseek_v41_vl_router, "deepseek_v41_vl_router_bf16": run_deepseek_v41_vl_router_bf16, "deepseek_v41_vision": run_deepseek_v41_vision, "deepseek_v41_image": run_deepseek_v41_image, "deepseek_v41_dspark": run_deepseek_v41_dspark, "deepseek_v41_dspark_quantized": run_deepseek_v41_dspark_quantized, "sd_scheduler": run_sd_scheduler, "clip": run_clip, "segformer": run_segformer, "zero_dce_losses": run_zero_dce_losses,
           "mimi": run_mimi, "chronos": run_chronos,
           "dcn": run_dcn,
-          "segformer_loss": run_segformer_loss, "basic_pitch_targets": run_basic_pitch_targets, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "rtdetr_loss": run_rtdetr_loss, "rtdetr_training_forward": run_rtdetr_training_forward, "rtdetr_training_setup": run_rtdetr_training_setup, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
+          "segformer_loss": run_segformer_loss, "basic_pitch_targets": run_basic_pitch_targets, "gtcrn_loss": run_gtcrn_loss, "nemotron_asr_streaming_loss": run_nemotron_asr_streaming_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "rtdetr_loss": run_rtdetr_loss, "rtdetr_training_forward": run_rtdetr_training_forward, "rtdetr_training_setup": run_rtdetr_training_setup, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "sana_adapters": run_sana_adapters, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "gelu_rounding": run_gelu_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
@@ -26345,7 +26609,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
                      "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_adapters": run_qwen3_adapters, "gemma3_adapters": run_gemma3_adapters, "gemma4_adapters": run_gemma4_adapters, "gemma3n_adapters": run_gemma3n_adapters, "qwen3vl_adapters": run_qwen3vl_adapters, "pixtral_tiny_adapters": run_pixtral_tiny_adapters, "madlad_adapters": run_madlad_adapters, "generated_decoder_adapters": run_generated_decoder_adapters, "whisper_adapters": run_whisper_adapters, "flux_adapters": run_flux_adapters, "flux2_adapters": run_flux2_adapters, "zimage_adapters": run_zimage_adapters, "sd35_adapters": run_sd35_adapters, "ltxv_adapters": run_ltxv_adapters, "stable_audio_adapters": run_stable_audio_adapters, "qwen_image_adapters": run_qwen_image_adapters, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "style_transfer_training": run_style_transfer_training, "adain_training": run_adain_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "qwen3_5_cached": run_qwen3_5_cached, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
-                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
+                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "nemotron_asr_streaming": run_nemotron_asr_streaming, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,
                      "chatterbox_t3": run_chatterbox_t3,
                      "chatterbox_s3gen": run_chatterbox_s3gen,

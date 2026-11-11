@@ -1197,6 +1197,7 @@
 		@[ NFKMLXQwen3VLEmbedder.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
 		@[ NFKMLXQwen3VLReranker.class, @"rerankerWithRepo:revision:cacheDirectoryURL:error:" ],
 		@[ NFKMLXParakeet.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
+		@[ NFKMLXNemotronASR.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
 		@[ NFKMLXCanary.class, @"backendWithRepo:revision:cacheDirectoryURL:error:" ],
 		@[ NFKMLXGraniteSpeech.class, @"graniteSpeechBackendWithRepo:revision:cacheDirectoryURL:error:" ],
 		@[ NFKMLXVoxtral.class, @"voxtralBackendWithRepo:revision:cacheDirectoryURL:error:" ],

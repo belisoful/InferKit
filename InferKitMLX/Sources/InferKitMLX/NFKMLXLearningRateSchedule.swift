@@ -42,6 +42,22 @@ public struct NFKMLXLearningRateSchedule {
         NFKMLXLearningRateSchedule { step in 1 / (1 + decay * Float(step)) }
     }
 
+    /// NeMo's `NoamAnnealing`: the base rate times `modelDimension^−½ · min(n^−½, n · warmupSteps^−1.5)`, where
+    /// `n` is the zero-based step and at least 1, as the scheduler reads its counter, and past the warmup a
+    /// rate no lower than `minimumRate`. `peakRate` is the optimizer's base rate, which the floor divides.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func noam(modelDimension: Int, warmupSteps: Int, minimumRate: Float, peakRate: Float) -> NFKMLXLearningRateSchedule {
+        NFKMLXLearningRateSchedule { step in
+            let n = Float(max(1, step))
+            let multiplier = powf(Float(modelDimension), -0.5) * min(powf(n, -0.5), n * powf(Float(warmupSteps), -1.5))
+            guard Int(n) > warmupSteps else {
+                return multiplier
+            }
+            return max(multiplier, minimumRate / peakRate)
+        }
+    }
+
     /// torch's `MultiStepLR`: the base rate times `gamma` once for every milestone at or before the
     /// zero-based step.
     ///

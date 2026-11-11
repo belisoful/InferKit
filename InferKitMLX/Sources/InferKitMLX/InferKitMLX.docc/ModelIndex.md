@@ -763,6 +763,7 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | Whisper | ``NFKMLXWhisper`` | ``NFKMLXWhisperNet`` | ``NFKMLXWhisperVariant`` `.tiny` / `.base` / `.small` / `.medium` / `.large` (v1 / v2) / `.largeV3` / `.largeV3Turbo` (`NFKMLXWhisperConfiguration.tiny` …); `emitsTimestamps` | `whisper-tiny` | ``NFKMLXWhisperBackend`` (`backend(variant:weightsURL:tokenizer:timestamps:)`) |
+| Nemotron ASR Streaming | ``NFKMLXNemotronASR`` | ``NFKMLXNemotronASRNet`` | `NFKMLXNemotronASRConfiguration.english06B` (0.6B: 24 causal conformer layers, a 70-frame attention window, lookaheads 0, 1, 6, 13) | `backend(directoryURL:)`; `register()` registers `nemotron-asr-streaming` (a release directory) | ``NFKMLXNemotronASRBackend`` (text + per-token `NFKOutputSegments`; a live stream) |
 | Parakeet-TDT | ``NFKMLXParakeet`` | ``NFKMLXParakeetNet`` | `NFKMLXParakeetConfiguration.tdt06B` (0.6B v2: 24 rel-pos conformer layers, TDT durations 0…4) | `backend(directoryURL:)`; `register()` registers `parakeet-tdt` (a release directory or its `.nemo` archive) | ``NFKMLXParakeetBackend`` (text + per-token `NFKOutputSegments`) |
 | Granite Speech 3.3-2b | ``NFKMLXGraniteSpeech`` | ``NFKMLXGraniteSpeechNet`` | `net(fromDirectory:)` (Conformer encoder + BLIP-2 Q-former + dense Granite decoder) | `backend(directoryURL:)`; `register()` registers `granite-speech-3.3-2b` | ``NFKMLXGraniteSpeechBackend`` (audio → text) |
 | Voxtral-Mini 3B | ``NFKMLXVoxtral`` | ``NFKMLXVoxtralNet`` | `net(fromDirectory:)` (Whisper encoder + 2-linear projector + Llama decoder) | `backend(directoryURL:)`; `register()` registers `voxtral-mini-3b` | ``NFKMLXVoxtralBackend`` (audio → text) |
@@ -802,6 +803,8 @@ let backend = NFKMLXVideoBackend(identifier: "my-clip-model") { frames in frames
 ```swift
 // Whisper
 let backend = try NFKMLXWhisper.backend(variant: .tiny, weightsURL: url, tokenizer: tokenizer, timestamps: false)
+// Nemotron ASR Streaming (a release directory)
+let streaming = try NFKMLXNemotronASR.backend(directoryURL: dir)
 // Parakeet-TDT (an unpacked .nemo directory)
 let backend = try NFKMLXParakeet.backend(directoryURL: dir)
 // Granite Speech 3.3-2b (a release directory; speech → text)
@@ -896,6 +899,8 @@ let backend = try NFKMLXMimi.backend(weightsURL: url)
 ```objc
 // Whisper
 [NFKMLXWhisper backendWithVariant:NFKMLXWhisperVariantTiny weightsURL:url tokenizer:tokenizer timestamps:NO error:&error]
+// Nemotron ASR Streaming
+[NFKMLXNemotronASR backendWithDirectoryURL:dir error:&error]
 // Parakeet-TDT
 [NFKMLXParakeet backendWithDirectoryURL:dir error:&error]
 // Canary-1B-v2

@@ -1008,6 +1008,12 @@ models.
   Whisper: a FastConformer encoder and a token-and-duration transducer, greedy TDT decoding, a
   timestamp per token under `NFKOutputSegments`. `backend(directoryURL:)` reads an unpacked `.nemo`;
   at reference parity against NeMo (tokens and timestamps exact).
+- **`NFKMLXNemotronASR`** — Nemotron ASR Streaming 0.6B (NVIDIA, NVIDIA Open Model License), a
+  cache-aware streaming recognizer: a causal FastConformer whose attention keeps a 70-frame key/value
+  window and whose convolutions keep their past frames, and a transducer whose state carries from chunk
+  to chunk. Its live stream transcribes a microphone in 80, 160, 560, or 1120 ms chunks
+  (`NFKMLXGenerationParameterKey.lookaheadFrames`), each chunk's tokens final.
+  `backend(directoryURL:)` reads the Hugging Face release; at reference parity against transformers.
 - **`NFKMLXGraniteSpeech`** — Granite Speech 3.3-2b (IBM, Apache-2.0), the first speech language model:
   a Conformer acoustic encoder, a BLIP-2 Q-former projector, and a dense Granite decoder that generates
   the transcription with the audio embeddings scattered into the prompt. The released audio LoRA adapter

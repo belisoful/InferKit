@@ -28,6 +28,11 @@ public final class NFKMLXGenerationParameterKey: NSObject {
     /// What a speech recognizer makes of the speech (`NSString`): "transcribe" for text in the language
     /// spoken, or "translate" for English text. Whisper reads it. Introduced in InferKit 0.4.0.
     @objc public static let speechTask = "NFKMLXParameterSpeechTask"
+    /// The encoder frames a cache-aware streaming recognizer reads past each chunk, as an `NSNumber`
+    /// integer, one of the release's trained right contexts: Nemotron ASR Streaming takes 0, 1, 6, or 13
+    /// frames of 80 ms, chunks of 80, 160, 560, or 1120 ms. Absent, the release's default. Introduced in
+    /// InferKit 0.4.0.
+    @objc public static let lookaheadFrames = "NFKMLXParameterLookaheadFrames"
     /// The bit width to store the key-value cache at (`NSNumber`, 2 to 8). Setting it enables cache
     /// quantization; see ``NFKMLXGenerationOptions/cacheQuantization``.
     @objc public static let cacheQuantizationBits = "NFKMLXParameterCacheQuantizationBits"

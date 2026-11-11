@@ -63,6 +63,22 @@ final class NFKMLXCatalogLiveTests: XCTestCase {
         }
     }
 
+    func testTheStreamingRecognizerDeclaresItsChunk() throws {
+        let configuration = NFKMLXNemotronASRConfiguration.english06B
+        let descriptor = try XCTUnwrap(descriptors.first { $0.identifier == NFKMLXNemotronASR.modelName })
+        let live = try XCTUnwrap(descriptor.liveProfile)
+        let frames = configuration.chunkFrames(lookahead: configuration.defaultLookahead)
+        XCTAssertEqual(live.unit, NFKModelLiveUnitAudioChunk)
+        XCTAssertEqual(live.outputKeys, [NFKOutputText, NFKOutputSegments])
+        XCTAssertTrue(live.isStateful)
+        XCTAssertEqual(live.chunkDuration, Double(frames * configuration.hopSamples) / 16000, accuracy: 1e-12)
+        // A sample just inside a chunk's first window waits for the chunk's last frame to be complete.
+        let waited = configuration.hopSamples * (frames - 1) + configuration.fftSize / 2 - 1 + configuration.windowSamples / 2 - 1
+        XCTAssertEqual(live.lookaheadMilliseconds, (Double(waited) / 16).rounded(.up))
+        XCTAssertEqual(descriptor.option(withKey: NFKMLXGenerationParameterKey.lookaheadFrames)?.defaultValue as? Int,
+                       configuration.defaultLookahead)
+    }
+
     func testOnlyTheDeclaredModelsAreLive() {
         let live = Set(descriptors.filter { $0.liveProfile != nil }.map(\.identifier))
         XCTAssertEqual(live, Set(NFKMLXCatalogLive.videoFrameOutputs.keys).union(NFKMLXCatalogLive.statefulVideoFrameOutputs.keys)

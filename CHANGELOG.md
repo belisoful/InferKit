@@ -2155,6 +2155,24 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   - HY-MT1.5 1.8B: 0.99999999998.
   - A tiny Pixtral: 1.0, the adapters' change 1.0, at the test's float32 cosine.
 
+#### Nemotron ASR Streaming transcribes a live source
+
+- `NFKMLXNemotronASR` ports NVIDIA's cache-aware streaming recognizer (`nvidia/nemotron-speech-streaming-en-0.6b`,
+  NVIDIA Open Model License): a causal FastConformer (a front-padded subsampler, causal depthwise
+  convolutions with LayerNorm, attention under a chunked mask over a 70-frame left context) and an RNN-T
+  transducer. `backend(directoryURL:)` and the repository factories read the Hugging Face release; the
+  registry name is `nemotron-asr-streaming`, and the family judge reads `nemotron_asr_streaming`.
+- Its backend opens a live stream: the log-mel frames, the subsampler's and depthwise convolutions' past
+  frames, each layer's key/value window, and the transducer's state carry from chunk to chunk, so the
+  stream answers each chunk as the clip forward under the chunked mask does. A unit's result holds the
+  final text and tokens its completed chunks added. `NFKMLXGenerationParameterKey.lookaheadFrames`
+  picks 0, 1, 6, or 13 frames of lookahead (80 ms to 1.12 s chunks); the catalog's live profile declares
+  the release's default.
+- `NFKMLXNemotronASR.fineTune` retrains the transducer over the frozen encoder with NeMo's `RNNTLoss`
+  (`NFKMLXNemotronASRObjective`), and a saved checkpoint reloads through `network(directoryURL:weightsURL:)`.
+- `NFKMLXStreamCarry.history` keeps a layer's last frames without padding the first unit, the form a
+  key/value window takes.
+
 #### GTCRN, DeepFilterNet3, and FRCRN stream
 
 - `NFKMLXGTCRNBackend` and `NFKMLXDeepFilterNetBackend` open live streams that answer each sample as the

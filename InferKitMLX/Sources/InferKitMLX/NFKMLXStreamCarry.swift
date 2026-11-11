@@ -63,6 +63,25 @@ final class NFKMLXStreamCarry: @unchecked Sendable {
         return joined
     }
 
+    /// `x` after the frames its owner kept on `axis` from the unit before, and how many there were: none
+    /// in a clip forward or on a stream's first unit. The last `keep` frames of the result are kept for
+    /// the next unit. A cache-aware attention keeps its keys and values this way.
+    static func history(_ x: MLXArray, keep: Int, axis: Int, owner: AnyObject) -> (joined: MLXArray, previous: Int) {
+        guard let carry = current else {
+            return (x, 0)
+        }
+        let key = ObjectIdentifier(owner)
+        let previous = carry.arrays[key]
+        let joined = previous.map { concatenated([$0, x], axis: axis) } ?? x
+        let length = joined.dim(axis)
+        if length > keep {
+            carry.arrays[key] = take(joined, MLXArray(((length - keep) ..< length).map { Int32($0) }), axis: axis)
+        } else {
+            carry.arrays[key] = joined
+        }
+        return (joined, previous?.dim(axis) ?? 0)
+    }
+
     /// `cell` over the sequence `x` `[B, L, in]`: from zero in a clip forward, from the hidden state the
     /// unit before ended with in a stream.
     static func recurrent(_ cell: NFKMLXGRUCell, _ x: MLXArray) -> MLXArray {

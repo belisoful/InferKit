@@ -3887,6 +3887,24 @@
       "note": "Parakeet-TDT 0.6B v2 speech recognizer (NVIDIA, CC-BY-4.0): a 2.47 GB .nemo tar holding model_config.yaml, model_weights.ckpt, and the SentencePiece BPE tokenizer (.model/.vocab). Unpack with `tar -xf` into raw/parakeet/tdt-0.6b-v2 (IK_VAL_PARAKEET); NFKMLXParakeet.backend(directoryURL:) reads model_weights.ckpt through the native torch reader and the *_tokenizer.vocab piece table. Parity via run_reference.py parakeet --checkpoint <the .nemo> under the nemo oracle env, on the validation speech clip (IK_VAL_AUDIO)."
     },
     {
+      "key": "NEMOTRON_ASR_STREAMING",
+      "repo": "nvidia/nemotron-speech-streaming-en-0.6b",
+      "revision": "ebe59e5a817142986528bbbee5dba8db7b38ed50",
+      "directory": "/Volumes/InferKit Models/InferKit/validation/nemotron-speech-streaming-en-0.6b",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "processor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_NEMOTRON_ASR_STREAMING": "."
+      },
+      "note": "Nemotron ASR Streaming 0.6B (NVIDIA Open Model License): the cache-aware streaming FastConformer-RNNT, as the Hugging Face release (2.47 GB model.safetensors, a Metaspace BPE tokenizer.json with <pad> 1024 and <blank> 1025 added while the head's blank is 1024). NFKMLXNemotronASR.backend(directoryURL:) reads it. model_config.yaml beside it is the .nemo's training configuration, range-fetched from the archive's first 4 MB. Parity via run_reference.py nemotron_asr_streaming --checkpoint <the folder> under the nemo oracle env (transformers 5.16.1 NemotronAsrStreamingForRNNT, sdpa) on the validation speech clip (IK_VAL_AUDIO) with IK_PROBE_OUTPUT_ORDER_FLOOR=1, which adds the clip rerun in every fixed summation order and the float64 clip and stream -> records/nemotron-asr-streaming-orders.safetensors, IK_PARITY_NEMOTRON_ASR_STREAMING_ORDERS; the transducer loss via run_reference.py nemotron_asr_streaming_loss (NeMo RNNTLoss numba and RNNTLossPytorch, no weights) -> IK_PARITY_NEMOTRON_ASR_STREAMING_LOSS."
+    },
+    {
       "key": "CANARY",
       "repo": "nvidia/canary-1b-v2",
       "directory": "raw/canary",
@@ -6174,14 +6192,16 @@
     },
     "nemo": {
       "interpreter": "~/.inferkit-validation/nemovenv/bin/python3",
-      "why": "NeMo 3.0 (nemo_toolkit[asr]) is the Parakeet, Canary, and MarbleNet VAD reference and needs Python >= 3.10 plus a large dependency set (lhotse, datasets, torch) that would fight the other oracles' pins, so it runs under its own interpreter on Homebrew's python@3.12. Canary-1B-v2 restores through EncDecMultiTaskModel; transformers has no released CanaryForConditionalGeneration yet, so NeMo is the oracle. The floor is 2.5: its mel front end zero-pads the centered transform and counts floor(samples / hop) valid frames, where 2.4 and earlier reflect and count one more (NVIDIA/NeMo #13827), and the MarbleNet VAD record (IK_PARITY_VAD, reference/vad-reference-nemo3.safetensors) and the Swift front end follow 2.5.",
+      "why": "NeMo 3.0 (nemo_toolkit[asr]) is the Parakeet, Canary, and MarbleNet VAD reference (its transformers 5.16.1 is also Nemotron ASR Streaming's) and needs Python >= 3.10 plus a large dependency set (lhotse, datasets, torch) that would fight the other oracles' pins, so it runs under its own interpreter on Homebrew's python@3.12. Canary-1B-v2 restores through EncDecMultiTaskModel; transformers has no released CanaryForConditionalGeneration yet, so NeMo is the oracle. The floor is 2.5: its mel front end zero-pads the centered transform and counts floor(samples / hop) valid frames, where 2.4 and earlier reflect and count one more (NVIDIA/NeMo #13827), and the MarbleNet VAD record (IK_PARITY_VAD, reference/vad-reference-nemo3.safetensors) and the Swift front end follow 2.5.",
       "rebuild": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/nemovenv && ~/.inferkit-validation/nemovenv/bin/pip install 'nemo_toolkit[asr]>=2.5' torch safetensors",
       "modes": [
         "parakeet",
         "canary",
         "vad",
         "vad_training",
-        "hymt_moe_tiny"
+        "hymt_moe_tiny",
+        "nemotron_asr_streaming",
+        "nemotron_asr_streaming_loss"
       ]
     },
     "phi4mm": {
@@ -7738,6 +7758,7 @@
       "record": "reference/wan-lora-musubi.safetensors",
       "environment": "wantrain_musubi",
       "command": "wan_lora_musubi (musubi-tuner's shift sampling, forward, and loss over its own tiny WanModel under its lora_wan network, attending in float32 with musubi's bfloat16-attention run under as_run.*; adapter gradients, the saved file, its merge_to under fused::, sampler.* 64 shift draws and table.* 64 sigma-mode draws)"
-    }
+    },
+    {"key": "IK_PARITY_NEMOTRON_ASR_STREAMING_LOSS", "record": "records/nemotron-asr-streaming-loss-release.safetensors", "environment": "nemo", "command": "nemotron_asr_streaming_loss (NeMo's RNNTLoss with the numba kernel at the release's FastEmit 0.005 and mean_volume, and RNNTLossPytorch, over fixed logits: each utterance's negative log-likelihood, the loss, and its gradient)"}
   ]
 }

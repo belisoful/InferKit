@@ -307,6 +307,7 @@ negatives.
 | `NFKMLXCanary` | trainable | LoRA | public | NeMo publishes `transf_loss` with a prompt loss mask, and a 1B encoder-decoder is within budget. |
 | `NFKMLXWav2Vec2` | ships | full | public | transformers' `run_speech_recognition_ctc.py`: a retargetable CTC head, the feature encoder frozen, SpecAugment; loss and steps at measured parity. |
 | `NFKMLXWav2Vec2Bert` | ships | full | public | Hugging Face's W2V-BERT recipe: the output adapter and a CTC head added, every parameter trained; loss and steps at measured parity. |
+| `NFKMLXNemotronASR` | ships | head-retarget | public | The release's `model_config.yaml` loss, NeMo's `RNNTLoss` with FastEmit 0.005 and `mean_volume`, matched against the numba kernel and `RNNTLossPytorch`; the encoder projection, prediction network, and joint retrain over the frozen streaming FastConformer under the release's own optimizer. |
 | `NFKMLXParakeet` | trainable | head-retarget | public | NeMo's `TDTLossPytorch` is pure PyTorch and portable. The prediction network and joint retrain over a frozen FastConformer. |
 | `NFKMLXVAD` | ships | full | public | The release's own recipe: NeMo's masked cross-entropy, SGD, and `PolynomialHoldDecayAnnealing`, matched by `run_reference.py vad_training`. |
 | `NFKMLXSileroVAD` | ships | head-retarget | public | snakers4's `tuning/` (v6.2.1): the decoder alone under Adam at 5e-4, a per-chunk binary cross-entropy weighing non-speech by 0.5. Targets, loss, and two Adam steps measured by `run_reference.py silero_vad_training`. |

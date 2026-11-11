@@ -26,6 +26,7 @@ public final class NFKMLXReferenceModels: NSObject {
         registerToneSpeech()
         NFKMLXWhisper.register()
         NFKMLXParakeet.register()
+        NFKMLXNemotronASR.register()
         NFKMLXCanary.register()
         NFKMLXVoxtral.register()
         NFKMLXGraniteSpeech.register()

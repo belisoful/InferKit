@@ -33331,6 +33331,190 @@
       ]
     },
     {
+      "displayName" : "Nemotron ASR Streaming 0.6B",
+      "engine" : "mlx",
+      "family" : "nemotron-asr",
+      "id" : "nemotron-asr-streaming",
+      "inputModalities" : [
+        "audio"
+      ],
+      "inputs" : [
+        {
+          "help" : "A WAV recording of speech. The backend resamples it to 16 kHz.",
+          "key" : "audio",
+          "required" : true,
+          "title" : "Audio",
+          "valueType" : "audio"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "NVIDIA Open Model License Agreement",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license"
+      },
+      "live" : {
+        "channelCount" : 1,
+        "chunkDuration" : 1.1200000000000001,
+        "inputs" : [
+          "audio"
+        ],
+        "lookahead" : 1139,
+        "outputs" : [
+          "text",
+          "segments"
+        ],
+        "sampleRate" : 16000,
+        "stateful" : true,
+        "unit" : "audioChunk"
+      },
+      "modelTypes" : [
+        "nemotron_asr_streaming"
+      ],
+      "options" : [
+        {
+          "choices" : [
+            {
+              "title" : "0 frames (80 ms chunks)",
+              "value" : 0
+            },
+            {
+              "title" : "1 frames (160 ms chunks)",
+              "value" : 1
+            },
+            {
+              "title" : "6 frames (560 ms chunks)",
+              "value" : 6
+            },
+            {
+              "title" : "13 frames (1120 ms chunks)",
+              "value" : 13
+            }
+          ],
+          "default" : 13,
+          "help" : "The encoder frames each chunk reads ahead. A longer lookahead is more accurate and answers later.",
+          "key" : "NFKMLXParameterLookaheadFrames",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Lookahead"
+        }
+      ],
+      "outputModalities" : [
+        "text",
+        "segments"
+      ],
+      "outputs" : [
+        {
+          "help" : "The transcript.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Transcript",
+          "valueType" : "text"
+        },
+        {
+          "help" : "One timed span per decoded token, labeled with its text.",
+          "key" : "segments",
+          "required" : true,
+          "title" : "Tokens",
+          "valueType" : "segments"
+        }
+      ],
+      "registryName" : "nemotron-asr-streaming",
+      "requirements" : {
+        "minimumMemoryBytes" : 5817269318,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "NVIDIA's cache-aware streaming FastConformer recognizer, which transcribes English with punctuation chunk by chunk as the audio arrives.",
+      "tasks" : [
+        "transcription"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Nemotron ASR Streaming 0.6B",
+          "downloadBytes" : 2472816091,
+          "id" : "en-0.6b",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 1236169730,
+                  "checkpoint" : 2472339460,
+                  "float32" : 2472339460
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ],
+            "vocabularySize" : 1025
+          },
+          "minimumMemoryBytes" : 5817269318,
+          "parameterCount" : 618084865,
+          "peakBytes" : 2472339460,
+          "precision" : "float32",
+          "registryName" : "nemotron-asr-streaming",
+          "residentBytes" : 2472339460,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1284,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 400216,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 525,
+                "optional" : true,
+                "path" : "processor_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 270,
+                "optional" : true,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 192,
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2472413604,
+                "optional" : false,
+                "path" : "model.safetensors",
+                "role" : "weights",
+                "sha256" : "bddd8a7300826efd19cf7e01f1c7db8402bed6786fc4c7739632894f69c71473"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "nvidia/nemotron-speech-streaming-en-0.6b",
+            "requiresConversion" : false,
+            "revision" : "ebe59e5a817142986528bbbee5dba8db7b38ed50"
+          }
+        }
+      ]
+    },
+    {
       "adapterBases" : [
         "nvidia/NVIDIA-Nemotron-Nano-9B-v2"
       ],

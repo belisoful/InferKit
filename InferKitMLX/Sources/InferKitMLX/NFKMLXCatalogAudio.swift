@@ -179,7 +179,37 @@ enum NFKMLXCatalogAudio {
 extension NFKMLXCatalogAudio {
 
     static var speechRecognition: [NFKMLXCatalogEntry] {
-        whisper + [parakeet, canary, voxtral, graniteSpeech] + wav2Vec2 + [w2vBert]
+        whisper + [parakeet, nemotronASR, canary, voxtral, graniteSpeech] + wav2Vec2 + [w2vBert]
+    }
+
+    /// The trained lookaheads of Nemotron ASR Streaming, titled with each chunk's latency.
+    static var nemotronASRLookaheads: [(value: Any, title: String)] {
+        NFKMLXNemotronASRConfiguration.english06B.lookaheads.sorted().map { right in
+            (right, "\(right) frames (\(80 * (right + 1)) ms chunks)")
+        }
+    }
+
+    static var nemotronASR: NFKMLXCatalogEntry {
+        var entry = model(NFKMLXNemotronASR.modelName, displayName: "Nemotron ASR Streaming 0.6B", family: "nemotron-asr",
+                          summary: "NVIDIA's cache-aware streaming FastConformer recognizer, which transcribes English with punctuation chunk by chunk as the audio arrives.",
+                          tasks: [NFKModelTaskTranscription],
+                          inputs: [audioInput("A WAV recording of speech. The backend resamples it to 16 kHz.")],
+                          outputs: [.output(NFKOutputText, required: true, title: "Transcript", help: "The transcript."),
+                                    .output(NFKOutputSegments, required: true, title: "Tokens",
+                                            help: "One timed span per decoded token, labeled with its text.")],
+                          parameters: [.option(NFKMLXGenerationParameterKey.lookaheadFrames, kind: NFKModelOptionKindChoice,
+                                               title: "Lookahead",
+                                               help: "The encoder frames each chunk reads ahead. A longer lookahead is more accurate and answers later.",
+                                               defaultValue: NFKMLXNemotronASRConfiguration.english06B.defaultLookahead,
+                                               choices: nemotronASRLookaheads)],
+                          license: .license(nil, name: "NVIDIA Open Model License Agreement",
+                                            url: "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license"),
+                          release: "en-0.6b",
+                          source: .hub("nvidia/nemotron-speech-streaming-en-0.6b", revision: "ebe59e5a817142986528bbbee5dba8db7b38ed50",
+                                       files: files(required: NFKMLXNemotronASR.requiredFiles, optional: NFKMLXNemotronASR.optionalFiles,
+                                                    weights: NFKMLXNemotronASR.weightFiles)))
+        entry.modelTypes = NFKMLXNemotronASR.modelTypes
+        return entry
     }
 
     static var whisper: [NFKMLXCatalogEntry] {

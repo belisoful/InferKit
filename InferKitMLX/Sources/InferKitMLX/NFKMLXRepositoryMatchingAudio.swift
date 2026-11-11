@@ -52,6 +52,53 @@ extension NFKMLXFamilyJudge {
         weightFiles: NFKMLXRepositoryJudgment.singleWeightFile("model.safetensors"),
         optionalFiles: ["vocab.json": NFKModelFileRoleTokenizer, "tokenizer_config.json": NFKModelFileRoleTokenizer])
 
+    /// Nemotron ASR Streaming (`nemotron_asr_streaming`), read by ``NFKMLXNemotronASRConfiguration`` and
+    /// ``NFKMLXNemotronASRTokenizer``. The loader builds a SiLU conformer, a ReLU joint, a 3 × 3 stride-2
+    /// causal subsampler, and a plain transducer, so the judgment refuses another activation, kernel, or
+    /// stride, grouped key/value heads, a token-and-duration head, and a tokenizer model the reader does
+    /// not decode.
+    static let nemotronASR = NFKMLXFamilyJudge(
+        reads: { $0.family == "nemotron-asr" && !$0.modelTypes.isEmpty },
+        verify: { repository, template in
+            try verifySpeechRepository(repository, suffixes: ["ForRNNT"])
+            let directory = try NFKMLXRepositoryJudgment.snapshot(of: repository, holding: ["config.json", "tokenizer.json"])
+            let configuration = repository.configuration
+            let encoder = configuration["encoder_config"] as? [String: Any] ?? [:]
+            func refuse(_ reason: String) -> NSError {
+                NFKMLXRepositoryJudgment.refusal(.unsupportedConfiguration, "\(repository.repository): \(reason)")
+            }
+            if let act = encoder["hidden_act"] as? String, act != "silu" {
+                throw refuse("the encoder's activation is \(act); the loader builds SiLU")
+            }
+            if let act = configuration["hidden_act"] as? String, act != "relu" {
+                throw refuse("the joint's activation is \(act); the loader builds ReLU")
+            }
+            if (encoder["subsampling_conv_kernel_size"] as? Int ?? 3) != 3 || (encoder["subsampling_conv_stride"] as? Int ?? 2) != 2 {
+                throw refuse("the subsampler is not 3 × 3 at stride 2, which fixes the stream's chunk geometry")
+            }
+            if let kv = encoder["num_key_value_heads"] as? Int, kv != (encoder["num_attention_heads"] as? Int ?? kv) {
+                throw refuse("the attention groups its key/value heads, which the loader does not")
+            }
+            if let durations = configuration["durations"] as? [Any], !durations.isEmpty {
+                throw refuse("the head predicts durations; the loader decodes a plain transducer")
+            }
+            let read = try NFKMLXRepositoryJudgment.reading(repository, template: template) {
+                try NFKMLXNemotronASRConfiguration(json: configuration)
+            }
+            let tokenizerData = try Data(contentsOf: directory.appendingPathComponent("tokenizer.json"))
+            let model = ((try? JSONSerialization.jsonObject(with: tokenizerData)) as? [String: Any])?["model"] as? [String: Any]
+            guard let type = model?["type"] as? String, ["BPE", "Unigram"].contains(type) else {
+                throw NFKMLXRepositoryJudgment.refusal(.unsupportedTokenizer,
+                    "\(repository.repository)'s tokenizer.json is not a BPE or Unigram model the reader decodes")
+            }
+            let tokenizer = try NFKMLXNemotronASRTokenizer(tokenizerURL: directory.appendingPathComponent("tokenizer.json"))
+            guard read.blank == read.vocabulary - 1, tokenizer.pieces.count >= read.blank else {
+                throw refuse("the blank is not the head's last logit, or the tokenizer names fewer pieces than the head emits")
+            }
+            return Reading()
+        },
+        weightFiles: NFKMLXRepositoryJudgment.singleWeightFile("model.safetensors"))
+
     /// The family's entry with the head the repository carries: a CTC release for a `…ForCTC` architecture,
     /// else an encoder release. nil where the family has no such entry.
     static func speechTemplate(of repository: NFKModelRepository,

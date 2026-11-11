@@ -1534,6 +1534,16 @@ final class MLXModelGalleryExamples: XCTestCase {
         let recognized = try parakeet.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave]))
         XCTAssertNotNil(recognized.output(forKey: NFKOutputText), "a transcript (token ids without a vocabulary)")
 
+        // Nemotron ASR Streaming (cache-aware FastConformer + RNN-T): the live recognizer. Random weights at
+        // a shrunk geometry run the clip forward under the chunked mask and the live stream over units.
+        let streaming = NFKMLXNemotronASR.backend(configuration: .tiny)
+        let transcribed = try streaming.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: wave],
+            parameters: [NFKMLXGenerationParameterKey.lookaheadFrames: 1]))
+        XCTAssertNotNil(transcribed.output(forKey: NFKOutputText))
+        let captions = try XCTUnwrap(NFKInferenceOpenLiveStream(streaming, [NFKMLXGenerationParameterKey.lookaheadFrames: 1], nil))
+        let buffer = NFKMLXLiveAudio.buffer([Float](repeating: 0.01, count: 3200), sampleRate: 16000)
+        XCTAssertNotNil(try captions.result(for: NFKInferenceRequest(inputs: [NFKInputAudio: buffer])).output(forKey: NFKOutputText))
+
         // Canary-1B-v2 (NeMo FastConformer encoder + attention encoder-decoder): a multitask
         // ASR/translation speech model. Random weights at a shrunk geometry run the whole path — the
         // biased FastConformer encoder (reused from Parakeet) and the Transformer decoder's greedy

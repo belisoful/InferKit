@@ -3096,7 +3096,7 @@ fetches the files the model reads, and nothing else, into the `NFKHFHub` cache, 
 snapshot folder. That covers the language models (`NFKMLXLanguage`, the Gemma family, Granite 4.0-H,
 Nemotron-H, Mamba), the vision-language models (SmolVLM2, Qwen3-VL, Pixtral, Florence-2, Sa2VA, TrOCR,
 Table Transformer, V-JEPA 2), the embedders and rerankers, the speech recognizers (Parakeet and Canary
-from their `.nemo` archives, Granite Speech, Voxtral), Kokoro (every voice), Chatterbox, VoiceRestore,
+from their `.nemo` archives, Nemotron ASR Streaming, Granite Speech, Voxtral), Kokoro (every voice), Chatterbox, VoiceRestore,
 Resemble Enhance, MossFormer2 super-resolution, FLUX, FLUX.2, and MiniMax Music 3.
 
 ```objc
@@ -3228,6 +3228,26 @@ NFKMLXModelRegistry.register(name: "my-whisper", consumes: [NFKModelLoadOptionPr
 }
 let whisper = try NFKMLXModelRegistry.backend(named: "my-whisper", weightsURL: checkpointURL,
                                               options: [NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32])
+```
+
+### Live captions from a streaming recognizer
+
+Nemotron ASR Streaming is built for a live source: its encoder keeps a key/value window and its
+convolutions' past frames from chunk to chunk, so each chunk of audio costs one chunk's forward and its
+tokens are final when they arrive. The stream's lookahead picks the chunk: 0, 1, 6, or 13 frames of
+80 ms, for chunks of 80 ms to 1.12 s. A shorter chunk answers sooner and transcribes less accurately.
+
+<!-- objc-check: given NSURL *releaseURL = nil; AVAudioPCMBuffer *microphoneBuffer = nil; -->
+```objc
+@import InferKitMLX;
+NSError *error = nil;
+id<NFKInferenceBackend> recognizer = [NFKMLXNemotronASR backendWithDirectoryURL:releaseURL error:&error];
+id<NFKLiveStream> captions =
+    NFKInferenceOpenLiveStream(recognizer, @{ NFKMLXGenerationParameterKey.lookaheadFrames: @1 }, &error);   // 160 ms chunks
+NFKInferenceResult *heard = [captions resultForUnit:[NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: microphoneBuffer }]
+                                              error:&error];
+NSString *more = heard.text;                       // the words the completed chunks added, final
+NSArray<NFKAudioSegment *> *tokens = heard.segments;   // one per token, in seconds from the stream's start
 ```
 
 ### A live stream on a stateful model

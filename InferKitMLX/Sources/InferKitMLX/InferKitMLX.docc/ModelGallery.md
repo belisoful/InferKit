@@ -253,6 +253,7 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | ``NFKMLXMuScriptor`` | `muscriptor` | multi-instrument transcription: audio to one MIDI track per instrument |
 | ``NFKMLXHFTTransformer`` | `hft-transformer` | piano transcription: onset, offset, multi-pitch, and velocity |
 | ``NFKMLXWhisper`` | `whisper-tiny` | speech → text (tiny / base / small / medium / large / large-v3 / large-v3-turbo, timestamps) |
+| ``NFKMLXNemotronASR`` | `nemotron-asr-streaming`; `backend(directoryURL:)` | speech → text, live (Nemotron ASR Streaming 0.6B, cache-aware FastConformer + RNN-T; 80–1120 ms chunks) |
 | ``NFKMLXParakeet`` | `parakeet-tdt`; `backend(directoryURL:)` | speech → text (Parakeet-TDT 0.6B v2, FastConformer + token-and-duration transducer; per-token timestamps) |
 | ``NFKMLXGraniteSpeech`` | `granite-speech-3.3-2b`; `backend(directoryURL:)` | speech → text (Granite Speech 3.3-2b: Conformer encoder + BLIP-2 Q-former + dense Granite decoder, audio LoRA folded; transcribes the validation clip exactly) |
 | ``NFKMLXVoxtral`` | `voxtral-mini-3b`; `backend(directoryURL:)` | speech → text (Voxtral-Mini 3B: Whisper encoder + 2-linear projector + Llama decoder, tekken tokenizer; transcribes the validation clip exactly) |

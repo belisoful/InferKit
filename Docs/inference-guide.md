@@ -1374,6 +1374,11 @@ A stream answers its units one at a time, in the order they arrive. Several stre
 their own state and share the loaded model. An audio unit is an `AVAudioPCMBuffer`, WAV bytes, or an
 `NFKAudioAsset` at the profile's sample rate and channel count.
 
+A streaming recognizer (Nemotron ASR Streaming in InferKitMLX) answers each unit with the final text and
+tokens of the chunks the unit completed; `NFKMLXGenerationParameterKey.lookaheadFrames` trades latency
+for accuracy. Apple's speech analyzer (InferKitAppleSwift) answers with its finalized spans and the
+tentative words after them under `NFKOutputTentativeText`.
+
 The streamed speech enhancers (GTCRN, DeepFilterNet3, and FRCRN in InferKitMLX) answer each unit with the
 enhanced samples they completed, an `AVAudioPCMBuffer` under `NFKOutputAudio`. The samples are those the
 clip forward of everything pushed so far returns, at most the profile's lookahead behind the input. The

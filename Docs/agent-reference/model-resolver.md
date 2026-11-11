@@ -221,6 +221,7 @@ The judgment is a shared core and one judge per family:
 | `language` | `NFKMLXRepositoryMatching.swift` | the dense and mixture releases `NFKMLXLanguage` loads | `qwen3`, `qwen3_moe`, `qwen2_moe`, `mixtral`, `gpt_oss`, `mistral` with `llama` on Mistral Small 3 |
 | `wav2Vec2` | `…Audio.swift` | the Wav2Vec2 and HuBERT releases | `wav2vec2`, `hubert` |
 | `w2vBert` | `…Audio.swift` | W2V-BERT 2.0 | `wav2vec2-bert` |
+| `nemotronASR` | `…Audio.swift` | Nemotron ASR Streaming | `nemotron_asr_streaming` |
 | `timesFM` | `…Forecasting.swift` | TimesFM 2.5 | `timesfm`, `timesfm2_5` |
 | `gemma3` | `…Gemma.swift` | Gemma 3 | `gemma3_text` on the text sizes, `gemma3` on the multimodal ones |
 | `gemma3n` | `…Gemma.swift` | Gemma 3n | `gemma3n` |

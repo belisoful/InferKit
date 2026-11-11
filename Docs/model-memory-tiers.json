@@ -865,6 +865,12 @@
       "24" : "resident 7947113664 fits",
       "32" : "resident 7947113664 fits"
     },
+    "nemotron-asr-streaming/en-0.6b" : {
+      "8" : "resident 2472339460 refused",
+      "16" : "resident 2472339460 fits",
+      "24" : "resident 2472339460 fits",
+      "32" : "resident 2472339460 fits"
+    },
     "nemotron-nano-2/nvidia-nemotron-nano-9b-v2" : {
       "8" : "streamed 2938621696 refused",
       "16" : "streamed 5177072296 fits",

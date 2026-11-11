@@ -171,6 +171,86 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   subsampler (ReLU at 1, 4, 7) and the joint (ReLU 0, Dropout 1, Linear 2) are kept with marker modules
   so every other key matches with no remap; the 4-D and 3-D convolutions transpose to channels-last.
   Weights: `nvidia/parakeet-tdt-0.6b-v2` (2.47 GB `.nemo`; v3 and the CTC release are the same encoder).
+- `NFKMLXNemotronASR` / `NFKMLXNemotronASRNet` / `NFKMLXNemotronASRBackend` (`@objc`) — **Nemotron ASR
+  Streaming 0.6B** (`nvidia/nemotron-speech-streaming-en-0.6b` at `ebe59e5a`, NVIDIA Open Model License),
+  the live recognizer: NVIDIA's cache-aware streaming FastConformer with an RNN-T transducer, ported from
+  transformers' `NemotronAsrStreamingForRNNT` (5.16.1) with NeMo's cache-aware conformer as the second
+  reading. It is Parakeet's layer with everything that reads the future made causal:
+  - The front end is Parakeet's (preemphasis 0.97, a zero-padded centered 512-point transform under a
+    symmetric 400-point Hann window, `log(x + 2⁻²⁴)`) with **no normalization**, and a Slaney mel bank
+    computed in double precision and rounded once, as librosa's float32 cast is. The valid frames are
+    `⌊samples / 160⌋`.
+  - The subsampler pads time and frequency `(2, 1)`, so the mel axis goes 128 → 65 → 33 → 17 and the
+    linear reads 256 × 17 = 4352. Its convolutions keep their biases while the conformer's have none.
+  - The convolution module's depthwise convolution pads 8 frames at the front only, and its norm is a
+    LayerNorm (`conv.norm`).
+  - Attention runs under the `chunked_limited` mask: a query sees its own chunk of `lookahead + 1` frames
+    and the `70 / (lookahead + 1)` chunks before it. Positions span the key length, so `relShift` runs on
+    `[Q, 2L − 1]` and the scores are sliced to `L`.
+  - `scale_input` is false in the release, so the subsampled frames are not scaled.
+  - The decoder is a plain transducer: an embedding with the blank (1024) as its start token, a
+    two-layer LSTM, `decoder_projector`, and a joint `head(ReLU(encoder_projector(f) + g))` over 1025
+    logits, blank last. Greedy decoding advances a frame on a blank, stays on a token, and advances after
+    `max_symbols_per_step` (10) tokens on one frame.
+  - **One encoder serves both paths.** A clip forward runs under the chunked mask; a stream runs the
+    same layers inside `NFKMLXStreamCarry`, chunk by chunk (`1 + 8R` mel frames first, then `8(R + 1)`).
+    The subsampler keeps one input frame per stride-2 convolution (two zero frames before the first
+    chunk), the depthwise convolutions their last 8 frames, and each layer its last 70 projected keys and
+    values. 70 is a whole number of chunks at R ∈ {0, 1, 6, 13}, so the window holds exactly the keys the
+    mask shows and the stream needs no mask. The configuration refuses a lookahead that does not divide
+    the left context.
+  - **The mask is integer arithmetic.** `MLXArray(Int32) / Int32` divides as floats, which made every
+    chunk of more than one frame see the wrong keys (a 0.045 gap on random weights);
+    `floorDivide` fixed it.
+  - **The release tokenizer disagrees with the head on the blank's id.** `tokenizer.json` adds `<pad>`
+    at 1024 and `<blank>` at 1025, while `config.json`'s head is 1025 wide with the blank at 1024.
+    Decoding drops special ids, so neither reaches the text.
+  `backend(directoryURL:)`, `backend(repo:revision:cacheDirectoryURL:)` (+ async), and `register()` under
+  `nemotron-asr-streaming`; `NFKMLXGenerationParameterKey.lookaheadFrames` picks R per request or stream.
+  The family judge `nemotronASR` reads `nemotron_asr_streaming`.
+  **Reference parity** on the released weights, the validation clip, and every trained lookahead
+  (`run_reference.py nemotron_asr_streaming`, the `nemo` env, `IK_VAL_NEMOTRON_ASR_STREAMING`,
+  `IK_PARITY_NEMOTRON_ASR_STREAMING_ORDERS`, the record written with `IK_PROBE_OUTPUT_ORDER_FLOOR=1`), measured on the M1 Max at float32: the features at cosine 0.9999999999
+  (max |d| 7.9e-5 over log-mel values), the subsampler 0.99999996, the first layer 1.0, the chunk-masked
+  encoder at 0.9999999 or above at every lookahead (max |d| 1.1e-6 at R = 13, 5.5e-6 at 6, 3.3e-6 at 1,
+  1.5e-6 at 0), the prediction network's start state and the joint's frame-0 logits at 1.0, and the
+  greedy tokens, their frames, and the decoded text exact at all four. The reference transcribes "The quick brown fox
+  jumps over the lazy dog" at R = 13 and 6, "A quick round fox …" at R = 1, and "A quick brown fox …" at
+  R = 0.
+  - **The stream is held to the reference's order floor.** At float64 the reference's cache-aware stream
+    and its chunk-masked clip agree to 3.0e-15, so at float32 the two are the same sums in different
+    orders. The reference's own float32 stream-to-clip gap (4.7e-7, 1.8e-6, 7.5e-7, 1.8e-6 at R = 13, 6,
+    1, 0) is one draw of that spread, and the port's stream misses it at R = 6 (5.5e-6) and R = 1
+    (1.9e-6). The oracle reruns the reference's clip once per fixed summation order
+    (`_SUMMATION_RERUNS`, through `_nemotron_asr_order_runs`; the causal convolutions keep their padding
+    by an ordered `_conv_forward`, and the masked float32 attention runs through
+    `_ordered_masked_attention`). The farthest rerun sits 1.4e-6, 5.8e-6, 4.9e-6, and 3.3e-6 from the
+    clip, and the port's stream-to-clip gap is 0.26, 0.95, 0.39, and 0.37 of it. Against the float64
+    clip, the reference's farthest float32 run sits at 1.8e-6, 6.6e-6, 5.8e-6, and 2.1e-6. The port's
+    clip is at 0.70, 0.37, 0.24, and 0.35 of that, and its stream at 0.68, 0.47, 0.20, and 0.72. These
+    two float64 checks are the primary assertions; the stream-to-clip ratio against the order floor
+    (0.95 at R = 6, the narrowest margin) and the reference's float64 stream-to-clip agreement below
+    1e-12 are asserted beside them. Every bar is read from the record.
+  - A bar anchored on the reference's float32 stream would not pass. At R = 1 the port's stream sits
+    5.5e-6 from the reference's stream, 1.12 times the clip order floor of 4.9e-6. Most of that is the
+    reference's own draw: its stream sits 4.94e-6 from float64, the port's 1.13e-6.
+  - **Open: MLX's CPU device.** At R = 13 its stream sits 2.2e-6 from float64, 1.21 times the
+    reference's farthest run, and its clip 1.8e-6, 1.01 times. The clip and the stream miss alike, so the
+    cause is not the stream; it is not yet localized. The shipped path is the GPU. The test computes and
+    prints the CPU figures on every run and asserts none.
+  **Customization ships** at head-retarget (`NFKMLXNemotronASRTraining.swift`): `network(directoryURL:
+  weightsURL:)`, `NFKMLXNemotronASRTrainable` (`.transducer` freezes the encoder), `latticeLogits`, and
+  `fineTune`. The objective is the release's `model_config.yaml` loss: NeMo's `RNNTLoss` with the numba
+  kernel, FastEmit 0.005, and `mean_volume`. FastEmit in that kernel scales each label emission's
+  gradient and the reported loss by `1 + λ` and leaves the blanks' gradient alone, which
+  `NFKMLXNemotronASRObjective` reproduces with a stop-gradient on the label log-probabilities. The
+  forward variable runs a frame at a time as `C + logcumsumexp(α + blank − C)`. Measured against NeMo
+  (`run_reference.py nemotron_asr_streaming_loss`, `IK_PARITY_NEMOTRON_ASR_STREAMING_LOSS`): each utterance's plain negative log-likelihood at 55.21628 and 38.548912 against 55.216278 and 38.548912, the release's loss at 11.779253 against 11.779252, and its gradient with respect to the logits at max |d| 6.2e-7 over a peak of 0.125.
+  The reference optimizer is the configuration's: AdamW at 3.0, betas (0.9, 0.98), weight decay 0.001,
+  under `NoamAnnealing` (`d_model` 1024, 8,000 warmup steps, floor 1e-6), with the folded LSTM bias at
+  twice the rate. The release is float32 and is not quantized or offered at a lower precision here: a
+  half-precision or quantized encoder needs its own floor measured against the reference at that
+  precision, which is open.
 - `NFKMLXGraniteSpeech` / `NFKMLXGraniteSpeechNet` / `NFKMLXGraniteSpeechBackend` (`@objc`) — **Granite
   Speech 3.3-2b** (`GraniteSpeechForConditionalGeneration`, IBM, Apache-2.0), the first speech language
   model here: a Conformer acoustic encoder, a BLIP-2 Q-former projector, and a dense Granite decoder that
