@@ -118,6 +118,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### VideoToolbox's frame rate converter keeps its session between frames
+
+- `NFKVideoToolboxBackend` holds the frame rate converter's session between requests, so a run at 1920 × 1080
+  takes about 72 ms in place of about 470 ms. Results equal a fresh session's. Another frame size opens a new
+  session, concurrent runs take the session in turn, and `converterIdleTimeout` (30 seconds) ends it when idle.
+
 #### VideoToolbox interpolates at any point between two frames
 
 - `NFKParameterTimestep` places an interpolated frame between two frames, from 0 at the first to 1 at the

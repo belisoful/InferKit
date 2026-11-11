@@ -73,6 +73,12 @@ typedef NS_ENUM(NSInteger, NFKVideoToolboxTask) {
 /*! The pixel range a packed flow channel covers, in pixels. 32 by default, as NFKMLXRAFT uses. */
 @property (nonatomic) double flowScale;
 
+/*! How long the frame rate converter's session stays open after its last run, in seconds. 30 by default.
+	Starting a session costs more than a run, so successive runs at one frame size share one; a run at
+	another size opens a new one. Runs answer one at a time and as a fresh session would. 0 ends the session
+	after each run. Introduced in InferKit 0.4.0. */
+@property (nonatomic) NSTimeInterval converterIdleTimeout;
+
 + (instancetype)backend;
 
 /*! A backend for one task. */

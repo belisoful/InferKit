@@ -25,6 +25,15 @@
 	#define NFK_VT_HAS_FRAME_RATE_CONVERSION 1
 #endif
 
+@interface NFKVideoToolboxBackend ()
+/*! The frame rate converter's held session and its configuration, read and written on converterLock. */
+@property (nonatomic, strong, nullable) id converter;
+@property (nonatomic, strong, nullable) id converterConfiguration;
+@property (nonatomic, readonly) NSObject *converterLock;
+/*! Counts the converter's runs, so an idle release scheduled before the last run stands down. */
+@property (nonatomic) NSUInteger converterUseCount;
+@end
+
 @implementation NFKVideoToolboxBackend
 
 + (instancetype)backend
@@ -45,9 +54,18 @@
 	if (self != nil) {
 		_scaleFactor = 0;
 		_flowScale = 32.0;
+		_converterIdleTimeout = 30.0;
+		_converterLock = [[NSObject alloc] init];
 	}
 	return self;
 }
+
+#if NFK_VT_HAS_FRAME_RATE_CONVERSION
+- (void)dealloc
+{
+	[self endConverterSession];
+}
+#endif
 
 - (NSString *)backendIdentifier
 {
@@ -327,45 +345,114 @@
 												phase:(double)phase
 												error:(NSError **)outError API_AVAILABLE(macos(26.0), ios(26.0))
 {
+	@synchronized (self.converterLock) {
+		NSInteger width = (NSInteger)CVPixelBufferGetWidth(source), height = (NSInteger)CVPixelBufferGetHeight(source);
+		if (![self holdConverterForWidth:width height:height error:outError]) {
+			return nil;
+		}
+		VTFrameRateConversionConfiguration *configuration = self.converterConfiguration;
+		CVPixelBufferRef previousReading = [self buffer:previous transferredToAttributes:configuration.sourcePixelBufferAttributes];
+		CVPixelBufferRef sourceReading = [self buffer:source transferredToAttributes:configuration.sourcePixelBufferAttributes];
+		CVPixelBufferRef destination = [self bufferMatchingAttributes:configuration.destinationPixelBufferAttributes fallback:source];
+		VTFrameProcessorFrame *previousFrame = [self frameWithBuffer:previousReading time:CMTimeMake(0, 600)];
+		VTFrameProcessorFrame *sourceFrame = [self frameWithBuffer:sourceReading time:CMTimeMake(600, 600)];
+		VTFrameProcessorFrame *destinationFrame = [self frameWithBuffer:destination time:CMTimeMakeWithSeconds(phase, 600000)];
+		NFKInferenceResult *result = nil;
+		if (previousFrame != nil && sourceFrame != nil && destinationFrame != nil) {
+			// Random submission clears the processor's caches, so a held session answers as a fresh one does.
+			VTFrameRateConversionParameters *parameters =
+				[[VTFrameRateConversionParameters alloc] initWithSourceFrame:previousFrame
+																   nextFrame:sourceFrame
+																 opticalFlow:nil
+														  interpolationPhase:@[ @(phase) ]
+															  submissionMode:VTFrameRateConversionParametersSubmissionModeRandom
+														   destinationFrames:@[ destinationFrame ]];
+			NSError *processError = nil;
+			if ([(VTFrameProcessor *)self.converter processWithParameters:parameters error:&processError]) {
+				result = [self resultWithBufferConvertedToBGRA:destination error:outError];
+			} else {
+				[self endConverterSession];
+				[self failWithError:outError code:kNFKError_InferenceBackendFailure
+							 reason:processError.localizedDescription ?: @"the frame processor failed"];
+			}
+		} else {
+			[self failWithError:outError code:kNFKError_InferenceBackendFailure reason:@"the frames could not be allocated"];
+		}
+		CVPixelBufferRelease(previousReading);
+		CVPixelBufferRelease(sourceReading);
+		CVPixelBufferRelease(destination);
+		[self scheduleConverterRelease];
+		return result;
+	}
+}
+
+/*! Leaves a started session for the frame size in converter, starting one when none is held or the size
+	changed. Runs on the converter's lock. */
+- (BOOL)holdConverterForWidth:(NSInteger)width height:(NSInteger)height error:(NSError **)outError API_AVAILABLE(macos(26.0), ios(26.0))
+{
+	VTFrameRateConversionConfiguration *held = self.converterConfiguration;
+	if (held != nil && held.frameWidth == width && held.frameHeight == height) {
+		return YES;
+	}
+	[self endConverterSession];
 	VTFrameRateConversionConfiguration *configuration =
-		[[VTFrameRateConversionConfiguration alloc] initWithFrameWidth:(NSInteger)CVPixelBufferGetWidth(source)
-														   frameHeight:(NSInteger)CVPixelBufferGetHeight(source)
+		[[VTFrameRateConversionConfiguration alloc] initWithFrameWidth:width
+														   frameHeight:height
 													usePrecomputedFlow:NO
 												 qualityPrioritization:VTFrameRateConversionConfigurationQualityPrioritizationNormal
 															  revision:VTFrameRateConversionConfiguration.defaultRevision];
 	if (configuration == nil) {
-		[self failWithError:outError
-					   code:kNFKError_InferenceUnsupported
-					 reason:[NSString stringWithFormat:@"the frame rate converter does not take a %zu × %zu frame",
-							 CVPixelBufferGetWidth(source), CVPixelBufferGetHeight(source)]];
-		return nil;
+		return [self failWithError:outError
+							  code:kNFKError_InferenceUnsupported
+							reason:[NSString stringWithFormat:@"the frame rate converter does not take a %ld × %ld frame",
+									(long)width, (long)height]];
 	}
-	CVPixelBufferRef previousReading = [self buffer:previous transferredToAttributes:configuration.sourcePixelBufferAttributes];
-	CVPixelBufferRef sourceReading = [self buffer:source transferredToAttributes:configuration.sourcePixelBufferAttributes];
-	CVPixelBufferRef destination = [self bufferMatchingAttributes:configuration.destinationPixelBufferAttributes fallback:source];
-	VTFrameProcessorFrame *previousFrame = [self frameWithBuffer:previousReading time:CMTimeMake(0, 600)];
-	VTFrameProcessorFrame *sourceFrame = [self frameWithBuffer:sourceReading time:CMTimeMake(600, 600)];
-	VTFrameProcessorFrame *destinationFrame = [self frameWithBuffer:destination time:CMTimeMakeWithSeconds(phase, 600000)];
-	NFKInferenceResult *result = nil;
-	if (previousFrame != nil && sourceFrame != nil && destinationFrame != nil) {
-		VTFrameRateConversionParameters *parameters =
-			[[VTFrameRateConversionParameters alloc] initWithSourceFrame:previousFrame
-															   nextFrame:sourceFrame
-															 opticalFlow:nil
-													  interpolationPhase:@[ @(phase) ]
-														  submissionMode:VTFrameRateConversionParametersSubmissionModeRandom
-													   destinationFrames:@[ destinationFrame ]];
-		result = [self runConfiguration:configuration parameters:parameters outputs:nil error:outError];
-		if (result != nil) {
-			result = [self resultWithBufferConvertedToBGRA:destination error:outError];
+	VTFrameProcessor *processor = [[VTFrameProcessor alloc] init];
+	NSError *sessionError = nil;
+	if (![processor startSessionWithConfiguration:configuration error:&sessionError]) {
+		return [self failWithError:outError code:kNFKError_InferenceBackendFailure
+							reason:sessionError.localizedDescription ?: @"the frame processor refused the configuration"];
+	}
+	self.converter = processor;
+	self.converterConfiguration = configuration;
+	return YES;
+}
+
+/*! Ends the held session, if any. Runs on the converter's lock. */
+- (void)endConverterSession
+{
+	if (self.converter != nil) {
+		if (@available(macOS 26.0, iOS 26.0, *)) {
+			[(VTFrameProcessor *)self.converter endSession];
 		}
-	} else {
-		[self failWithError:outError code:kNFKError_InferenceBackendFailure reason:@"the frames could not be allocated"];
 	}
-	CVPixelBufferRelease(previousReading);
-	CVPixelBufferRelease(sourceReading);
-	CVPixelBufferRelease(destination);
-	return result;
+	self.converter = nil;
+	self.converterConfiguration = nil;
+}
+
+/*! Ends the held session once it has gone unused for converterIdleTimeout; a later run moves the deadline.
+	Runs on the converter's lock. */
+- (void)scheduleConverterRelease
+{
+	NSTimeInterval timeout = self.converterIdleTimeout;
+	if (timeout <= 0) {
+		[self endConverterSession];
+		return;
+	}
+	NSUInteger generation = ++self.converterUseCount;
+	__weak NFKVideoToolboxBackend *weakSelf = self;
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)),
+				   dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+		NFKVideoToolboxBackend *backend = weakSelf;
+		if (backend == nil) {
+			return;
+		}
+		@synchronized (backend.converterLock) {
+			if (backend.converterUseCount == generation) {
+				[backend endConverterSession];
+			}
+		}
+	});
 }
 #endif
 

@@ -280,6 +280,102 @@
 	XCTAssertEqualObjects(NFKModelValueTypeForKey(NFKParameterTimestep), NFKModelValueTypeNumber);
 }
 
+- (NSArray *)framesOfWidth:(size_t)width height:(size_t)height shiftedBy:(size_t)shift
+{
+	CVPixelBufferRef first = [self frameOfWidth:width height:height shiftedBy:shift];
+	CVPixelBufferRef second = [self frameOfWidth:width height:height shiftedBy:shift + 60];
+	NSArray *frames = @[ (__bridge id)first, (__bridge id)second ];
+	CVPixelBufferRelease(first);
+	CVPixelBufferRelease(second);
+	return frames;
+}
+
+/*! The BGRA bytes of the frame a backend answers at a timestep, or nil where the processor did not run. */
+- (nullable NSData *)bytesFrom:(NFKVideoToolboxBackend *)backend frames:(NSArray *)frames timestep:(double)timestep
+{
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImages: frames }
+															   parameters:@{ NFKParameterTimestep: @(timestep) }];
+	NFKInferenceResult *result = [self resultOfRunning:backend request:request];
+	if (result == nil) {
+		return nil;
+	}
+	CVPixelBufferRef frame = (__bridge CVPixelBufferRef)[result outputForKey:NFKOutputImage];
+	CVPixelBufferLockBaseAddress(frame, kCVPixelBufferLock_ReadOnly);
+	NSMutableData *bytes = [NSMutableData data];
+	for (size_t y = 0; y < CVPixelBufferGetHeight(frame); y++) {
+		[bytes appendBytes:(const uint8_t *)CVPixelBufferGetBaseAddress(frame) + y * CVPixelBufferGetBytesPerRow(frame)
+					length:CVPixelBufferGetWidth(frame) * 4];
+	}
+	CVPixelBufferUnlockBaseAddress(frame, kCVPixelBufferLock_ReadOnly);
+	return bytes;
+}
+
+- (void)testAHeldConverterAnswersAsAFreshOneAcrossUnrelatedPairs
+{
+	NFKVideoToolboxBackend *held = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskFrameInterpolation];
+	if (!held.isReady) {
+		return;
+	}
+	NSArray<NSArray<NSNumber *> *> *runs = @[ @[ @0, @0.4 ], @[ @0, @0.8 ], @[ @60, @0.2 ], @[ @160, @0.6 ], @[ @0, @0.4 ] ];
+	for (NSArray<NSNumber *> *run in runs) {
+		NSArray *frames = [self framesOfWidth:320 height:240 shiftedBy:run[0].unsignedIntegerValue];
+		NSData *reused = [self bytesFrom:held frames:frames timestep:run[1].doubleValue];
+		if (reused == nil) {
+			return;
+		}
+		XCTAssertNotNil([held valueForKey:@"converter"], @"the session stays open between runs");
+		NFKVideoToolboxBackend *fresh = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskFrameInterpolation];
+		fresh.converterIdleTimeout = 0;
+		XCTAssertEqualObjects(reused, [self bytesFrom:fresh frames:frames timestep:run[1].doubleValue], @"%@", run);
+		XCTAssertNil([fresh valueForKey:@"converter"], @"a timeout of 0 ends the session after each run");
+	}
+}
+
+- (void)testAHeldConverterTakesANewFrameSizeAndEndsWhenIdle
+{
+	NFKVideoToolboxBackend *held = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskFrameInterpolation];
+	if (!held.isReady) {
+		return;
+	}
+	held.converterIdleTimeout = 0.3;
+	NSData *small = [self bytesFrom:held frames:[self framesOfWidth:320 height:240 shiftedBy:0] timestep:0.4];
+	if (small == nil) {
+		return;
+	}
+	XCTAssertEqual(small.length, (NSUInteger)320 * 240 * 4);
+	NSData *large = [self bytesFrom:held frames:[self framesOfWidth:640 height:480 shiftedBy:0] timestep:0.4];
+	XCTAssertEqual(large.length, (NSUInteger)640 * 480 * 4, @"another size opens another session");
+	XCTAssertNotNil([held valueForKey:@"converter"]);
+	NSPredicate *released = [NSPredicate predicateWithBlock:^BOOL(NFKVideoToolboxBackend *backend, NSDictionary *bindings) {
+		return [backend valueForKey:@"converter"] == nil;
+	}];
+	[self waitForExpectations:@[ [self expectationForPredicate:released evaluatedWithObject:held handler:nil] ] timeout:10];
+	XCTAssertEqualObjects([self bytesFrom:held frames:[self framesOfWidth:320 height:240 shiftedBy:0] timestep:0.4], small,
+						  @"a run after the release opens a session again");
+}
+
+- (void)testRunsFromManyThreadsTakeTheHeldConverterInTurn
+{
+	NFKVideoToolboxBackend *held = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskFrameInterpolation];
+	if (!held.isReady) {
+		return;
+	}
+	NSArray *frames = [self framesOfWidth:320 height:240 shiftedBy:0];
+	NSData *expected = [self bytesFrom:held frames:frames timestep:0.4];
+	if (expected == nil) {
+		return;
+	}
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputImages: frames }
+															   parameters:@{ NFKParameterTimestep: @0.4 }];
+	__block NSInteger answered = 0;
+	dispatch_apply(4, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t index) {
+		if ([held runInferenceForRequest:request error:NULL] != nil) {
+			__sync_fetch_and_add(&answered, 1);
+		}
+	});
+	XCTAssertEqual(answered, 4);
+}
+
 - (void)testStillFramesPackAsNoMotion
 {
 	NFKVideoToolboxBackend *backend = [NFKVideoToolboxBackend backendWithTask:NFKVideoToolboxTaskOpticalFlow];

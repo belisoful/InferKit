@@ -226,6 +226,12 @@ headers:
     run on a machine takes about 12 s.
     It takes up to 8192 × 4320 (7680 × 4320 and 8192 × 4320 measured, the phase within 0.007), and a
     larger frame is refused by size. The first run at a new size takes 10–18 s.
+  - The backend holds the converter's session between requests (`converterIdleTimeout`, 30 s): about 72 ms
+    a run at 1920 × 1080, against about 470 ms with a session per run. Each run still submits in
+    `VTFrameRateConversionParametersSubmissionModeRandom`, which clears the processor's caches: 8 runs
+    over unrelated frame pairs through one session equal a fresh session's bytes. Sequential submission is
+    not used, because a served request does not say whether its pair follows the last. A size change ends
+    the session and starts another, and a lock takes concurrent runs in turn.
   - A request that names a timestep runs the converter, and one that names none stays on the low-latency
     path. tvOS has no converter, so there the timestep rounds to eighths.
 - The packed flow map follows `NFKMLXRAFT`: red and green carry `0.5 + component / (2 * flowScale)`
