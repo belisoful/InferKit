@@ -108,6 +108,18 @@ final class NFKMLXConversationCacheTests: XCTestCase {
         XCTAssertGreaterThan(named.conversationCacheBytes, 0)
     }
 
+    // A reply longer than its prompt does not count against a keyless prompt that parts from it: the prompt
+    // shares all of the last prompt, which is what the rule weighs.
+    func testAKeylessPromptContinuesPastAReplyLongerThanItsPrompt() throws {
+        try requireMLXRuntime()
+        let backend = try backend()
+        let first = try reply(backend, opening, maxTokens: 12)
+        XCTAssertEqual(first.cached, 0)
+        let next = try reply(backend, opening + " he he")
+        XCTAssertGreaterThan(next.cached, 0, "the last prompt is reused though the reply is discarded")
+        XCTAssertEqual(backend.conversationCacheCount, 1, "it continued the conversation rather than starting one")
+    }
+
     func testARequestWithoutAConversationLeavesTheConversationsAlone() throws {
         try requireMLXRuntime()
         let backend = try backend()

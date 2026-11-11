@@ -597,6 +597,7 @@ extension NFKMLXGranitePromptCache: NFKMLXSpillableConversation {
     /// Only the last prompt's end resumes, so the record lists no earlier position.
     var resumablePositions: [Int]? { [] }
     var optionsSignature: String { "granite" }
+    var promptLength: Int { tokens.count }
 
     func resumablePosition(for prompt: [Int]) -> Int {
         kept != nil && prompt.count > tokens.count && prompt.starts(with: tokens) ? tokens.count : 0

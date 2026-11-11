@@ -540,7 +540,7 @@ attention and feed-forward.
   against the unnamed conversation (`NFKMLXConversation.unnamedPrefix` + a UUID) its prompt resumes
   furthest into, in memory (`NFKMLXPromptCache.resumablePosition(for:)`) or on disk
   (`NFKMLXConversationSpill.resumable`), taken only where the resumed prefix is at least what the
-  rollback discards; otherwise a new one. `promptCacheLength` reads the last unnamed conversation. The
+  rollback discards of its last prompt; otherwise a new one. `promptCacheLength` reads the last unnamed conversation. The
   budget is derived per run unless set (weights, reserve, and the keys and values at the window from
   `NFKModelInfoKeyValueBytesPerToken`), and evicted, released (`releaseIdleConversationCaches`), and freed
   conversations spill through `NFKMLXConversationSpill` (generic over `NFKMLXSpillableConversation`; the
@@ -675,8 +675,9 @@ attention and feed-forward.
   the prompt ends on an absolute multiple of 64 (`prefillPassLength(position:)`), identical to the old rule
   from position 0, so a resumed prefill splits the delta rule's chunks where a full one does. Lookup: the key,
   else the unnamed conversation (`\u{0}unnamed.<UUID>`) the prompt resumes furthest into, taken only when the
-  resumed prefix is at least what the rollback discards, so one client never discards most of another's
-  conversation. Budget: `NFKMLXResidencyBudget.current()` less the weight bytes, the reserve, and
+  resumed prefix is at least what the rollback discards of that conversation's last prompt (`promptLength`), so
+  one client never discards most of another's conversation. The reply is not weighed: a five-token prompt with
+  an eight-token reply must still continue. Budget: `NFKMLXResidencyBudget.current()` less the weight bytes, the reserve, and
   `NFKMLXHybridConversation.bytes` at the window (or context length), recomputed per run unless set; the
   conversation that ran is kept. Spill: evicted, released, and unloaded conversations go to
   `NFKMLXConversationSpill` (arrays in safetensors plus a JSON record of name, tokens, snapshot positions, and

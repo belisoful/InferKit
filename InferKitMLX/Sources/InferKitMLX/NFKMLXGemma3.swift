@@ -322,6 +322,8 @@ final class NFKMLXGemma3PromptCache: NFKMLXConversationState {
     private(set) var tokens: [Int] = []
     /// How many of the last aligned prompt's tokens the cache already held.
     private(set) var sharedPrefixLength = 0
+    /// The length of the prompt the cache last aligned to, or 0 for a cache read back from disk.
+    private var lastPromptLength = 0
     let kinds: [NFKMLXGemmaAttentionKind]
     let slidingWindow: Int
     /// The strengths of the held adapters the cached rows were computed at, or nil for a model that holds none.
@@ -338,6 +340,7 @@ final class NFKMLXGemma3PromptCache: NFKMLXConversationState {
     /// Rolls the cache back to the longest prefix it shares with `prompt`, at most one short of the
     /// prompt so a token runs through the model, and returns that prefix's length.
     func align(to prompt: [Int]) -> Int {
+        defer { lastPromptLength = prompt.count }
         var shared = 0
         let limit = Swift.min(tokens.count, Swift.max(prompt.count - 1, 0))
         while shared < limit && tokens[shared] == prompt[shared] {
@@ -689,6 +692,7 @@ public final class NFKMLXGemma3Language: NSObject {
 extension NFKMLXGemma3PromptCache: NFKMLXSpillableConversation {
     var resumablePositions: [Int]? { nil }
     var optionsSignature: String { "sliding \(slidingWindow)" }
+    var promptLength: Int { lastPromptLength > 0 ? lastPromptLength : tokens.count }
 
     func resumablePosition(for prompt: [Int]) -> Int {
         let limit = Swift.min(tokens.count, Swift.max(prompt.count - 1, 0))

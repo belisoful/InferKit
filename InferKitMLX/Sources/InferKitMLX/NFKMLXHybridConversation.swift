@@ -50,6 +50,8 @@ final class NFKMLXHybridConversation: NFKMLXConversationState {
     private(set) var tokens: [Int] = []
     /// The snapshots, oldest position first.
     private(set) var snapshots: [NFKMLXHybridSnapshot] = []
+    /// The length of the prompt the last run resumed for, or 0 for a conversation read back from disk.
+    private var lastPromptLength = 0
     private let attentionLayers: [Int]
 
     init(configuration: NFKMLXHybridConfiguration, window: Int?, quantization: NFKMLXKeyValueCache.Quantization?,
@@ -98,6 +100,7 @@ final class NFKMLXHybridConversation: NFKMLXConversationState {
     /// Moves the cache to where `prompt` continues and returns that position; the caller prefills the prompt
     /// from there. Where nothing held can be continued, the conversation starts over and returns 0.
     func resume(for prompt: [Int]) -> Int {
+        defer { lastPromptLength = prompt.count }
         let position = resumablePosition(for: prompt)
         guard position > 0 else {
             reset()
@@ -249,6 +252,9 @@ protocol NFKMLXSpillableConversation: NFKMLXConversationState {
     /// The positions short of the held tokens a prompt can resume at, or nil where every position can.
     var resumablePositions: [Int]? { get }
     var optionsSignature: String { get }
+    /// The length of the last run's prompt, which a keyless prompt is weighed against; the reply after it is
+    /// not, since a follow-up often renders a reply in other tokens than the model wrote.
+    var promptLength: Int { get }
     func save(to url: URL) throws
     /// The position a prompt continues the conversation from, without moving anything.
     func resumablePosition(for prompt: [Int]) -> Int
@@ -259,8 +265,9 @@ extension NFKMLXConversationKeeper where State: NFKMLXSpillableConversation {
     /// where `reuses` is false. A named run continues its own conversation, held or read back from the spill
     /// directory by `read`. A run that names none continues the unnamed conversation, held or on disk, its
     /// prompt resumes furthest into, where the resumed prefix is at least as long as what the rollback
-    /// discards, so one client's prompt never discards most of another's conversation; otherwise it starts
-    /// one. A held conversation `usable` refuses starts over. Runs under the backend's generation lock.
+    /// discards of that conversation's last prompt, so one client's prompt never discards most of another's
+    /// conversation; otherwise it starts one. A held conversation `usable` refuses starts over. Runs under the
+    /// backend's generation lock.
     func conversation(named name: String?, reuses: Bool, prompt: [Int], signature: String,
                       usable: (State) -> Bool = { _ in true }, make: () -> State,
                       read: (URL, NFKMLXConversationSpill.Record) throws -> State?) -> (name: String?, state: State) {
@@ -272,7 +279,7 @@ extension NFKMLXConversationKeeper where State: NFKMLXSpillableConversation {
             let prefix = NFKMLXConversation.unnamedPrefix
             let inMemory = states.held
                 .filter { $0.name.hasPrefix(prefix) && usable($0.state) }
-                .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.tokens.count) }
+                .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.promptLength) }
                 .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
                 .max { $0.kept < $1.kept }
             let onDisk = spill?.resumable(for: prompt, prefix: prefix, options: signature)
@@ -367,6 +374,7 @@ enum NFKMLXConversationBudget {
 
 extension NFKMLXHybridConversation: NFKMLXSpillableConversation {
     var resumablePositions: [Int]? { snapshots.map(\.position) }
+    var promptLength: Int { lastPromptLength > 0 ? lastPromptLength : tokens.count }
 }
 
 /// Conversations written to disk where the memory budget lets them go, so a later request, after an
@@ -418,6 +426,7 @@ final class NFKMLXConversationSpill {
         let tokens: [Int]
         let snapshots: [Int]?
         let options: String
+        let promptLength: Int
 
         /// The position a conversation holding this record's tokens continues `prompt` from.
         func resumablePosition(for prompt: [Int]) -> Int {
@@ -440,7 +449,7 @@ final class NFKMLXConversationSpill {
         remove(stem)
         try conversation.save(to: arraysURL(stem))
         let record = Record(name: name, tokens: conversation.tokens, snapshots: conversation.resumablePositions,
-                            options: conversation.optionsSignature)
+                            options: conversation.optionsSignature, promptLength: conversation.promptLength)
         try JSONEncoder().encode(record).write(to: recordURL(stem), options: .atomic)
         trim()
     }
@@ -455,11 +464,12 @@ final class NFKMLXConversationSpill {
     }
 
     /// The unnamed conversation on disk, its name starting with `prefix`, that `prompt` resumes furthest into,
-    /// among those built for `options` whose resumed prefix is at least what a rollback discards.
+    /// among those built for `options` whose resumed prefix is at least what a rollback discards of its last
+    /// prompt.
     func resumable(for prompt: [Int], prefix: String, options: String) -> (name: String, kept: Int)? {
         records()
             .filter { $0.name.hasPrefix(prefix) && $0.options == options }
-            .map { (name: $0.name, kept: $0.resumablePosition(for: prompt), held: $0.tokens.count) }
+            .map { (name: $0.name, kept: $0.resumablePosition(for: prompt), held: $0.promptLength) }
             .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
             .max { $0.kept < $1.kept }
             .map { ($0.name, $0.kept) }

@@ -464,7 +464,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// where the request turns reuse off. A named request continues its own conversation, from memory or
     /// from the spill directory. A request that names none continues the unnamed conversation, in memory
     /// or on disk, its prompt resumes furthest into, where the resumed prefix is at least as long as what
-    /// the rollback discards, so one client's prompt never discards most of another's conversation;
+    /// the rollback discards of its last prompt, so one client's prompt never discards most of another's conversation;
     /// otherwise it starts one. A conversation built for another window, cache quantization, or adapter
     /// strengths starts over. The weights' precision and quantization are part of the spill directory's
     /// identity, so a spilled conversation always comes from these weights.
@@ -492,7 +492,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         }
         let inMemory = conversations.states.held
             .filter { $0.name.hasPrefix(Self.unnamedPrefix) && usable($0.state) }
-            .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.tokens.count) }
+            .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.promptLength) }
             .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
             .max { $0.kept < $1.kept }
         let signature = NFKMLXHybridConversation.optionsSignature(window: options.contextWindow,

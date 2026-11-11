@@ -254,6 +254,7 @@ extension NFKMLXDeepSeekPromptCache: NFKMLXSpillableConversation {
     /// Only the last prompt's end resumes, so the record lists no earlier position.
     var resumablePositions: [Int]? { [] }
     var optionsSignature: String { "deepseek" }
+    var promptLength: Int { tokens.count }
 
     func resumablePosition(for prompt: [Int]) -> Int {
         let minimum = configuration.minimumPrefillChunk

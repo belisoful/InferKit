@@ -39,6 +39,8 @@ public final class NFKMLXPromptCache {
     /// share of the input a backend reports under `NFKUsageCachedTokens`. Introduced in InferKit
     /// 0.4.0.
     public private(set) var sharedPrefixLength = 0
+    /// The length of the prompt the cache last aligned to, or 0 for a cache read back from disk.
+    private var lastPromptLength = 0
     private(set) var cache: NFKMLXKeyValueCache
     /// The strengths of the held adapters the cached rows were computed at, or nil for a model that holds none.
     var adapterStrengths: [Float]?
@@ -72,6 +74,7 @@ public final class NFKMLXPromptCache {
     /// the whole prompt prefills, when a window has dropped the sequence's first positions, since every
     /// prompt reads from position 0, or when the rollback reaches past what a window retains.
     func align(to prompt: [Int]) -> Int {
+        defer { lastPromptLength = prompt.count }
         var shared = 0
         let limit = Swift.min(tokens.count, Swift.max(prompt.count - 1, 0))
         while shared < limit && tokens[shared] == prompt[shared] {
@@ -194,6 +197,7 @@ protocol NFKMLXConversationState: AnyObject {
 
 extension NFKMLXPromptCache: NFKMLXSpillableConversation {
     var resumablePositions: [Int]? { nil }
+    var promptLength: Int { lastPromptLength > 0 ? lastPromptLength : tokens.count }
 
     var optionsSignature: String {
         NFKMLXHybridConversation.optionsSignature(window: window, quantization: quantization,

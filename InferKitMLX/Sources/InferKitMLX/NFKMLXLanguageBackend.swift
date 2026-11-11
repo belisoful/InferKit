@@ -1200,13 +1200,13 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     }
 
     /// The name of the unnamed conversation, in memory or on disk, a prompt resumes furthest into, where the
-    /// resumed prefix is at least as long as what the rollback discards, so one client's prompt never discards
-    /// most of another's conversation; otherwise a new name. Runs under `generationLock`.
+    /// resumed prefix is at least as long as what the rollback discards of its last prompt, so one client's
+    /// prompt never discards most of another's conversation; otherwise a new name. Runs under `generationLock`.
     private func unnamedConversation(for prompt: [Int], net: NFKMLXLanguageNet, options: NFKMLXGenerationOptions) -> String {
         let prefix = NFKMLXConversation.unnamedPrefix
         let inMemory = conversationCaches.held
             .filter { $0.name.hasPrefix(prefix) && $0.state.matches(layerCount: net.configuration.layerCount, options: options) }
-            .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.count) }
+            .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.promptLength) }
             .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
             .max { $0.kept < $1.kept }
         let signature = NFKMLXHybridConversation.optionsSignature(window: options.contextWindow,
