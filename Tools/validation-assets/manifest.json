@@ -718,6 +718,56 @@
       "note": "A Fon-to-French adapter for MADLAD-400 3B (Zelyanoth/traduction_fon_french, apache-2.0), PEFT layout over the query and value projections of every attention, cross-attention included, rank 16, lora_alpha 32; its adapter_config.json (640 B, same revision) sits beside it. The second adapter of the IK_PARITY_MADLAD_ADAPTERS stack, at strength 0.5."
     },
     {
+      "key": "LORA_FLUX2_KLEIN4B_PIXEL_ART",
+      "file": "lora/flux2-klein4b-pixel-art/pytorch_lora_weights.safetensors",
+      "bytes": 325280664,
+      "url": "https://huggingface.co/Limbicnation/pixel-art-lora/resolve/0ac8e5c3400af68228811edc324721e25fc26777/pytorch_lora_weights.safetensors",
+      "config": [
+        "IK_VAL_LORA_FLUX2_KLEIN4B_PIXEL_ART"
+      ],
+      "note": "A pixel-art adapter for FLUX.2 [klein] 4B (Limbicnation/pixel-art-lora, apache-2.0) in diffusers' transformer. layout, r 64, lora_alpha 128, rsLoRA, its lora_adapter_metadata stating the scaling (128/8 = 16), over every attention, feed-forward, modulation, and embedding projection. Held beside the FLUX2_KLEIN_4B transformer at 0.8 and stacked with LORA_FLUX2_KLEIN4B_MIKKOANI at 0.6, measured against diffusers' FLUX.2 loader with set_adapters at float32 (run_reference.py flux2_adapters under the ltxtrain env with IK_FLUX2_ADAPTERS='<pixel-art>=0.8;<mikkoani>=0.6' -> IK_PARITY_FLUX2_ADAPTERS)."
+    },
+    {
+      "key": "LORA_FLUX2_KLEIN4B_PIXEL_ART_COMFYUI",
+      "file": "lora/flux2-klein4b-pixel-art/pytorch_lora_weights.comfyui.safetensors",
+      "bytes": 325276656,
+      "url": "https://huggingface.co/Limbicnation/pixel-art-lora/resolve/0ac8e5c3400af68228811edc324721e25fc26777/pytorch_lora_weights.comfyui.safetensors",
+      "config": [
+        "IK_VAL_LORA_FLUX2_KLEIN4B_PIXEL_ART_COMFYUI"
+      ],
+      "note": "The same adapter's ComfyUI copy (same revision): the diffusers names without the transformer. prefix and no metadata or alpha, so it is held at scale 1, as ComfyUI reads it, where the diffusers file is held at 16. testFlux2HeldAdaptersMatchTheReference reads both to the same layers and halves."
+    },
+    {
+      "key": "LORA_FLUX2_KLEIN4B_MIKKOANI",
+      "file": "lora/flux2-klein4b-mikkoani/klein4b-mikkoani.safetensors",
+      "bytes": 92436112,
+      "url": "https://huggingface.co/mikkoph/mikkoani-klein4b/resolve/2429707d188e1c366fc9fad14a88516b931c4b30/klein4b-mikkoani.safetensors",
+      "config": [
+        "IK_VAL_LORA_FLUX2_KLEIN4B_MIKKOANI"
+      ],
+      "note": "An anime-style adapter for FLUX.2 [klein] 4B (mikkoph/mikkoani-klein4b, apache-2.0) in kohya's layout over the original model's fused names (lora_unet_double_blocks_N_img_attn_qkv, lora_unet_single_blocks_N_linear1) with per-layer alphas, stored bfloat16. The second adapter of the IK_PARITY_FLUX2_ADAPTERS stack, at 0.6."
+    },
+    {
+      "key": "LORA_ZIMAGE_TURBO_PIXEL_ART",
+      "file": "lora/zimage-turbo-pixel-art/pixel_art_style_z_image_turbo.safetensors",
+      "bytes": 170128328,
+      "url": "https://huggingface.co/tarn59/pixel_art_style_lora_z_image_turbo/resolve/0a5092d1619664d94a5a36784f92db84b3ae62bd/pixel_art_style_z_image_turbo.safetensors",
+      "config": [
+        "IK_VAL_LORA_ZIMAGE_TURBO_PIXEL_ART"
+      ],
+      "note": "A pixel-art adapter for Z-Image-Turbo (tarn59/pixel_art_style_lora_z_image_turbo, apache-2.0) in the diffusion_model. layout over every block's attention, feed-forward, and modulation projections, stored bfloat16. Held beside the Z_IMAGE_TURBO transformer at 0.8 and stacked with LORA_ZIMAGE_TURBO_REALISM at 0.6, measured against diffusers' Z-Image loader at bfloat16 inside the reference's own bfloat16 floor against its float32 run (run_reference.py zimage_adapters under the ltxtrain env with IK_ZIMAGE_ADAPTERS='<pixel-art>=0.8;<realism>=0.6' -> IK_PARITY_ZIMAGE_ADAPTERS)."
+    },
+    {
+      "key": "LORA_ZIMAGE_TURBO_REALISM",
+      "file": "lora/zimage-turbo-realism/pytorch_lora_weights.safetensors",
+      "bytes": 85094800,
+      "url": "https://huggingface.co/suayptalha/Z-Image-Turbo-Realism-LoRA/resolve/8dc179cb56844d4ddc6e4527c30e98347eeae971/pytorch_lora_weights.safetensors",
+      "config": [
+        "IK_VAL_LORA_ZIMAGE_TURBO_REALISM"
+      ],
+      "note": "A realism adapter for Z-Image-Turbo (suayptalha/Z-Image-Turbo-Realism-LoRA, apache-2.0) in the diffusion_model. layout, stored bfloat16. The second adapter of the IK_PARITY_ZIMAGE_ADAPTERS stack, at 0.6."
+    },
+    {
       "key": "LORA_FLUX_SUPER_REALISM",
       "file": "lora/flux-super-realism/super-realism.safetensors",
       "bytes": 612747744,

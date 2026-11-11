@@ -125,6 +125,10 @@ public final class NFKMLXSD3Generator: NSObject {
     /// runs at 0.
     @objc public var guidance: Float = 7
 
+    /// The strengths the adapters held beside the transformer were loaded at, in load order; empty for a
+    /// generator that holds none.
+    var adapterStrengths: [Float] = []
+
     /// Whether the text towers and the transformer stay loaded together between images.
     @objc public var holdsStagesResident: Bool { staging.resident }
 
@@ -198,8 +202,19 @@ public final class NFKMLXSD3Generator: NSObject {
         try generator(directoryURL: directoryURL, residency: residency, budget: NFKMLXResidencyBudget.current())
     }
 
-    /// ``generator(directoryURL:residency:)`` planned against `budget` bytes.
-    static func generator(directoryURL: URL, residency: NFKMLXResidency, budget: Int) throws -> NFKMLXSD3Generator {
+    /// ``generator(directoryURL:residency:)`` with `adapters` held beside the transformer at their strengths,
+    /// read by ``NFKMLXDiTAdapters``. A staged release holds them again each time it loads the transformer, so
+    /// a misfit surfaces at the first image; a resident one at construction. A plan that streams transformer
+    /// blocks is refused.
+    static func generator(directoryURL: URL, residency: NFKMLXResidency,
+                          adapters: [(url: URL, strength: Float)]) throws -> NFKMLXSD3Generator {
+        try generator(directoryURL: directoryURL, residency: residency, budget: NFKMLXResidencyBudget.current(),
+                      adapters: adapters)
+    }
+
+    /// ``generator(directoryURL:residency:adapters:)`` planned against `budget` bytes.
+    static func generator(directoryURL: URL, residency: NFKMLXResidency, budget: Int,
+                          adapters: [(url: URL, strength: Float)] = []) throws -> NFKMLXSD3Generator {
         let directory = { (name: String) in directoryURL.appendingPathComponent(name) }
         let tokenizerL = try NFKMLXSDPromptTokenizer(directoryURL: directory("tokenizer"))
         let tokenizerG = try NFKMLXSDPromptTokenizer(directoryURL: directory("tokenizer_2"))
@@ -238,6 +253,9 @@ public final class NFKMLXSD3Generator: NSObject {
             residency: residency, budget: budget)
         let streamed = plan.streams(1)
             ? Set(plan.heldLayers(1, of: pipelineFootprint).upperBound ..< transformer.layerBytes.count) : []
+        guard adapters.isEmpty || streamed.isEmpty else {
+            throw NFKMLXError.unsupportedConfiguration(NFKMLXDiTAdapters.sd3StreamRefusal)
+        }
         let t5InFloat32 = plan.widens(0)
         let generator = NFKMLXSD3Generator(
             resident: plan.holdsStagesResident, tokenizerL: tokenizerL, tokenizerG: tokenizerG, segmenter: segmenter,
@@ -258,6 +276,7 @@ public final class NFKMLXSD3Generator: NSObject {
                 let transformer = NFKMLXSD3TransformerNet(configuration)
                 try NFKMLXSD3Release.loadTransformer(into: transformer, fromDirectory: directory("transformer"),
                                                      dtype: .bfloat16, streamed: streamed)
+                try NFKMLXDiTAdapters.hold(adapters, in: transformer)
                 let vae = NFKMLXSDAutoencoder(configuration: vaeConfiguration)
                 try NFKMLXStableDiffusionModels.loadVAEWeights(into: vae, from: vaeURL, precision: .float32)
                 return NFKMLXSD3Pipeline(transformer: transformer, vae: vae, schedule: schedule)
@@ -265,6 +284,7 @@ public final class NFKMLXSD3Generator: NSObject {
         generator.encodesInFloat32 = t5InFloat32
         generator.streamedLayerCount = streamed.count
         generator.streamedBytesPerPass = streamed.reduce(0) { $0 + transformer.layerBytes[$1] }
+        generator.adapterStrengths = adapters.map(\.strength)
         if plan.holdsStagesResident {
             try generator.loadResident()
         }

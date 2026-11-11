@@ -294,6 +294,10 @@ public final class NFKMLXFlux2: NSObject {
     /// path, since diffusers has no reference-cache inpainting pipeline.
     @objc public var cachesReferences = false
 
+    /// The strengths the adapters held beside the transformer were loaded at, in load order; empty for a
+    /// release that holds none.
+    var adapterStrengths: [Float] = []
+
     /// Whether the text encoder and the transformer stay loaded together between images. False where
     /// the release is staged: each image then loads the encoder, encodes, releases it, and loads the
     /// transformer.
@@ -353,6 +357,14 @@ public final class NFKMLXFlux2: NSObject {
     /// 0.4.0.
     @objc(flux2WithDirectoryURL:residency:error:)
     public static func flux2(directoryURL: URL, residency: NFKMLXResidency) throws -> NFKMLXFlux2 {
+        try flux2(directoryURL: directoryURL, residency: residency, adapters: [])
+    }
+
+    /// ``flux2(directoryURL:residency:)`` with `adapters` held beside the transformer at their strengths, read by
+    /// ``NFKMLXDiTAdapters``. A staged release holds them again each time it loads the transformer, so a misfit
+    /// surfaces at the first image; a resident one at construction.
+    static func flux2(directoryURL: URL, residency: NFKMLXResidency,
+                      adapters: [(url: URL, strength: Float)]) throws -> NFKMLXFlux2 {
         let transformerDirectory = directoryURL.appendingPathComponent("transformer")
         let vaeDirectory = directoryURL.appendingPathComponent("vae")
         let encoderDirectory = directoryURL.appendingPathComponent("text_encoder")
@@ -396,6 +408,7 @@ public final class NFKMLXFlux2: NSObject {
                 let transformer = NFKMLXFlux2TransformerNet(configuration)
                 try NFKMLXFlux2TransformerNet.loadWeights(into: transformer, from: transformerDirectory,
                                                           precision: .checkpoint)
+                try NFKMLXDiTAdapters.hold(adapters, in: transformer)
                 let autoencoder = NFKMLXSDAutoencoder(configuration: .flux2)
                 try NFKMLXStableDiffusionModels.loadVAEWeights(
                     into: autoencoder,
@@ -408,6 +421,7 @@ public final class NFKMLXFlux2: NSObject {
             tokenizer: tokenizer, chatTemplate: template,
             isDistilled: isDistilled(releaseDirectory: directoryURL),
             encodesInFloat32: placement.encoderFloat32)
+        flux.adapterStrengths = adapters.map(\.strength)
         if placement.resident {
             try flux.loadResident()
         }

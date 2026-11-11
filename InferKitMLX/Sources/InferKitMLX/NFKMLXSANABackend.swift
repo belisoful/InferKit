@@ -30,7 +30,8 @@ extension NFKMLXSANAGenerator {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: Self.backendInputKeys,
-                                parameterKeys: Self.backendParameterKeys,
+                                parameterKeys: NFKMLXDiTAdapters.parameterKeys(Self.backendParameterKeys,
+                                                                               holding: adapterStrengths),
                                 outputKeys: [NFKOutputImage]) { [self] request, job in
             let prompt = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             let negative = NFKMLXGenerationBackend.text(request, NFKInputNegativePrompt)
@@ -40,10 +41,14 @@ extension NFKMLXSANAGenerator {
             steps = parameter(NFKParameterSteps)?.intValue ?? steps
             guidance = parameter(NFKParameterGuidanceScale)?.floatValue ?? guidance
             job.reportProgress(0)
-            let pixels = try image(forPrompt: prompt, negativePrompt: negative,
-                                   width: parameter(NFKParameterWidth)?.intValue ?? 1024,
-                                   height: parameter(NFKParameterHeight)?.intValue ?? 1024,
-                                   seed: NFKMLXGenerationBackend.seed(request))
+            // The held adapters read the run's strengths as each step builds its graph.
+            let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
+            let pixels = try NFKMLXAdapterRun.$strengths.withValue(strengths) {
+                try image(forPrompt: prompt, negativePrompt: negative,
+                          width: parameter(NFKParameterWidth)?.intValue ?? 1024,
+                          height: parameter(NFKParameterHeight)?.intValue ?? 1024,
+                          seed: NFKMLXGenerationBackend.seed(request))
+            }
             if job.status == .cancelled { return nil }
             let result = NFKMLXGenerationBackend.imageResult(try NFKMLXGenerationBackend.cgImage(pixels))
             job.reportProgress(1)
@@ -63,6 +68,22 @@ extension NFKMLXSANAGenerator {
     @objc(backendWithDirectoryURL:residency:error:)
     public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try generator(directoryURL: directoryURL, residency: residency).inferenceBackend()
+    }
+
+    /// ``backend(directoryURL:residency:)`` with LoRA adapters held beside the transformer: each a diffusers or kohya
+    /// safetensors file, at the strength in `strengths` at its index. The adapters stay unmerged, so they stack, and a
+    /// request sets each one's strength through `NFKParameterAdapterStrengths`, an array in the order of `adapterURLs`.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the counts differ, and `NFKMLXError.loRANotApplicable`
+    ///   when an adapter does not fit SANA (at construction for a resident release, at the first
+    ///   run for a staged one).
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:residency:adapterURLs:strengths:error:)
+    public static func backend(directoryURL: URL, residency: NFKMLXResidency, adapterURLs: [URL],
+                               strengths: [NSNumber]) throws -> any NFKInferenceBackend {
+        try generator(directoryURL: directoryURL, residency: residency,
+                      adapters: NFKMLXDiTAdapters.adapters(adapterURLs, strengths: strengths)).inferenceBackend()
     }
 
     /// Downloads the release (``releaseRepo`` when `repo` is nil) and returns the model behind the InferKit

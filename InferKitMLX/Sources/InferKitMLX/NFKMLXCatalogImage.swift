@@ -2043,17 +2043,19 @@ enum NFKMLXCatalogImage {
                                          displayName: "Stable Diffusion 3.5 Medium", license: gatedStabilityCommunity)]
             + sd3AdditionalReleases
         return releases.map { release in
-            model(release.name, release.displayName, family: "stable-diffusion-3",
-                  summary: release.summary ?? "A multimodal diffusion transformer that draws an image from a prompt.",
-                  tasks: [NFKModelTaskTextToImage],
-                  inputs: [promptInput, negativePromptInput], outputs: [generatedImageOutput],
-                  parameters: generatorOptions(side: 1024, multiple: 16, steps: release.steps, guidance: release.guidance,
-                                               guidanceHelp: release.guidance > 1
-                                                   ? "The classifier-free guidance weight. Above 1 the image guides against the negative prompt."
-                                                   : "The classifier-free guidance weight. The distillation runs at 0; above 1 the image guides against the negative prompt."),
-                  license: release.license,
-                  source: hubRelease(release.repository, components: NFKMLXSD3Generator.releaseComponents),
-                  residencies: streamedStageResidencies)
+            var entry = model(release.name, release.displayName, family: "stable-diffusion-3",
+                              summary: release.summary ?? "A multimodal diffusion transformer that draws an image from a prompt.",
+                              tasks: [NFKModelTaskTextToImage],
+                              inputs: [promptInput, negativePromptInput], outputs: [generatedImageOutput],
+                              parameters: generatorOptions(side: 1024, multiple: 16, steps: release.steps, guidance: release.guidance,
+                                                           guidanceHelp: release.guidance > 1
+                                                               ? "The classifier-free guidance weight. Above 1 the image guides against the negative prompt."
+                                                               : "The classifier-free guidance weight. The distillation runs at 0; above 1 the image guides against the negative prompt."),
+                              license: release.license,
+                              source: hubRelease(release.repository, components: NFKMLXSD3Generator.releaseComponents),
+                              residencies: streamedStageResidencies)
+            entry.takesAdapters(trainedOn: [NFKModelAdapterBaseStableDiffusion3])
+            return entry
         }
     }
 
@@ -2103,29 +2105,33 @@ enum NFKMLXCatalogImage {
         let releases = [GeneratorRelease(name: NFKMLXFlux2.modelName, repository: "black-forest-labs/FLUX.2-klein-4B",
                                          displayName: "FLUX.2 [klein] 4B", license: .apache2())]
             + flux2AdditionalReleases
+        // An adapter fits every release of the size it was trained at, distilled or base.
+        let size = { (repository: String) in repository.lowercased().contains("9b") ? "9b" : "4b" }
         return releases.map { release in
-            model(release.name, release.displayName, family: "flux2",
-                  summary: "A rectified-flow transformer that draws, edits from reference images, and inpaints from a prompt.",
-                  tasks: [NFKModelTaskTextToImage, NFKModelTaskImageToImage, NFKModelTaskInpainting],
-                  inputs: [promptInput,
-                           .input(NFKInputNegativePrompt, title: "Negative prompt",
-                                  help: "What to steer away from. A distilled release ignores it."),
-                           .input(NFKInputImages, title: "References",
-                                  help: "The images the generation is conditioned on, each resampled to a multiple of 16 on each side."),
-                           .input(NFKInputImage, title: "Image to inpaint",
-                                  help: "The image to repaint where the mask is white. It needs the mask."),
-                           .input(NFKInputMask, title: "Mask", help: "White repaints the region. It needs the image to inpaint.")],
-                  outputs: [generatedImageOutput],
-                  parameters: generatorOptions(side: 1024, multiple: 16, steps: 28, guidance: 4,
-                                               guidanceHelp: "The guidance weight a base release reads. A distilled release ignores it.")
-                      + [strengthOption(0.8, help: "How much of the image to inpaint the sampler regenerates. Read by inpainting only."),
-                         .option(NFKMLXFlux2ParameterKey.cachesReferences, kind: NFKModelOptionKindBoolean,
-                                 title: "Cache references",
-                                 help: "Generate with the reference cache the 9B KV release is trained for.",
-                                 defaultValue: false)],
-                  license: release.license,
-                  source: hubRelease(release.repository, components: NFKMLXFlux2.releaseComponents),
-                  residencies: stagedResidencies)
+            var entry = model(release.name, release.displayName, family: "flux2",
+                              summary: "A rectified-flow transformer that draws, edits from reference images, and inpaints from a prompt.",
+                              tasks: [NFKModelTaskTextToImage, NFKModelTaskImageToImage, NFKModelTaskInpainting],
+                              inputs: [promptInput,
+                                       .input(NFKInputNegativePrompt, title: "Negative prompt",
+                                              help: "What to steer away from. A distilled release ignores it."),
+                                       .input(NFKInputImages, title: "References",
+                                              help: "The images the generation is conditioned on, each resampled to a multiple of 16 on each side."),
+                                       .input(NFKInputImage, title: "Image to inpaint",
+                                              help: "The image to repaint where the mask is white. It needs the mask."),
+                                       .input(NFKInputMask, title: "Mask", help: "White repaints the region. It needs the image to inpaint.")],
+                              outputs: [generatedImageOutput],
+                              parameters: generatorOptions(side: 1024, multiple: 16, steps: 28, guidance: 4,
+                                                           guidanceHelp: "The guidance weight a base release reads. A distilled release ignores it.")
+                                  + [strengthOption(0.8, help: "How much of the image to inpaint the sampler regenerates. Read by inpainting only."),
+                                     .option(NFKMLXFlux2ParameterKey.cachesReferences, kind: NFKModelOptionKindBoolean,
+                                             title: "Cache references",
+                                             help: "Generate with the reference cache the 9B KV release is trained for.",
+                                             defaultValue: false)],
+                              license: release.license,
+                              source: hubRelease(release.repository, components: NFKMLXFlux2.releaseComponents),
+                              residencies: stagedResidencies)
+            entry.takesAdapters(trainedOn: releases.map(\.repository).filter { size($0) == size(release.repository) })
+            return entry
         }
     }
 
@@ -2195,16 +2201,18 @@ enum NFKMLXCatalogImage {
             (sana1600MName, "Efficient-Large-Model/Sana_1600M_1024px_diffusers", "SANA 1600M 1024px"),
         ]
         return releases.map { release in
-            model(release.name, release.displayName, family: "sana",
-                  summary: "A linear-attention diffusion transformer that draws an image from a prompt.",
-                  tasks: [NFKModelTaskTextToImage],
-                  inputs: [promptInput, negativePromptInput], outputs: [generatedImageOutput],
-                  parameters: generatorOptions(side: 1024, multiple: 32, steps: 20, guidance: 4.5,
-                                               guidanceHelp: "The classifier-free guidance weight."),
-                  license: .license("Apache-2.0", name: "Apache License 2.0",
-                                    url: "https://huggingface.co/\(release.repository)/blob/main/LICENSE"),
-                  source: hubRelease(release.repository, components: NFKMLXSANAGenerator.releaseComponents),
-                  residencies: stagedResidencies)
+            var entry = model(release.name, release.displayName, family: "sana",
+                              summary: "A linear-attention diffusion transformer that draws an image from a prompt.",
+                              tasks: [NFKModelTaskTextToImage],
+                              inputs: [promptInput, negativePromptInput], outputs: [generatedImageOutput],
+                              parameters: generatorOptions(side: 1024, multiple: 32, steps: 20, guidance: 4.5,
+                                                           guidanceHelp: "The classifier-free guidance weight."),
+                              license: .license("Apache-2.0", name: "Apache License 2.0",
+                                                url: "https://huggingface.co/\(release.repository)/blob/main/LICENSE"),
+                              source: hubRelease(release.repository, components: NFKMLXSANAGenerator.releaseComponents),
+                              residencies: stagedResidencies)
+            entry.takesAdapters(trainedOn: [release.repository])
+            return entry
         }
     }
 
@@ -2218,16 +2226,19 @@ enum NFKMLXCatalogImage {
             (zImageBaseName, "Tongyi-MAI/Z-Image", "Z-Image",
              "A single-stream diffusion transformer that draws an image from a prompt."),
         ]
+        // Turbo is distilled from the base release, and an adapter trained on either fits both.
         return releases.map { release in
-            model(release.name, release.displayName, family: "z-image", summary: release.summary,
-                  tasks: [NFKModelTaskTextToImage],
-                  inputs: [promptInput, negativePromptInput], outputs: [generatedImageOutput],
-                  parameters: generatorOptions(side: 1024, multiple: 16, steps: 9, guidance: 0,
-                                               guidanceHelp: "The classifier-free guidance weight. Turbo runs at 0; the base release is sampled with guidance."),
-                  license: .license("Apache-2.0", name: "Apache License 2.0",
-                                    url: "https://huggingface.co/\(release.repository)"),
-                  source: hubRelease(release.repository, components: NFKMLXZImageGenerator.releaseComponents),
-                  residencies: stagedResidencies)
+            var entry = model(release.name, release.displayName, family: "z-image", summary: release.summary,
+                              tasks: [NFKModelTaskTextToImage],
+                              inputs: [promptInput, negativePromptInput], outputs: [generatedImageOutput],
+                              parameters: generatorOptions(side: 1024, multiple: 16, steps: 9, guidance: 0,
+                                                           guidanceHelp: "The classifier-free guidance weight. Turbo runs at 0; the base release is sampled with guidance."),
+                              license: .license("Apache-2.0", name: "Apache License 2.0",
+                                                url: "https://huggingface.co/\(release.repository)"),
+                              source: hubRelease(release.repository, components: NFKMLXZImageGenerator.releaseComponents),
+                              residencies: stagedResidencies)
+            entry.takesAdapters(trainedOn: releases.map(\.repository))
+            return entry
         }
     }
 

@@ -42,9 +42,9 @@ import MLX
 /// - Pixtral: residency, precision, and the adapters held beside its decoder;
 /// - DeepSeek V4: residency, and each other value whose key names an ``NFKMLXDeepSeekLoadOptions``
 ///   property, set by key-value coding;
-/// - FLUX.1: residency, and the adapters held beside its transformer;
-/// - the staged generators (FLUX.1's ControlNet, FLUX.2, SD3 and its ControlNet, SANA, Z-Image,
-///   Qwen-Image, Wan, LTX-Video, MiniMax Music 3, Stable Audio Open): residency.
+/// - FLUX.1, FLUX.2, SD3, SANA, Z-Image, LTX-Video, and Stable Audio Open: residency, and the adapters held
+///   beside the transformer;
+/// - the staged generators (FLUX.1's ControlNet, SD3's ControlNet, Qwen-Image, Wan, MiniMax Music 3): residency.
 /// - Wan 2.2 A14B: residency, precision, and a runtime weight quantization of both experts' blocks.
 /// - Wan 2.2 Animate: residency, precision, and a runtime weight quantization of the transformer's blocks.
 ///
@@ -356,14 +356,17 @@ enum NFKMLXOptionRegistrations {
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }
-        registerDirectoryModels(registryNames(families: ["flux2"]), consumes: residency) { url, _, options in
-            let flux = try NFKMLXFlux2.flux2(directoryURL: url, residency: options.residency)
+        let adapted = residency.union([NFKModelLoadOptionAdapters])
+        registerDirectoryModels(registryNames(families: ["flux2"]), consumes: adapted) { url, _, options in
+            let flux = try NFKMLXFlux2.flux2(directoryURL: url, residency: options.residency,
+                                             adapters: options.adapters())
             report(flux.holdsStagesResident, to: options)
             return flux.inferenceBackend()
         }
         registerDirectoryModels(registryNames(families: ["stable-diffusion-3"], where: lists(NFKModelTaskTextToImage)),
-                                consumes: residency) { url, _, options in
-            let generator = try NFKMLXSD3Generator.generator(directoryURL: url, residency: options.residency)
+                                consumes: adapted) { url, _, options in
+            let generator = try NFKMLXSD3Generator.generator(directoryURL: url, residency: options.residency,
+                                                             adapters: options.adapters())
             if generator.streamedLayerCount > 0 {
                 options.reportResidency(.streamed)
             } else {
@@ -379,13 +382,15 @@ enum NFKMLXOptionRegistrations {
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }
-        registerDirectoryModels(registryNames(families: ["sana"]), consumes: residency) { url, _, options in
-            let generator = try NFKMLXSANAGenerator.generator(directoryURL: url, residency: options.residency)
+        registerDirectoryModels(registryNames(families: ["sana"]), consumes: adapted) { url, _, options in
+            let generator = try NFKMLXSANAGenerator.generator(directoryURL: url, residency: options.residency,
+                                                              adapters: options.adapters())
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }
-        registerDirectoryModels(registryNames(families: ["z-image"]), consumes: residency) { url, _, options in
-            let generator = try NFKMLXZImageGenerator.generator(directoryURL: url, residency: options.residency)
+        registerDirectoryModels(registryNames(families: ["z-image"]), consumes: adapted) { url, _, options in
+            let generator = try NFKMLXZImageGenerator.generator(directoryURL: url, residency: options.residency,
+                                                                adapters: options.adapters())
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }
@@ -399,6 +404,7 @@ enum NFKMLXOptionRegistrations {
     /// Wan, Wan 2.2 A14B, Wan Animate, LTX-Video, and MiniMax Music 3.
     private static func registerVideoAndMusicGenerators() {
         let residency: Set<String> = [NFKModelLoadOptionResidency]
+        let adapted = residency.union([NFKModelLoadOptionAdapters])
         // The precision option converts Wan 2.1's float32 transformer to bfloat16 as it loads.
         registerDirectoryModels(registryNames(families: ["wan"]), consumes: residency.union([NFKModelLoadOptionPrecision])) {
             url, name, options in
@@ -430,8 +436,9 @@ enum NFKMLXOptionRegistrations {
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }
-        registerDirectoryModels(registryNames(families: ["ltx-video"]), consumes: residency) { url, _, options in
-            let generator = try NFKMLXLTXVideoGenerator.generator(directoryURL: url, residency: options.residency)
+        registerDirectoryModels(registryNames(families: ["ltx-video"]), consumes: adapted) { url, _, options in
+            let generator = try NFKMLXLTXVideoGenerator.generator(directoryURL: url, residency: options.residency,
+                                                                  adapters: options.adapters())
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }
@@ -442,8 +449,9 @@ enum NFKMLXOptionRegistrations {
             options.reportResidency(options.residency == .resident ? .resident : .staged)
             return try NFKMLXMusic3.backend(directoryURL: url, residency: options.residency)
         }
-        registerDirectoryModels(registryNames(families: ["stable-audio"]), consumes: residency) { url, _, options in
-            let generator = try NFKMLXStableAudioGenerator.generator(directoryURL: url, residency: options.residency)
+        registerDirectoryModels(registryNames(families: ["stable-audio"]), consumes: adapted) { url, _, options in
+            let generator = try NFKMLXStableAudioGenerator.generator(directoryURL: url, residency: options.residency,
+                                                                     adapters: options.adapters())
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }

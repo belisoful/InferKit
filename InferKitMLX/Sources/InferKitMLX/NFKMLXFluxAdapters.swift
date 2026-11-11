@@ -12,7 +12,7 @@ import Foundation
 import MLX
 import MLXNN
 
-/// Reads FLUX.1 adapters and holds them unmerged beside the transformer's layers.
+/// Reads FLUX.1 adapters and holds them unmerged beside the transformer's layers, through ``NFKMLXDiTAdapters``.
 ///
 /// @discussion The transformer is named as diffusers names it, so a diffusers file (`transformer.<layer>.lora_A.weight`
 /// and `lora_B.weight`) reaches its layers directly, scaled by the `lora_adapter_metadata` it carries or by a layer's
@@ -31,19 +31,16 @@ enum NFKMLXFluxAdapters {
     /// Holds each adapter beside `transformer`'s layers at its strength, in load order, and returns the strengths.
     @discardableResult
     static func hold(_ adapters: [(url: URL, strength: Float)], in transformer: NFKMLXFluxTransformerNet) throws -> [Float] {
-        guard !adapters.isEmpty else { return [] }
-        let layers = Dictionary(transformer.leafModules().flattened(), uniquingKeysWith: { first, _ in first })
-        let original = originalLayers(doubleBlocks: transformer.transformerBlocks.count,
-                                      singleBlocks: transformer.singleTransformerBlocks.count)
-        var detours = [String: [NFKMLXLowRankDetour]]()
-        for (index, adapter) in adapters.enumerated() {
-            for (path, detour) in try read(adapter.url, adapter: index, strength: adapter.strength, layers: layers,
-                                           original: original) {
-                detours[path, default: []].append(detour)
-            }
-        }
-        try NFKMLXAdapterLayers.attach(detours, to: transformer)
-        return adapters.map(\.strength)
+        try NFKMLXDiTAdapters.hold(adapters, in: transformer, layout: layout(
+            doubleBlocks: transformer.transformerBlocks.count, singleBlocks: transformer.singleTransformerBlocks.count))
+    }
+
+    /// FLUX.1's layout over a transformer of `doubleBlocks` and `singleBlocks` blocks.
+    static func layout(doubleBlocks: Int, singleBlocks: Int) -> NFKMLXDiTAdapterLayout {
+        NFKMLXDiTAdapterLayout(family: "FLUX.1",
+                               original: originalLayers(doubleBlocks: doubleBlocks, singleBlocks: singleBlocks),
+                               leftOut: { $0.hasPrefix("time_text_embed.guidance_embedder.") },
+                               swapsHalves: ["norm_out.linear"])
     }
 
     /// Each original-model layer name, dotted as Black Forest Labs writes it, and the diffusers layers it is.
@@ -78,109 +75,5 @@ enum NFKMLXFluxAdapters {
             layers[from + "modulation.lin"] = [to + "norm.linear"]
         }
         return layers
-    }
-
-    /// The detours one adapter file places, by layer path.
-    static func read(_ url: URL, adapter: Int, strength: Float, layers: [String: Module],
-                     original: [String: [String]]) throws -> [(String, NFKMLXLowRankDetour)] {
-        let name = url.lastPathComponent
-        let (arrays, metadata) = try MLX.loadArraysAndMetadata(url: url)
-        let keys = arrays.keys
-        if keys.contains(where: { $0.hasPrefix("lora_te") || $0.hasPrefix("text_encoder") }) {
-            throw NFKMLXError.loRANotApplicable("\(name) adapts a text encoder, which FLUX holds no adapter beside")
-        }
-        if keys.contains(where: { $0.contains(".processor.") }) {
-            throw NFKMLXError.loRANotApplicable("\(name) is an XLabs adapter, a layout InferKit does not read")
-        }
-        if keys.contains(where: { $0.contains("lora_magnitude_vector") || $0.contains("dora_scale") }) {
-            throw NFKMLXError.loRANotApplicable("\(name) is a DoRA, which a held adapter does not compute")
-        }
-        var halves = [(stored: String, down: MLXArray, up: MLXArray, targets: [String])]()
-        if keys.contains(where: { $0.hasPrefix("transformer.") && $0.hasSuffix(".lora_A.weight") }) {
-            for key in keys.sorted() where key.hasPrefix("transformer.") && key.hasSuffix(".lora_A.weight") {
-                let stored = String(key.dropLast(".lora_A.weight".count))
-                halves.append((stored, arrays[key]!, try pair(stored + ".lora_B.weight", in: arrays, name: name),
-                               [String(stored.dropFirst("transformer.".count))]))
-            }
-        } else if keys.contains(where: { $0.hasPrefix("lora_unet_") }) {
-            let kohya = Dictionary(uniqueKeysWithValues: original.map { ("lora_unet_" + $0.key.replacingOccurrences(of: ".", with: "_"), $0.value) })
-            for key in keys.sorted() where key.hasPrefix("lora_unet_") && key.hasSuffix(".lora_down.weight") {
-                let stored = String(key.dropLast(".lora_down.weight".count))
-                guard let targets = kohya[stored] else {
-                    throw NFKMLXError.loRANotApplicable("\(name) adapts \(stored), which names no layer of FLUX.1")
-                }
-                halves.append((stored, arrays[key]!, try pair(stored + ".lora_up.weight", in: arrays, name: name), targets))
-            }
-        } else if keys.contains(where: { $0.hasPrefix("diffusion_model.") }) {
-            for key in keys.sorted() where key.hasPrefix("diffusion_model.")
-                && (key.hasSuffix(".lora_A.weight") || key.hasSuffix(".lora_down.weight")) {
-                let peft = key.hasSuffix(".lora_A.weight")
-                let stored = String(key.dropLast((peft ? ".lora_A.weight" : ".lora_down.weight").count))
-                guard let targets = original[String(stored.dropFirst("diffusion_model.".count))] else {
-                    throw NFKMLXError.loRANotApplicable("\(name) adapts \(stored), which names no layer of FLUX.1")
-                }
-                halves.append((stored, arrays[key]!, try pair(stored + (peft ? ".lora_B.weight" : ".lora_up.weight"),
-                                                              in: arrays, name: name), targets))
-            }
-        } else {
-            throw NFKMLXError.loRANotApplicable(
-                "\(name) holds no FLUX.1 LoRA tensors in the diffusers, kohya, or Black Forest Labs layout")
-        }
-        guard !halves.isEmpty else {
-            throw NFKMLXError.loRANotApplicable("\(name) adapts no layer")
-        }
-
-        let peft = try NFKMLXWanLoRA.peftConfiguration(metadata, component: "transformer.")
-        var placed = [(String, NFKMLXLowRankDetour)]()
-        // An adapter trained on [dev] adapts its guidance embedding, which [schnell] does not have; that part is
-        // left out, as diffusers leaves it out. Any other layer the transformer lacks is refused.
-        let guidance = "time_text_embed.guidance_embedder."
-        let embedsGuidance = layers.keys.contains { $0.hasPrefix(guidance) }
-        for half in halves where embedsGuidance || !half.targets.allSatisfy({ $0.hasPrefix(guidance) }) {
-            let rank = half.down.dim(0)
-            let scale: Double
-            if let alpha = arrays[half.stored + ".alpha"] {
-                scale = Double(alpha.asType(.float32).item(Float.self)) / Double(rank)
-            } else {
-                scale = half.targets.count == 1 ? peft.preciseScaling(half.targets[0], rank: rank) ?? 1 : 1
-            }
-            var up = half.up
-            if half.targets == ["norm_out.linear"] && !half.stored.hasPrefix("transformer.") {
-                let width = up.dim(0) / 2
-                up = concatenated([up[width...], up[..<width]], axis: 0)
-            }
-            var row = 0
-            for target in half.targets {
-                let outputs = try outputCount(of: target, in: layers, name: name)
-                guard row + outputs <= up.dim(0) else {
-                    throw NFKMLXError.loRANotApplicable(
-                        "\(name) adapts \(half.stored) with \(up.dim(0)) outputs, fewer than the layers it fuses")
-                }
-                placed.append((target, try NFKMLXDecoderAdapters.detour(
-                    down: half.down, up: up[row ..< row + outputs], scale: scale, adapter: adapter, strength: strength,
-                    path: target, layers: layers, name: name)))
-                row += outputs
-            }
-            guard row == up.dim(0) else {
-                throw NFKMLXError.loRANotApplicable(
-                    "\(name) adapts \(half.stored) with \(up.dim(0)) outputs, where the layers it names take \(row)")
-            }
-        }
-        return placed
-    }
-
-    private static func pair(_ key: String, in arrays: [String: MLXArray], name: String) throws -> MLXArray {
-        guard let array = arrays[key] else {
-            throw NFKMLXError.loRANotApplicable("\(name) holds a down half without \(key)")
-        }
-        return array
-    }
-
-    private static func outputCount(of path: String, in layers: [String: Module], name: String) throws -> Int {
-        switch layers[path] {
-        case let quantized as QuantizedLinear: return quantized.shape.0
-        case let linear as Linear: return linear.weight.dim(0)
-        default: throw NFKMLXError.loRANotApplicable("\(name) adapts \(path), which is not a linear layer of FLUX.1")
-        }
     }
 }

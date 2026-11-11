@@ -2041,6 +2041,27 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The diffusion transformers hold LoRA adapters beside their weights
+
+- FLUX.2, Stable Diffusion 3 and 3.5, SANA, Z-Image, LTX-Video, and Stable Audio Open take the
+  `adapters` load option and declare `NFKParameterAdapterStrengths`. SD3 lists the `stable-diffusion-3` base;
+  the others list their releases' repositories. Each holds the adapters beside its transformer's layers, again at
+  each staged load, and each `@objc` generator gains `backendWithDirectoryURL:residency:adapterURLs:strengths:error:`.
+- One reader (`NFKMLXDiTAdapters`) serves them and FLUX.1. It reads diffusers' layout with or without its
+  `transformer.` prefix, PEFT's `save_pretrained` directory scaled by the `adapter_config.json` beside it, the
+  original model's `diffusion_model.` names, and kohya's. A fused original-model layer splits onto the
+  transformer's separate layers, as diffusers' converters split it. A LyCORIS LoKr or LoHa, a DoRA, a grouped
+  convolution's adapter, and a layer the transformer lacks are refused before any layer changes. SD3 refuses
+  adapters while its blocks stream.
+- Measured against diffusers with the adapters active together:
+  - FLUX.2 [klein] 4B at float32, a released diffusers adapter and a released kohya adapter: output cosine
+    0.9999999999973.
+  - SD3.5 Medium, LTX-Video, Stable Audio Open, and a tiny SANA, each with two made adapters at float32: 0.9999999999961
+    or closer.
+  - Z-Image-Turbo with two released adapters at bfloat16: inside the reference's own bfloat16 distance from its
+    float32 run, at 0.94 of it for the output and 0.85 for the adapters' change.
+  - FLUX.1 through the shared reader reads its earlier figures.
+
 #### Every remaining decoder family holds LoRA adapters beside its weights
 
 - Gemma 3, Gemma 4, Gemma 3n, Qwen3-VL, Pixtral, Nemotron-H, Granite 4.0-H, and Codestral Mamba take the

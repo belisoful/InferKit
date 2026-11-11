@@ -114,6 +114,10 @@ public final class NFKMLXSANAGenerator: NSObject {
     /// The classifier-free guidance scale, 4.5 by the reference's default. Above 1 the image guides
     /// against the negative prompt, or against an empty one where none is given.
     @objc public var guidance: Float = 4.5
+
+    /// The strengths the adapters held beside the transformer were loaded at, in load order; empty for a
+    /// generator that holds none.
+    var adapterStrengths: [Float] = []
     /// Whether a positive prompt follows the reference pipeline's complex human instruction. True by
     /// the reference's default.
     @objc public var followsHumanInstruction = true
@@ -172,6 +176,14 @@ public final class NFKMLXSANAGenerator: NSObject {
     /// holds it as ``NFKMLXResidency/staged`` does.
     @objc(generatorWithDirectoryURL:residency:error:)
     public static func generator(directoryURL: URL, residency: NFKMLXResidency) throws -> NFKMLXSANAGenerator {
+        try generator(directoryURL: directoryURL, residency: residency, adapters: [])
+    }
+
+    /// ``generator(directoryURL:residency:)`` with `adapters` held beside the transformer at their strengths,
+    /// read by ``NFKMLXDiTAdapters``. A staged release holds them again each time it loads the transformer, so
+    /// a misfit surfaces at the first image; a resident one at construction.
+    static func generator(directoryURL: URL, residency: NFKMLXResidency,
+                          adapters: [(url: URL, strength: Float)]) throws -> NFKMLXSANAGenerator {
         let encoderDirectory = directoryURL.appendingPathComponent("text_encoder")
         guard let tokenizer = NFKMLXGemmaTokenizer(
             directoryURL: directoryURL.appendingPathComponent("tokenizer")) else {
@@ -187,7 +199,8 @@ public final class NFKMLXSANAGenerator: NSObject {
             resident: plan.holdsStagesResident, tokenizer: tokenizer,
             pixelsPerLatent: 1 << (NFKMLXDCAEConfiguration.sana.blockOutChannels.count - 1),
             loadTextEncoder: { try loadTextEncoder(fromDirectory: encoderDirectory) },
-            loadPipeline: { try NFKMLXSANAPipeline.pipeline(directoryURL: directoryURL) })
+            loadPipeline: { try NFKMLXSANAPipeline.pipeline(directoryURL: directoryURL, adapters: adapters) })
+        generator.adapterStrengths = adapters.map(\.strength)
         if plan.holdsStagesResident {
             try generator.loadResident()
         }

@@ -241,6 +241,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   reader loads the release directly. Customization is offline: the codec trains adversarially against
   discriminators the release does not ship, so a fine-tune first trains those discriminators.
   Codes 60/60 exact on both, reconstruction 0.99999999999978 / 0.99999999999984.
+- Stable Audio Open holds released LoRA adapters beside its DiT through the `adapters` load option
+  (`NFKMLXDiTAdapters`); the layer names, refusals, and parity are in `mlx-models-dit-generation.md` ("Held
+  adapters on the other diffusion transformers").
 - `NFKMLXStableAudioGenerator` (`@objc`) — Stable Audio Open 1.0 (`stabilityai/stable-audio-open-1.0`,
   `StableAudioPipeline`, Stability AI), text to sound effects, field recordings, and short music samples
   as stereo 44.1 kHz audio. The diffusers release holds five networks, each ported on its own:

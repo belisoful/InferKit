@@ -2339,6 +2339,265 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(change, 0.999)
     }
 
+    // MARK: Held diffusion transformer adapters
+
+    /// Holds a record's adapters to it: `forward` runs the transformer with the adapters at the run strengths it is
+    /// given, in the reference's layout. The adapted output compares to `output`, the adapters' own change to the
+    /// reference's (`output − base_output`), and the output with every adapter at 0 to `base_output`.
+    private func assertHeldAdapters(_ label: String, arrays: [String: MLXArray], output outputBar: Double,
+                                    change changeBar: Double, base baseBar: Double,
+                                    forward: () throws -> MLXArray) throws {
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        func run(at values: [Float]) throws -> MLXArray {
+            let result = try NFKMLXAdapterRun.$strengths.withValue(values) { try forward() }
+            eval(result)
+            return result.asType(.float32)
+        }
+        func values(_ array: MLXArray) -> [Double] { array.reshaped([-1]).asArray(Float.self).map(Double.init) }
+        let reference = try XCTUnwrap(arrays["output"])
+        let referenceBase = try XCTUnwrap(arrays["base_output"])
+        let adapted = try run(at: strengths)
+        let base = try run(at: strengths.map { _ in 0 })
+        XCTAssertEqual(adapted.size, reference.size, label)
+        let similarity = cosine(values(adapted), values(reference))
+        let baseSimilarity = cosine(values(base), values(referenceBase))
+        let change = cosine(values(adapted - base), values(reference - referenceBase))
+        let control = cosine(values(base), values(reference))
+        print("VALIDATION PARITY \(label): strengths \(strengths), output cosine \(similarity); base transformer "
+              + "\(baseSimilarity); the adapters' change, cosine \(change); control at strength 0 \(control)")
+        XCTAssertLessThan(control, similarity, "\(label): the record tells the adapted transformer from the base")
+        XCTAssertGreaterThan(similarity, outputBar, "\(label): the adapted output")
+        XCTAssertGreaterThan(change, changeBar, "\(label): the adapters' change")
+        XCTAssertGreaterThan(baseSimilarity, baseBar, "\(label): the base transformer")
+    }
+
+    /// The two adapters `run_reference.py` made beside a record, in `<record stem>.adapters/`: the first a PEFT
+    /// `save_pretrained` directory, the second diffusers' `transformer.` layout, each with the record's strength.
+    private func madeAdapters(beside path: String, strengths: [Float],
+                              first: String = "adapter_model.safetensors") -> [(url: URL, strength: Float)] {
+        let folder = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("adapters")
+        let files = [folder.appendingPathComponent("adapter0").appendingPathComponent(first),
+                     folder.appendingPathComponent("adapter1").appendingPathComponent("pytorch_lora_weights.safetensors")]
+        return zip(files, strengths).map { (url: $0, strength: $1) }
+    }
+
+    /// Holds a bfloat16 run with held adapters to a record that carries the reference at bfloat16 (`output`,
+    /// `base_output`) and at float32 (`output_f32`, `base_output_f32`). `forward` runs the port with the adapters at
+    /// the run strengths it is given, in the reference's layout. For the adapted output, the base, and the
+    /// adapters' change, the port's 1 − cosine against the float32 reference stays inside the reference's own
+    /// bfloat16 1 − cosine against it. The bfloat16-to-bfloat16 cosines are printed for information.
+    private func assertInsideBFloat16Floor(_ label: String, arrays: [String: MLXArray],
+                                           forward: () throws -> MLXArray) throws {
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        func run(at values: [Float]) throws -> MLXArray {
+            let result = try NFKMLXAdapterRun.$strengths.withValue(values) { try forward() }
+            eval(result)
+            return result.asType(.float32)
+        }
+        func values(_ array: MLXArray) -> [Double] { array.reshaped([-1]).asArray(Float.self).map(Double.init) }
+        let adapted = try run(at: strengths)
+        let base = try run(at: strengths.map { _ in 0 })
+        let reference16 = try XCTUnwrap(arrays["output"]), referenceBase16 = try XCTUnwrap(arrays["base_output"])
+        let reference32 = try XCTUnwrap(arrays["output_f32"]), referenceBase32 = try XCTUnwrap(arrays["base_output_f32"])
+        XCTAssertEqual(adapted.size, reference32.size, label)
+        let comparisons: [(name: String, ours: MLXArray, reference16: MLXArray, reference32: MLXArray)] = [
+            ("output", adapted, reference16, reference32),
+            ("base", base, referenceBase16, referenceBase32),
+            ("change", adapted - base, reference16 - referenceBase16, reference32 - referenceBase32),
+        ]
+        for comparison in comparisons {
+            let gap = 1 - cosine(values(comparison.ours), values(comparison.reference32))
+            let floor = 1 - cosine(values(comparison.reference16), values(comparison.reference32))
+            let direct = cosine(values(comparison.ours), values(comparison.reference16))
+            print("VALIDATION PARITY \(label) \(comparison.name): against the float32 reference 1 − cosine \(gap), "
+                  + "the reference's bfloat16 floor \(floor), gap/floor \(gap / floor); bfloat16 against bfloat16 "
+                  + "cosine \(direct)")
+            XCTAssertLessThan(gap / floor, 1, "\(label) \(comparison.name): inside the reference's bfloat16 floor")
+        }
+        print("VALIDATION PARITY \(label): strengths \(strengths), control at strength 0 "
+              + "\(cosine(values(base), values(reference32)))")
+    }
+
+    // Two released FLUX.2 [klein] 4B adapters held beside the released transformer at their own strengths, one in
+    // diffusers' layout with its lora_adapter_metadata and one in kohya's over the original model's fused layers,
+    // against diffusers' FLUX.2 loader with both active through set_adapters, at float32 on flux2_real_f32's
+    // inputs. The pixel-art adapter's ComfyUI copy, its diffusers names without the prefix, reads to the same
+    // layers and halves at its own scaling. Bars: the output and the base at flux2_real_f32's 0.99999999990117 floored to nine nines; the
+    // change at the float32 default.
+    func testFlux2HeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_FLUX2_ADAPTERS"], let release = config["IK_VAL_FLUX2_KLEIN_4B"],
+              let pixelArt = config["IK_VAL_LORA_FLUX2_KLEIN4B_PIXEL_ART"],
+              let mikkoani = config["IK_VAL_LORA_FLUX2_KLEIN4B_MIKKOANI"],
+              let comfyUI = config["IK_VAL_LORA_FLUX2_KLEIN4B_PIXEL_ART_COMFYUI"] else {
+            throw XCTSkip("set IK_PARITY_FLUX2_ADAPTERS (run_reference.py flux2_adapters), IK_VAL_FLUX2_KLEIN_4B, "
+                          + "IK_VAL_LORA_FLUX2_KLEIN4B_PIXEL_ART, IK_VAL_LORA_FLUX2_KLEIN4B_MIKKOANI, and "
+                          + "IK_VAL_LORA_FLUX2_KLEIN4B_PIXEL_ART_COMFYUI")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        let adapters = [URL(fileURLWithPath: pixelArt), URL(fileURLWithPath: mikkoani)]
+        XCTAssertEqual(strengths.count, adapters.count, "the record holds one strength per adapter")
+        let directory = URL(fileURLWithPath: release)
+        let net = NFKMLXFlux2TransformerNet(try NFKMLXFlux2TransformerNet.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXFlux2TransformerNet.loadWeights(into: net, from: directory, precision: .float32)
+
+        let layers = Dictionary(net.leafModules().flattened(), uniquingKeysWith: { first, _ in first })
+        let layout = NFKMLXDiTAdapters.flux2Layout(doubleBlocks: net.transformerBlocks.count,
+                                                   singleBlocks: net.singleTransformerBlocks.count)
+        let prefixed = try NFKMLXDiTAdapters.read(adapters[0], adapter: 0, strength: strengths[0], layers: layers,
+                                                  layout: layout).sorted { $0.0 < $1.0 }
+        let bare = try NFKMLXDiTAdapters.read(URL(fileURLWithPath: comfyUI), adapter: 0, strength: strengths[0],
+                                              layers: layers, layout: layout).sorted { $0.0 < $1.0 }
+        XCTAssertEqual(prefixed.map(\.0), bare.map(\.0), "the ComfyUI copy adapts the same layers")
+        // The diffusers file's metadata states r 64, lora_alpha 128, and rsLoRA, so 128/√64 = 16. The ComfyUI copy
+        // carries neither alpha nor metadata and is held at 1, as ComfyUI reads it.
+        for ((layer, a), (_, b)) in zip(prefixed, bare) {
+            XCTAssertTrue(arrayEqual(a.down, b.down).item(Bool.self) && arrayEqual(a.up, b.up).item(Bool.self), layer)
+            XCTAssertEqual(a.scale, 16, "\(layer): the diffusers file's scaling")
+            XCTAssertEqual(b.scale, 1, "\(layer): the ComfyUI copy's scaling")
+        }
+
+        try NFKMLXDiTAdapters.hold(zip(adapters, strengths).map { (url: $0, strength: $1) }, in: net)
+        try assertHeldAdapters("flux2-adapters", arrays: arrays, output: 0.999999999, change: 0.9999,
+                               base: 0.999999999) {
+            net(try XCTUnwrap(arrays["hidden"]), encoderHidden: try XCTUnwrap(arrays["encoder"]),
+                timestep: try XCTUnwrap(arrays["timestep"]), guidance: arrays["guidance"],
+                imageIds: try XCTUnwrap(arrays["img_ids"]), textIds: try XCTUnwrap(arrays["txt_ids"]))
+        }
+    }
+
+    // Two released Z-Image-Turbo adapters in the original model's diffusion_model. layout held beside the released
+    // transformer at their own strengths, against diffusers' Z-Image loader with both active through
+    // set_adapters, on z_image_release_probe's inputs. The port runs at bfloat16, as the generator loads the
+    // release. The reference records the same run at bfloat16 and at float32, and the port's distance from the
+    // float32 run, as 1 − cosine, stays inside the reference's own bfloat16 distance from it: for the adapted
+    // output, for the base, and for the adapters' change.
+    func testZImageHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_ZIMAGE_ADAPTERS"], let release = config["IK_VAL_Z_IMAGE_TURBO"],
+              let pixelArt = config["IK_VAL_LORA_ZIMAGE_TURBO_PIXEL_ART"],
+              let realism = config["IK_VAL_LORA_ZIMAGE_TURBO_REALISM"] else {
+            throw XCTSkip("set IK_PARITY_ZIMAGE_ADAPTERS (run_reference.py zimage_adapters), IK_VAL_Z_IMAGE_TURBO, "
+                          + "IK_VAL_LORA_ZIMAGE_TURBO_PIXEL_ART, and IK_VAL_LORA_ZIMAGE_TURBO_REALISM")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let strengths = try XCTUnwrap(arrays["strengths"]).asArray(Float.self)
+        let adapters = [URL(fileURLWithPath: pixelArt), URL(fileURLWithPath: realism)]
+        XCTAssertEqual(strengths.count, adapters.count, "the record holds one strength per adapter")
+        let directory = URL(fileURLWithPath: release).appendingPathComponent("transformer")
+        let net = NFKMLXZImageTransformerNet(try NFKMLXZImageRelease.transformerConfiguration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXZImageRelease.loadTransformer(into: net, fromDirectory: directory, dtype: .bfloat16)
+        try NFKMLXDiTAdapters.hold(zip(adapters, strengths).map { (url: $0, strength: $1) }, in: net)
+
+        try assertInsideBFloat16Floor("zimage-adapters", arrays: arrays) {
+            net(try XCTUnwrap(arrays["latent"]).asType(.bfloat16),
+                capFeats: try XCTUnwrap(arrays["cap_feats"]).asType(.bfloat16), t: try XCTUnwrap(arrays["timestep"]))
+        }
+    }
+
+    // Two adapters run_reference.py made over the released SD3.5 Medium transformer, a PEFT save_pretrained
+    // directory and a diffusers file with rsLoRA scaling, held at 0.8 and 0.5 against diffusers with both active
+    // through set_adapters, at float32 on sd35_release's inputs. Bars: the output and the base at sd35_release's
+    // 0.99999999999971 floored to ten nines; the change at the float32 default.
+    func testSD35HeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SD35_ADAPTERS"], let release = config["IK_VAL_SD35_MEDIUM"] else {
+            throw XCTSkip("set IK_PARITY_SD35_ADAPTERS (run_reference.py sd35_adapters) and IK_VAL_SD35_MEDIUM")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release).appendingPathComponent("transformer")
+        let net = NFKMLXSD3TransformerNet(try NFKMLXSD3TransformerNet.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXSD3TransformerNet.loadWeights(into: net, from: directory, precision: .float32)
+        try NFKMLXDiTAdapters.hold(madeAdapters(beside: path, strengths: try XCTUnwrap(arrays["strengths"])
+                                                    .asArray(Float.self)), in: net)
+        try assertHeldAdapters("sd35-adapters", arrays: arrays, output: 0.9999999999, change: 0.9999,
+                               base: 0.9999999999) {
+            net(try XCTUnwrap(arrays["latent"]), encoderHidden: try XCTUnwrap(arrays["encoder"]),
+                pooled: try XCTUnwrap(arrays["pooled"]), timestep: try XCTUnwrap(arrays["timestep"]))
+        }
+    }
+
+    // Two adapters run_reference.py made over the released LTX-Video 0.9.0 transformer, held at 0.8 and 0.5
+    // against diffusers with both active through set_adapters, at float32 on ltx_transformer's inputs. Bars: the
+    // output and the base at ltx_transformer's 0.99999999999 floored to ten nines; the change at the float32
+    // default.
+    func testLTXVideoHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_LTXV_ADAPTERS"], let release = config["IK_VAL_LTX_TF"] else {
+            throw XCTSkip("set IK_PARITY_LTXV_ADAPTERS (run_reference.py ltxv_adapters) and IK_VAL_LTX_TF")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release)
+        let net = NFKMLXLTXTransformer.makeNet(try NFKMLXLTXTransformer.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXLTXTransformer.loadWeights(into: net, from: directory)
+        try NFKMLXDiTAdapters.hold(madeAdapters(beside: path, strengths: try XCTUnwrap(arrays["strengths"])
+                                                    .asArray(Float.self)), in: net)
+        try assertHeldAdapters("ltxv-adapters", arrays: arrays, output: 0.9999999999, change: 0.9999,
+                               base: 0.9999999999) {
+            net(try XCTUnwrap(arrays["latent"]).reshaped([1, 8, 128]),
+                text: try XCTUnwrap(arrays["text"]).reshaped([1, 4, 4096]), timestep: try XCTUnwrap(arrays["timestep"]),
+                grid: (2, 2, 2), ropeScale: (1, 1, 1))
+        }
+    }
+
+    // Two adapters run_reference.py made over the released Stable Audio Open transformer, both in diffusers'
+    // transformer. layout, held at 0.8 and 0.5 against PEFT with both active, at float32 on
+    // stable_audio_components' middle noise level. The second adapts the conditioning projections, which the
+    // port holds under layers. Bars: the output and the base at stable_audio_components' 0.9999999999899 floored
+    // to ten nines; the change at the float32 default.
+    func testStableAudioHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_STABLE_AUDIO_ADAPTERS"], let release = config["IK_VAL_STABLE_AUDIO_OPEN"] else {
+            throw XCTSkip("set IK_PARITY_STABLE_AUDIO_ADAPTERS (run_reference.py stable_audio_adapters) and "
+                          + "IK_VAL_STABLE_AUDIO_OPEN")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let directory = URL(fileURLWithPath: release).appendingPathComponent("transformer")
+        let net = NFKMLXStableAudioDiTNet(try NFKMLXStableAudioDiTConfiguration.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXStableAudio.loadTransformerWeights(into: net, fromDirectory: directory)
+        try NFKMLXDiTAdapters.hold(madeAdapters(beside: path, strengths: try XCTUnwrap(arrays["strengths"])
+                                                    .asArray(Float.self), first: "pytorch_lora_weights.safetensors"),
+                                   in: net)
+        try assertHeldAdapters("stable-audio-adapters", arrays: arrays, output: 0.9999999999, change: 0.9999,
+                               base: 0.9999999999) {
+            net(try XCTUnwrap(arrays["input"]).transposed(1, 0).expandedDimensions(axis: 0),
+                timestep: try XCTUnwrap(arrays["timestep"]),
+                context: try XCTUnwrap(arrays["context"]).expandedDimensions(axis: 0),
+                global: try XCTUnwrap(arrays["global"]).expandedDimensions(axis: 0))[0].transposed(1, 0)
+        }
+    }
+
+    // Two adapters run_reference.py made over run_sana's tiny random SANA DiT, the second reaching each
+    // feed-forward's one-by-one convolutions, held at 0.8 and 0.5 against diffusers with both active through
+    // set_adapters, at float32. Bars: the output and the base at run_sana's 0.9999999999999959 floored to twelve
+    // nines; the change at the float32 default.
+    func testSANAHeldAdaptersMatchTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_SANA_ADAPTERS"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_SANA_ADAPTERS (run_reference.py sana_adapters)")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let net = NFKMLXSANATransformerNet(.tiny)
+        let weights = arrays.compactMap { key, value -> (String, MLXArray)? in
+            guard key.hasPrefix("w::") else { return nil }
+            return (String(key.dropFirst(3)), value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights, to: net)
+        try NFKMLXDiTAdapters.hold(madeAdapters(beside: path, strengths: try XCTUnwrap(arrays["strengths"])
+                                                    .asArray(Float.self)), in: net)
+        try assertHeldAdapters("sana-adapters", arrays: arrays, output: 0.999999999999, change: 0.9999,
+                               base: 0.999999999999) {
+            net(try XCTUnwrap(arrays["latent"]), capFeats: try XCTUnwrap(arrays["cap_feats"]),
+                t: try XCTUnwrap(arrays["timestep"]))
+        }
+    }
+
     // FLUX.1's text front end (NFKMLXFluxTextEncoder) on the RELEASED CLIP-L and T5-XXL weights, against
     // transformers' CLIPTextModel and T5EncoderModel. The two encoders are ~10 GB in bfloat16, which fits
     // where the 24 GB transformer does not, so this measures the whole prompt→conditioning path — the CLIP

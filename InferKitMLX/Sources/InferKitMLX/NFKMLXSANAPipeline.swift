@@ -46,10 +46,17 @@ public final class NFKMLXSANAPipeline {
     /// caption embedding from the release's Gemma 2 text encoder (``NFKMLXGemma2Net``). Blocking on
     /// the load; run it off the render thread. Introduced in InferKit 0.4.0.
     public static func pipeline(directoryURL: URL) throws -> NFKMLXSANAPipeline {
+        try pipeline(directoryURL: directoryURL, adapters: [])
+    }
+
+    /// ``pipeline(directoryURL:)`` with `adapters` held beside the transformer at their strengths, read by
+    /// ``NFKMLXDiTAdapters``.
+    static func pipeline(directoryURL: URL, adapters: [(url: URL, strength: Float)]) throws -> NFKMLXSANAPipeline {
         let transformerDirectory = directoryURL.appendingPathComponent("transformer")
         let transformer = NFKMLXSANATransformerNet(try NFKMLXSANATransformerNet.configuration(
             fromHuggingFace: transformerDirectory.appendingPathComponent("config.json")))
         try NFKMLXSANATransformerNet.loadWeights(into: transformer, fromDirectory: transformerDirectory)
+        try NFKMLXDiTAdapters.hold(adapters, in: transformer)
         let vae = NFKMLXDCAutoencoderNet(.sana)
         try NFKMLXDCAutoencoderNet.loadWeights(into: vae, from: try NFKMLXReleaseWeights.files(
             inDirectory: directoryURL.appendingPathComponent("vae"))[0])

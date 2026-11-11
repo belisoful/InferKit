@@ -222,20 +222,22 @@ enum NFKMLXCatalogVideo {
     }
 
     static var ltxVideo: NFKMLXCatalogEntry {
-        NFKMLXCatalogImage.model(NFKMLXLTXVideoGenerator.modelName, "LTX-Video 0.9.0", family: "ltx-video",
-                                 summary: "A diffusion transformer that films a clip from a prompt.",
-                                 tasks: [NFKModelTaskVideoGeneration],
-                                 inputs: promptInputs,
-                                 outputs: [clipOutput("The generated clip as a QuickTime movie.")],
-                                 parameters: videoOptions(frames: 121, width: 704, height: 480, framesPerSecond: 25,
-                                                          frameRateHelp: "The frame rate the clip is conditioned on and written at.",
-                                                          steps: 50, guidance: 3),
-                                 license: .license(nil, name: "LTX Video 0.9 RAIL-M License",
-                                                   url: "https://huggingface.co/Lightricks/LTX-Video/blob/main/ltx-video-2b-v0.9.license.txt",
-                                                   note: "Use restrictions apply."),
-                                 source: NFKMLXCatalogImage.hubRelease(NFKMLXLTXVideoGenerator.releaseRepo,
-                                                                       components: NFKMLXLTXVideoGenerator.releaseComponents),
-                                 residencies: NFKMLXCatalogImage.stagedResidencies)
+        var entry = NFKMLXCatalogImage.model(NFKMLXLTXVideoGenerator.modelName, "LTX-Video 0.9.0", family: "ltx-video",
+                                             summary: "A diffusion transformer that films a clip from a prompt.",
+                                             tasks: [NFKModelTaskVideoGeneration],
+                                             inputs: promptInputs,
+                                             outputs: [clipOutput("The generated clip as a QuickTime movie.")],
+                                             parameters: videoOptions(frames: 121, width: 704, height: 480, framesPerSecond: 25,
+                                                                      frameRateHelp: "The frame rate the clip is conditioned on and written at.",
+                                                                      steps: 50, guidance: 3),
+                                             license: .license(nil, name: "LTX Video 0.9 RAIL-M License",
+                                                               url: "https://huggingface.co/Lightricks/LTX-Video/blob/main/ltx-video-2b-v0.9.license.txt",
+                                                               note: "Use restrictions apply."),
+                                             source: NFKMLXCatalogImage.hubRelease(NFKMLXLTXVideoGenerator.releaseRepo,
+                                                                                   components: NFKMLXLTXVideoGenerator.releaseComponents),
+                                             residencies: NFKMLXCatalogImage.stagedResidencies)
+        entry.takesAdapters(trainedOn: [NFKMLXLTXVideoGenerator.releaseRepo])
+        return entry
     }
 
     /// LTX-2.5's prompt enhancement, which reads the release's `prompt_enhancer/` and `processor/` where its

@@ -13146,6 +13146,455 @@ def run_flux_adapters(image, checkpoint):
     return output.float().contiguous()
 
 
+def _dit_adapter_entries(variable):
+    """The adapters `variable` lists as `<safetensors path>=<strength>` joined by `;`."""
+    return [entry.rsplit("=", 1) for entry in os.environ[variable].split(";") if entry]
+
+
+def _dit_released_adapters(mixin, model, variable):
+    """Each adapter `variable` lists, read by the family's pipeline loader `mixin` (its `lora_state_dict`, which
+    turns a kohya or original-model file into diffusers' names) and placed with its `load_lora_into_transformer`,
+    as the pipeline's `load_lora_weights` does. Returns the adapter names and their strengths."""
+    entries = _dit_adapter_entries(variable)
+    names = []
+    for index, (path, _) in enumerate(entries):
+        state, metadata = mixin.lora_state_dict(path, return_lora_metadata=True)
+        names.append(f"adapter{index}")
+        mixin.load_lora_into_transformer(state, transformer=model, adapter_name=names[-1], metadata=metadata)
+    return names, [float(strength) for _, strength in entries]
+
+
+def _dit_made_adapters(model, folder, targets, writer, peft_directory=True, dtype=None):
+    """Two LoRA adapters drawn over `model` (`init_lora_weights=False`, so neither half is zero), saved under
+    `folder`, then removed from `model` again.
+
+    `adapter0` adapts the modules `targets[0]` matches at r 4 and alpha 8. With `peft_directory` it is made by
+    `get_peft_model` and saved by PEFT's `save_pretrained` (`adapter0/adapter_model.safetensors` beside its
+    `adapter_config.json`); otherwise it is saved as `adapter1` is. `adapter1` adapts the modules `targets[1]`
+    matches at r 8 and alpha 16 with rsLoRA scaling, and is saved in diffusers' layout by
+    `writer.save_lora_weights` (`adapter1/pytorch_lora_weights.safetensors`: `transformer.` names, and the
+    `LoraConfig` under `lora_adapter_metadata`). A transformer with diffusers' adapter methods takes `adapter1`
+    through its own `add_adapter`; one without them takes it through `get_peft_model`. With `dtype`, both are
+    saved with their halves at that type, as a trainer saving a run at that type writes them. Returns the two
+    files."""
+    from diffusers.loaders.peft import PeftAdapterMixin
+    from peft import LoraConfig, get_peft_model
+    from peft.utils import get_peft_model_state_dict
+
+    configurations = [LoraConfig(r=4, lora_alpha=8, target_modules=targets[0], init_lora_weights=False),
+                      LoraConfig(r=8, lora_alpha=16, use_rslora=True, target_modules=targets[1],
+                                 init_lora_weights=False)]
+    paths = []
+    for index, configuration in enumerate(configurations):
+        directory = os.path.join(folder, f"adapter{index}")
+        torch.manual_seed(31 + index)
+        if index == 0 and peft_directory:
+            made = get_peft_model(model, configuration)
+            if dtype is not None:
+                _dit_cast_halves(made, dtype)
+            made.save_pretrained(directory)
+            made.unload()
+            paths.append(os.path.join(directory, "adapter_model.safetensors"))
+            continue
+        if isinstance(model, PeftAdapterMixin):
+            model.add_adapter(configuration, adapter_name="made")
+            layers = get_peft_model_state_dict(model, adapter_name="made")
+            model.delete_adapters("made")
+        else:
+            made = get_peft_model(model, configuration)
+            layers = {key.removeprefix("base_model.model."): value
+                      for key, value in get_peft_model_state_dict(made).items()}
+            made.unload()
+        if dtype is not None:
+            layers = {key: value.to(dtype) for key, value in layers.items()}
+        writer.save_lora_weights(directory, transformer_lora_layers=layers,
+                                 transformer_lora_adapter_metadata=configuration.to_dict())
+        paths.append(os.path.join(directory, "pytorch_lora_weights.safetensors"))
+    return paths
+
+
+def _dit_cast_halves(model, dtype):
+    """Every LoRA half `model` holds (`lora_A`, `lora_B`) at `dtype`."""
+    for name, parameter in model.named_parameters():
+        if ".lora_A." in name or ".lora_B." in name:
+            parameter.data = parameter.data.to(dtype)
+
+
+def _dit_made_folder():
+    """`<output stem>.adapters`, beside the record."""
+    output = next(argument for argument in sys.argv[1:] if argument.endswith(".safetensors"))
+    return os.path.splitext(os.path.abspath(output))[0] + ".adapters"
+
+
+def _dit_load_made(mixin, model, paths):
+    """`_dit_made_adapters`' two files placed on `model`. The pipeline loader `mixin` reads `adapter1`. It reads
+    no `save_pretrained` directory (it keeps only keys under `transformer.`, and PEFT's are under
+    `base_model.model.`), so `adapter0` goes to the transformer's own `load_lora_adapter`, the method the
+    pipeline loader ends in, with PEFT's wrapper dropped and the `adapter_config.json` beside it as the metadata.
+    Returns the adapter names."""
+    from peft import LoraConfig
+    from safetensors.torch import load_file
+
+    state = {key.removeprefix("base_model.model."): value for key, value in load_file(paths[0]).items()}
+    configuration = LoraConfig.from_pretrained(os.path.dirname(paths[0])).to_dict()
+    model.load_lora_adapter(state, prefix=None, adapter_name="adapter0", metadata=configuration)
+    state, metadata = mixin.lora_state_dict(paths[1], return_lora_metadata=True)
+    mixin.load_lora_into_transformer(state, transformer=model, adapter_name="adapter1", metadata=metadata)
+    return ["adapter0", "adapter1"]
+
+
+def _dit_load_peft(model, paths):
+    """Adapters in diffusers' layout placed on a transformer without diffusers' adapter methods, through PEFT:
+    each file's `transformer.` names and `lora_adapter_metadata` configuration are injected with
+    `inject_adapter_in_model` and filled with `set_peft_model_state_dict`, the two steps diffusers'
+    `load_lora_adapter` takes. Returns the adapter names."""
+    from peft import LoraConfig, inject_adapter_in_model, set_peft_model_state_dict
+    from safetensors import safe_open
+
+    names = []
+    for index, path in enumerate(paths):
+        with safe_open(path, "pt") as handle:
+            stored = json.loads(handle.metadata()["lora_adapter_metadata"])
+            state = {key.removeprefix("transformer."): handle.get_tensor(key) for key in handle.keys()}
+        configuration = LoraConfig(**{key.removeprefix("transformer."): value for key, value in stored.items()
+                                      if key.startswith("transformer.")})
+        names.append(f"adapter{index}")
+        inject_adapter_in_model(configuration, model, adapter_name=names[-1])
+        set_peft_model_state_dict(model, state, adapter_name=names[-1])
+    return names
+
+
+def _dit_stacked(model, names, strengths, run):
+    """`run()` with every adapter active at its strength, and with every adapter at 0, through diffusers'
+    `set_weights_and_activate_adapters`, which a transformer's `set_adapters` calls."""
+    from diffusers.utils.peft_utils import set_weights_and_activate_adapters
+
+    def at(weights):
+        set_weights_and_activate_adapters(model, names, weights)
+        with torch.no_grad():
+            return run()
+
+    return at(strengths), at([0.0] * len(names))
+
+
+def run_flux2_adapters(image, checkpoint):
+    """`flux2_real_f32`'s velocity with released FLUX.2 [klein] 4B adapters active together, each at its own
+    strength, at float32.
+
+    `--checkpoint` is the release's `transformer/` directory. `IK_FLUX2_ADAPTERS` lists the adapters as
+    `<safetensors path>=<strength>` joined by `;`. Each is read by diffusers' own FLUX.2 loader
+    (`Flux2LoraLoaderMixin.lora_state_dict`, which turns a kohya file into diffusers' names with its alphas
+    baked into the halves and reads a diffusers file's `lora_adapter_metadata`) and placed with
+    `load_lora_into_transformer`; `set_adapters`' weights give each its strength. The inputs are
+    `flux2_real_f32`'s. `base_output` holds the velocity with every adapter at weight 0. About 17 GB resident.
+    """
+    from diffusers import Flux2Transformer2DModel
+    from diffusers.loaders.lora_pipeline import Flux2LoraLoaderMixin
+
+    model = Flux2Transformer2DModel.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    names, strengths = _dit_released_adapters(Flux2LoraLoaderMixin, model, "IK_FLUX2_ADAPTERS")
+    generator = torch.Generator().manual_seed(8)
+    lh, lw, txt = 2, 2, 8
+    hidden = torch.randn(1, lh * lw, model.config.in_channels, generator=generator).to(torch.bfloat16).float()
+    encoder = torch.randn(1, txt, model.config.joint_attention_dim, generator=generator).to(torch.bfloat16).float()
+    t = torch.tensor([0.5])
+    guidance = torch.tensor([3.5]) if model.config.guidance_embeds else None
+    img_ids = torch.cartesian_prod(torch.arange(1), torch.arange(lh), torch.arange(lw), torch.arange(1)).float()
+    txt_ids = torch.cartesian_prod(torch.arange(1), torch.arange(1), torch.arange(1), torch.arange(txt)).float()
+    output, base = _dit_stacked(model, names, strengths, lambda: model(
+        hidden_states=hidden, encoder_hidden_states=encoder, timestep=t, img_ids=img_ids, txt_ids=txt_ids,
+        guidance=guidance, return_dict=False)[0])
+    extra = {"hidden": hidden.contiguous(), "encoder": encoder.contiguous(), "timestep": t.contiguous(),
+             "img_ids": img_ids.contiguous(), "txt_ids": txt_ids.contiguous(),
+             "strengths": torch.tensor(strengths, dtype=torch.float32), "base_output": base.contiguous()}
+    if guidance is not None:
+        extra["guidance"] = guidance.contiguous()
+    globals()["_extra"] = extra
+    return output.contiguous()
+
+
+def run_zimage_adapters(image, checkpoint):
+    """Z-Image-Turbo's velocity with released adapters active together, each at its own strength, at bfloat16 as
+    diffusers loads the release with `torch_dtype=bfloat16`, and at float32, the floor that bfloat16 run is read
+    against.
+
+    `--checkpoint` is the release's `transformer/` directory. `IK_ZIMAGE_ADAPTERS` lists the adapters as
+    `<safetensors path>=<strength>` joined by `;`. Each is read by diffusers' own Z-Image loader
+    (`ZImageLoraLoaderMixin.lora_state_dict`, which reads the `diffusion_model.` layout, bakes each alpha into
+    the halves, and reads an original model's attention `out` as `to_out.0`) and placed with
+    `load_lora_into_transformer`; `set_adapters`' weights give each its strength. The inputs are
+    `z_image_release_probe`'s: a seeded 16×24 latent, 37 caption features, and timestep 0.6 in float32.
+
+    The transformer first loads at float32 (its stored 24.6 GB), with the adapters' halves held at float32, and
+    records `output_f32` and `base_output_f32`; it is then released and loaded again at bfloat16 for `output` and
+    `base_output`. Each base holds the velocity `[C, F, H, W]` with every adapter at weight 0. The reference's own
+    bfloat16 distance from its float32 run is the floor the port's bfloat16 run is held to. About 26 GB peak.
+    """
+    import gc
+
+    from diffusers import ZImageTransformer2DModel
+    from diffusers.loaders.lora_pipeline import ZImageLoraLoaderMixin
+
+    generator = torch.Generator().manual_seed(17)
+    latent, caption = None, None
+
+    def velocities(dtype):
+        nonlocal latent, caption
+        model = ZImageTransformer2DModel.from_pretrained(checkpoint, torch_dtype=dtype).eval()
+        names, strengths = _dit_released_adapters(ZImageLoraLoaderMixin, model, "IK_ZIMAGE_ADAPTERS")
+        _dit_cast_halves(model, dtype)
+        if latent is None:
+            latent = torch.randn(model.config.in_channels, 1, 16, 24, generator=generator).to(torch.bfloat16)
+            caption = torch.randn(37, model.config.cap_feat_dim, generator=generator).to(torch.bfloat16)
+        patch, frames = model.config.all_patch_size[0], model.config.all_f_patch_size[0]
+        output, base = _dit_stacked(model, names, strengths, lambda: model(
+            [latent.to(dtype)], timestep, [caption.to(dtype)], patch_size=patch, f_patch_size=frames,
+            return_dict=False)[0][0])
+        del model
+        gc.collect()
+        return output.float(), base.float(), strengths
+
+    timestep = torch.tensor([0.6], dtype=torch.float32)
+    output32, base32, _ = velocities(torch.float32)
+    output, base, strengths = velocities(torch.bfloat16)
+    globals()["_extra"] = {"latent": latent.float().contiguous(), "cap_feats": caption.float().contiguous(),
+                           "timestep": timestep.contiguous(), "strengths": torch.tensor(strengths, dtype=torch.float32),
+                           "base_output": base.contiguous(), "output_f32": output32.contiguous(),
+                           "base_output_f32": base32.contiguous()}
+    return output.contiguous()
+
+def run_sd35_adapters(image, checkpoint):
+    """Two LoRA adapters made over SD3.5's released transformer, saved beside the record, then active together
+    at 0.8 and 0.5, at float32 on `sd35_release`'s inputs.
+
+    `--checkpoint` is the release directory (`stabilityai/stable-diffusion-3.5-medium`). No released adapter with
+    a license targets it, so `_dit_made_adapters` draws them: one over every joint attention's query, key, value,
+    and output projections in both streams, saved by PEFT's `save_pretrained`, and one over every linear layer
+    of the blocks (both attentions, both feed-forwards, and the adaptive norms' projections) with rsLoRA scaling,
+    saved by `SD3LoraLoaderMixin.save_lora_weights`, both to `<output stem>.adapters/adapter<N>/`. They are placed
+    by `_dit_load_made`. `base_output` holds the velocity with both adapters at weight 0. About 12 GB resident.
+    """
+    from diffusers import SD3Transformer2DModel
+    from diffusers.loaders.lora_pipeline import SD3LoraLoaderMixin
+
+    model = SD3Transformer2DModel.from_pretrained(checkpoint, subfolder="transformer",
+                                                  torch_dtype=torch.float32).eval()
+    projections = r"(to_q|to_k|to_v|to_out\.0|add_q_proj|add_k_proj|add_v_proj|to_add_out)"
+    targets = [rf"transformer_blocks\.\d+\.attn\.{projections}",
+               rf"transformer_blocks\.\d+\.((attn|attn2)\.{projections}|(ff|ff_context)\.net\.(0\.proj|2)"
+               r"|(norm1|norm1_context)\.linear)"]
+    paths = _dit_made_adapters(model, _dit_made_folder(), targets, SD3LoraLoaderMixin)
+    names = _dit_load_made(SD3LoraLoaderMixin, model, paths)
+    strengths = [0.8, 0.5]
+    latent, encoder, pooled, timestep = _sd35_inputs()
+    output, base = _dit_stacked(model, names, strengths, lambda: model(
+        hidden_states=latent, encoder_hidden_states=encoder, pooled_projections=pooled, timestep=timestep,
+        return_dict=False)[0])
+    globals()["_extra"] = {"latent": latent.contiguous(), "encoder": encoder.contiguous(),
+                           "pooled": pooled.contiguous(), "timestep": timestep.contiguous(),
+                           "strengths": torch.tensor(strengths, dtype=torch.float32),
+                           "base_output": base[0].contiguous()}
+    return output[0].contiguous()
+
+
+def run_ltxv_adapters(image, checkpoint):
+    """Two LoRA adapters made over LTX-Video 0.9.0's released transformer, saved beside the record, then active
+    together at 0.8 and 0.5, at float32 on `ltx_transformer`'s inputs.
+
+    `--checkpoint` is the release's `transformer/` directory. `_dit_made_adapters` draws one adapter over every
+    self- and cross-attention's query, key, value, and output projections, saved by PEFT's `save_pretrained`, and
+    one over those and each feed-forward's two projections with rsLoRA scaling, saved by
+    `LTXVideoLoraLoaderMixin.save_lora_weights`, both to `<output stem>.adapters/adapter<N>/`. They are placed by
+    `_dit_load_made`. `base_output` holds the velocity `[S, 128]` with both adapters at weight 0. About 9 GB
+    resident.
+    """
+    from diffusers import LTXVideoTransformer3DModel
+    from diffusers.loaders.lora_pipeline import LTXVideoLoraLoaderMixin
+
+    model = LTXVideoTransformer3DModel.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    attention = r"transformer_blocks\.\d+\.(attn1|attn2)\.(to_q|to_k|to_v|to_out\.0)"
+    targets = [attention, rf"{attention}|transformer_blocks\.\d+\.ff\.net\.(0\.proj|2)"]
+    paths = _dit_made_adapters(model, _dit_made_folder(), targets, LTXVideoLoraLoaderMixin)
+    names = _dit_load_made(LTXVideoLoraLoaderMixin, model, paths)
+    strengths = [0.8, 0.5]
+    generator = torch.Generator().manual_seed(7)
+    frames, height, width = 2, 2, 2
+    latent = torch.randn(1, frames * height * width, 128, generator=generator)
+    text = torch.randn(1, 4, 4096, generator=generator)
+    timestep = torch.tensor([500.0])
+    output, base = _dit_stacked(model, names, strengths, lambda: model(
+        hidden_states=latent, encoder_hidden_states=text, timestep=timestep, encoder_attention_mask=torch.ones(1, 4),
+        num_frames=frames, height=height, width=width, rope_interpolation_scale=(1.0, 1.0, 1.0),
+        return_dict=False)[0])
+    globals()["_extra"] = {"latent": latent[0].contiguous(), "text": text[0].contiguous(),
+                           "timestep": timestep.contiguous(), "strengths": torch.tensor(strengths, dtype=torch.float32),
+                           "base_output": base[0].contiguous()}
+    return output[0].contiguous()
+
+
+def run_stable_audio_adapters(image, checkpoint):
+    """Two LoRA adapters made over Stable Audio Open 1.0's released transformer, saved beside the record in
+    diffusers' layout, then active together at 0.8 and 0.5, at float32 on `stable_audio_components`' middle
+    noise level (σ 3, 48 latent frames, the second prompt's conditioning).
+
+    `--checkpoint` is the RELEASE ROOT. diffusers has no LoRA loader for Stable Audio and its transformer has no
+    adapter methods, so PEFT makes both adapters and places them (`_dit_load_peft`), as diffusers'
+    `load_lora_adapter` would. `_dit_made_adapters` draws one over every self- and cross-attention's query, key,
+    value, and output projections, and one over those, each feed-forward's two projections, the three
+    conditioning projections (`timestep_proj`, `global_proj`, `cross_attention_proj`), `proj_in`, and `proj_out`
+    with rsLoRA scaling; the one-wide convolutions are left alone. Both are saved by
+    `SanaLoraLoaderMixin.save_lora_weights`, diffusers' writer of a transformer-only adapter, to
+    `<output stem>.adapters/adapter<N>/pytorch_lora_weights.safetensors`. `base_output` holds the prediction
+    `[64, frames]` with both adapters at scale 0. About 6 GB resident.
+    """
+    from diffusers.loaders.lora_pipeline import SanaLoraLoaderMixin
+    from diffusers.models.embeddings import get_1d_rotary_pos_embed
+
+    parts = _stable_audio_components(checkpoint)
+    tokenizer, text_encoder = parts["tokenizer"], parts["text_encoder"]
+    projection, model = parts["projection_model"], parts["transformer"]
+    attention = r"transformer_blocks\.\d+\.(attn1|attn2)\.(to_q|to_k|to_v|to_out\.0)"
+    targets = [attention, rf"{attention}|transformer_blocks\.\d+\.ff\.net\.(0\.proj|2)"
+                          r"|(timestep_proj|global_proj|cross_attention_proj)\.(0|2)|proj_in|proj_out"]
+    paths = _dit_made_adapters(model, _dit_made_folder(), targets, SanaLoraLoaderMixin, peft_directory=False)
+    names = _dit_load_peft(model, paths)
+    strengths = [0.8, 0.5]
+
+    inputs = tokenizer(STABLE_AUDIO_PROMPTS[1], padding="max_length", max_length=tokenizer.model_max_length,
+                       truncation=True, return_tensors="pt")
+    with torch.no_grad():
+        states = text_encoder(inputs.input_ids, attention_mask=inputs.attention_mask)[0]
+        text = projection(text_hidden_states=states).text_hidden_states * inputs.attention_mask.unsqueeze(-1)
+        seconds = projection(start_seconds=torch.tensor([0.0]), end_seconds=torch.tensor([4.5]))
+    start, end = seconds.seconds_start_hidden_states, seconds.seconds_end_hidden_states
+    context = torch.cat([text, start, end], dim=1)
+    global_states = torch.cat([start, end], dim=2)
+    generator = torch.Generator().manual_seed(67)
+    frames = 48
+    latents = torch.randn(1, 64, frames, generator=generator)
+    rotary = get_1d_rotary_pos_embed(model.config.attention_head_dim // 2, frames + 1, use_real=True,
+                                     repeat_interleave_real=False)
+    sigma = torch.tensor(3.0)
+    scaled = latents / ((sigma ** 2 + 1) ** 0.5)
+    t = (sigma.atan() / math.pi * 2).reshape(1)
+    output, base = _dit_stacked(model, names, strengths, lambda: model(
+        scaled, t, encoder_hidden_states=context, global_hidden_states=global_states, rotary_embedding=rotary,
+        return_dict=False)[0])
+    globals()["_extra"] = {"input": scaled[0].contiguous(), "timestep": t.contiguous(),
+                           "context": context[0].contiguous(), "global": global_states[0].contiguous(),
+                           "strengths": torch.tensor(strengths, dtype=torch.float32),
+                           "base_output": base[0].contiguous()}
+    return output[0].contiguous()
+
+
+def run_qwen_image_adapters(image, checkpoint):
+    """Two LoRA adapters made over Qwen-Image 2.1's released transformer, saved beside the record, then active
+    together at 0.8 and 0.5 on `qwenimage21_real`'s inputs, at bfloat16 as the release ships and at float32, the
+    floor that bfloat16 run is read against.
+
+    `--checkpoint` is the release's `transformer/` directory. `QwenImage21Pipeline` carries no LoRA loader, so
+    Qwen-Image's (`QwenImageLoraLoaderMixin`) writes and reads the diffusers-layout adapter. `_dit_made_adapters`
+    draws one adapter over every block's query, key, value, and output projections, saved by PEFT's
+    `save_pretrained`, and one over those, each block's three feed-forward projections, the shared modulation
+    (`modulation.1`), and the final norm's projection (`norm_out.linear`) with rsLoRA scaling, both to
+    `<output stem>.adapters/adapter<N>/`. Both are bfloat16 adapters, as a trainer saving a bfloat16 run writes
+    them: each is saved with its halves at bfloat16.
+
+    The transformer first loads at float32 (28 GB), the adapters are made over it and placed by `_dit_load_made`
+    with their halves held at float32, and the pass records `output_f32` and `base_output_f32`; it is then
+    released and loaded again at bfloat16, where the halves are cast to bfloat16 so the reference's low-rank path
+    runs at the layer's type, as the port's detour does, for `output` and `base_output`. Each base holds the
+    output with both adapters at weight 0. The reference's own bfloat16 distance from its float32 run is the
+    floor the port's bfloat16 run is held to. About 28 GB peak.
+    """
+    import gc
+
+    from diffusers import QwenImage21Transformer2DModel
+    from diffusers.loaders.lora_pipeline import QwenImageLoraLoaderMixin
+
+    attention = r"transformer_blocks\.\d+\.attn\.(to_q|to_k|to_v|to_out\.0)"
+    targets = [attention,
+               rf"{attention}|transformer_blocks\.\d+\.img_mlp\.(proj|gate_layer|out)|modulation\.1|norm_out\.linear"]
+    strengths = [0.8, 0.5]
+    torch.manual_seed(11)
+    img_shapes = [[(1, 2, 2), (1, 8, 8)]]
+    slots = [False] * 16
+    slots[5] = True
+    img_mask = torch.tensor([slots + [True] * 16])
+    encoder_hidden_states = (torch.randn(1, 16, 4096) * 0.5).to(torch.bfloat16)
+    encoder_hidden_states_mask = torch.ones(1, 16, dtype=torch.bool)
+    encoder_hidden_states_mask[0, -2:] = False
+    latents = (torch.randn(1, 68, 64) * 0.5).to(torch.bfloat16)
+    timestep = torch.tensor([0.35])
+    paths = None
+
+    def outputs(dtype):
+        nonlocal paths
+        model = QwenImage21Transformer2DModel.from_pretrained(checkpoint, dtype=dtype).eval()
+        if paths is None:
+            paths = _dit_made_adapters(model, _dit_made_folder(), targets, QwenImageLoraLoaderMixin,
+                                       dtype=torch.bfloat16)
+        names = _dit_load_made(QwenImageLoraLoaderMixin, model, paths)
+        _dit_cast_halves(model, dtype)
+        output, base = _dit_stacked(model, names, strengths, lambda: model(
+            hidden_states=latents.to(dtype), encoder_hidden_states=encoder_hidden_states.to(dtype),
+            timestep=timestep, img_shapes=img_shapes, img_mask=img_mask,
+            encoder_hidden_states_mask=encoder_hidden_states_mask, return_dict=False)[0])
+        del model
+        gc.collect()
+        return output[0].float(), base[0].float()
+
+    output32, base32 = outputs(torch.float32)
+    output, base = outputs(torch.bfloat16)
+    globals()["_extra"] = {"latents": latents[0].float().contiguous(),
+                           "encoder_hidden_states": encoder_hidden_states[0].float().contiguous(),
+                           "encoder_mask": encoder_hidden_states_mask[0].to(torch.int32).contiguous(),
+                           "img_mask": img_mask[0].to(torch.int32).contiguous(), "timestep": timestep.contiguous(),
+                           "strengths": torch.tensor(strengths, dtype=torch.float32),
+                           "base_output": base.contiguous(), "output_f32": output32.contiguous(),
+                           "base_output_f32": base32.contiguous()}
+    return output.contiguous()
+
+def run_sana_adapters(image):
+    """Two LoRA adapters made over `run_sana`'s tiny random SANA DiT (the same configuration and seed), saved
+    beside the record, then active together at 0.8 and 0.5, at float32 on `run_sana`'s inputs.
+
+    `_dit_made_adapters` draws one adapter over every self- and cross-attention's query, key, value, and output
+    projections, saved by PEFT's `save_pretrained`, and one over those and each feed-forward's one-by-one
+    convolutions (`ff.conv_inverted`, `ff.conv_point`) with rsLoRA scaling, saved by
+    `SanaLoraLoaderMixin.save_lora_weights`, both to `<output stem>.adapters/adapter<N>/`; the depthwise
+    `ff.conv_depth` is left alone. They are placed by `_dit_load_made`. The record carries the base weights as
+    `w::<name>`, the inputs, the strengths, and `base_output`, the velocity `[C, H, W]` with both adapters at
+    weight 0. `image` unused.
+    """
+    from diffusers import SanaTransformer2DModel
+    from diffusers.loaders.lora_pipeline import SanaLoraLoaderMixin
+
+    model = SanaTransformer2DModel(
+        in_channels=8, out_channels=8, num_attention_heads=2, attention_head_dim=8, num_layers=2,
+        num_cross_attention_heads=2, cross_attention_head_dim=8, cross_attention_dim=16,
+        caption_channels=12, mlp_ratio=2.0, patch_size=1, attention_bias=False,
+        norm_elementwise_affine=False, norm_eps=1e-6, qk_norm=None, guidance_embeds=False,
+        timestep_scale=1.0, sample_size=8)
+    model = _randomized(model, seed=23)
+    extra = {f"w::{key}": value.float().clone().contiguous() for key, value in model.state_dict().items()}
+    attention = r"transformer_blocks\.\d+\.(attn1|attn2)\.(to_q|to_k|to_v|to_out\.0)"
+    targets = [attention, rf"{attention}|transformer_blocks\.\d+\.ff\.(conv_inverted|conv_point)"]
+    paths = _dit_made_adapters(model, _dit_made_folder(), targets, SanaLoraLoaderMixin)
+    names = _dit_load_made(SanaLoraLoaderMixin, model, paths)
+    strengths = [0.8, 0.5]
+    generator = torch.Generator().manual_seed(6)
+    latent = torch.randn(1, 8, 4, 4, generator=generator)
+    cap = torch.randn(1, 6, 12, generator=generator)
+    t = torch.tensor([0.4])
+    output, base = _dit_stacked(model, names, strengths, lambda: model(
+        hidden_states=latent, encoder_hidden_states=cap, timestep=t, return_dict=False)[0][0])
+    extra.update({"latent": latent[0].contiguous(), "cap_feats": cap[0].contiguous(), "timestep": t.contiguous(),
+                  "strengths": torch.tensor(strengths, dtype=torch.float32), "base_output": base.contiguous()})
+    globals()["_extra"] = extra
+    return output.contiguous()
+
+
 def run_flux_text(image, checkpoint):
     """FLUX.1's text front end on the RELEASED weights: the CLIP-L pooled projection and the T5-XXL
     sequence, from transformers' own CLIPTextModel and T5EncoderModel.
@@ -25825,7 +26274,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "segformer_loss": run_segformer_loss, "basic_pitch_targets": run_basic_pitch_targets, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "rtdetr_loss": run_rtdetr_loss, "rtdetr_training_forward": run_rtdetr_training_forward, "rtdetr_training_setup": run_rtdetr_training_setup, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "gelu_rounding": run_gelu_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
+          "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "sana_adapters": run_sana_adapters, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "gelu_rounding": run_gelu_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
 CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "open_jev_layerwise": run_open_jev_layerwise, "pplx_decider": run_pplx_decider, "pplx_decider_tiny": run_pplx_decider_tiny, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "hymt": run_hymt, "hymt_moe_tiny": run_hymt_moe_tiny, "hymt_beam": run_hymt_beam, "hymt_tokenizer": run_hymt_tokenizer, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
@@ -25833,7 +26282,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_adapters": run_qwen3_adapters, "gemma3_adapters": run_gemma3_adapters, "gemma4_adapters": run_gemma4_adapters, "gemma3n_adapters": run_gemma3n_adapters, "qwen3vl_adapters": run_qwen3vl_adapters, "pixtral_tiny_adapters": run_pixtral_tiny_adapters, "madlad_adapters": run_madlad_adapters, "generated_decoder_adapters": run_generated_decoder_adapters, "whisper_adapters": run_whisper_adapters, "flux_adapters": run_flux_adapters, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "style_transfer_training": run_style_transfer_training, "adain_training": run_adain_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "qwen3_5_cached": run_qwen3_5_cached, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_adapters": run_qwen3_adapters, "gemma3_adapters": run_gemma3_adapters, "gemma4_adapters": run_gemma4_adapters, "gemma3n_adapters": run_gemma3n_adapters, "qwen3vl_adapters": run_qwen3vl_adapters, "pixtral_tiny_adapters": run_pixtral_tiny_adapters, "madlad_adapters": run_madlad_adapters, "generated_decoder_adapters": run_generated_decoder_adapters, "whisper_adapters": run_whisper_adapters, "flux_adapters": run_flux_adapters, "flux2_adapters": run_flux2_adapters, "zimage_adapters": run_zimage_adapters, "sd35_adapters": run_sd35_adapters, "ltxv_adapters": run_ltxv_adapters, "stable_audio_adapters": run_stable_audio_adapters, "qwen_image_adapters": run_qwen_image_adapters, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "style_transfer_training": run_style_transfer_training, "adain_training": run_adain_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "qwen3_5_cached": run_qwen3_5_cached, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,

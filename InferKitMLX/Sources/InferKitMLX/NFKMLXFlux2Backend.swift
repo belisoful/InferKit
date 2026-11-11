@@ -55,7 +55,8 @@ extension NFKMLXFlux2 {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: Self.backendInputKeys,
-                                parameterKeys: Self.backendParameterKeys,
+                                parameterKeys: NFKMLXDiTAdapters.parameterKeys(Self.backendParameterKeys,
+                                                                               holding: adapterStrengths),
                                 outputKeys: [NFKOutputImage]) { [self] request, job in
             let prompt = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             let negative = NFKMLXGenerationBackend.text(request, NFKInputNegativePrompt)
@@ -76,17 +77,19 @@ extension NFKMLXFlux2 {
             cachesReferences = parameter(NFKMLXFlux2ParameterKey.cachesReferences)?.boolValue ?? cachesReferences
             let seed = NFKMLXGenerationBackend.seed(request)
             job.reportProgress(0)
-            let pixels: MLXArray
-            if let source, let mask {
-                let (sourcePixels, repaint) = try Self.backendInpaintingPixels(image: source, mask: mask)
-                pixels = try inpaint(prompt: prompt, negativePrompt: negative, image: sourcePixels, mask: repaint,
-                                     strength: parameter(NFKParameterStrength)?.doubleValue ?? 0.8, seed: seed,
-                                     references: references)
-            } else {
-                pixels = try image(forPrompt: prompt, negativePrompt: negative,
-                                   width: parameter(NFKParameterWidth)?.intValue ?? 1024,
-                                   height: parameter(NFKParameterHeight)?.intValue ?? 1024,
-                                   seed: seed, references: references)
+            // The held adapters read the run's strengths as each step builds its graph.
+            let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
+            let pixels: MLXArray = try NFKMLXAdapterRun.$strengths.withValue(strengths) {
+                if let source, let mask {
+                    let (sourcePixels, repaint) = try Self.backendInpaintingPixels(image: source, mask: mask)
+                    return try inpaint(prompt: prompt, negativePrompt: negative, image: sourcePixels, mask: repaint,
+                                       strength: parameter(NFKParameterStrength)?.doubleValue ?? 0.8, seed: seed,
+                                       references: references)
+                }
+                return try image(forPrompt: prompt, negativePrompt: negative,
+                                 width: parameter(NFKParameterWidth)?.intValue ?? 1024,
+                                 height: parameter(NFKParameterHeight)?.intValue ?? 1024,
+                                 seed: seed, references: references)
             }
             if job.status == .cancelled { return nil }
             let result = NFKMLXGenerationBackend.imageResult(try NFKMLXGenerationBackend.cgImage(pixels[0]))
@@ -136,6 +139,23 @@ extension NFKMLXFlux2 {
     @objc(backendWithDirectoryURL:residency:error:)
     public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try flux2(directoryURL: directoryURL, residency: residency).inferenceBackend()
+    }
+
+    /// ``backend(directoryURL:residency:)`` with LoRA adapters held beside the transformer: each a diffusers,
+    /// kohya, or Black Forest Labs safetensors file, at the strength in `strengths` at its index. The adapters
+    /// stay unmerged, so they stack, and a request sets each one's strength through
+    /// `NFKParameterAdapterStrengths`, an array in the order of `adapterURLs`.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the counts differ, and `NFKMLXError.loRANotApplicable`
+    ///   when an adapter does not fit FLUX.2 (at construction for a resident release, at the first image for a
+    ///   staged one).
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:residency:adapterURLs:strengths:error:)
+    public static func backend(directoryURL: URL, residency: NFKMLXResidency, adapterURLs: [URL],
+                               strengths: [NSNumber]) throws -> any NFKInferenceBackend {
+        try flux2(directoryURL: directoryURL, residency: residency,
+                  adapters: NFKMLXDiTAdapters.adapters(adapterURLs, strengths: strengths)).inferenceBackend()
     }
 
     /// Downloads a diffusers FLUX.2 [klein] release and returns the model behind the InferKit contract.

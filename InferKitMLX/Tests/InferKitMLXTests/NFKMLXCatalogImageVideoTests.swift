@@ -117,20 +117,21 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
     }
 
     func testTheImageGeneratorsDeclareTheirBackendsKeys() throws {
-        // A FLUX.1 entry declares the adapter strengths for a load that holds adapters; a backend built without one
-        // does not read them.
+        // An entry declares the adapter strengths for a load that holds adapters; a backend built without one does
+        // not read them.
+        let adapted: Set<String> = [NFKParameterAdapterStrengths]
         for name in [NFKMLXFlux.modelName, NFKMLXCatalogImage.fluxDevName] {
             assertPorts(name, inputs: NFKMLXFlux.backendInputKeys,
                         parameters: NFKMLXFlux.backendParameterKeys.union([NFKParameterAdapterStrengths]),
                         outputs: [NFKOutputImage])
         }
         for name in [NFKMLXFlux2.modelName] + NFKMLXCatalogImage.flux2AdditionalReleases.map(\.name) {
-            assertPorts(name, inputs: NFKMLXFlux2.backendInputKeys, parameters: NFKMLXFlux2.backendParameterKeys,
-                        outputs: [NFKOutputImage])
+            assertPorts(name, inputs: NFKMLXFlux2.backendInputKeys,
+                        parameters: NFKMLXFlux2.backendParameterKeys.union(adapted), outputs: [NFKOutputImage])
         }
         for name in [NFKMLXSD3Generator.modelName] + NFKMLXCatalogImage.sd3AdditionalReleases.map(\.name) {
             assertPorts(name, inputs: NFKMLXSD3Generator.backendInputKeys,
-                        parameters: NFKMLXSD3Generator.backendParameterKeys, outputs: [NFKOutputImage])
+                        parameters: NFKMLXSD3Generator.backendParameterKeys.union(adapted), outputs: [NFKOutputImage])
         }
         let large = try XCTUnwrap(entry("sd3.5-large")).descriptor()
         XCTAssertEqual(large.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 28)
@@ -144,11 +145,11 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
                     parameters: NFKMLXSD3ControlNetGenerator.backendParameterKeys, outputs: [NFKOutputImage])
         for name in [NFKMLXSANAGenerator.modelName, NFKMLXCatalogImage.sana1600MName] {
             assertPorts(name, inputs: NFKMLXSANAGenerator.backendInputKeys,
-                        parameters: NFKMLXSANAGenerator.backendParameterKeys, outputs: [NFKOutputImage])
+                        parameters: NFKMLXSANAGenerator.backendParameterKeys.union(adapted), outputs: [NFKOutputImage])
         }
         for name in [NFKMLXZImageGenerator.modelName, NFKMLXCatalogImage.zImageBaseName] {
             assertPorts(name, inputs: NFKMLXZImageGenerator.backendInputKeys,
-                        parameters: NFKMLXZImageGenerator.backendParameterKeys, outputs: [NFKOutputImage])
+                        parameters: NFKMLXZImageGenerator.backendParameterKeys.union(adapted), outputs: [NFKOutputImage])
         }
         assertPorts(NFKMLXQwenImageGenerator.modelName, inputs: NFKMLXQwenImageGenerator.backendInputKeys,
                     parameters: NFKMLXQwenImageGenerator.backendParameterKeys, outputs: [NFKOutputImage])
@@ -223,7 +224,8 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
 
     func testTheVideoModelsDeclareTheirBackendsKeys() {
         assertPorts(NFKMLXLTXVideoGenerator.modelName, inputs: NFKMLXLTXVideoGenerator.backendInputKeys,
-                    parameters: NFKMLXLTXVideoGenerator.backendParameterKeys, outputs: [NFKOutputVideo])
+                    parameters: NFKMLXLTXVideoGenerator.backendParameterKeys.union([NFKParameterAdapterStrengths]),
+                    outputs: [NFKOutputVideo])
         for name in [NFKMLXWanVideoGenerator.modelName] + NFKMLXCatalogVideo.wanAdditionalReleases.map(\.name) {
             assertPorts(name, inputs: NFKMLXWanVideoGenerator.backendInputKeys,
                         parameters: NFKMLXWanVideoGenerator.backendParameterKeys, outputs: [NFKOutputVideo])

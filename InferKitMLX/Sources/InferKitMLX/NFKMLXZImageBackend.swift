@@ -30,7 +30,8 @@ extension NFKMLXZImageGenerator {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: Self.backendInputKeys,
-                                parameterKeys: Self.backendParameterKeys,
+                                parameterKeys: NFKMLXDiTAdapters.parameterKeys(Self.backendParameterKeys,
+                                                                               holding: adapterStrengths),
                                 outputKeys: [NFKOutputImage]) { [self] request, job in
             let prompt = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             let negative = NFKMLXGenerationBackend.text(request, NFKInputNegativePrompt)
@@ -40,10 +41,14 @@ extension NFKMLXZImageGenerator {
             steps = parameter(NFKParameterSteps)?.intValue ?? steps
             guidance = parameter(NFKParameterGuidanceScale)?.floatValue ?? guidance
             job.reportProgress(0)
-            let image = try cgImage(forPrompt: prompt, negativePrompt: negative,
-                                    width: parameter(NFKParameterWidth)?.intValue ?? 1024,
-                                    height: parameter(NFKParameterHeight)?.intValue ?? 1024,
-                                    seed: NFKMLXGenerationBackend.seed(request))
+            // The held adapters read the run's strengths as each step builds its graph.
+            let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
+            let image = try NFKMLXAdapterRun.$strengths.withValue(strengths) {
+                try cgImage(forPrompt: prompt, negativePrompt: negative,
+                            width: parameter(NFKParameterWidth)?.intValue ?? 1024,
+                            height: parameter(NFKParameterHeight)?.intValue ?? 1024,
+                            seed: NFKMLXGenerationBackend.seed(request))
+            }
             if job.status == .cancelled { return nil }
             job.reportProgress(1)
             return NFKMLXGenerationBackend.imageResult(image)
@@ -62,6 +67,23 @@ extension NFKMLXZImageGenerator {
     @objc(backendWithDirectoryURL:residency:error:)
     public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try generator(directoryURL: directoryURL, residency: residency).inferenceBackend()
+    }
+
+    /// ``backend(directoryURL:residency:)`` with LoRA adapters held beside the transformer: each a diffusers, kohya, or
+    /// original Z-Image safetensors file, at the strength in `strengths` at its index. The adapters stay unmerged, so
+    /// they stack, and a request sets each one's strength through `NFKParameterAdapterStrengths`, an array in the order
+    /// of `adapterURLs`.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the counts differ, and `NFKMLXError.loRANotApplicable`
+    ///   when an adapter does not fit Z-Image (at construction for a resident release, at the first
+    ///   run for a staged one).
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:residency:adapterURLs:strengths:error:)
+    public static func backend(directoryURL: URL, residency: NFKMLXResidency, adapterURLs: [URL],
+                               strengths: [NSNumber]) throws -> any NFKInferenceBackend {
+        try generator(directoryURL: directoryURL, residency: residency,
+                      adapters: NFKMLXDiTAdapters.adapters(adapterURLs, strengths: strengths)).inferenceBackend()
     }
 
     /// Downloads the release (``releaseRepo`` when `repo` is nil) and returns the model behind the InferKit

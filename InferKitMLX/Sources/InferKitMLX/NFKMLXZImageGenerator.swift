@@ -123,6 +123,10 @@ public final class NFKMLXZImageGenerator: NSObject {
     /// reference pipeline's 5.
     @objc public var guidance: Float = 0
 
+    /// The strengths the adapters held beside the transformer were loaded at, in load order; empty for a
+    /// generator that holds none.
+    var adapterStrengths: [Float] = []
+
     /// Whether the text encoder and the transformer stay loaded together between images.
     @objc public var holdsStagesResident: Bool { staging.resident }
 
@@ -172,6 +176,14 @@ public final class NFKMLXZImageGenerator: NSObject {
     /// ``NFKMLXResidency/staged`` does.
     @objc(generatorWithDirectoryURL:residency:error:)
     public static func generator(directoryURL: URL, residency: NFKMLXResidency) throws -> NFKMLXZImageGenerator {
+        try generator(directoryURL: directoryURL, residency: residency, adapters: [])
+    }
+
+    /// ``generator(directoryURL:residency:)`` with `adapters` held beside the transformer at their strengths,
+    /// read by ``NFKMLXDiTAdapters``. A staged release holds them again each time it loads the transformer, so
+    /// a misfit surfaces at the first image; a resident one at construction.
+    static func generator(directoryURL: URL, residency: NFKMLXResidency,
+                          adapters: [(url: URL, strength: Float)]) throws -> NFKMLXZImageGenerator {
         let encoderDirectory = directoryURL.appendingPathComponent("text_encoder")
         let transformerDirectory = directoryURL.appendingPathComponent("transformer")
         let vaeDirectory = directoryURL.appendingPathComponent("vae")
@@ -206,12 +218,14 @@ public final class NFKMLXZImageGenerator: NSObject {
                 let transformer = NFKMLXZImageTransformerNet(configuration)
                 try NFKMLXZImageRelease.loadTransformer(into: transformer, fromDirectory: transformerDirectory,
                                                         dtype: .bfloat16)
+                try NFKMLXDiTAdapters.hold(adapters, in: transformer)
                 let vae = NFKMLXSDAutoencoder(configuration: vaeConfiguration)
                 try NFKMLXStableDiffusionModels.loadVAEWeights(
                     into: vae, from: vaeDirectory.appendingPathComponent("diffusion_pytorch_model.safetensors"),
                     precision: .checkpoint)
                 return NFKMLXZImagePipeline(transformer: transformer, vae: vae, schedule: schedule)
             })
+        generator.adapterStrengths = adapters.map(\.strength)
         if plan.holdsStagesResident {
             try generator.loadResident()
         }

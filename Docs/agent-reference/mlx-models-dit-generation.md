@@ -1043,6 +1043,51 @@ arithmetic as before.
   against diffusers' FLUX loader with `set_adapters`: velocity 0.99999434, base transformer 0.99999610, the
   adapters' change 0.99910, and at strength 0 the adapted record reads 0.99534. The change is a tenth of the
   velocity's norm and each bfloat16 side carries the base distance, which together put the change near 1 − 1e-3.
+  **Held adapters on the other diffusion transformers (2026-11-10).** `NFKMLXDiTAdapters` is the shared reader;
+  `NFKMLXFluxAdapters` is FLUX.1's layout over it, its tables, scaling, swap, and guidance rule unchanged, and the
+  FLUX.1 parity above reads the same figures through it. A layout (`NFKMLXDiTAdapterLayout`) carries the family's
+  original-model table, prefix renames from diffusers' names to the port's, the layers left out where the
+  transformer lacks them, the half-swapped targets, and a per-layer refusal. A file is read in the first layout
+  its names match:
+  - diffusers' `transformer.<layer>.lora_A/lora_B`, scaled by a layer's `alpha` where the file stores one, else by
+    `lora_adapter_metadata`, else by an `adapter_config.json` beside the file (PEFT's `save_pretrained`
+    directory), else 1;
+  - kohya's `lora_unet_<layer>` through the underscored original table, else through the port's own module paths
+    with each dot read as an underscore (a name that reads as two layers is refused);
+  - `diffusion_model.<layer>` or `base_model.model.<layer>`, an original-model or a diffusers name;
+  - diffusers' names with no prefix, as a ComfyUI copy writes them.
+  The families and what each departs in:
+  - FLUX.2: Black Forest Labs' and kohya's names follow diffusers' `_convert_non_diffusers_flux2_lora_to_diffusers`
+    and `_convert_kohya_flux2_lora_to_diffusers`; `final_layer.adaLN_modulation.1` maps to `norm_out.linear`
+    without FLUX.1's half swap. diffusers' kohya converter drops the guidance, final-modulation, and stream
+    modulation layers; the reader holds them, as the original model's trainers adapt them.
+  - Z-Image: the original model's attention `out` is `to_out.0`. Stable Audio: the `timestep_proj`,
+    `global_proj`, and `cross_attention_proj` Sequentials sit under the port's `layers.`, and the
+    `preprocess_conv` / `postprocess_conv` adapters are refused (Conv1d in diffusers, held as Linear here).
+    SANA: the 1×1 convolutions take a convolution detour; the depthwise `ff.conv_depth` is refused.
+  - SD3 refuses adapters while transformer blocks stream: an adapted layer wraps the base layer, and the stream
+    writes weights into the tree. LTX-Video holds diffusers' names as they are.
+  Each generator holds the adapters inside its staged pipeline loader, so a stage load holds them again, and its
+  backend runs the request's strengths (`NFKParameterAdapterStrengths`) around generation.
+  Parity, against diffusers' loaders with `set_adapters` (or PEFT on the transformer where diffusers has none):
+  - FLUX.2 [klein] 4B at float32, `Limbicnation/pixel-art-lora` (diffusers, rsLoRA, scale 16) at 0.8 with
+    `mikkoph/mikkoani-klein4b` (kohya) at 0.6: output 0.9999999999973, base 0.99999999990, the adapters' change
+    0.99999999995. The pixel-art adapter's ComfyUI copy reads the same layers and halves at scale 1, as ComfyUI
+    reads a file with no alpha or metadata; the README's ComfyUI strength of 0.85–1.4 reflects that.
+  - Made adapters (PEFT `get_peft_model` with drawn halves, one saved as a PEFT directory and one in diffusers'
+    layout), at 0.8 and 0.5: SD3.5 Medium at float32 output 0.99999999999926, change 0.99999999999872; LTX-Video
+    0.9.0 at float32 0.99999999999611, change 0.99999999999598; Stable Audio Open at float32 (PEFT placed on the
+    transformer, which diffusers gives no LoRA loader) 0.99999999999711, change 0.99999999999699; SANA at a tiny
+    configuration 0.99999999999997, change 0.99999999999996.
+  - Z-Image-Turbo runs at bfloat16: its float32 transformer (24.6 GB) does not fit a 32 GB Mac's working set.
+    The oracle runs the reference at float32 as well, and the port's 1 − cosine against it stays inside the
+    reference's own bfloat16 1 − cosine against it (`assertInsideBFloat16Floor`), with
+    `tarn59/pixel_art_style_lora_z_image_turbo` at 0.8 and `suayptalha/Z-Image-Turbo-Realism-LoRA` at 0.6: the
+    output at 0.94 of the floor, the base at 0.79, the adapters' change at 0.85. Bfloat16 against bfloat16 the
+    output reads 0.99965 and the base 0.99952, which is why fixed bars of 0.99999 missed.
+  - Qwen-Image 2.1 holds no adapters yet. Its base transformer at bfloat16 sits 1.7% past the reference's own
+    bfloat16 floor against float32 (`run_reference.py qwen_image_adapters`, which records both), so the
+    adapters' measurement waits on localizing that rounding placement.
 - `NFKMLXFlux2TransformerNet` — the FLUX.2 transformer (`Flux2Transformer2DModel`, Black Forest Labs).
   It keeps FLUX.1's two block kinds and changes four things. MODULATION LIVES ON THE MODEL: three
   heads (`double_stream_modulation_img`, `…_txt`, `single_stream_modulation`) are evaluated once from

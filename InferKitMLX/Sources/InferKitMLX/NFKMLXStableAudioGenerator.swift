@@ -202,6 +202,10 @@ public final class NFKMLXStableAudioGenerator: NSObject {
     /// the negative prompt, or against zeroed conditioning where none is given.
     @objc public var guidance: Float = 7
 
+    /// The strengths the adapters held beside the transformer were loaded at, in load order; empty for a
+    /// generator that holds none.
+    var adapterStrengths: [Float] = []
+
     /// The output sample rate, 44100 for the release.
     @objc public var sampleRate: Int { autoencoderConfiguration.samplingRate }
     /// The output channels, 2 for the release.
@@ -266,6 +270,14 @@ public final class NFKMLXStableAudioGenerator: NSObject {
     /// so ``NFKMLXResidency/paged`` holds it as ``NFKMLXResidency/staged`` does.
     @objc(generatorWithDirectoryURL:residency:error:)
     public static func generator(directoryURL: URL, residency: NFKMLXResidency) throws -> NFKMLXStableAudioGenerator {
+        try generator(directoryURL: directoryURL, residency: residency, adapters: [])
+    }
+
+    /// ``generator(directoryURL:residency:)`` with `adapters` held beside the transformer at their strengths,
+    /// read by ``NFKMLXDiTAdapters``. A staged release holds them again each time it loads the transformer, so
+    /// a misfit surfaces at the first clip; a resident one at construction.
+    static func generator(directoryURL: URL, residency: NFKMLXResidency,
+                          adapters: [(url: URL, strength: Float)]) throws -> NFKMLXStableAudioGenerator {
         let directory = { (name: String) in directoryURL.appendingPathComponent(name) }
         let t5 = try NFKMLXT5Encoder.configuration(fromHuggingFace: directory("text_encoder/config.json"))
         let segmenter = NFKMLXSentencePieceSegmenter(model: try NFKMLXSentencePieceModel(
@@ -300,10 +312,12 @@ public final class NFKMLXStableAudioGenerator: NSObject {
             loadPipeline: {
                 let net = NFKMLXStableAudioDiTNet(transformer)
                 try NFKMLXStableAudio.loadTransformerWeights(into: net, fromDirectory: directory("transformer"))
+                try NFKMLXDiTAdapters.hold(adapters, in: net)
                 let vae = NFKMLXOobleckAutoencoderNet(autoencoder)
                 try NFKMLXStableAudio.loadAutoencoderWeights(into: vae, from: vaeURL)
                 return NFKMLXStableAudioPipeline(transformer: net, autoencoder: vae, schedulerConfiguration: scheduler)
             })
+        generator.adapterStrengths = adapters.map(\.strength)
         if plan.holdsStagesResident {
             try generator.loadResident()
         }
@@ -508,7 +522,8 @@ extension NFKMLXStableAudioGenerator {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: Self.backendInputKeys,
-                                parameterKeys: Self.backendParameterKeys,
+                                parameterKeys: NFKMLXDiTAdapters.parameterKeys(Self.backendParameterKeys,
+                                                                               holding: adapterStrengths),
                                 outputKeys: [NFKOutputAudio]) { [self] request, job in
             let prompt = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             let negative = NFKMLXGenerationBackend.text(request, NFKInputNegativePrompt)
@@ -524,13 +539,18 @@ extension NFKMLXStableAudioGenerator {
             steps = parameter(NFKParameterSteps)?.intValue ?? steps
             guidance = parameter(NFKParameterGuidanceScale)?.floatValue ?? guidance
             job.reportProgress(0)
-            guard let clip = try audio(forPrompt: prompt, negativePrompt: negative, startSeconds: start,
-                                       endSeconds: start + duration, initialAudio: initialAudio,
-                                       seed: NFKMLXGenerationBackend.seed(request),
-                                       progress: { fraction in
-                                           job.reportProgress(fraction)
-                                           return job.status != .cancelled
-                                       }) else { return nil }
+            // The held adapters read the run's strengths as each step builds its graph.
+            let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
+            let generated = try NFKMLXAdapterRun.$strengths.withValue(strengths) {
+                try audio(forPrompt: prompt, negativePrompt: negative, startSeconds: start,
+                          endSeconds: start + duration, initialAudio: initialAudio,
+                          seed: NFKMLXGenerationBackend.seed(request),
+                          progress: { fraction in
+                              job.reportProgress(fraction)
+                              return job.status != .cancelled
+                          })
+            }
+            guard let clip = generated else { return nil }
             let samples = clip.asType(.float32).clipped(-1, 1).reshaped([-1]).asArray(Float.self)
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent("\(Self.modelName)-\(UUID().uuidString).wav")
@@ -571,6 +591,22 @@ extension NFKMLXStableAudioGenerator {
     @objc(backendWithDirectoryURL:residency:error:)
     public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try generator(directoryURL: directoryURL, residency: residency).inferenceBackend()
+    }
+
+    /// ``backend(directoryURL:residency:)`` with LoRA adapters held beside the transformer: each a diffusers
+    /// safetensors file, at the strength in `strengths` at its index. The adapters stay unmerged, so they stack, and a
+    /// request sets each one's strength through `NFKParameterAdapterStrengths`, an array in the order of `adapterURLs`.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the counts differ, and `NFKMLXError.loRANotApplicable`
+    ///   when an adapter does not fit Stable Audio Open (at construction for a resident release, at the first
+    ///   run for a staged one).
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:residency:adapterURLs:strengths:error:)
+    public static func backend(directoryURL: URL, residency: NFKMLXResidency, adapterURLs: [URL],
+                               strengths: [NSNumber]) throws -> any NFKInferenceBackend {
+        try generator(directoryURL: directoryURL, residency: residency,
+                      adapters: NFKMLXDiTAdapters.adapters(adapterURLs, strengths: strengths)).inferenceBackend()
     }
 
     /// Downloads the release (``releaseRepo`` when `repo` is nil) and returns the model behind the InferKit

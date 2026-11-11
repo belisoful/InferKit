@@ -70,6 +70,10 @@ public final class NFKMLXLTXVideoGenerator: NSObject {
     /// The classifier-free guidance scale, 3 by the reference's default. Above 1 the clip guides against
     /// the negative prompt, or an empty one where none is given.
     @objc public var guidance: Float = 3
+
+    /// The strengths the adapters held beside the transformer were loaded at, in load order; empty for a
+    /// generator that holds none.
+    var adapterStrengths: [Float] = []
     /// The frame rate the rotary scales time by, 25 by the reference's default.
     @objc public var frameRate: Float = 25
 
@@ -114,6 +118,14 @@ public final class NFKMLXLTXVideoGenerator: NSObject {
     /// holds it as ``NFKMLXResidency/staged`` does.
     @objc(generatorWithDirectoryURL:residency:error:)
     public static func generator(directoryURL: URL, residency: NFKMLXResidency) throws -> NFKMLXLTXVideoGenerator {
+        try generator(directoryURL: directoryURL, residency: residency, adapters: [])
+    }
+
+    /// ``generator(directoryURL:residency:)`` with `adapters` held beside the transformer at their strengths,
+    /// read by ``NFKMLXDiTAdapters``. A staged release holds them again each time it loads the transformer, so
+    /// a misfit surfaces at the first clip; a resident one at construction.
+    static func generator(directoryURL: URL, residency: NFKMLXResidency,
+                          adapters: [(url: URL, strength: Float)]) throws -> NFKMLXLTXVideoGenerator {
         let textDirectory = directoryURL.appendingPathComponent("text_encoder")
         let transformerDirectory = directoryURL.appendingPathComponent("transformer")
         let vaeDirectory = directoryURL.appendingPathComponent("vae")
@@ -141,11 +153,13 @@ public final class NFKMLXLTXVideoGenerator: NSObject {
             loadPipeline: {
                 let transformer = NFKMLXLTXTransformer.makeNet(transformerConfiguration)
                 try NFKMLXLTXTransformer.loadWeights(into: transformer, from: transformerDirectory)
+                try NFKMLXDiTAdapters.hold(adapters, in: transformer)
                 let vae = NFKMLXLTXVideoVAE.makeNet(vaeConfiguration)
                 try NFKMLXLTXVideoVAE.loadWeights(
                     into: vae, from: vaeDirectory.appendingPathComponent("diffusion_pytorch_model.safetensors"))
                 return NFKMLXLTXPipeline(transformer: transformer, vae: vae, scalingFactor: scalingFactor)
             })
+        generator.adapterStrengths = adapters.map(\.strength)
         if plan.holdsStagesResident {
             try generator.loadResident()
         }
