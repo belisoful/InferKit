@@ -83,7 +83,13 @@ struct NFKMLXComplexSTFT {
         for f in 0 ..< frames {
             for k in 0 ..< nFFT { gather.append(Int32(f * hop + k)) }
         }
-        let framed = take(padded, MLXArray(gather), axis: 1).reshaped([1, frames, nFFT]) * window.reshaped([1, 1, nFFT])
+        return transform(frames: take(padded, MLXArray(gather), axis: 1).reshaped([1, frames, nFFT]))
+    }
+
+    /// Unwindowed frames `[1, frames, nFFT]` → magnitude and phase, each `[1, nFFT/2 + 1, frames]`. A
+    /// stream frames its samples itself and transforms the frames each unit completes.
+    func transform(frames: MLXArray) -> (magnitude: MLXArray, phase: MLXArray) {
+        let framed = frames * window.reshaped([1, 1, nFFT])
         let spectrum = MLXFFT.rfft(framed, axis: 2)                       // [1, frames, bins] complex
         let magnitude = spectrum.abs().transposed(0, 2, 1)               // [1, bins, frames]
         let phase = atan2(spectrum.imaginaryPart(), spectrum.realPart()).transposed(0, 2, 1)
@@ -148,12 +154,16 @@ struct NFKMLXComplexSTFT {
     /// magnitude and phase `[1, bins, frames]` → `[1, samples]`, overlap-add with the window-squared
     /// normalization `torch.istft` applies, center padding removed.
     func inverse(magnitude: MLXArray, phase: MLXArray, length: Int? = nil) -> MLXArray {
-        let frames = magnitude.dim(2)
+        overlapAdd(inverseFrames(magnitude: magnitude, phase: phase), frames: magnitude.dim(2), length: length)
+    }
+
+    /// magnitude and phase `[1, bins, frames]` → each frame's samples `[1, frames, nFFT]`, before the
+    /// synthesis window and the overlap-add. A stream overlap-adds the frames each unit completes itself.
+    func inverseFrames(magnitude: MLXArray, phase: MLXArray) -> MLXArray {
         let real = (magnitude * cos(phase)).transposed(0, 2, 1)          // [1, frames, bins]
         let imaginary = (magnitude * sin(phase)).transposed(0, 2, 1)
         let complex = real.asType(.complex64) + imaginary.asType(.complex64) * MLXArray(real: 0, imaginary: 1)
-        let time = MLXFFT.irfft(complex, n: nFFT, axis: 2)               // [1, frames, nFFT] real
-        return overlapAdd(time, frames: frames, length: length)
+        return MLXFFT.irfft(complex, n: nFFT, axis: 2)                   // [1, frames, nFFT] real
     }
 }
 

@@ -124,10 +124,7 @@ final class NFKDFConvNormAct: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        var h = x
-        if padTimeFront > 0 {
-            h = MLX.padded(h, widths: [IntOrPair(0), IntOrPair((padTimeFront, 0)), IntOrPair(0), IntOrPair(0)], mode: .constant)
-        }
+        var h = NFKMLXStreamCarry.causallyPadded(x, frames: padTimeFront, axis: 1, owner: self)
         h = conv(h)
         if let pointwise { h = pointwise(h) }
         h = norm(h)
@@ -189,7 +186,7 @@ final class NFKDFSqueezedGRU: Module {
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         var h = relu(linearIn(x))                                      // linear_in = Sequential(GroupedLinear, ReLU)
-        for cell in gru { h = cell(h) }
+        for cell in gru { h = NFKMLXStreamCarry.recurrent(cell, h) }
         guard let linearOut else { return h }                          // output_size=None → Identity
         return relu(linearOut(h))                                      // linear_out = Sequential(GroupedLinear, ReLU)
     }
@@ -365,30 +362,44 @@ public final class NFKMLXDeepFilterNet: Module {
     /// The clean torch boundary. `spec [B, T, F, 2]`, `featERB [B, T, 32, 1]`, `featSpec [B, T, 96, 2]`.
     public func callAsFunction(spec: MLXArray, featERB: MLXArray, featSpec: MLXArray)
         -> (specE: MLXArray, mask: MLXArray, coefs: MLXArray, lsnr: MLXArray) {
-        let (emb, e0, e1, e2, e3, c0, lsnr) = enc(featERB: padFeat(featERB), featSpec: padFeat(featSpec))
+        let (m, coefs, lsnr) = masks(featERB: padFeat(featERB), featSpec: padFeat(featSpec))
+        let low = spec[0..., 0..., .stride(to: config.nbDF), 0...]      // [B, T, nbDF, 2]
+        let paddedLow = MLX.padded(low, widths: [IntOrPair(0), IntOrPair((dfPast, config.dfLookahead)), IntOrPair(0), IntOrPair(0)], mode: .constant)
+        return (enhancedSpectrum(spec: spec, mask: m, coefs: coefs, paddedLow: paddedLow), m, coefs, lsnr)
+    }
+
+    /// The frames of spectrum before each frame the deep filter reads.
+    var dfPast: Int { config.dfOrder - 1 - config.dfLookahead }
+
+    /// The ERB mask `[B, T, 32, 1]`, the deep-filter coefficients `[B, dfOrder, T, nbDF, 2]`, and the
+    /// local-SNR estimate, from features already shifted by the convolution lookahead.
+    func masks(featERB: MLXArray, featSpec: MLXArray) -> (mask: MLXArray, coefs: MLXArray, lsnr: MLXArray) {
+        let (emb, e0, e1, e2, e3, c0, lsnr) = enc(featERB: featERB, featSpec: featSpec)
         let m = erbDec(emb: emb, e0: e0, e1: e1, e2: e2, e3: e3)        // [B, T, 32, 1]
         let coefs = dfDec(emb: emb, c0: c0)                            // [B, dfOrder, T, nbDF, 2]
+        return (m, coefs, lsnr)
+    }
 
+    /// The enhanced spectrum of `spec` `[B, T, F, 2]`: the ERB mask over every bin, then the deep filter
+    /// over the lowest `nbDF`, which reads `paddedLow`, those bins from `dfPast` frames before the first
+    /// frame to `dfLookahead` frames after the last.
+    func enhancedSpectrum(spec: MLXArray, mask m: MLXArray, coefs: MLXArray, paddedLow: MLXArray) -> MLXArray {
         // ERB mask → bins (m · erb_inv_fb) and multiply the spectrum → spec_m.
         let maskBins = matmul(m.squeezed(axis: 3), erbInvFB).expandedDimensions(axis: 3)  // [B, T, F, 1]
         let specM = spec * maskBins
 
         // Deep filter the lowest nbDF bins (5-tap causal complex FIR); higher bins take spec_m.
-        let low = applyDeepFilter(spec: spec, coefs: coefs)            // [B, T, nbDF, 2]
+        let low = applyDeepFilter(paddedLow: paddedLow, coefs: coefs, frames: spec.dim(1))   // [B, T, nbDF, 2]
         let high = specM[0..., 0..., config.nbDF..., 0...]
-        let specE = concatenated([low, high], axis: 2)
-        return (specE, m, coefs, lsnr)
+        return concatenated([low, high], axis: 2)
     }
 
-    /// The deep filter (`MF.DF`): the lowest `nbDF` bins are padded in time by `(dfOrder-1-lookahead,
-    /// lookahead)` and each output frame is the complex MAC of a `dfOrder`-frame window with its
+    /// The deep filter (`MF.DF`): over the lowest `nbDF` bins padded in time by `(dfOrder-1-lookahead,
+    /// lookahead)`, each output frame is the complex MAC of a `dfOrder`-frame window with its
     /// coefficients (`out[t,f] = Σ_n spec[t+n-past, f]·coef[n,t,f]`).
-    private func applyDeepFilter(spec: MLXArray, coefs: MLXArray) -> MLXArray {
-        let (b, t) = (spec.dim(0), spec.dim(1))
+    private func applyDeepFilter(paddedLow padded: MLXArray, coefs: MLXArray, frames t: Int) -> MLXArray {
+        let b = padded.dim(0)
         let n = config.dfOrder
-        let low = spec[0..., 0..., .stride(to: config.nbDF), 0...]      // [B, T, nbDF, 2]
-        let past = n - 1 - config.dfLookahead
-        let padded = MLX.padded(low, widths: [IntOrPair(0), IntOrPair((past, config.dfLookahead)), IntOrPair(0), IntOrPair(0)], mode: .constant)
         var reAcc = MLXArray.zeros([b, t, config.nbDF])
         var imAcc = MLXArray.zeros([b, t, config.nbDF])
         for tap in 0 ..< n {

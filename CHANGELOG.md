@@ -2025,6 +2025,26 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### GTCRN, DeepFilterNet3, and FRCRN stream
+
+- `NFKMLXGTCRNBackend` and `NFKMLXDeepFilterNetBackend` open live streams that answer each sample as the
+  clip forward of every sample so far answers it. Each stream frames its samples as the clip's STFT does,
+  runs the frames each unit completes through the network from the convolution history and recurrent
+  state the frames before left, and overlap-adds the synthesis frames in the clip's order of addition.
+  DeepFilterNet3's stream also carries its two feature normalizations, the convolutions' two frames of
+  lookahead, and the spectrum frames its deep filter reads. A GTCRN stream answers a sample once it has
+  read at most 32 ms of audio past it, and a DeepFilterNet3 stream at most 40 ms.
+- `NFKMLXFRCRNBackend` opens a live stream through ClearerVoice's windowed decoding, the path a clip past
+  two minutes takes: FRCRN's squeeze-excite gates pool over the whole input, so it answers a 1 s window
+  every 0.75 s rather than a frame at a time, and each window's kept samples are those the windowed clip
+  forward writes. The stream enhances the audio at its own level.
+- A unit's result holds the enhanced samples as an `AVAudioPCMBuffer` under `NFKOutputAudio`, empty while
+  the stream fills its first frames. A unit at another rate or channel count fails with
+  `kNFKError_InferenceUnsupported`.
+- The three carry stateful audio-chunk live profiles: GTCRN a 16 ms hop at 16 kHz with 32 ms of
+  lookahead, DeepFilterNet3 a 10 ms hop at 48 kHz with 40 ms, and FRCRN a 0.75 s stride at 16 kHz with
+  1 s.
+
 #### Gemma 4, Qwen3-VL, and Pixtral fall back to the published precision
 
 - The dense sizes of these families keep float32 as their default and load as published where float32 does not

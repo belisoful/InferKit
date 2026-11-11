@@ -983,8 +983,12 @@ To refresh a benchmark:
 first table holds the stateless video-frame models, image in and each output key out: MODNet, U²-Net-p,
 BiSeNet and BiSeNet V2, SegFormer-B0, DeepLabV3, Depth Anything V2 Small and 3 Small, SimpleBaseline pose,
 RetinaFace MobileNet-0.25, RF-DETR Nano, Small, and Seg Small, RT-DETR R18vd, Real-ESRGAN general x4v3,
-and the three SwinIR lightweight scales. `statefulVideoFrameOutputs` holds the two RVM releases and `audioChunks`
-Silero VAD (512 samples at 16 kHz). The speech enhancers join when their streams ship.
+and the three SwinIR lightweight scales. `statefulVideoFrameOutputs` holds the two RVM releases. `audioChunks`
+holds Silero VAD (512 samples at 16 kHz) and the three streamed speech enhancers. An enhancer's chunk is its
+own step: GTCRN's 16 ms hop, DeepFilterNet3's 10 ms hop, and FRCRN's 0.75 s decoding stride. Its lookahead
+is the most audio its stream reads past a sample before it answers that sample, rounded up to a
+millisecond: GTCRN 511 samples (32 ms), DeepFilterNet3 1,919 samples (40 ms), and FRCRN 15,999 samples
+(1 s).
 `NFKMLXCatalogLiveTests` holds the tables to the shipped entries and their ports.
 
 ### Live streams
@@ -1002,6 +1006,26 @@ whose blocks hold that state:
 - Silero VAD's stream keeps the LSTM's hidden and cell state, the last 64 samples, and the samples short of
   a chunk (`NFKSileroStreamState`). Units of any length score the same chunks as one clip, bit for bit
   (`NFKMLXSileroVADLiveStreamTests`, uneven units of 60 to 2000 samples, random weights).
+- A causal network streams through `NFKMLXStreamCarry` (`NFKMLXStreamCarry.swift`). A streamed forward
+  runs inside the carry's `streaming(_:)`, and each causal layer reads it through the task-local `current`:
+  a time-padded convolution prepends the last input frames its owner kept (`causallyPadded`), and a
+  time-recurrent `NFKMLXGRUCell` starts from the hidden state it ended with (`recurrent`). Outside a stream
+  `current` is nil, so the same layers zero-pad and start from zero, which is the clip forward, and a
+  stream's first unit runs exactly as a clip's start. A GRU that runs over frequency within a frame (GTCRN's
+  intra-frame pass) reads no carry.
+- GTCRN's stream (`NFKGTCRNStreamState`) takes `torch.stft`'s centered frames, the first reflected about
+  sample 0, and answers each hop once the next frame is complete. DeepFilterNet3's (`NFKDFStreamState`)
+  analyzes a hop at a time from the window's last `nFFT - hop` samples, continues both normalization
+  scans, crops the first `convLookahead` feature frames as `padFeat` does, keeps the spectrum frames the
+  deep filter reads around each frame, and drops the first synthesis hop as `enhance` trims it. Both
+  overlap-add in the clip's order of addition, the frame before's half first.
+- FRCRN's network is not causal: each squeeze-excite pools over the whole input. Its stream
+  (`NFKFRCRNStreamState`) runs ClearerVoice's windowed decoding a window at a time, the path
+  `NFKMLXFRCRNBackend.enhance` takes for a clip past `oneTimeDecodeSeconds`, and keeps the samples
+  `NFKMLXClearerVoiceDecoding.stitched` keeps. It enhances at the audio's own level: the clip forward's
+  `audio_norm` reads the whole recording.
+- `NFKMLXSpeechEnhancerLiveStreamTests` holds each stream to its clip forward on random weights, with
+  units of uneven length.
 - `NFKMLXLiveAudio` reads an audio unit from an `AVAudioPCMBuffer` (float32 or int16), WAV bytes, or a WAV
   `NFKAudioAsset`. A stream refuses another rate or channel count with `kNFKError_InferenceUnsupported`
   rather than resampling each unit, which would put a seam at every unit boundary.

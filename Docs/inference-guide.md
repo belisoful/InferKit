@@ -1369,7 +1369,12 @@ id mask = [matted outputForKey:NFKOutputMask];
 
 A stream answers its units one at a time, in the order they arrive. Several streams of one backend keep
 their own state and share the loaded model. An audio unit is an `AVAudioPCMBuffer`, WAV bytes, or an
-`NFKAudioAsset` at the profile's sample rate and channel count. The C interface opens the same streams
+`NFKAudioAsset` at the profile's sample rate and channel count.
+
+The streamed speech enhancers (GTCRN, DeepFilterNet3, and FRCRN in InferKitMLX) answer each unit with the
+enhanced samples they completed, an `AVAudioPCMBuffer` under `NFKOutputAudio`. The samples are those the
+clip forward of everything pushed so far returns, at most the profile's lookahead behind the input. The
+first units answer empty buffers while the stream fills its first frames. The C interface opens the same streams
 with `nfk_live_stream_open` (see [C interface](c-api.md#a-live-stream)).
 
 A server streams a hosted model on its live route, `GET /v1/inferkit/live`, a WebSocket; each connection

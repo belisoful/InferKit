@@ -34,8 +34,8 @@ struct NFKMLXDeepFilterNetDSP {
         })
     }
 
-    /// `audio` (length a multiple of `hop`) → `(real, imaginary)` spectra, each `[T, bins]`.
-    private func analysis(_ audio: MLXArray) -> (real: MLXArray, imaginary: MLXArray) {
+    /// `audio` (length a multiple of `hop`) → its unwindowed analysis frames `[T, nFFT]`.
+    private func frames(_ audio: MLXArray) -> MLXArray {
         let n = config.fftSize, hop = config.hopSize
         let leftPad = n - hop
         let padded = MLX.padded(audio, widths: [IntOrPair((leftPad, 0))], mode: .constant)   // [L + leftPad]
@@ -45,15 +45,37 @@ struct NFKMLXDeepFilterNetDSP {
         for t in 0 ..< frames {
             for k in 0 ..< n { gather.append(Int32(t * hop + k)) }
         }
-        let framed = take(padded, MLXArray(gather), axis: 0).reshaped([frames, n]) * window.reshaped([1, n])
+        return take(padded, MLXArray(gather), axis: 0).reshaped([frames, n])
+    }
+
+    /// Unwindowed frames `[T, nFFT]` → `(real, imaginary)` spectra, each `[T, bins]`.
+    private func analysis(frames: MLXArray) -> (real: MLXArray, imaginary: MLXArray) {
+        let n = config.fftSize
+        let framed = frames * window.reshaped([1, n])
         let spectrum = MLXFFT.rfft(framed, axis: 1) / Float(n)          // [T, bins] complex
         return (spectrum.realPart(), spectrum.imaginaryPart())
+    }
+
+    /// The normalizations' starting state: `MEAN_NORM_INIT` and `UNIT_NORM_INIT`.
+    func initialNormalization() -> NFKDFNormalizationState {
+        let nbERB = config.nbERB, nbDF = config.nbDF
+        return NFKDFNormalizationState(
+            erb: (0 ..< nbERB).map { -60 + (-30) * Float($0) / Float(nbERB - 1) },   // linspace(-60,-90)
+            df: (0 ..< nbDF).map { 0.001 + (-0.0009) * Float($0) / Float(nbDF - 1) })  // linspace(0.001,0.0001)
     }
 
     /// `audio` → `(spec [1, T, bins, 2], featERB [1, T, nbERB, 1], featSpec [1, T, nbDF, 2])`.
     func features(_ audioSamples: [Float]) -> (spec: MLXArray, featERB: MLXArray, featSpec: MLXArray) {
         let audio = audioSamples.withUnsafeBufferPointer { MLXArray($0, [audioSamples.count]) }
-        let (real, imaginary) = analysis(audio)                        // [T, bins]
+        var normalization = initialNormalization()
+        return features(frames: frames(audio), normalization: &normalization)
+    }
+
+    /// Unwindowed frames `[T, nFFT]` → the same features, the normalizations continuing from
+    /// `normalization`, which ends at the state after the last frame.
+    func features(frames: MLXArray, normalization: inout NFKDFNormalizationState)
+        -> (spec: MLXArray, featERB: MLXArray, featSpec: MLXArray) {
+        let (real, imaginary) = analysis(frames: frames)              // [T, bins]
         let t = real.dim(0), bins = config.bins, nbERB = config.nbERB, nbDF = config.nbDF
 
         // ERB power banding and the dB + EMA mean-normalization (per-band scan in Swift).
@@ -61,7 +83,7 @@ struct NFKMLXDeepFilterNetDSP {
         let erbPow = matmul(power, erbFB)                              // [T, nbERB]
         eval(erbPow)
         let pow = erbPow.asArray(Float.self)
-        var stateERB = (0 ..< nbERB).map { -60 + (-30) * Float($0) / Float(nbERB - 1) }   // linspace(-60,-90)
+        var stateERB = normalization.erb
         var featERB = [Float](repeating: 0, count: t * nbERB)
         for frame in 0 ..< t {
             for band in 0 ..< nbERB {
@@ -75,7 +97,7 @@ struct NFKMLXDeepFilterNetDSP {
         let lowReal = real[0..., .stride(to: nbDF)], lowImag = imaginary[0..., .stride(to: nbDF)]
         eval(lowReal, lowImag)
         let lr = lowReal.asArray(Float.self), li = lowImag.asArray(Float.self)
-        var stateDF = (0 ..< nbDF).map { 0.001 + (-0.0009) * Float($0) / Float(nbDF - 1) }   // linspace(0.001,0.0001)
+        var stateDF = normalization.df
         var featSpec = [Float](repeating: 0, count: t * nbDF * 2)
         for frame in 0 ..< t {
             for bin in 0 ..< nbDF {
@@ -87,19 +109,26 @@ struct NFKMLXDeepFilterNetDSP {
             }
         }
 
+        normalization = NFKDFNormalizationState(erb: stateERB, df: stateDF)
         let spec = stacked([real, imaginary], axis: 2).reshaped([1, t, bins, 2])
         let featERBArray = MLXArray(featERB).reshaped([1, t, nbERB, 1])
         let featSpecArray = MLXArray(featSpec).reshaped([1, t, nbDF, 2])
         return (spec, featERBArray, featSpecArray)
     }
 
+    /// Enhanced spectrum `[1, T, bins, 2]` → each frame's samples `[T, nFFT]`, before the synthesis window.
+    func synthesisFrames(_ spec: MLXArray) -> MLXArray {
+        let n = config.fftSize
+        let real = spec[0, 0..., 0..., 0], imaginary = spec[0, 0..., 0..., 1]   // [T, bins]
+        let complex = real.asType(.complex64) + imaginary.asType(.complex64) * MLXArray(real: 0, imaginary: 1)
+        return MLXFFT.irfft(complex * Float(n), n: n, axis: 1)         // [T, n] real (undo the analysis /N)
+    }
+
     /// Enhanced spectrum `[1, T, bins, 2]` → time samples (length `T·hop`), window-squared overlap-add.
     func synthesis(_ spec: MLXArray) -> [Float] {
         let n = config.fftSize, hop = config.hopSize
         let t = spec.dim(1)
-        let real = spec[0, 0..., 0..., 0], imaginary = spec[0, 0..., 0..., 1]   // [T, bins]
-        let complex = real.asType(.complex64) + imaginary.asType(.complex64) * MLXArray(real: 0, imaginary: 1)
-        let framed = MLXFFT.irfft(complex * Float(n), n: n, axis: 1)   // [T, n] real (undo the analysis /N)
+        let framed = synthesisFrames(spec)
         eval(framed)
         let frameValues = framed.asArray(Float.self)
         let windowValues = window.asArray(Float.self)
@@ -114,6 +143,66 @@ struct NFKMLXDeepFilterNetDSP {
             }
         }
         for i in 0 ..< outLength where norm[i] > 1e-10 { output[i] /= norm[i] }
+        return output
+    }
+}
+
+/// The DSP's two running normalizations: the ERB feature's per-band mean and the deep-filter feature's
+/// per-bin magnitude.
+struct NFKDFNormalizationState {
+    var erb: [Float]
+    var df: [Float]
+}
+
+/// What a DeepFilterNet3 live stream carries between units: the samples short of a hop, the analysis
+/// window's last `nFFT - hop` samples, the normalizations, the spectrum frames the deep filter still
+/// reads, the overlap-add's pending half frame, and the network's carry.
+final class NFKDFStreamState {
+    let carry = NFKMLXStreamCarry()
+    var normalization: NFKDFNormalizationState
+    /// The samples short of a whole hop.
+    var pending: [Float] = []
+    /// The analysis window's samples before the next hop, zeros before the stream's first sample.
+    var tail: [Float]
+    var featureFrames = 0
+    /// The spectrum from frame `spectrumStart` on, which starts at the deep filter's zero past frames.
+    var spectrum: MLXArray
+    var spectrumStart: Int
+    var synthesizedFrames = 0
+    var synthesisPending: [Float] = []
+    var synthesisPendingNormalization: [Float] = []
+
+    init(dsp: NFKMLXDeepFilterNetDSP, net: NFKMLXDeepFilterNet) {
+        let config = dsp.config
+        normalization = dsp.initialNormalization()
+        tail = [Float](repeating: 0, count: config.fftSize - config.hopSize)
+        spectrum = MLXArray.zeros([1, net.dfPast, config.bins, 2])
+        spectrumStart = -net.dfPast
+    }
+}
+
+extension NFKDFStreamState {
+
+    /// Overlap-adds synthesis frames `[T·nFFT]` and returns the enhanced samples they complete. Each frame
+    /// completes one hop, its first half added to the half frame before it in the clip's order of addition;
+    /// the first frame's hop is the analysis delay `enhance` trims, and is dropped.
+    func overlapAdd(_ frames: [Float], window: [Float], config: NFKMLXDeepFilterNetConfiguration) -> [Float] {
+        let hop = config.hopSize, n = config.fftSize
+        var output: [Float] = []
+        for frame in 0 ..< frames.count / n {
+            let base = frame * n
+            let completed = (0 ..< hop).map { k -> Float in
+                let sum = (synthesisPending.isEmpty ? 0 : synthesisPending[k]) + frames[base + k] * window[k]
+                let norm = (synthesisPending.isEmpty ? 0 : synthesisPendingNormalization[k]) + window[k] * window[k]
+                return norm > 1e-10 ? sum / norm : sum
+            }
+            if synthesizedFrames > 0 {
+                output += completed
+            }
+            synthesisPending = (hop ..< n).map { 0 + frames[base + $0] * window[$0] }
+            synthesisPendingNormalization = (hop ..< n).map { 0 + window[$0] * window[$0] }
+            synthesizedFrames += 1
+        }
         return output
     }
 }
@@ -190,6 +279,89 @@ public final class NFKMLXDeepFilterNetBackend: NSObject, NFKInferenceBackend {
         let end = min(origLen + d, audioOut.count)
         guard d < end else { return audioOut }
         return Array(audioOut[d ..< end])
+    }
+
+    // MARK: Live streams
+
+    /// Opens a live stream over mono 48 kHz audio. Each unit's samples join those the units before left
+    /// short of a hop; each hop they complete is analyzed and normalized from the state the hops before
+    /// left, runs through the network from the convolution history and recurrent state the frames before
+    /// left, and is deep-filtered from the spectrum frames around it. The unit's result holds the enhanced
+    /// samples the overlap-add completed, as an `AVAudioPCMBuffer` under `NFKOutputAudio`. They are those
+    /// `enhance` returns for a clip of every sample so far. A sample is answered once the stream has read
+    /// the rest of its hop, the next frame's hop, and the convolutions' two frames of lookahead, at most
+    /// 1,919 samples (40 ms) past it, so the answers run three hops behind the input. A unit at another
+    /// rate or channel count fails with `kNFKError_InferenceUnsupported`. Introduced in InferKit 0.4.0.
+    @objc(openLiveStreamWithParameters:error:)
+    public func openLiveStream(parameters: [String: Any]?) throws -> any NFKLiveStream {
+        let net = holder.net
+        let dsp = holder.dsp
+        var state = NFKDFStreamState(dsp: dsp, net: net)
+        return NFKBlockLiveStream(parameters: parameters, unitHandler: { unit, errorPointer in
+            switch NFKMLXLiveAudio.monoSamples(unit, sampleRate: net.config.sampleRate) {
+            case .failure(let error):
+                errorPointer?.pointee = error
+                return nil
+            case .success(let samples):
+                let enhanced = Self.stream(samples, net: net, dsp: dsp, state: state)
+                return NFKInferenceResult(outputs: [NFKOutputAudio: NFKMLXLiveAudio.buffer(enhanced, sampleRate: net.config.sampleRate)])
+            }
+        }, resetHandler: { state = NFKDFStreamState(dsp: dsp, net: net) },
+           closeHandler: { state = NFKDFStreamState(dsp: dsp, net: net) })
+    }
+
+    /// Enhances the hops `samples` completes after the stream's earlier samples and returns the enhanced
+    /// samples the overlap-add completed. Each step reproduces `enhance` frame by frame: the analysis frame
+    /// of each hop, the normalizations' scan, the network on the features shifted by the convolution
+    /// lookahead, the deep filter over the frames around each frame, and the overlap-add with the first
+    /// hop dropped as `enhance` trims it.
+    static func stream(_ samples: [Float], net: NFKMLXDeepFilterNet, dsp: NFKMLXDeepFilterNetDSP,
+                       state: NFKDFStreamState) -> [Float] {
+        let config = net.config
+        let hop = config.hopSize, n = config.fftSize
+        state.pending += samples
+        let hops = state.pending.count / hop
+        guard hops > 0 else {
+            return []
+        }
+        let window = state.tail + state.pending[0 ..< hops * hop]
+        var rows: [Float] = []
+        rows.reserveCapacity(hops * n)
+        for frame in 0 ..< hops {
+            rows += window[(frame * hop) ..< (frame * hop + n)]
+        }
+        state.tail = Array(window[(window.count - (n - hop))...])
+        state.pending.removeFirst(hops * hop)
+        let frames = rows.withUnsafeBufferPointer { MLXArray($0, [hops, n]) }
+        let (spec, featERB, featSpec) = dsp.features(frames: frames, normalization: &state.normalization)
+        let firstFeature = state.featureFrames
+        state.featureFrames += hops
+        let known = concatenated([state.spectrum, spec], axis: 1)
+
+        // Network frame j reads feature frame j + convLookahead; the first convLookahead features are
+        // cropped, as `padFeat` crops them.
+        let lookahead = config.convLookahead
+        let skipped = max(0, lookahead - firstFeature)
+        guard skipped < hops else {
+            state.spectrum = known
+            return []
+        }
+        let firstNetFrame = firstFeature + skipped - lookahead
+        let netFrames = hops - skipped
+        let (mask, coefs, _) = state.carry.streaming {
+            net.masks(featERB: featERB[0..., skipped..., 0..., 0...], featSpec: featSpec[0..., skipped..., 0..., 0...])
+        }
+        let past = net.dfPast
+        let frameOffset = firstNetFrame - state.spectrumStart
+        let framed = known[0..., frameOffset ..< (frameOffset + netFrames), 0..., 0...]
+        let paddedLow = known[0..., (frameOffset - past)..., .stride(to: config.nbDF), 0...]
+        let specE = net.enhancedSpectrum(spec: framed, mask: mask, coefs: coefs, paddedLow: paddedLow)
+        let synthesis = dsp.synthesisFrames(specE)
+        let keepFrom = firstNetFrame + netFrames - past
+        state.spectrum = known[0..., (keepFrom - state.spectrumStart)..., 0..., 0...]
+        state.spectrumStart = keepFrom
+        state.carry.evaluate([synthesis, state.spectrum])
+        return state.overlapAdd(synthesis.asArray(Float.self), window: dsp.window.asArray(Float.self), config: config)
     }
 
     @objc(submitInferenceJobForRequest:)

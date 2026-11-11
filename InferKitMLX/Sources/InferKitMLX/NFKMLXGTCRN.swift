@@ -171,7 +171,7 @@ final class NFKGTCRNTRA: Module {
     /// `x` `[B, T, F, C]` → the gated `[B, T, F, C]`.
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let power = (x * x).mean(axis: 2)                                   // [B, T, C], mean over frequency
-        let gate = sigmoid(attFC(attGRU(power)))                           // [B, T, C]
+        let gate = sigmoid(attFC(NFKMLXStreamCarry.recurrent(attGRU, power)))   // [B, T, C]
         let (b, t, c) = (x.dim(0), x.dim(1), x.dim(3))
         return x * gate.reshaped([b, t, 1, c])
     }
@@ -239,7 +239,7 @@ final class NFKGTCRNGTConvBlock: Module {
         // The reference front-pads the time axis by (kernel-1)·dilation for BOTH the regular and the
         // transposed convolution (`F.pad(h, [0,0,pad_size,0])`); the transposed conv's own time padding
         // of 2·dilation then removes the excess, so the frame count is preserved in both cases.
-        let padded = MLX.padded(h, widths: [IntOrPair(0), IntOrPair((2 * dilation, 0)), IntOrPair(0), IntOrPair(0)], mode: .constant)
+        let padded = NFKMLXStreamCarry.causallyPadded(h, frames: 2 * dilation, axis: 1, owner: self)
         h = depthAct(depthBN(conv(depthConv, padded)))
         h = pointBN2(conv(pointConv2, h))
         h = tra(h)
@@ -329,9 +329,11 @@ final class NFKGTCRNGroupedGRU: Module {
         _rnn2.wrappedValue = NFKMLXGRUCell(inputSize: inputSize / 2, hiddenSize: hiddenSize / 2)
     }
 
+    /// Runs over time, so a stream carries both cells' hidden states.
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let half = x.dim(-1) / 2
-        return concatenated([rnn1(x[.ellipsis, 0 ..< half]), rnn2(x[.ellipsis, half...])], axis: -1)
+        return concatenated([NFKMLXStreamCarry.recurrent(rnn1, x[.ellipsis, 0 ..< half]),
+                             NFKMLXStreamCarry.recurrent(rnn2, x[.ellipsis, half...])], axis: -1)
     }
 }
 
@@ -525,6 +527,54 @@ public final class NFKMLXGTCRNBackend: NSObject, NFKInferenceBackend {
         return job
     }
 
+    // MARK: Live streams
+
+    /// Opens a live stream over mono 16 kHz audio. Each unit's samples join those the units before left,
+    /// each frame they complete runs through the network from the convolution history and recurrent state
+    /// the frames before left, and the unit's result holds the enhanced samples the overlap-add completed,
+    /// as an `AVAudioPCMBuffer` under `NFKOutputAudio`. The enhanced samples are those `enhance` returns for
+    /// a clip of every sample so far. A sample is answered once the stream has read the rest of its frame
+    /// and the next hop, at most 511 samples (32 ms) past it, so the answers run one hop behind the input. A
+    /// unit at another rate or channel count fails with `kNFKError_InferenceUnsupported`. Introduced in
+    /// InferKit 0.4.0.
+    @objc(openLiveStreamWithParameters:error:)
+    public func openLiveStream(parameters: [String: Any]?) throws -> any NFKLiveStream {
+        let net = holder.net
+        let config = holder.config
+        var state = NFKGTCRNStreamState(config)
+        return NFKBlockLiveStream(parameters: parameters, unitHandler: { unit, errorPointer in
+            switch NFKMLXLiveAudio.monoSamples(unit, sampleRate: config.sampleRate) {
+            case .failure(let error):
+                errorPointer?.pointee = error
+                return nil
+            case .success(let samples):
+                let enhanced = Self.stream(samples, net: net, state: state)
+                return NFKInferenceResult(outputs: [NFKOutputAudio: NFKMLXLiveAudio.buffer(enhanced, sampleRate: config.sampleRate)])
+            }
+        }, resetHandler: { state = NFKGTCRNStreamState(config) }, closeHandler: { state = NFKGTCRNStreamState(config) })
+    }
+
+    /// Enhances the frames `samples` completes after the stream's earlier samples and returns the samples
+    /// the overlap-add completed. The STFT frames, the network, and the overlap-add each reproduce
+    /// `enhance`, frame by frame.
+    static func stream(_ samples: [Float], net: NFKMLXGTCRN, state: NFKGTCRNStreamState) -> [Float] {
+        let rows = state.takeFrames(samples)
+        guard !rows.isEmpty else {
+            return []
+        }
+        let config = state.config
+        let frames = rows.withUnsafeBufferPointer { MLXArray($0, [1, rows.count / config.fftSize, config.fftSize]) }
+        let (magnitude, phase) = state.stft.transform(frames: frames)
+        let real = magnitude * cos(phase), imaginary = magnitude * sin(phase)
+        let (enhancedReal, enhancedImag) = state.carry.streaming { net(real: real, imaginary: imaginary) }
+        let enhancedMag = sqrt(enhancedReal * enhancedReal + enhancedImag * enhancedImag)
+        let enhancedPhase = atan2(enhancedImag, enhancedReal)
+        let windowed = state.stft.inverseFrames(magnitude: enhancedMag, phase: enhancedPhase)
+            * state.stft.window.reshaped([1, 1, config.fftSize])
+        state.carry.evaluate([windowed])
+        return state.overlapAdd(windowed[0].asArray(Float.self))
+    }
+
     private static func audio(from request: NFKInferenceRequest) -> (samples: [Float], sampleRate: Int)? {
         guard let value = request.input(forKey: NFKInputAudio) else { return nil }
         if let asset = value as? NFKAudioAsset, let url = asset.fileURL, let data = try? Data(contentsOf: url) {
@@ -532,6 +582,78 @@ public final class NFKMLXGTCRNBackend: NSObject, NFKInferenceBackend {
         }
         if let data = value as? Data { return NFKMLXWaveFile.read(data) }
         return nil
+    }
+}
+
+/// What a GTCRN live stream carries between units: the samples the next frames read, the frames taken so
+/// far, the overlap-add's pending half frame and its window normalization, and the network's carry.
+final class NFKGTCRNStreamState {
+    let config: NFKMLXGTCRNConfiguration
+    let stft: NFKMLXComplexSTFT
+    let carry = NFKMLXStreamCarry()
+    private let squaredWindow: [Float]
+    /// The input from sample `firstSample` on.
+    private var samples: [Float] = []
+    private var firstSample = 0
+    private var framesTaken = 0
+    private var pending: [Float] = []
+    private var pendingNormalization: [Float] = []
+
+    init(_ config: NFKMLXGTCRNConfiguration) {
+        self.config = config
+        stft = NFKMLXComplexSTFT(nFFT: config.fftSize, hop: config.hopSize,
+                                 window: MLXArray(nfkPeriodicHann(config.fftSize).map { sqrtf($0) }))
+        squaredWindow = (stft.window * stft.window).asArray(Float.self)
+    }
+
+    /// Adds `newSamples` and returns the frames they complete, row by row, unwindowed. Frame `t` is the
+    /// clip's centered frame: samples `(t - 1)·hop ..< (t + 1)·hop`, the first frame reflected about
+    /// sample 0 as `torch.stft` pads it, so it waits for sample `hop`.
+    func takeFrames(_ newSamples: [Float]) -> [Float] {
+        samples += newSamples
+        let hop = config.hopSize, size = config.fftSize
+        var rows: [Float] = []
+        while true {
+            if framesTaken == 0 {
+                guard samples.count > hop else {
+                    break
+                }
+                rows += (1 ... hop).reversed().map { samples[$0] }
+                rows += samples[0 ..< hop]
+            } else {
+                let start = (framesTaken - 1) * hop - firstSample
+                guard samples.count >= start + size else {
+                    break
+                }
+                rows += samples[start ..< start + size]
+            }
+            framesTaken += 1
+        }
+        let keepFrom = max(0, (framesTaken - 1) * hop)
+        samples.removeFirst(keepFrom - firstSample)
+        firstSample = keepFrom
+        return rows
+    }
+
+    /// Overlap-adds windowed synthesis frames and returns the samples they complete: each frame after the
+    /// first completes one hop, its first half added to the half frame before it, in the clip's order of
+    /// addition. The first frame's first half is the reflected padding and is dropped.
+    func overlapAdd(_ windowedFrames: [Float]) -> [Float] {
+        let hop = config.hopSize, size = config.fftSize
+        var output: [Float] = []
+        for frame in 0 ..< windowedFrames.count / size {
+            let base = frame * size
+            if !pending.isEmpty {
+                for k in 0 ..< hop {
+                    let sum = pending[k] + windowedFrames[base + k]
+                    let normalization = pendingNormalization[k] + squaredWindow[k]
+                    output.append(normalization > 1e-11 ? sum / normalization : 0)
+                }
+            }
+            pending = (hop ..< size).map { 0 + windowedFrames[base + $0] }
+            pendingNormalization = (hop ..< size).map { 0 + squaredWindow[$0] }
+        }
+        return output
     }
 }
 

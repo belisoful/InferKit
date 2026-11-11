@@ -35,11 +35,22 @@ enum NFKMLXCatalogLive {
         return live
     }
 
-    /// The audio-chunk profile of each audio model whose backend opens a live stream.
+    /// The audio-chunk profile of each audio model whose backend opens a live stream. A chunk is the
+    /// model's own step: a hop for a frame-causal enhancer, a decoding stride for a windowed one. The
+    /// lookahead is the most audio the stream reads past a sample before it answers that sample.
     static let audioChunks: [String: NFKModelLiveProfile] = [
         "silero-vad": .audioChunkProfile(withInputKeys: [NFKInputAudio], outputKeys: [NFKOutputSegments], stateful: true,
                                          chunkDuration: 0.032, sampleRate: 16000, channelCount: 1,
                                          lookaheadMilliseconds: 0, timings: nil),
+        "gtcrn": .audioChunkProfile(withInputKeys: [NFKInputAudio], outputKeys: [NFKOutputAudio], stateful: true,
+                                    chunkDuration: 0.016, sampleRate: 16000, channelCount: 1,
+                                    lookaheadMilliseconds: 32, timings: nil),
+        "deepfilternet3": .audioChunkProfile(withInputKeys: [NFKInputAudio], outputKeys: [NFKOutputAudio], stateful: true,
+                                             chunkDuration: 0.010, sampleRate: 48000, channelCount: 1,
+                                             lookaheadMilliseconds: 40, timings: nil),
+        "frcrn": .audioChunkProfile(withInputKeys: [NFKInputAudio], outputKeys: [NFKOutputAudio], stateful: true,
+                                    chunkDuration: 0.75, sampleRate: 16000, channelCount: 1,
+                                    lookaheadMilliseconds: 1000, timings: nil),
     ]
 
     /// The output keys of each video-frame model that carries state from frame to frame.

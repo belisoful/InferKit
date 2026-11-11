@@ -55,6 +55,31 @@ enum NFKMLXLiveAudio {
         return (samples, Int(buffer.format.sampleRate.rounded()), channels)
     }
 
+    /// Mono float32 samples as a non-interleaved buffer, the form a stream answers an audio unit in. A unit
+    /// that completes no output answers an empty buffer.
+    static func buffer(_ samples: [Float], sampleRate: Int) -> AVAudioPCMBuffer {
+        let format = AVAudioFormat(standardFormatWithSampleRate: Double(sampleRate), channels: 1)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(max(samples.count, 1)))!
+        buffer.frameLength = AVAudioFrameCount(samples.count)
+        samples.withUnsafeBufferPointer { source in
+            if let base = source.baseAddress {
+                buffer.floatChannelData![0].update(from: base, count: samples.count)
+            }
+        }
+        return buffer
+    }
+
+    /// The samples of one mono unit at `sampleRate`, or the error the unit fails with.
+    static func monoSamples(_ unit: NFKInferenceRequest, sampleRate: Int) -> Result<[Float], NSError> {
+        guard let (samples, rate, channels) = samples(from: unit.input(forKey: NFKInputAudio)) else {
+            return .failure(NFKMLXError.unsupportedInput as NSError)
+        }
+        guard rate == sampleRate, channels == 1 else {
+            return .failure(formatError(sampleRate: rate, channels: channels, expectedRate: sampleRate, expectedChannels: 1))
+        }
+        return .success(samples)
+    }
+
     /// The error a unit at another rate or channel count than the stream takes fails with.
     static func formatError(sampleRate: Int, channels: Int, expectedRate: Int, expectedChannels: Int) -> NSError {
         NSError(domain: NFKInferenceErrorDomain, code: NFKInferenceError.error_InferenceUnsupported.rawValue, userInfo: [

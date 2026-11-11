@@ -450,6 +450,55 @@ public final class NFKMLXFRCRNBackend: NSObject, NFKInferenceBackend {
         return stft(configuration).inverseComplex(real: masked.real.squeezed(axis: 3), imaginary: masked.imaginary.squeezed(axis: 3))
     }
 
+    // MARK: Live streams
+
+    /// Opens a live stream over mono 16 kHz audio through ClearerVoice's windowed decoding, the path
+    /// `enhance` takes for a clip past `oneTimeDecodeSeconds`. The network's squeeze-excite gates pool
+    /// over the whole input, so it answers a window at a time rather than a frame at a time: each 1 s
+    /// window the samples complete runs through `inference`, and the unit's result holds the samples the
+    /// window keeps, as an `AVAudioPCMBuffer` under `NFKOutputAudio`. Windows start every 0.75 s and keep
+    /// all but their last 2,000 samples, and all but their first 2,000 after the first window, as
+    /// `NFKMLXClearerVoiceDecoding.stitched` keeps them. A sample is answered once its window is complete,
+    /// less than one window (1 s) past it. The stream enhances the audio at its own level: the clip
+    /// forward's level normalization reads the whole recording, so a client that wants it scales the
+    /// audio before the stream. A unit at another rate or channel count fails with
+    /// `kNFKError_InferenceUnsupported`. Introduced in InferKit 0.4.0.
+    @objc(openLiveStreamWithParameters:error:)
+    public func openLiveStream(parameters: [String: Any]?) throws -> any NFKLiveStream {
+        let net = holder.net
+        let sampleRate = net.configuration.sampleRate
+        var state = NFKFRCRNStreamState()
+        return NFKBlockLiveStream(parameters: parameters, unitHandler: { unit, errorPointer in
+            switch NFKMLXLiveAudio.monoSamples(unit, sampleRate: sampleRate) {
+            case .failure(let error):
+                errorPointer?.pointee = error
+                return nil
+            case .success(let samples):
+                let enhanced = Self.stream(samples, net: net, state: state)
+                return NFKInferenceResult(outputs: [NFKOutputAudio: NFKMLXLiveAudio.buffer(enhanced, sampleRate: sampleRate)])
+            }
+        }, resetHandler: { state = NFKFRCRNStreamState() }, closeHandler: { state = NFKFRCRNStreamState() })
+    }
+
+    /// Enhances each window `samples` completes after the stream's earlier samples and returns the samples
+    /// the windows keep, which are the samples `NFKMLXClearerVoiceDecoding.stitched` writes there.
+    static func stream(_ samples: [Float], net: NFKMLXFRCRNNet, state: NFKFRCRNStreamState) -> [Float] {
+        let configuration = net.configuration
+        let window = configuration.decodeWindow, stride = configuration.decodeStride
+        let giveUp = (window - stride) / 2
+        state.samples += samples
+        var output: [Float] = []
+        while state.samples.count >= window {
+            let waveform = inference(Array(state.samples[0 ..< window]), net: net)
+            eval(waveform)
+            let enhanced = waveform.reshaped([-1]).asArray(Float.self)
+            output += enhanced[(state.windowStart == 0 ? 0 : giveUp) ..< (window - giveUp)]
+            state.samples.removeFirst(stride)
+            state.windowStart += stride
+        }
+        return output
+    }
+
     @objc(submitInferenceJobForRequest:)
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
@@ -468,6 +517,13 @@ public final class NFKMLXFRCRNBackend: NSObject, NFKInferenceBackend {
         if let data = value as? Data { return NFKMLXWaveFile.read(data) }
         return nil
     }
+}
+
+/// What an FRCRN live stream carries between units: the samples from the next window's start on, and that
+/// start.
+final class NFKFRCRNStreamState {
+    var samples: [Float] = []
+    var windowStart = 0
 }
 
 /// Registration and weight loading for FRCRN.

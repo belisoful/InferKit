@@ -27,11 +27,16 @@ final class NFKMLXGRUCell: Module {
 
     /// `x` `[B, L, in]` → `[B, L, H]`.
     func callAsFunction(_ x0: MLXArray) -> MLXArray {
+        callAsFunction(x0, initialHidden: nil)
+    }
+
+    /// `x` `[B, L, in]` → `[B, L, H]`, from `initialHidden` `[B, H]`, or from zero when it is nil.
+    func callAsFunction(_ x0: MLXArray, initialHidden: MLXArray?) -> MLXArray {
         let h = hiddenSize
         let x = addMM(b, x0, wx.transposed(1, 0))                          // [B, L, 3H]
         let xrz = x[.ellipsis, .stride(to: -h)]
         let xn = x[.ellipsis, .stride(from: -h)]
-        var hidden: MLXArray?
+        var hidden = initialHidden
         var all = [MLXArray]()
         for index in 0 ..< x.dim(-2) {
             var rz = xrz[.ellipsis, index, 0...]

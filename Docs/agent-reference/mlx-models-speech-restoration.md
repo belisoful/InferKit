@@ -53,6 +53,12 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   cosine 0.99999999999994. The repo publishes no training script (the author's SEtrain template is
   separate), so the optimizer (bias-corrected Adam at 1e-3) is this package's choice.
   `testAFineTunedCheckpointLoadsThroughTheFactory` reloads a saved run through the released loader.
+  **It streams** (`openLiveStream(parameters:)`, 2026-11-10): every time-axis operation is causal (the
+  grouped temporal convolutions front-pad, TRA and the inter-frame RNN run forward in time, and the
+  intra-frame RNN and both LayerNorms read one frame), so the stream carries each depthwise convolution's
+  last `2·dilation` frames and the TRA and inter-frame GRU states through `NFKMLXStreamCarry`. Its STFT
+  takes `torch.stft`'s centered frames, the first reflected about sample 0. See "Live streams" in
+  `mlx-companion.md`.
 - `NFKMLXSGMSE` (`@objc`) / `NFKMLXNCSNppNet` — SGMSE+ (`sp-uhh/sgmse`, MIT), score-based generative
   speech **dereverberation** / enhancement, the third restoration port and the first generative one. A
   forward OUVE variance-exploding SDE walks a clean complex spectrogram toward the observation; inference
@@ -230,6 +236,12 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `deepfilterlib` + torch, Python 3.9; `init_df` downloads the model, and `IK_DEEPFILTERNET_WEIGHTS_OUT`
   dumps the state dict as the weights). No offline converter: the pip package ships the weights and the
   DSP oracle.
+  **It streams** (`openLiveStream(parameters:)`, 2026-11-10), as libdf's real-time loop runs it: the
+  analysis, both normalization scans, the causal convolutions (`erb_conv0` and `df_conv0` keep 2
+  frames, `df_convp` 4), the three `SqueezedGRU_S` stacks, the `convLookahead` shift, and the deep
+  filter's `dfOrder`-frame window all carry from hop to hop (`NFKDFStreamState`). The net's boundary is
+  split into `masks(featERB:featSpec:)` over shifted features and
+  `enhancedSpectrum(spec:mask:coefs:paddedLow:)`, which the clip forward and the stream share.
 - `NFKMLXVoiceRestore` / `NFKMLXBigVGAN` / `NFKMLXVoiceRestoreBackend` (`@objc(NFKMLXVoiceRestore_Factory)`)
   — **VoiceRestore** (skirdey/voicerestore, **MIT**), a ~301M-parameter flow-matching (CFM) universal
   speech restorer, text-free, that fixes noise, reverberation, clipping, and band-limiting together in
@@ -420,6 +432,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     at the clip's own level (`decoder_output`), which matches the hand-built `output` and is the
     control. Measured on the M1 at float32, on the CMGAN noisy clip: relative L2 error **3.4e-6**
     against the reader's output. The control, the decoder at the clip's own level, is 0.164 from it.
+  **It streams only window by window** (`openLiveStream(parameters:)`, 2026-11-10). Each squeeze-excite
+  pools over the whole input, so no frame-causal stream can match a clip forward. The stream runs the
+  windowed decoding below a window at a time and keeps what `stitched` keeps; it enhances at the
+  audio's own level, since `audio_norm` reads the whole recording.
   **Long clips decode in windows**, as `decode_one_audio_frcrn_se_16k` decodes them. The FSMN memories and
   the squeeze-excites' global pools read the whole input, so a one-pass decode of a long clip differs from
   the windowed one.

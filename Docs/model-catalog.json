@@ -4806,6 +4806,20 @@
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/Rikorose/DeepFilterNet#license"
       },
+      "live" : {
+        "channelCount" : 1,
+        "chunkDuration" : 0.01,
+        "inputs" : [
+          "audio"
+        ],
+        "lookahead" : 40,
+        "outputs" : [
+          "audio"
+        ],
+        "sampleRate" : 48000,
+        "stateful" : true,
+        "unit" : "audioChunk"
+      },
       "options" : [
 
       ],
@@ -11301,6 +11315,20 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "live" : {
+        "channelCount" : 1,
+        "chunkDuration" : 0.75,
+        "inputs" : [
+          "audio"
+        ],
+        "lookahead" : 1000,
+        "outputs" : [
+          "audio"
+        ],
+        "sampleRate" : 16000,
+        "stateful" : true,
+        "unit" : "audioChunk"
+      },
       "options" : [
 
       ],
@@ -17745,6 +17773,20 @@
         "name" : "MIT License",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/Xiaobin-Rong/gtcrn/blob/main/LICENSE"
+      },
+      "live" : {
+        "channelCount" : 1,
+        "chunkDuration" : 0.016,
+        "inputs" : [
+          "audio"
+        ],
+        "lookahead" : 32,
+        "outputs" : [
+          "audio"
+        ],
+        "sampleRate" : 16000,
+        "stateful" : true,
+        "unit" : "audioChunk"
       },
       "options" : [
 

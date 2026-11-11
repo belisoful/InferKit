@@ -42,6 +42,27 @@ final class NFKMLXCatalogLiveTests: XCTestCase {
         XCTAssertTrue(silero.isStateful)
     }
 
+    func testTheSpeechEnhancersDeclareTheirStep() throws {
+        let steps: [(identifier: String, chunk: Double, rate: Double, lookahead: Double)] = [
+            ("gtcrn", Double(NFKMLXGTCRNConfiguration().hopSize) / 16000, 16000, 32),
+            ("deepfilternet3", Double(NFKMLXDeepFilterNetConfiguration().hopSize) / 48000, 48000, 40),
+            ("frcrn", Double(NFKMLXFRCRNConfiguration().decodeStride) / 16000, 16000, 1000),
+        ]
+        for step in steps {
+            let descriptor = try XCTUnwrap(descriptors.first { $0.identifier == step.identifier }, step.identifier)
+            let live = try XCTUnwrap(descriptor.liveProfile, step.identifier)
+            XCTAssertEqual(live.unit, NFKModelLiveUnitAudioChunk, step.identifier)
+            XCTAssertEqual(live.inputKeys, [NFKInputAudio], step.identifier)
+            XCTAssertEqual(live.outputKeys, [NFKOutputAudio], step.identifier)
+            XCTAssertTrue(live.isStateful, step.identifier)
+            XCTAssertEqual(live.chunkDuration, step.chunk, accuracy: 1e-12, step.identifier)
+            XCTAssertEqual(live.sampleRate, step.rate, step.identifier)
+            XCTAssertEqual(live.channelCount, 1, step.identifier)
+            XCTAssertEqual(live.lookaheadMilliseconds, step.lookahead, step.identifier)
+            XCTAssertTrue(descriptor.outputs.contains { $0.key == NFKOutputAudio }, step.identifier)
+        }
+    }
+
     func testOnlyTheDeclaredModelsAreLive() {
         let live = Set(descriptors.filter { $0.liveProfile != nil }.map(\.identifier))
         XCTAssertEqual(live, Set(NFKMLXCatalogLive.videoFrameOutputs.keys).union(NFKMLXCatalogLive.statefulVideoFrameOutputs.keys)
