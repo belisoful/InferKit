@@ -344,8 +344,8 @@ own template, which took the same question to 8 output tokens and no chain. The 
 model only through a Jinja template, so a request that names one without a template is refused. A
 caller who renders its own prompt names the markers instead, through
 `NFKMLXGenerationParameterKey.reasoningFormat` (`"think"`, `"harmony"`, or the markers themselves).
-`NFKUsageCachedTokens` counts what a retained prompt cache served, so it is above zero only on a
-request that shares a prefix with the last one.
+`NFKUsageCachedTokens` counts what a kept conversation's cache served, so it is above zero only on a
+request that shares a prefix with a kept conversation.
 
 **Refusing a release that will not fit.** The dense loader checks a release's weight bytes against the
 memory budget before materializing any, so a load that would kill the process is an error instead:
@@ -410,7 +410,7 @@ point where a new prompt diverges, so only the new tokens run through the model.
 
 ```swift
 var options = NFKMLXGenerationOptions()
-options.reusesPromptCache = true                       // the backend keeps a cache between requests
+options.reusesPromptCache = true                       // the default: the backend keeps caches between requests
 let backend = try NFKMLXLanguage.backend(directoryURL: releaseDirectory, options: options)
 
 // Or hold one yourself, and persist a long system prompt's prefill for the next launch:

@@ -88,6 +88,13 @@ public final class NFKMLXPromptCache {
         return shared
     }
 
+    /// The position ``align(to:)`` would roll the cache back to for `prompt`, without moving anything.
+    func resumablePosition(for prompt: [Int]) -> Int {
+        guard !cache.hasDroppedPositions else { return 0 }
+        let limit = Swift.min(tokens.count, Swift.max(prompt.count - 1, 0))
+        return zip(tokens[..<limit], prompt).prefix { $0.0 == $0.1 }.count
+    }
+
     /// Records tokens whose rows a forward pass has just written.
     func record(_ fed: [Int]) { tokens.append(contentsOf: fed) }
 
@@ -185,11 +192,22 @@ protocol NFKMLXConversationState: AnyObject {
     var allocatedBytes: Int { get }
 }
 
-extension NFKMLXPromptCache: NFKMLXConversationState {}
+extension NFKMLXPromptCache: NFKMLXSpillableConversation {
+    var resumablePositions: [Int]? { nil }
+
+    var optionsSignature: String {
+        NFKMLXHybridConversation.optionsSignature(window: window, quantization: quantization,
+                                                  adapterStrengths: adapterStrengths)
+    }
+}
 
 /// The name of the conversation a request continues: its `NFKParameterConversationKey`, unless the
 /// request turns prompt reuse off with `NFKMLXGenerationParameterKey.reusesPromptCache`.
 enum NFKMLXConversation {
+    /// The prefix of the names a backend gives conversations their requests do not name, which no caller's
+    /// key starts with.
+    static let unnamedPrefix = "\u{0}unnamed."
+
     static func name(of request: NFKInferenceRequest) -> String? {
         guard let conversation = request.parameter(forKey: NFKParameterConversationKey) as? String,
               !conversation.isEmpty else {

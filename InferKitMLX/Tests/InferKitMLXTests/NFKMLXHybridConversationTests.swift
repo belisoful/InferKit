@@ -404,7 +404,13 @@ final class NFKMLXHybridConversationTests: XCTestCase {
         let directory = try spillDirectory()
         let spill = NFKMLXConversationSpill(directory: directory, byteBudget: 1 << 30)
         try spill.write(kept, name: "a")
-        let restored = try XCTUnwrap(spill.take("a", configuration: small, window: nil, quantization: nil, adapterStrengths: nil))
+        func take(_ name: String, window: Int? = nil) -> NFKMLXHybridConversation? {
+            spill.take(name) { url, record in
+                try NFKMLXHybridConversation.load(from: url, tokens: record.tokens, configuration: small, window: window,
+                                                  quantization: nil, adapterStrengths: nil)
+            }
+        }
+        let restored = try XCTUnwrap(take("a"))
         XCTAssertEqual(restored.tokens, kept.tokens)
         XCTAssertEqual(restored.snapshots.map(\.position), [128, 155])
         XCTAssertTrue(spill.records().isEmpty, "a read conversation leaves the disk")
@@ -416,8 +422,7 @@ final class NFKMLXHybridConversationTests: XCTestCase {
         let live = turn(net, kept, prompt: kept.tokens + tokens(10, seed: 4), turnStart: nil, reply: [])
         XCTAssertEqual(live.start, 155)
         try spill.write(restored, name: "b")
-        XCTAssertNil(spill.take("b", configuration: small, window: 64, quantization: nil, adapterStrengths: nil),
-                     "another window reads nothing")
+        XCTAssertNil(take("b", window: 64), "another window reads nothing")
     }
 
     // A released conversation, named or not, is written to disk and continued from it by the next request.

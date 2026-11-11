@@ -47,9 +47,10 @@ public final class NFKMLXGenerationParameterKey: NSObject {
     /// speculative decoding off for the request even when the backend holds a draft. See
     /// ``NFKMLXGenerationOptions/draftTokens``.
     @objc public static let draftTokens = "NFKMLXParameterDraftTokens"
-    /// Whether the backend keeps its key-value cache between requests and prefills only what a new
-    /// prompt adds to the last one, as an `NSNumber` boolean. A request that names its conversation
-    /// under `NFKParameterConversationKey` reuses that conversation's cache unless this is NO. See
+    /// Whether the backend keeps a request's key-value cache and continues it from a later prompt, so the
+    /// later one prefills only what it adds, as an `NSNumber` boolean; YES unless a request sets NO. A
+    /// request continues the conversation its `NFKParameterConversationKey` names, or, naming none, the
+    /// kept conversation its prompt shares the longest prefix with. See
     /// ``NFKMLXGenerationOptions/reusesPromptCache``.
     @objc public static let reusesPromptCache = "NFKMLXParameterReusesPromptCache"
     /// The output's required shape, as an `NSString`: `"json"` constrains sampling to well-formed
@@ -243,11 +244,11 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// same family. 0 turns speculation off for a request even when a draft is present.
     public var draftTokens: Int = 4
 
-    /// Whether the backend keeps its key-value cache between requests, so a prompt that extends the
-    /// previous one prefills only its tail. Off by default; a request that names its conversation
-    /// under `NFKParameterConversationKey` reuses that conversation's own cache without it. See
-    /// ``NFKMLXPromptCache``.
-    public var reusesPromptCache: Bool = false
+    /// Whether the backend keeps a request's key-value cache between requests, so a later prompt sharing a
+    /// prefix with it prefills only its tail. On by default. A request continues the conversation its
+    /// `NFKParameterConversationKey` names, or, naming none, the unnamed conversation its prompt resumes
+    /// furthest into. See ``NFKMLXPromptCache``.
+    public var reusesPromptCache: Bool = true
 
     /// The strengths a run gives the adapters the model holds, in load order, or nil for a model that holds
     /// none. A kept prompt cache computed at other strengths is not reused.
@@ -527,17 +528,22 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     private let defaults: NFKMLXGenerationOptions
     /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
     private let adapterStrengths: [Float]
-    /// The cache kept between requests when a request asks for reuse. Generation is serialized
-    /// through `generationLock`: two runs through one cache would interleave their rows.
-    private var promptCache: NFKMLXPromptCache?
-    /// The caches of requests that name their conversation, read and written under `generationLock`.
-    private static let defaultConversationCacheByteBudget = 2 << 30
-    private let conversationCaches = NFKMLXConversationCaches(byteBudget: defaultConversationCacheByteBudget)
+    /// The conversations' caches, named by their requests or, for a request that names none, by the backend,
+    /// read and written under `generationLock`, which serializes generation: two runs through one cache would
+    /// interleave their rows.
+    private let conversationCaches = NFKMLXConversationCaches(byteBudget: 0)
+    /// The unnamed conversation the last request that named none ran.
+    private var lastUnnamedConversation: String?
+    /// The budget a caller set, or nil for the budget the memory left beside the model affords.
+    private var setConversationByteBudget: Int?
+    /// Where conversations the budget lets go are written, read and written under `generationLock`; resolved
+    /// on first use, since its default directory reads the loaded model's description.
+    private var spill: NFKMLXConversationSpill?
+    private var spillResolved = false
     /// The cache figures ``backendStatus`` reports, refreshed under `generationLock` after each run
     /// and each change, and read under `statusLock`, so a status request never waits on a run.
     private var cacheStatus: [String: Any] = ["conversation_caches": 0, "conversation_cache_bytes": 0,
-                                              "conversation_cache_byte_budget": defaultConversationCacheByteBudget,
-                                              "prompt_cache_length": 0]
+                                              "conversation_cache_byte_budget": 0, "prompt_cache_length": 0]
     private let statusLock = NSLock()
     private let generationLock = NSLock()
     private let modelInfoCache = NFKMLXModelInfoCache()
@@ -707,38 +713,43 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         try lifecycle.prepare()
     }
 
-    /// Drops the prompt caches and the vocabulary, which hold arrays over the freed network.
+    /// Writes the conversations to the spill directory and drops them and the vocabulary, which hold arrays over
+    /// the freed network.
     private func dropCaches() {
         generationLock.lock(); defer { generationLock.unlock() }
-        promptCache = nil
+        spillAll()
         conversationCaches.removeAll()
         vocabulary = nil
         refreshCacheStatus()
     }
 
-    /// How many positions the retained prompt cache holds, or 0 when none is kept.
+    /// How many positions the conversation of the last request that named none holds, or 0 when none is kept.
     @objc public var promptCacheLength: Int {
         generationLock.lock(); defer { generationLock.unlock() }
-        return promptCache?.count ?? 0
+        return unnamedLength
     }
 
-    /// Drops every retained prompt cache, the conversations' included, so the next request prefills
-    /// from the start.
+    private var unnamedLength: Int {
+        conversationCaches.held.first { $0.name == lastUnnamedConversation }?.state.count ?? 0
+    }
+
+    /// Drops every conversation's cache in memory, so the next request prefills from the start; spilled
+    /// ones stay on disk.
     @objc public func resetPromptCache() {
         generationLock.lock(); defer { generationLock.unlock() }
-        promptCache = nil
         conversationCaches.removeAll()
         refreshCacheStatus()
     }
 
-    /// Drops the unnamed prompt cache and every conversation's when no run is in progress, and returns the
-    /// bytes they held; returns 0 at once while a run holds them. `NFKInferenceServer` calls it to relieve
-    /// memory. Introduced in InferKit 0.4.0.
+    /// Writes every conversation's cache to the spill directory and drops it from memory when no run is in
+    /// progress, and returns the bytes they held; returns 0 at once while a run holds them.
+    /// `NFKInferenceServer` calls it to relieve memory, and the reloadable backend before it unloads the
+    /// model. Introduced in InferKit 0.4.0.
     @objc public func releaseIdleConversationCaches() -> Int {
         guard generationLock.try() else { return 0 }
         defer { generationLock.unlock() }
-        let held = conversationCaches.heldBytes + (promptCache?.allocatedBytes ?? 0)
-        promptCache = nil
+        let held = conversationCaches.heldBytes
+        spillAll()
         conversationCaches.removeAll()
         refreshCacheStatus()
         return held
@@ -751,21 +762,24 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         expertStore?.releaseCachedBytes(byteCount, keeping: keepingByteCount) ?? 0
     }
 
-    /// Drops one conversation's prompt cache. Introduced in InferKit 0.4.0.
+    /// Drops one named conversation's prompt cache, in memory and on disk. Introduced in InferKit 0.4.0.
     @objc(resetPromptCacheForConversation:)
     public func resetPromptCache(forConversation conversation: String) {
         generationLock.lock(); defer { generationLock.unlock() }
         conversationCaches.remove(conversation)
+        currentSpill()?.remove(named: conversation)
         refreshCacheStatus()
     }
 
     /// The bytes the conversations' prompt caches may hold together.
     ///
-    /// @discussion A request that names its conversation under `NFKParameterConversationKey`
-    /// continues from that conversation's own cache, so the turns of several chats served at once
-    /// each prefill only what they add. When the caches outgrow the budget, the least recently used
-    /// conversations are dropped, never the one a request is running. Lowering the budget drops down
-    /// to it at once. Defaults to 2 GiB. Introduced in InferKit 0.4.0.
+    /// @discussion A request continues the conversation its `NFKParameterConversationKey` names, or, naming
+    /// none, the kept conversation its prompt shares the longest prefix with, so the turns of several chats
+    /// served at once each prefill only what they add. When the caches outgrow the budget, the least
+    /// recently used conversations are written to the spill directory and dropped, never the one a request
+    /// just ran. Until it is set, the budget is what the memory planned beside the model affords after one
+    /// run's cache at its window, recomputed each run; setting it fixes it, and lowering it drops down to it
+    /// at once. Introduced in InferKit 0.4.0.
     @objc public var conversationCacheByteBudget: Int {
         get {
             generationLock.lock(); defer { generationLock.unlock() }
@@ -773,9 +787,67 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         }
         set {
             generationLock.lock(); defer { generationLock.unlock() }
+            setConversationByteBudget = newValue
             conversationCaches.byteBudget = newValue
-            conversationCaches.evict()
+            conversationCaches.evict(releasing: spillConversation)
             refreshCacheStatus()
+        }
+    }
+
+    /// The directory conversations the memory budget lets go are written to, so a later request continues
+    /// one without its prefill, after an unload or a restart too; nil writes none. A backend over a release
+    /// directory defaults to a directory under the user's caches that only the same release and weights read.
+    /// A model that holds adapters writes none. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillDirectoryURL: URL? {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return currentSpill()?.directory
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            spill = newValue.map { NFKMLXConversationSpill(directory: $0, byteBudget: spill?.byteBudget
+                                                           ?? NFKMLXConversationSpill.defaultByteBudget) }
+            spillResolved = true
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk; the least recently written go first past it.
+    /// Defaults to 8 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return currentSpill()?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            currentSpill()?.byteBudget = newValue
+        }
+    }
+
+    /// The spill directory, its default resolved on first use. Runs under `generationLock`.
+    private func currentSpill() -> NFKMLXConversationSpill? {
+        if !spillResolved, let releaseURL {
+            spillResolved = true
+            spill = NFKMLXConversationSpill(
+                directory: NFKMLXConversationSpill.defaultDirectory(
+                    release: releaseURL, identifier: identifier, weights: NFKMLXConversationSpill.weightsDescription(modelInfo)),
+                byteBudget: NFKMLXConversationSpill.defaultByteBudget)
+        }
+        return spill
+    }
+
+    /// Writes a conversation the memory lets go to the spill directory, unless the model holds adapters, which
+    /// the directory cannot tell apart. A conversation that cannot be written is let go all the same. Runs
+    /// under `generationLock`.
+    private func spillConversation(_ name: String, _ cache: NFKMLXPromptCache) {
+        guard adapterStrengths.isEmpty else { return }
+        try? currentSpill()?.write(cache, name: name)
+    }
+
+    /// Writes every held conversation to the spill directory. Runs under `generationLock`.
+    private func spillAll() {
+        for (name, cache) in conversationCaches.held {
+            spillConversation(name, cache)
         }
     }
 
@@ -812,7 +884,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         let figures: [String: Any] = ["conversation_caches": conversationCaches.count,
                                       "conversation_cache_bytes": conversationCaches.heldBytes,
                                       "conversation_cache_byte_budget": conversationCaches.byteBudget,
-                                      "prompt_cache_length": promptCache?.count ?? 0]
+                                      "prompt_cache_length": unnamedLength]
         statusLock.lock(); defer { statusLock.unlock() }
         cacheStatus = figures
     }
@@ -1071,22 +1143,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         if let tokenizer = holder.tokenizer {
             options.constraint = constraint(for: requested, tokenizer: tokenizer, holder: holder)
         }
-        var cache: NFKMLXPromptCache?
-        if let conversation {
-            cache = conversationCaches.cache(for: conversation, layerCount: net.configuration.layerCount,
-                                             options: options)
-        } else if options.reusesPromptCache {
-            if let kept = promptCache, kept.matches(layerCount: net.configuration.layerCount, options: options) {
-                cache = kept
-            } else {
-                cache = NFKMLXPromptCache(layerCount: net.configuration.layerCount,
-                                          window: options.contextWindow,
-                                          quantization: options.cacheQuantization)
-                cache?.adapterStrengths = options.adapterStrengths
-            }
-            promptCache = cache
-        } else {
-            promptCache = nil
+        let name = conversation ?? (options.reusesPromptCache ? unnamedConversation(for: tokens, net: net, options: options) : nil)
+        let cache = name.map { conversationCache($0, net: net, options: options) }
+        if conversation == nil {
+            lastUnnamedConversation = name
         }
         let produced: [Int]
         if let draft = holder.draft, options.draftTokens > 0, options.constraint == nil {
@@ -1110,11 +1170,69 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             refreshCacheStatus()
             throw error
         }
-        if let conversation {
-            conversationCaches.evict(keeping: conversation)
+        if let name {
+            conversationCaches.byteBudget = setConversationByteBudget ?? affordedConversationBytes(net: net, options: options)
+            conversationCaches.evict(keeping: name, releasing: spillConversation)
         }
         refreshCacheStatus()
         return (produced, cache?.sharedPrefixLength ?? 0)
+    }
+
+    /// The cache of the conversation `name`, held or read back from the spill directory, or a new one where
+    /// neither was built for the run's window, cache quantization, and adapter strengths. Runs under
+    /// `generationLock`.
+    private func conversationCache(_ name: String, net: NFKMLXLanguageNet, options: NFKMLXGenerationOptions) -> NFKMLXPromptCache {
+        let held = conversationCaches.held.contains { $0.name == name }
+        let signature = NFKMLXHybridConversation.optionsSignature(window: options.contextWindow,
+                                                                  quantization: options.cacheQuantization,
+                                                                  adapterStrengths: options.adapterStrengths)
+        let spilled = held ? nil : currentSpill()?.take(name) { url, record -> NFKMLXPromptCache? in
+            guard record.options == signature else { return nil }
+            let restored = try NFKMLXPromptCache.load(from: url)
+            restored.adapterStrengths = options.adapterStrengths
+            return restored.matches(layerCount: net.configuration.layerCount, options: options) ? restored : nil
+        }
+        if let spilled {
+            conversationCaches.remove(name)
+            return conversationCaches.state(for: name) { spilled }
+        }
+        return conversationCaches.cache(for: name, layerCount: net.configuration.layerCount, options: options)
+    }
+
+    /// The name of the unnamed conversation, in memory or on disk, a prompt resumes furthest into, where the
+    /// resumed prefix is at least as long as what the rollback discards, so one client's prompt never discards
+    /// most of another's conversation; otherwise a new name. Runs under `generationLock`.
+    private func unnamedConversation(for prompt: [Int], net: NFKMLXLanguageNet, options: NFKMLXGenerationOptions) -> String {
+        let prefix = NFKMLXConversation.unnamedPrefix
+        let inMemory = conversationCaches.held
+            .filter { $0.name.hasPrefix(prefix) && $0.state.matches(layerCount: net.configuration.layerCount, options: options) }
+            .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.count) }
+            .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
+            .max { $0.kept < $1.kept }
+        let signature = NFKMLXHybridConversation.optionsSignature(window: options.contextWindow,
+                                                                  quantization: options.cacheQuantization,
+                                                                  adapterStrengths: options.adapterStrengths)
+        if let onDisk = currentSpill()?.resumable(for: prompt, prefix: prefix, options: signature),
+           onDisk.kept > inMemory?.kept ?? 0 {
+            return onDisk.name
+        }
+        return inMemory?.name ?? prefix + UUID().uuidString
+    }
+
+    /// The bytes the conversations may hold where no budget is set: the planned working set less the weights
+    /// the model holds, the reserve beside them, and the keys and values one run takes at the window, or at
+    /// the model's context length without one. The conversation a run just used is kept beyond it.
+    private func affordedConversationBytes(net: NFKMLXLanguageNet, options: NFKMLXGenerationOptions) -> Int {
+        let info = modelInfo
+        let budget = NFKMLXResidencyBudget.current()
+        let weights = info[NFKModelInfoWeightBytes] as? Int ?? 0
+        let c = net.configuration
+        let elements = 2 * c.layerCount * c.keyValueHeadCount * c.headDimensions
+        let elementBytes = (info[NFKModelInfoKeyValueBytesPerToken] as? Int).map { $0 / Swift.max(elements, 1) } ?? 2
+        let perToken = options.cacheQuantization.map { q in elements * q.bits / 8 + elements / q.groupSize * 2 * elementBytes }
+            ?? elements * elementBytes
+        let positions = options.contextWindow ?? c.contextLength ?? 0
+        return Swift.max(0, budget - weights - NFKMLXResidencyBudget.reserve(forBudget: budget) - perToken * positions)
     }
 
     /// Overrides `options` with the MLX generation parameters a request carries, so an Objective-C

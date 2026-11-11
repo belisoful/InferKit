@@ -8,6 +8,7 @@
 
 import CryptoKit
 import Foundation
+import InferKit
 import MLX
 
 /// The recurrence layers' convolution inputs and states at one position of a conversation.
@@ -241,11 +242,25 @@ final class NFKMLXHybridConversation: NFKMLXConversationState {
     }
 }
 
+/// A conversation's state a backend can write to disk and read back: its token ids, the positions a prompt
+/// can resume it at, and the options it was built for.
+protocol NFKMLXSpillableConversation: NFKMLXConversationState {
+    var tokens: [Int] { get }
+    /// The positions short of the held tokens a prompt can resume at, or nil where every position can.
+    var resumablePositions: [Int]? { get }
+    var optionsSignature: String { get }
+    func save(to url: URL) throws
+}
+
+extension NFKMLXHybridConversation: NFKMLXSpillableConversation {
+    var resumablePositions: [Int]? { snapshots.map(\.position) }
+}
+
 /// Conversations written to disk where the memory budget lets them go, so a later request, after an
 /// eviction, an unload, or a restart, continues one without its prefill.
 ///
-/// @discussion Each conversation is two files named by a digest of its name: the arrays
-/// (``NFKMLXHybridConversation/save(to:)``) and a JSON record of its name, token ids, snapshot positions,
+/// @discussion Each conversation is two files named by a digest of its name: the arrays the state writes
+/// (``NFKMLXSpillableConversation/save(to:)``) and a JSON record of its name, token ids, resumable positions,
 /// and options. Reading a conversation removes its files, since the memory then holds it. Past the byte
 /// budget the least recently written files go first. The caller serializes access.
 final class NFKMLXConversationSpill {
@@ -257,16 +272,47 @@ final class NFKMLXConversationSpill {
         self.byteBudget = byteBudget
     }
 
+    /// The bytes the spilled conversations may take on disk where no budget is set.
+    static let defaultByteBudget = 8 << 30
+
+    /// A directory under the user's caches named by a digest of the release's path, its configuration's
+    /// modification date, the model's identifier, and `weights`, a description of the weights' precision and
+    /// quantization, so another release, the same one changed, or other weights find none of these
+    /// conversations.
+    static func defaultDirectory(release: URL, identifier: String, weights: String) -> URL {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let configured = (try? release.appendingPathComponent("config.json")
+            .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)?.timeIntervalSince1970 ?? 0
+        let identity = "\(release.standardizedFileURL.path)|\(configured)|\(identifier)|\(weights)"
+        return caches.appendingPathComponent("InferKit/Conversations/\(digest(of: identity))", isDirectory: true)
+    }
+
+    /// The precision and quantization ``defaultDirectory(release:identifier:weights:)`` reads from a model's
+    /// `NFKModelInfo*` description.
+    static func weightsDescription(_ info: [String: Any]) -> String {
+        "\(info[NFKModelInfoPrecision] ?? "")|\(info[NFKModelInfoQuantizationBits] ?? "")|"
+            + "\(info[NFKModelInfoQuantizationGroupSize] ?? "")"
+    }
+
+    private static func digest(of text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// A conversation's record: what a prefix search reads without loading the arrays.
     struct Record: Codable {
         let name: String
         let tokens: [Int]
-        let snapshots: [Int]
+        let snapshots: [Int]?
         let options: String
-    }
 
-    private func stem(of name: String) -> String {
-        SHA256.hash(data: Data(name.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
+        /// The position a conversation holding this record's tokens continues `prompt` from.
+        func resumablePosition(for prompt: [Int]) -> Int {
+            let limit = Swift.min(tokens.count, Swift.max(prompt.count - 1, 0))
+            let shared = zip(tokens[..<limit], prompt).prefix { $0.0 == $0.1 }.count
+            guard shared < tokens.count, let snapshots else { return shared }
+            return snapshots.last { $0 <= shared } ?? 0
+        }
     }
 
     private func arraysURL(_ stem: String) -> URL { directory.appendingPathComponent(stem + ".safetensors") }
@@ -274,13 +320,13 @@ final class NFKMLXConversationSpill {
 
     /// Writes `conversation` under `name`, replacing what the name held, then trims the directory to the
     /// budget. The record is written last, so a write cut short leaves no record to read.
-    func write(_ conversation: NFKMLXHybridConversation, name: String) throws {
+    func write<State: NFKMLXSpillableConversation>(_ conversation: State, name: String) throws {
         guard byteBudget > 0, !conversation.tokens.isEmpty else { return }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let stem = stem(of: name)
+        let stem = Self.digest(of: name)
         remove(stem)
         try conversation.save(to: arraysURL(stem))
-        let record = Record(name: name, tokens: conversation.tokens, snapshots: conversation.snapshots.map(\.position),
+        let record = Record(name: name, tokens: conversation.tokens, snapshots: conversation.resumablePositions,
                             options: conversation.optionsSignature)
         try JSONEncoder().encode(record).write(to: recordURL(stem), options: .atomic)
         trim()
@@ -295,23 +341,31 @@ final class NFKMLXConversationSpill {
         }
     }
 
-    /// The conversation written under `name`, its files removed; nil where none was written or it was built
-    /// for other options.
-    func take(_ name: String, configuration: NFKMLXHybridConfiguration, window: Int?,
-              quantization: NFKMLXKeyValueCache.Quantization?, adapterStrengths: [Float]?) -> NFKMLXHybridConversation? {
-        let stem = stem(of: name)
+    /// The unnamed conversation on disk, its name starting with `prefix`, that `prompt` resumes furthest into,
+    /// among those built for `options` whose resumed prefix is at least what a rollback discards.
+    func resumable(for prompt: [Int], prefix: String, options: String) -> (name: String, kept: Int)? {
+        records()
+            .filter { $0.name.hasPrefix(prefix) && $0.options == options }
+            .map { (name: $0.name, kept: $0.resumablePosition(for: prompt), held: $0.tokens.count) }
+            .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
+            .max { $0.kept < $1.kept }
+            .map { ($0.name, $0.kept) }
+    }
+
+    /// The conversation written under `name`, read by `read` from the arrays file and the record, its files
+    /// removed; nil where none was written or `read` refuses it.
+    func take<State>(_ name: String, read: (URL, Record) throws -> State?) -> State? {
+        let stem = Self.digest(of: name)
         defer { remove(stem) }
         guard let data = try? Data(contentsOf: recordURL(stem)),
               let record = try? JSONDecoder().decode(Record.self, from: data), record.name == name else {
             return nil
         }
-        return try? NFKMLXHybridConversation.load(from: arraysURL(stem), tokens: record.tokens, configuration: configuration,
-                                                  window: window, quantization: quantization,
-                                                  adapterStrengths: adapterStrengths)
+        return try? read(arraysURL(stem), record)
     }
 
     /// Removes the files written under `name`.
-    func remove(named name: String) { remove(stem(of: name)) }
+    func remove(named name: String) { remove(Self.digest(of: name)) }
 
     private func remove(_ stem: String) {
         try? FileManager.default.removeItem(at: recordURL(stem))

@@ -322,12 +322,15 @@ and the `NFKMLXGenerationParameterKey` request keys in Objective-C, the same set
   Exact, pinned by a test against the single-pass result.
 - **`chatTemplate`** renders `NFKInputMessages` in ChatML with the release's own special tokens, which
   is what an instruct release was trained on. Off by default, because a base model wants plain text.
-- **`reusesPromptCache`** keeps the key-value cache between requests, so a conversation's next turn
-  prefills only what it adds. Exact, since the cache rolls back to where the prompts diverge. A
-  request that names its conversation under `NFKParameterConversationKey` (OpenAI's
-  `prompt_cache_key` on a served chat route) continues that conversation's own cache without the
-  key, so a server answering several chats at once keeps each one's prefix. The caches share
-  `conversationCacheByteBudget` (2 GiB by default), and the least recently used go first. The Gemma 3
+- **`reusesPromptCache`**, on by default, keeps the key-value cache between requests, so a
+  conversation's next turn prefills only what it adds. Exact, since the cache rolls back to where the
+  prompts diverge. A request continues the conversation its `NFKParameterConversationKey` names
+  (OpenAI's `prompt_cache_key` on a served chat route), or, naming none, the kept conversation its
+  prompt shares the longest prefix with, so a server answering several chats at once keeps each one's
+  prefix whatever its clients send. The caches share `conversationCacheByteBudget`, by default what
+  the memory beside the model affords after one run's cache, and the least recently used are written
+  to `conversationSpillDirectoryURL` (a directory under the user's caches, 8 GiB) and read back by a
+  later request, after a restart too. Set `reusesPromptCache` to NO on a request to keep nothing. The Gemma 3
   and DeepSeek backends keep conversation caches the same way; DeepSeek continues only a prompt that
   extends the last one by at least its largest compression ratio.
 - **`draftTokens`**, with a backend built from a main release and a draft release, decodes

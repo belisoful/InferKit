@@ -1961,8 +1961,8 @@ and start times on `systemUptime`, and the job's last reported progress.
   `NFKParameterConversationKey` (the `messages:` digest), so a server's backend keeps a keyless
   chat's prompt too; a caller's own key goes out as written, and a request in no conversation gains
   none. MLX's language backend keeps a prompt cache per named conversation
-  (`conversationCacheByteBudget`) and reuses it without
-  `NFKMLXGenerationParameterKey.reusesPromptCache`.
+  (`conversationCacheByteBudget`), and continues a keyless request from the unnamed conversation its
+  prompt resumes furthest into.
 - `lastServerBaseURL` is the server's base URL as added. Rebuilding it from the client's endpoint by
   deleting path components leaves a trailing slash, and the URLs then compare unequal.
 - Runtime reports: the server resolves each registered class name with `NSClassFromString` and asks

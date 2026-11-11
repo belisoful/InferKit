@@ -8,7 +8,6 @@
 //  encoded as given.
 //
 
-import CryptoKit
 import Foundation
 import InferKit
 import MLX
@@ -128,28 +127,12 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         self.stopTokens = stopTokens
         super.init()
         if cached != nil, let releaseDirectoryURL {
-            let weights = "\(modelInfo[NFKModelInfoPrecision] ?? "")|\(modelInfo[NFKModelInfoQuantizationBits] ?? "")"
-                + "|\(modelInfo[NFKModelInfoQuantizationGroupSize] ?? "")"
-            spill = NFKMLXConversationSpill(directory: Self.defaultSpillDirectory(release: releaseDirectoryURL,
-                                                                                  identifier: identifier, weights: weights),
-                                            byteBudget: Self.defaultSpillByteBudget)
+            spill = NFKMLXConversationSpill(
+                directory: NFKMLXConversationSpill.defaultDirectory(
+                    release: releaseDirectoryURL, identifier: identifier,
+                    weights: NFKMLXConversationSpill.weightsDescription(modelInfo)),
+                byteBudget: NFKMLXConversationSpill.defaultByteBudget)
         }
-    }
-
-    /// The bytes the spilled conversations may take on disk where no budget is set.
-    static let defaultSpillByteBudget = 8 << 30
-
-    /// A directory under the user's caches named by a digest of the release's path, its configuration's
-    /// modification date, the model's identifier, and the weights' precision and quantization, so another
-    /// release, the same one changed, or other weights find none of these conversations.
-    static func defaultSpillDirectory(release: URL, identifier: String, weights: String) -> URL {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        let configured = (try? release.appendingPathComponent("config.json")
-            .resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)?.timeIntervalSince1970 ?? 0
-        let identity = "\(release.standardizedFileURL.path)|\(configured)|\(identifier)|\(weights)"
-        let digest = SHA256.hash(data: Data(identity.utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
-        return caches.appendingPathComponent("InferKit/Conversations/\(digest)", isDirectory: true)
     }
 
     /// The decoder, tokenizer, chat template, and stop ids a release directory supplies; `modules`
@@ -496,42 +479,31 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             state.matches(window: options.contextWindow, quantization: options.cacheQuantization, adapterStrengths: strengths)
         }
         let spilled = { [spill] (name: String) in
-            spill?.take(name, configuration: cached.configuration, window: options.contextWindow,
-                        quantization: options.cacheQuantization, adapterStrengths: strengths)
+            spill?.take(name) { url, record in
+                try NFKMLXHybridConversation.load(from: url, tokens: record.tokens, configuration: cached.configuration,
+                                                  window: options.contextWindow, quantization: options.cacheQuantization,
+                                                  adapterStrengths: strengths)
+            }
         }
         guard run.reuses else { return (nil, make()) }
         if let name = run.name {
             let held = conversations.states.held.contains { $0.name == name }
             return (name, conversations.states.state(for: name, isUsable: usable) { (held ? nil : spilled(name)) ?? make() })
         }
-        func resumes(kept: Int, held: Int) -> Bool { kept > 0 && kept >= held - kept }
         let inMemory = conversations.states.held
             .filter { $0.name.hasPrefix(Self.unnamedPrefix) && usable($0.state) }
             .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.tokens.count) }
-            .filter { resumes(kept: $0.kept, held: $0.held) }
+            .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
             .max { $0.kept < $1.kept }
         let signature = NFKMLXHybridConversation.optionsSignature(window: options.contextWindow,
                                                                   quantization: options.cacheQuantization,
                                                                   adapterStrengths: strengths)
-        let onDisk = (spill?.records() ?? [])
-            .filter { $0.name.hasPrefix(Self.unnamedPrefix) && $0.options == signature }
-            .map { (name: $0.name, kept: Self.resumablePosition(prompt, tokens: $0.tokens, snapshots: $0.snapshots),
-                    held: $0.tokens.count) }
-            .filter { resumes(kept: $0.kept, held: $0.held) }
-            .max { $0.kept < $1.kept }
+        let onDisk = spill?.resumable(for: prompt, prefix: Self.unnamedPrefix, options: signature)
         if let onDisk, onDisk.kept > inMemory?.kept ?? 0, let state = spilled(onDisk.name) {
             return (onDisk.name, conversations.states.state(for: onDisk.name, isUsable: usable) { state })
         }
         let name = inMemory?.name ?? Self.unnamedPrefix + UUID().uuidString
         return (name, conversations.states.state(for: name, isUsable: usable, make: make))
-    }
-
-    /// The position a conversation holding `tokens`, with snapshots at `snapshots`, continues `prompt` from:
-    /// what ``NFKMLXHybridConversation/resumablePosition(for:)`` answers for it once read.
-    private static func resumablePosition(_ prompt: [Int], tokens: [Int], snapshots: [Int]) -> Int {
-        let limit = min(tokens.count, max(prompt.count - 1, 0))
-        let shared = zip(tokens[..<limit], prompt).prefix { $0.0 == $0.1 }.count
-        return shared == tokens.count ? shared : snapshots.last { $0 <= shared } ?? 0
     }
 
     /// Writes a conversation the memory lets go to the spill directory. A conversation that cannot be written
@@ -543,9 +515,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         try? spill?.write(state, name: name)
     }
 
-    /// The prefix of the names the backend gives conversations their requests do not name, which no
-    /// caller's key starts with.
-    private static let unnamedPrefix = "\u{0}unnamed."
+    private static let unnamedPrefix = NFKMLXConversation.unnamedPrefix
 
     /// The bytes the conversations may hold where no budget is set: the planned working set less the weights
     /// the model holds, the reserve beside them, and the cache one run takes at the window, or at the
@@ -638,7 +608,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         }
         set {
             generationLock.lock(); defer { generationLock.unlock() }
-            spill = newValue.map { NFKMLXConversationSpill(directory: $0, byteBudget: spill?.byteBudget ?? Self.defaultSpillByteBudget) }
+            spill = newValue.map { NFKMLXConversationSpill(directory: $0, byteBudget: spill?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget) }
         }
     }
 
@@ -647,7 +617,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     @objc public var conversationSpillByteBudget: Int {
         get {
             generationLock.lock(); defer { generationLock.unlock() }
-            return spill?.byteBudget ?? Self.defaultSpillByteBudget
+            return spill?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget
         }
         set {
             generationLock.lock(); defer { generationLock.unlock() }

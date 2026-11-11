@@ -2041,6 +2041,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A keyless request continues the conversation its prompt extends
+
+- `NFKMLXLanguageBackend` keeps the cache of a request that names no conversation among its unnamed
+  conversations, and a later keyless request continues the one its prompt resumes furthest into, so a
+  served chat whose client sends no `prompt_cache_key` (the Messages route has none) prefills only its new
+  turn. `reusesPromptCache` now defaults to YES; a request that sets NO keeps nothing. The single retained
+  unnamed cache is gone; `promptCacheLength` reads the last unnamed conversation.
+- The conversations' budget is what the memory beside the model affords after one run's keys and values at
+  the window, unless `conversationCacheByteBudget` is set; it was 2 GiB.
+- Conversations the budget lets go, or that `releaseIdleConversationCaches` or an unload releases, are written to
+  `conversationSpillDirectoryURL` within `conversationSpillByteBudget` and read back by a later request, as the
+  hybrid decoder's are.
+
 #### The hybrid decoder continues a conversation from its kept cache
 
 - `NFKMLXDecoderBackend` over a Qwen3.5 or Qwen3.8 release keeps each conversation's cache between requests, so

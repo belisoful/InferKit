@@ -310,7 +310,7 @@ attention and feed-forward.
   surviving beams their parents' rows (`mlx-models-translation.md`). `NFKMLXPromptCache` keeps the
   cache and its token ids between generations, `align(to:)` rolls back to the shared prefix (capped
   one short of the prompt so a token runs and produces logits), and `save(to:)`/`load(from:)` persist
-  it — float or packed rows alike. `reusesPromptCache` makes the backend keep one; the backend
+  it — float or packed rows alike. `reusesPromptCache` (on by default) makes the backend keep them; the backend
   serializes generation through a lock because two runs through one cache interleave their rows.
   **Speculative decoding** (`generate(prompt:options:draft:promptCache:report:onToken:)`,
   `backend(directoryURL:draftDirectoryURL:)`, ObjC `backendWithDirectoryURL:draftDirectoryURL:error:`,
@@ -535,8 +535,17 @@ attention and feed-forward.
   rollback succeeded without position 0 (2026-10-23). Bytes are `NFKMLXKeyValueCache.allocatedBytes`, the sum of
   every stored array's `nbytes`, capacity included. Eviction runs after each named run, least
   recently used first, skipping the conversation that ran, so one conversation over the budget
-  keeps its cache. The unnamed retained cache is separate and keeps its old rule: a request that
-  does not ask for reuse drops it. A named request leaves it alone. `NFKMLXLanguageBackend`,
+  keeps its cache. **Keyless requests (2026-11-10):** the single unnamed retained cache is gone. A
+  request without a key, unless it sets `reusesPromptCache` NO (the option now defaults to YES), runs
+  against the unnamed conversation (`NFKMLXConversation.unnamedPrefix` + a UUID) its prompt resumes
+  furthest into, in memory (`NFKMLXPromptCache.resumablePosition(for:)`) or on disk
+  (`NFKMLXConversationSpill.resumable`), taken only where the resumed prefix is at least what the
+  rollback discards; otherwise a new one. `promptCacheLength` reads the last unnamed conversation. The
+  budget is derived per run unless set (weights, reserve, and the keys and values at the window from
+  `NFKModelInfoKeyValueBytesPerToken`), and evicted, released (`releaseIdleConversationCaches`), and freed
+  conversations spill through `NFKMLXConversationSpill` (generic over `NFKMLXSpillableConversation`; the
+  dense cache writes `save(to:)`, its record carries no snapshot positions since any position rolls back).
+  `NFKMLXLanguageBackend`,
   `NFKMLXGemma3Backend`, `NFKMLXDeepSeekBackend`, `NFKMLXGraniteBackend`, and the cached
   `NFKMLXDecoderBackend` (Qwen3.5/3.8, below) keep conversation caches; Gemma 3n, the multimodal backends,
   and the prefill-only backends do not. The store is generic

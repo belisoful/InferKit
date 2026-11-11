@@ -96,8 +96,8 @@ final class NFKMLXConversationCacheTests: XCTestCase {
         let single = try backend()
         XCTAssertEqual(try cachedTokens(single, opening, reuse: true), 0)
         XCTAssertEqual(try cachedTokens(single, unrelated, reuse: true), 0)
-        XCTAssertEqual(try cachedTokens(single, continuation, reuse: true), 0,
-                       "one retained cache holds only the last prompt, which shares nothing")
+        XCTAssertGreaterThan(try cachedTokens(single, continuation, reuse: true), 0,
+                             "an unnamed request continues the unnamed conversation its prompt extends")
 
         let named = try backend()
         XCTAssertEqual(try cachedTokens(named, opening, conversation: "a"), 0)
@@ -113,7 +113,8 @@ final class NFKMLXConversationCacheTests: XCTestCase {
         let backend = try backend()
         XCTAssertEqual(try cachedTokens(backend, opening, conversation: "a"), 0)
         XCTAssertEqual(try cachedTokens(backend, unrelated), 0)
-        XCTAssertEqual(backend.promptCacheLength, 0, "a request that does not ask for reuse keeps no cache")
+        XCTAssertGreaterThan(backend.promptCacheLength, 0, "a request that names none keeps an unnamed conversation")
+        XCTAssertEqual(backend.conversationCacheCount, 2)
         XCTAssertGreaterThan(try cachedTokens(backend, continuation, conversation: "a"), 0)
     }
 
@@ -152,13 +153,14 @@ final class NFKMLXConversationCacheTests: XCTestCase {
         try requireMLXRuntime()
         let backend = try backend()
         XCTAssertEqual(backend.backendStatus["conversation_caches"] as? Int, 0)
-        XCTAssertEqual(backend.backendStatus["conversation_cache_byte_budget"] as? Int, 2 << 30)
         XCTAssertEqual(try cachedTokens(backend, opening, conversation: "a"), 0)
-        XCTAssertEqual(try cachedTokens(backend, opening, reuse: true), 0)
+        XCTAssertEqual(try cachedTokens(backend, unrelated), 0)
         let status = backend.backendStatus
-        XCTAssertEqual(status["conversation_caches"] as? Int, 1)
+        XCTAssertEqual(status["conversation_caches"] as? Int, 2, "the named conversation and the unnamed one")
         XCTAssertEqual(status["conversation_cache_bytes"] as? Int, backend.conversationCacheBytes)
-        XCTAssertGreaterThan(status["prompt_cache_length"] as? Int ?? 0, 0, "the unnamed retained cache")
+        XCTAssertEqual(status["conversation_cache_byte_budget"] as? Int, backend.conversationCacheByteBudget,
+                       "the budget the run derived from the memory")
+        XCTAssertGreaterThan(status["prompt_cache_length"] as? Int ?? 0, 0, "the unnamed conversation")
         backend.conversationCacheByteBudget = 0
         XCTAssertEqual(backend.backendStatus["conversation_caches"] as? Int, 0, "lowering the budget refreshes it")
         XCTAssertEqual(backend.backendStatus["conversation_cache_byte_budget"] as? Int, 0)
@@ -188,5 +190,24 @@ final class NFKMLXConversationCacheTests: XCTestCase {
         XCTAssertEqual(backend.conversationCacheCount, 0)
         XCTAssertEqual(backend.backendStatus["conversation_cache_bytes"] as? Int, 0)
         XCTAssertEqual(backend.releaseIdleConversationCaches(), 0)
+    }
+
+    // A released conversation, named or not, is written to the spill directory, and the next request that
+    // extends it continues from disk.
+    func testAReleasedConversationContinuesFromTheSpillDirectory() throws {
+        try requireMLXRuntime()
+        let backend = try backend()
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("language-spill-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        backend.conversationSpillDirectoryURL = directory
+        for conversation in ["a", nil] as [String?] {
+            XCTAssertEqual(try cachedTokens(backend, opening, conversation: conversation), 0)
+            XCTAssertGreaterThan(backend.releaseIdleConversationCaches(), 0)
+            XCTAssertEqual(backend.conversationCacheCount, 0)
+            XCTAssertGreaterThan(try cachedTokens(backend, continuation, conversation: conversation), 0,
+                                 "continued from disk")
+            backend.resetPromptCache()
+        }
     }
 }
