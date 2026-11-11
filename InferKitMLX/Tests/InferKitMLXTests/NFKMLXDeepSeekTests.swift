@@ -2824,6 +2824,21 @@ final class NFKMLXDeepSeekTests: XCTestCase {
         XCTAssertEqual(cache.sharedPrefixLength, 0, "an extension shorter than a ratio prefills from the start")
         XCTAssertEqual(shortAnswer, net.generate(prompt: short, options: options))
 
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("deepseek-spill-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let spill = NFKMLXConversationSpill(directory: directory, byteBudget: 1 << 30)
+        try spill.write(cache, name: "a")
+        let restored = try XCTUnwrap(spill.take("a") { url, record in
+            try NFKMLXDeepSeekPromptCache.load(from: url, tokens: record.tokens, configuration: oracleShaped)
+        })
+        let extended = short + [9, 2, 12, 7, 3, 1, 6, 8]
+        XCTAssertEqual(restored.resumablePosition(for: extended), short.count)
+        XCTAssertEqual(net.generate(prompt: extended, embeddings: nil, images: nil, options: options, promptCache: restored,
+                                    onToken: nil),
+                       net.generate(prompt: extended, options: options), "a prefill read back from disk answers as a fresh run")
+        XCTAssertEqual(restored.sharedPrefixLength, short.count)
+
         let other = [8, 8, 2, 6, 10]
         _ = net.generate(prompt: other, embeddings: nil, images: nil, options: options, promptCache: cache, onToken: nil)
         XCTAssertEqual(cache.sharedPrefixLength, 0, "a prompt that does not extend the last one starts over")

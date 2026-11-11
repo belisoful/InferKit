@@ -592,3 +592,46 @@ public final class NFKMLXGraniteHybrid: NSObject {
         try NFKMLXWeights.apply(merged, to: net)
     }
 }
+
+extension NFKMLXGranitePromptCache: NFKMLXSpillableConversation {
+    /// Only the last prompt's end resumes, so the record lists no earlier position.
+    var resumablePositions: [Int]? { [] }
+    var optionsSignature: String { "granite" }
+
+    func resumablePosition(for prompt: [Int]) -> Int {
+        kept != nil && prompt.count > tokens.count && prompt.starts(with: tokens) ? tokens.count : 0
+    }
+
+    /// Writes the kept caches' arrays to a safetensors file.
+    func save(to url: URL) throws {
+        guard let kept else { return }
+        var arrays = ["token_count": MLXArray(Int32(tokens.count))]
+        for (index, layer) in kept.mamba.enumerated() {
+            if let inputs = layer?.convolutionInputs { arrays["mamba.\(index).convolution"] = inputs }
+            if let state = layer?.state { arrays["mamba.\(index).state"] = state }
+        }
+        for (index, layer) in kept.attention.enumerated() {
+            if let keys = layer?.keys { arrays["attention.\(index).keys"] = keys }
+            if let values = layer?.values { arrays["attention.\(index).values"] = values }
+        }
+        try MLX.save(arrays: arrays, metadata: [:], url: url)
+    }
+
+    /// Reads what ``save(to:)`` wrote as the prefill of `tokens`.
+    static func load(from url: URL, tokens: [Int], layerTypes: [NFKMLXGraniteLayerKind]) throws -> NFKMLXGranitePromptCache? {
+        let arrays = try loadArrays(url: url)
+        guard arrays["token_count"].map({ Int($0.item(Int32.self)) }) == tokens.count else { return nil }
+        let cache = NFKMLXGraniteCache(layerTypes: layerTypes)
+        for (index, layer) in cache.mamba.enumerated() {
+            layer?.convolutionInputs = arrays["mamba.\(index).convolution"]
+            layer?.state = arrays["mamba.\(index).state"]
+        }
+        for (index, layer) in cache.attention.enumerated() {
+            layer?.keys = arrays["attention.\(index).keys"]
+            layer?.values = arrays["attention.\(index).values"]
+        }
+        let restored = NFKMLXGranitePromptCache()
+        restored.finish(tokens, cache: cache)
+        return restored
+    }
+}

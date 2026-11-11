@@ -685,3 +685,39 @@ public final class NFKMLXGemma3Language: NSObject {
         try NFKMLXWeights.apply(mapped, to: net)
     }
 }
+
+extension NFKMLXGemma3PromptCache: NFKMLXSpillableConversation {
+    var resumablePositions: [Int]? { nil }
+    var optionsSignature: String { "sliding \(slidingWindow)" }
+
+    func resumablePosition(for prompt: [Int]) -> Int {
+        let limit = Swift.min(tokens.count, Swift.max(prompt.count - 1, 0))
+        return zip(tokens[..<limit], prompt).prefix { $0.0 == $0.1 }.count
+    }
+
+    /// Writes both caches' retained rows and the token count to a safetensors file.
+    func save(to url: URL) throws {
+        var arrays = ["token_count": MLXArray(Int32(tokens.count))]
+        for (key, value) in cache.full.exportedArrays() { arrays["full." + key] = value }
+        for (key, value) in cache.sliding.exportedArrays() { arrays["sliding." + key] = value }
+        try MLX.save(arrays: arrays, metadata: ["dtype": NFKMLXConversationSpill.name(of: cache.full.storedDTypeForExport)],
+                     url: url)
+    }
+
+    /// Reads what ``save(to:)`` wrote for `tokens`, or nil where the file holds another count.
+    static func load(from url: URL, tokens: [Int], kinds: [NFKMLXGemmaAttentionKind],
+                     slidingWindow: Int) throws -> NFKMLXGemma3PromptCache? {
+        let (arrays, metadata) = try loadArraysAndMetadata(url: url)
+        guard arrays["token_count"].map({ Int($0.item(Int32.self)) }) == tokens.count else { return nil }
+        let restored = NFKMLXGemma3PromptCache(kinds: kinds, slidingWindow: slidingWindow)
+        let dtype = NFKMLXConversationSpill.dtype(named: metadata["dtype"] ?? "float32")
+        func part(_ prefix: String) -> [String: MLXArray] {
+            Dictionary(uniqueKeysWithValues: arrays.filter { $0.key.hasPrefix(prefix) }
+                .map { (String($0.key.dropFirst(prefix.count)), $0.value) })
+        }
+        restored.cache.full.restore(arrays: part("full."), offset: tokens.count, storedDType: dtype)
+        restored.cache.sliding.restore(arrays: part("sliding."), offset: tokens.count, storedDType: dtype)
+        restored.tokens = tokens
+        return restored
+    }
+}

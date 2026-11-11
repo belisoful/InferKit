@@ -545,6 +545,13 @@ attention and feed-forward.
   `NFKModelInfoKeyValueBytesPerToken`), and evicted, released (`releaseIdleConversationCaches`), and freed
   conversations spill through `NFKMLXConversationSpill` (generic over `NFKMLXSpillableConversation`; the
   dense cache writes `save(to:)`, its record carries no snapshot positions since any position rolls back).
+  Gemma 3, DeepSeek, and Granite share it through `NFKMLXConversationKeeper`'s extension
+  (`conversation(named:reuses:prompt:signature:usable:make:read:)`, `finish`, `releaseAll`, `resolveSpill`,
+  `fixBudget`) and `NFKMLXConversationBudget` (weights, reserve, and `NFKModelInfoKeyValueBytesPerToken` at
+  the window or context length). Their records: Gemma 3 any position (`full.`/`sliding.` exports; signature
+  the sliding window), DeepSeek and Granite only the last prompt's end (`resumablePositions` empty; DeepSeek's
+  `Snapshot` arrays, Granite's Mamba and attention arrays). A keyless Gemma 3 prompt with an image reuses
+  nothing. Gemma 3 is built without its release URL, so its spill is off until set.
   `NFKMLXLanguageBackend`,
   `NFKMLXGemma3Backend`, `NFKMLXDeepSeekBackend`, `NFKMLXGraniteBackend`, and the cached
   `NFKMLXDecoderBackend` (Qwen3.5/3.8, below) keep conversation caches; Gemma 3n, the multimodal backends,

@@ -2054,6 +2054,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `conversationSpillDirectoryURL` within `conversationSpillByteBudget` and read back by a later request, as the
   hybrid decoder's are.
 
+#### Gemma 3, DeepSeek, and Granite continue keyless conversations and spill them
+
+- `NFKMLXGemma3Backend`, `NFKMLXDeepSeekBackend`, and `NFKMLXGraniteBackend` continue a request that names no
+  conversation from the unnamed conversation its prompt continues furthest, and set their budget from the memory
+  beside the model unless `conversationCacheByteBudget` is set; it was 2 GiB. A keyless Gemma 3 prompt with an
+  image keeps nothing, since its placeholder ids are the same for every image.
+- Each writes the conversations its budget, `releaseIdleConversationCaches`, or an unload lets go to
+  `conversationSpillDirectoryURL` within `conversationSpillByteBudget`, and a later request reads one back. DeepSeek
+  and Granite default to a directory under the user's caches for their release; Gemma 3, built without its release,
+  writes none until the directory is set. A Gemma 3 or Granite model that holds adapters writes none, and a kept
+  conversation computed at other adapter strengths starts over.
+
 #### The hybrid decoder continues a conversation from its kept cache
 
 - `NFKMLXDecoderBackend` over a Qwen3.5 or Qwen3.8 release keeps each conversation's cache between requests, so

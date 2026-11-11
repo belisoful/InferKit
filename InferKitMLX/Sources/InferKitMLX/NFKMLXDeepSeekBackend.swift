@@ -243,11 +243,13 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
 
     /// The bytes the conversations' prompt caches may hold together.
     ///
-    /// @discussion A request that names its conversation under `NFKParameterConversationKey`
-    /// continues from the prefill of that conversation's last prompt, so the turns of several chats
-    /// served at once each prefill only what they add. When the caches outgrow the budget, the least
-    /// recently used conversations are dropped, never the one a request is running. Lowering the
-    /// budget drops down to it at once. Defaults to 2 GiB. Introduced in InferKit 0.4.0.
+    /// @discussion A request continues the conversation its `NFKParameterConversationKey` names, or, naming
+    /// none, the kept conversation its prompt continues furthest, so the turns of several chats served at
+    /// once each prefill only what they add. When the caches outgrow the budget, the least recently used
+    /// conversations are written to ``conversationSpillDirectoryURL`` and dropped, never the one a request
+    /// just ran. Until it is set, the budget is what the memory planned beside the model affords after one
+    /// run's keys and values at the context, recomputed each run; setting it fixes it, and lowering it drops
+    /// down to it at once. Introduced in InferKit 0.4.0.
     @objc public var conversationCacheByteBudget: Int {
         get {
             generationLock.lock(); defer { generationLock.unlock() }
@@ -255,9 +257,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         }
         set {
             generationLock.lock(); defer { generationLock.unlock() }
-            conversations.states.byteBudget = newValue
-            conversations.states.evict()
-            conversations.refresh()
+            conversations.fixBudget(newValue)
         }
     }
 
@@ -278,19 +278,49 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     public func resetPromptCache(forConversation conversation: String) {
         generationLock.lock(); defer { generationLock.unlock() }
         conversations.states.remove(conversation)
+        conversations.spill?.remove(named: conversation)
         conversations.refresh()
     }
 
-    /// Drops every conversation's prompt cache when no run is in progress, and returns the bytes they held;
-    /// returns 0 at once while a run holds them. `NFKInferenceServer` calls it to relieve memory. Introduced
-    /// in InferKit 0.4.0.
+    /// Writes every conversation's prompt cache to the spill directory and drops it from memory when no run is
+    /// in progress, and returns the bytes they held; returns 0 at once while a run holds them.
+    /// `NFKInferenceServer` calls it to relieve memory, and the reloadable backend before it unloads the model.
+    /// Introduced in InferKit 0.4.0.
     @objc public func releaseIdleConversationCaches() -> Int {
         guard generationLock.try() else { return 0 }
         defer { generationLock.unlock() }
-        let held = conversations.states.heldBytes
-        conversations.states.removeAll()
-        conversations.refresh()
-        return held
+        return conversations.releaseAll(spills: true)
+    }
+
+    /// The directory conversations the memory budget lets go are written to, so a later request continues one
+    /// without its prefill, after an unload or a restart too; nil writes none. A backend over a release
+    /// directory defaults to a directory under the user's caches that only the same release and weights read.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillDirectoryURL: URL? {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            resolveSpill()
+            return conversations.spill?.directory
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.setSpillDirectory(newValue)
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk; the least recently written go first past it.
+    /// Defaults to 8 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            resolveSpill()
+            return conversations.spill?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            resolveSpill()
+            conversations.spill?.byteBudget = newValue
+        }
     }
 
     /// Releases up to `byteCount` of the routed experts the model caches, keeping `keepingByteCount`, and
@@ -361,8 +391,10 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             embeddings = inputs.embeddings
             spanMask = inputs.images
         }
-        let (produced, cached) = generate(promptTokens, embeddings: embeddings, images: spanMask,
-                                          options: options, conversation: NFKMLXConversation.name(of: request))
+        let conversation = NFKMLXConversation.name(of: request)
+        let (produced, cached) = generate(promptTokens, embeddings: embeddings, images: spanMask, options: options,
+                                          conversation: conversation,
+                                          reuses: NFKMLXConversation.reuses(request) && (conversation != nil || embeddings == nil))
         var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map(NSNumber.init(value:))),
                                                 reasoning: "", request: request, format: toolCallFormat, source: identifier)
         outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
@@ -459,7 +491,8 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     /// One generation at a time. A run threads its own cache through the shared decoder, so two
     /// interleaving their steps would read each other's positions.
     private func generate(_ tokens: [Int], embeddings: MLXArray? = nil, images: MLXArray? = nil,
-                          options: NFKMLXGenerationOptions, conversation: String?) -> (produced: [Int], cached: Int) {
+                          options: NFKMLXGenerationOptions, conversation: String?,
+                          reuses: Bool) -> (produced: [Int], cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
         var resolved = options
         resolved.constraint = constraint(for: options)
@@ -471,22 +504,25 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
                                         images: images, options: resolved), 0)
         }
         let configuration = holder.net.configuration
-        let promptCache = conversation.map { name in
-            conversations.states.state(for: name) { NFKMLXDeepSeekPromptCache(configuration: configuration) }
-        }
+        resolveSpill()
+        let (name, kept) = conversations.conversation(
+            named: conversation, reuses: reuses, prompt: tokens, signature: "deepseek",
+            make: { NFKMLXDeepSeekPromptCache(configuration: configuration) },
+            read: { url, record in try NFKMLXDeepSeekPromptCache.load(from: url, tokens: record.tokens, configuration: configuration) })
+        let promptCache = name == nil ? nil : kept
         defer {
-            if let conversation {
-                // A failed evaluation left a prefill no later prompt may extend.
-                if NFKMLXErrorScope.hasFailed {
-                    conversations.states.remove(conversation)
-                }
-                conversations.states.evict(keeping: conversation)
-            }
-            conversations.refresh()
+            // A failed evaluation left a prefill no later prompt may extend.
+            conversations.finish(name, failed: NFKMLXErrorScope.hasFailed, afforded: NFKMLXConversationBudget.afforded(
+                info: modelInfo, runBytes: NFKMLXConversationBudget.runBytes(info: modelInfo, positions: options.contextWindow)), spills: true)
         }
         let produced = holder.net.generate(prompt: tokens, embeddings: embeddings, images: images,
                                            options: resolved, promptCache: promptCache, onToken: nil)
         return (produced, promptCache?.sharedPrefixLength ?? 0)
+    }
+
+    /// Settles the spill directory, defaulting it from the release on first use.
+    private func resolveSpill() {
+        conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
     }
 
     /// The constraint a request asks for: a schema set on the options, or none.

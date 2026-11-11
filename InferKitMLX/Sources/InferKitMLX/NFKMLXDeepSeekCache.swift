@@ -249,3 +249,53 @@ final class NFKMLXDeepSeekPromptCache: NFKMLXConversationState {
         sharedPrefixLength = 0
     }
 }
+
+extension NFKMLXDeepSeekPromptCache: NFKMLXSpillableConversation {
+    /// Only the last prompt's end resumes, so the record lists no earlier position.
+    var resumablePositions: [Int]? { [] }
+    var optionsSignature: String { "deepseek" }
+
+    func resumablePosition(for prompt: [Int]) -> Int {
+        let minimum = configuration.minimumPrefillChunk
+        guard snapshot != nil, tokens.count >= minimum, prompt.count - tokens.count >= minimum,
+              prompt.starts(with: tokens) else {
+            return 0
+        }
+        return tokens.count
+    }
+
+    /// Writes the kept snapshot's arrays and offset to a safetensors file.
+    func save(to url: URL) throws {
+        guard let snapshot else { return }
+        var arrays = ["offset": MLXArray(Int32(snapshot.offset)), "window_count": MLXArray(Int32(snapshot.window.count))]
+        for (index, rows) in snapshot.window.enumerated() { if let rows { arrays["window.\(index)"] = rows } }
+        for (name, part) in [("compressed", snapshot.compressed), ("index_keys", snapshot.indexKeys),
+                             ("pending_values", snapshot.pendingValues), ("pending_scores", snapshot.pendingScores)] {
+            for (layer, rows) in part { arrays["\(name).\(layer)"] = rows }
+        }
+        if let history = snapshot.engramHistory { arrays["engram_history"] = history }
+        if let states = snapshot.draftStates { arrays["draft_states"] = states }
+        try MLX.save(arrays: arrays, metadata: [:], url: url)
+    }
+
+    /// Reads what ``save(to:)`` wrote as the prefill of `tokens`.
+    static func load(from url: URL, tokens: [Int], configuration: NFKMLXDeepSeekConfiguration) throws -> NFKMLXDeepSeekPromptCache? {
+        let arrays = try loadArrays(url: url)
+        guard let offset = arrays["offset"].map({ Int($0.item(Int32.self)) }),
+              let count = arrays["window_count"].map({ Int($0.item(Int32.self)) }) else {
+            return nil
+        }
+        func part(_ name: String) -> [Int: MLXArray] {
+            Dictionary(uniqueKeysWithValues: arrays.compactMap { key, value in
+                key.hasPrefix(name + ".") ? Int(key.dropFirst(name.count + 1)).map { ($0, value) } : nil
+            })
+        }
+        let restored = NFKMLXDeepSeekPromptCache(configuration: configuration)
+        restored.tokens = tokens
+        restored.snapshot = NFKMLXDeepSeekCache.Snapshot(
+            offset: offset, window: (0 ..< count).map { arrays["window.\($0)"] }, compressed: part("compressed"),
+            indexKeys: part("index_keys"), pendingValues: part("pending_values"), pendingScores: part("pending_scores"),
+            engramHistory: arrays["engram_history"], draftStates: arrays["draft_states"])
+        return restored
+    }
+}

@@ -250,6 +250,119 @@ protocol NFKMLXSpillableConversation: NFKMLXConversationState {
     var resumablePositions: [Int]? { get }
     var optionsSignature: String { get }
     func save(to url: URL) throws
+    /// The position a prompt continues the conversation from, without moving anything.
+    func resumablePosition(for prompt: [Int]) -> Int
+}
+
+extension NFKMLXConversationKeeper where State: NFKMLXSpillableConversation {
+    /// The conversation a run continues and the name it is kept under, or a conversation kept under no name
+    /// where `reuses` is false. A named run continues its own conversation, held or read back from the spill
+    /// directory by `read`. A run that names none continues the unnamed conversation, held or on disk, its
+    /// prompt resumes furthest into, where the resumed prefix is at least as long as what the rollback
+    /// discards, so one client's prompt never discards most of another's conversation; otherwise it starts
+    /// one. A held conversation `usable` refuses starts over. Runs under the backend's generation lock.
+    func conversation(named name: String?, reuses: Bool, prompt: [Int], signature: String,
+                      usable: (State) -> Bool = { _ in true }, make: () -> State,
+                      read: (URL, NFKMLXConversationSpill.Record) throws -> State?) -> (name: String?, state: State) {
+        guard reuses else { return (nil, make()) }
+        let chosen: String
+        if let name {
+            chosen = name
+        } else {
+            let prefix = NFKMLXConversation.unnamedPrefix
+            let inMemory = states.held
+                .filter { $0.name.hasPrefix(prefix) && usable($0.state) }
+                .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.tokens.count) }
+                .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
+                .max { $0.kept < $1.kept }
+            let onDisk = spill?.resumable(for: prompt, prefix: prefix, options: signature)
+            if let onDisk, onDisk.kept > inMemory?.kept ?? 0 {
+                chosen = onDisk.name
+            } else {
+                chosen = inMemory?.name ?? prefix + UUID().uuidString
+            }
+        }
+        let held = states.held.contains { $0.name == chosen }
+        let spilled = held ? nil : spill?.take(chosen) { url, record in
+            record.options == signature ? try read(url, record) : nil
+        }
+        return (chosen, states.state(for: chosen, isUsable: usable) { spilled ?? make() })
+    }
+
+    /// Ends a run of the conversation `name`: drops it where the run failed, sets the budget to the one a
+    /// caller fixed or else `afforded`, and lets go of the least recently used conversations past it, writing
+    /// each to the spill directory where `spills`. Runs under the backend's generation lock.
+    func finish(_ name: String?, failed: Bool, afforded: Int, spills: Bool) {
+        if let name {
+            if failed {
+                states.remove(name)
+            }
+            states.byteBudget = fixedByteBudget ?? afforded
+            states.evict(keeping: name) { name, state in
+                if spills { try? spill?.write(state, name: name) }
+            }
+        }
+        refresh()
+    }
+
+    /// Defaults the spill directory, once, to the one ``NFKMLXConversationSpill/defaultDirectory(release:identifier:weights:)``
+    /// names for `release`; a backend without a release writes none until a caller sets one. Runs under the
+    /// backend's generation lock.
+    func resolveSpill(release: URL?, identifier: String, info: () -> [String: Any]) {
+        guard !spillResolved else { return }
+        spillResolved = true
+        spill = release.map {
+            NFKMLXConversationSpill(directory: NFKMLXConversationSpill.defaultDirectory(
+                release: $0, identifier: identifier, weights: NFKMLXConversationSpill.weightsDescription(info())),
+                                    byteBudget: NFKMLXConversationSpill.defaultByteBudget)
+        }
+    }
+
+    /// Fixes the budget at `bytes` and lets go of the least recently used conversations past it, writing each
+    /// to the spill directory. Runs under the backend's generation lock.
+    func fixBudget(_ bytes: Int) {
+        fixedByteBudget = bytes
+        states.byteBudget = bytes
+        states.evict { name, state in try? spill?.write(state, name: name) }
+        refresh()
+    }
+
+    /// Sets the spill directory, or none for nil, keeping the disk budget. Runs under the backend's generation lock.
+    func setSpillDirectory(_ directory: URL?) {
+        spill = directory.map { NFKMLXConversationSpill(directory: $0, byteBudget: spill?.byteBudget
+                                                        ?? NFKMLXConversationSpill.defaultByteBudget) }
+        spillResolved = true
+    }
+
+    /// Writes every conversation to the spill directory where `spills`, drops them all, and returns the bytes
+    /// they held. Runs under the backend's generation lock.
+    func releaseAll(spills: Bool) -> Int {
+        let held = states.heldBytes
+        if spills {
+            for (name, state) in states.held {
+                try? spill?.write(state, name: name)
+            }
+        }
+        states.removeAll()
+        refresh()
+        return held
+    }
+}
+
+/// The bytes a backend's conversations may hold where no budget is set: the planned working set less the
+/// weights the model holds, the reserve beside them, and `runBytes`, what one run's cache takes.
+enum NFKMLXConversationBudget {
+    static func afforded(info: [String: Any], runBytes: Int) -> Int {
+        let budget = NFKMLXResidencyBudget.current()
+        let weights = info[NFKModelInfoWeightBytes] as? Int ?? 0
+        return Swift.max(0, budget - weights - NFKMLXResidencyBudget.reserve(forBudget: budget) - runBytes)
+    }
+
+    /// One run's keys and values from a model's description: `NFKModelInfoKeyValueBytesPerToken` over
+    /// `positions`, or over the context length the description states where `positions` is nil.
+    static func runBytes(info: [String: Any], positions: Int?) -> Int {
+        (info[NFKModelInfoKeyValueBytesPerToken] as? Int ?? 0) * (positions ?? info[NFKModelInfoContextLength] as? Int ?? 0)
+    }
 }
 
 extension NFKMLXHybridConversation: NFKMLXSpillableConversation {

@@ -158,9 +158,20 @@ final class NFKMLXGraniteHybridTests: XCTestCase {
         XCTAssertEqual(try run("hello", conversation: "chat").cached, 0,
                        "a prompt that does not extend the last starts again")
         XCTAssertEqual(try run("hello hello", conversation: "other").cached, 0)
-        XCTAssertEqual(backend.conversationCacheCount, 2)
+        XCTAssertEqual(backend.conversationCacheCount, 3, "chat, other, and the keyless run's unnamed conversation")
+        XCTAssertEqual(try run("hello hello hello hello hello", conversation: nil).cached, second.input,
+                       "a keyless request continues the unnamed conversation its prompt extends")
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("granite-spill-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        backend.conversationSpillDirectoryURL = directory
+        XCTAssertEqual(try run("hello hello hello", conversation: "disk").cached, 0)
         XCTAssertGreaterThan(backend.releaseIdleConversationCaches(), 0)
         XCTAssertEqual(backend.conversationCacheCount, 0)
+        let spilled = try run("hello hello hello hello", conversation: "disk")
+        XCTAssertGreaterThan(spilled.cached, 0, "continued from the spill directory")
+        XCTAssertEqual(spilled.text, fresh.text)
     }
 
     func testParameterNamesFollowTheModuleLayout() throws {

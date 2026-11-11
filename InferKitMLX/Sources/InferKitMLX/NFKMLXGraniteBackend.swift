@@ -105,11 +105,13 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
 
     /// The bytes the conversations' prompt caches may hold together.
     ///
-    /// @discussion A request that names its conversation under `NFKParameterConversationKey`
-    /// continues from the prefill of that conversation's last prompt where its own prompt extends
-    /// it, so each turn prefills only what it adds. When the caches outgrow the budget, the least
-    /// recently used conversations are dropped, never the one a request is running. Lowering the
-    /// budget drops down to it at once. Defaults to 2 GiB. Introduced in InferKit 0.4.0.
+    /// @discussion A request continues the conversation its `NFKParameterConversationKey` names, or, naming
+    /// none, the kept conversation its prompt continues furthest, so the turns of several chats served at
+    /// once each prefill only what they add. When the caches outgrow the budget, the least recently used
+    /// conversations are written to ``conversationSpillDirectoryURL`` and dropped, never the one a request
+    /// just ran. Until it is set, the budget is what the memory planned beside the model affords after one
+    /// run's keys and values at the context, recomputed each run; setting it fixes it, and lowering it drops
+    /// down to it at once. Introduced in InferKit 0.4.0.
     @objc public var conversationCacheByteBudget: Int {
         get {
             generationLock.lock(); defer { generationLock.unlock() }
@@ -117,9 +119,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
         }
         set {
             generationLock.lock(); defer { generationLock.unlock() }
-            conversations.states.byteBudget = newValue
-            conversations.states.evict()
-            conversations.refresh()
+            conversations.fixBudget(newValue)
         }
     }
 
@@ -140,6 +140,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     public func resetPromptCache(forConversation conversation: String) {
         generationLock.lock(); defer { generationLock.unlock() }
         conversations.states.remove(conversation)
+        conversations.spill?.remove(named: conversation)
         conversations.refresh()
     }
 
@@ -150,22 +151,56 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
         conversations.refresh()
     }
 
-    /// Drops every conversation's prompt cache when no run is in progress, and returns the bytes they held;
-    /// returns 0 at once while a run holds them. `NFKInferenceServer` calls it to relieve memory. Introduced
-    /// in InferKit 0.4.0.
+    /// Writes every conversation's prompt cache to the spill directory and drops it from memory when no run is
+    /// in progress, and returns the bytes they held; returns 0 at once while a run holds them.
+    /// `NFKInferenceServer` calls it to relieve memory, and the reloadable backend before it unloads the model.
+    /// Introduced in InferKit 0.4.0.
     @objc public func releaseIdleConversationCaches() -> Int {
         guard generationLock.try() else { return 0 }
         defer { generationLock.unlock() }
-        let held = conversations.states.heldBytes
-        conversations.states.removeAll()
-        conversations.refresh()
-        return held
+        return conversations.releaseAll(spills: adapterStrengths.isEmpty)
+    }
+
+    /// The directory conversations the memory budget lets go are written to, so a later request continues one
+    /// without its prefill, after an unload or a restart too; nil writes none. A backend over a release
+    /// directory defaults to a directory under the user's caches that only the same release and weights read.
+    /// A model that holds adapters writes none. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillDirectoryURL: URL? {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            resolveSpill()
+            return conversations.spill?.directory
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.setSpillDirectory(newValue)
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk; the least recently written go first past it.
+    /// Defaults to 8 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            resolveSpill()
+            return conversations.spill?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            resolveSpill()
+            conversations.spill?.byteBudget = newValue
+        }
     }
 
     /// The conversation caches as of the last run or change: `conversation_caches`,
     /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it
     /// under the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
     @objc public var backendStatus: [String: Any] { conversations.status }
+
+    /// Settles the spill directory, defaulting it from the release on first use.
+    private func resolveSpill() {
+        conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+    }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
@@ -200,7 +235,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
         if let (promptTokens, format) = try templatePrompt(for: request) {
             let (produced, limit, cached) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens,
                                                          seed: seed, stops: templateStopTokens,
-                                                         conversation: conversation)
+                                                         conversation: conversation, reuses: NFKMLXConversation.reuses(request))
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
                                                     reasoning: "", request: request, format: format, source: identifier)
             outputs[NFKOutputFinishReason] = NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit, outputs: outputs)
@@ -210,7 +245,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
         }
         let promptTokens = try tokens(for: request)
         let (produced, limit, cached) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens,
-                                                     seed: seed, stops: stopTokens, conversation: conversation)
+                                                     seed: seed, stops: stopTokens, conversation: conversation, reuses: NFKMLXConversation.reuses(request))
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
@@ -265,7 +300,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     /// prompt's kept prefill, and `cached` counts the tokens it held. A backend built without a cached
     /// step runs the whole growing sequence each step.
     private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
-                          stops: Set<Int>, conversation: String?) throws -> (tokens: [Int], limit: Int, cached: Int) {
+                          stops: Set<Int>, conversation: String?, reuses: Bool) throws -> (tokens: [Int], limit: Int, cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
                                                   contextLength: contextLength, source: identifier)
@@ -281,24 +316,24 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
             }
             return (produced, limit, 0)
         }
+        resolveSpill()
         // A conversation's prefill computed at other adapter strengths starts over.
         let strengths = NFKMLXAdapterRun.strengths
-        let kept = conversation.map { name in
-            conversations.states.state(for: name, isUsable: { $0.adapterStrengths == strengths }) {
+        let layerTypes = cached.layerTypes
+        let (name, state) = conversations.conversation(
+            named: conversation, reuses: reuses, prompt: promptTokens, signature: "granite",
+            usable: { $0.adapterStrengths == strengths },
+            make: {
                 let made = NFKMLXGranitePromptCache()
                 made.adapterStrengths = strengths
                 return made
-            }
-        }
+            },
+            read: { url, record in try NFKMLXGranitePromptCache.load(from: url, tokens: record.tokens, layerTypes: layerTypes) })
+        let kept = name == nil ? nil : state
         defer {
-            if let conversation {
-                // A failed evaluation left a prefill no later prompt may extend.
-                if NFKMLXErrorScope.hasFailed {
-                    conversations.states.remove(conversation)
-                }
-                conversations.states.evict(keeping: conversation)
-            }
-            conversations.refresh()
+            // A failed evaluation left a prefill no later prompt may extend.
+            conversations.finish(name, failed: NFKMLXErrorScope.hasFailed, afforded: NFKMLXConversationBudget.afforded(
+                info: modelInfo, runBytes: NFKMLXConversationBudget.runBytes(info: modelInfo, positions: nil)), spills: adapterStrengths.isEmpty)
         }
         let (cache, start) = kept?.begin(promptTokens, layerTypes: cached.layerTypes)
             ?? (NFKMLXGraniteCache(layerTypes: cached.layerTypes), 0)

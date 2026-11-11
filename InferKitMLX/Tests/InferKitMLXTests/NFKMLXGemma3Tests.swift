@@ -412,13 +412,24 @@ final class NFKMLXGemma3Tests: XCTestCase {
         }
         XCTAssertEqual(try cachedTokens("Hi", conversation: "a"), 0)
         XCTAssertGreaterThanOrEqual(try cachedTokens("Hi Hi", conversation: "a"), 3, "the first turn's prompt is reused")
-        XCTAssertEqual(try cachedTokens("Hi Hi", conversation: nil), 0, "a request in no conversation keeps nothing")
+        XCTAssertEqual(try cachedTokens("Hi Hi", conversation: nil), 0, "a request in no conversation starts an unnamed one")
+        XCTAssertGreaterThanOrEqual(try cachedTokens("Hi Hi Hi", conversation: nil), 3,
+                                    "a keyless request continues the unnamed conversation its prompt extends")
         XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterConversationKey))
-        XCTAssertEqual(backend.conversationCacheCount, 1)
-        XCTAssertEqual(backend.backendStatus["conversation_caches"] as? Int, 1)
+        XCTAssertEqual(backend.conversationCacheCount, 2)
+        XCTAssertEqual(backend.backendStatus["conversation_caches"] as? Int, 2)
         XCTAssertEqual(backend.backendStatus["conversation_cache_bytes"] as? Int, backend.conversationCacheBytes)
         backend.resetPromptCache(forConversation: "a")
+        XCTAssertEqual(backend.conversationCacheCount, 1)
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gemma3-spill-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        backend.conversationSpillDirectoryURL = directory
+        XCTAssertEqual(try cachedTokens("Hi", conversation: "b"), 0)
+        XCTAssertGreaterThan(backend.releaseIdleConversationCaches(), 0)
         XCTAssertEqual(backend.conversationCacheCount, 0)
+        XCTAssertGreaterThanOrEqual(try cachedTokens("Hi Hi", conversation: "b"), 3, "continued from the spill directory")
     }
 
     func testThePromptExpandsAnImageAndTheBlockIdsMarkIt() throws {

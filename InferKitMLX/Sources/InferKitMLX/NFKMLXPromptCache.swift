@@ -219,6 +219,12 @@ enum NFKMLXConversation {
         }
         return conversation
     }
+
+    /// Whether a request keeps its cache for a later one: unless it sets
+    /// `NFKMLXGenerationParameterKey.reusesPromptCache` to NO.
+    static func reuses(_ request: NFKInferenceRequest) -> Bool {
+        (request.parameter(forKey: NFKMLXGenerationParameterKey.reusesPromptCache) as? NSNumber)?.boolValue ?? true
+    }
 }
 
 /// What a backend keeps for its named conversations, under one byte budget.
@@ -307,6 +313,12 @@ extension NFKMLXConversationStates where State == NFKMLXPromptCache {
 /// request never waits on a run in progress.
 final class NFKMLXConversationKeeper<State: NFKMLXConversationState>: @unchecked Sendable {
     let states: NFKMLXConversationStates<State>
+    /// Where conversations the budget lets go are written, or nil for nowhere.
+    var spill: NFKMLXConversationSpill?
+    /// The budget a caller set, or nil for the one each run derives from the memory.
+    var fixedByteBudget: Int?
+    /// Whether ``spill`` is settled: set by a caller, or defaulted from the release on the first run.
+    var spillResolved = false
     private var figures: [String: Any]
     private let figuresLock = NSLock()
 
