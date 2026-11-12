@@ -71,7 +71,7 @@ The reasons behind each step, and how to find the offender when a leg breaks, ar
    is a truncated run, not a green one. Read the exit code.
 5. `InferKitFoundationModels/`: `swift build` + `swift test` when a change touches that companion
    (all 102 tests across its three test targets).
-6. `InferKitAppleSwift/`: `swift build` + `swift test` when a change touches that companion (all 45
+6. `InferKitAppleSwift/`: `swift build` + `swift test` when a change touches that companion (all 46
    tests across its three test targets; one skips without an installed translation model, and the
    analyzer's live-stream tests skip without installed English speech assets).
 7. `Tools/doc-snippets/check-objc.py` when a change touches an Objective-C block in `README.md`,

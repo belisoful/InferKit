@@ -35,6 +35,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitAppleSwift (companion)
 
+#### The speech analyzer's live profile carries its measured time
+
+- `apple-speech-analyzer`'s live profile holds its time per 0.1 s chunk on an M1 Max, 1.25 ms, a real-time
+  factor of 0.013. The analyzer answers a unit before it has read it, so the time is its throughput: fed
+  faster than real time, the wall time until the transcript reaches the last word, over the chunks fed.
+
 #### The speech analyzer captions a live source
 
 - `NFKSpeechAnalyzerBackend` opens a live stream (`openLiveStream(parameters:)`) that feeds one analyzer
@@ -141,6 +147,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   case and default guardrails, whatever the caller needed.
 
 ### Core (`InferKit`)
+
+#### The live Vision engines carry their measured times
+
+- The live profiles of `vision-face`, `vision-pose`, and `vision-segmentation` hold their time per frame on an
+  M1 Max at 1280 × 720 and 1920 × 1080: 6.7 / 6.6 ms, 8.1 / 8.8 ms, and 26.3 / 28.3 ms.
 
 #### VideoToolbox's frame rate converter keeps its session between frames
 
@@ -2079,6 +2090,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Every live model carries its measured time
+
+- Each live model's profile holds its time per unit on an M1 Max, measured in a release build through the
+  stream a client opens, the unit's conversion to and from tensors included: a video model at 1280 × 720 and
+  1920 × 1080, an audio model per chunk. `-[NFKModelLiveProfile keepsUpWithRate:variant:width:height:chip:]`
+  reads them. At 720p the detectors take 17 to 36 ms a frame, the matting, depth, and segmentation models 52 to 282 ms,
+  Real-ESRGAN 673 ms, and SwinIR about 4.1 s. The audio models answer a chunk at real-time factors of 0.027
+  (Silero VAD) to 0.95 (GTCRN).
 
 #### RIFE v4 reads the core's timestep key
 

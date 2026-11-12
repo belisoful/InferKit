@@ -659,11 +659,31 @@ static BOOL NFKAppleIncludesMachineChoices = YES;
 		for (NSString *identifier in liveOutputs) {
 			byName[identifier].liveProfile = [NFKModelLiveProfile videoFrameProfileWithInputKeys:@[ NFKInputImage ]
 																					  outputKeys:liveOutputs[identifier]
-																						stateful:NO timings:nil];
+																						stateful:NO
+																						 timings:[self liveTimingsForEngine:identifier]];
 		}
 		engines = [byName copy];
 	});
 	return engines;
+}
+
+/*! The measured time per frame of a live engine at 1280 × 720 and 1920 × 1080, through the live stream a
+	client opens, as NFKLiveTimingTests reports it in a release build. */
++ (nullable NSArray<NFKModelLiveTiming *> *)liveTimingsForEngine:(NSString *)identifier
+{
+	NSDictionary<NSString *, NSArray<NSNumber *> *> *milliseconds = @{ @"vision-face": @[ @6.729, @6.571 ],
+																		 @"vision-pose": @[ @8.139, @8.769 ],
+																		 @"vision-segmentation": @[ @26.25, @28.32 ] };
+	NSArray<NSNumber *> *times = milliseconds[identifier];
+	if (times == nil) {
+		return nil;
+	}
+	return @[ [[NFKModelLiveTiming alloc] initWithVariantIdentifier:nil chip:@"Apple M1 Max" width:1280 height:720
+											  millisecondsPerUnit:times[0].doubleValue measuredDate:@"2026-11-11"
+															 note:nil extensions:nil],
+			  [[NFKModelLiveTiming alloc] initWithVariantIdentifier:nil chip:@"Apple M1 Max" width:1920 height:1080
+											  millisecondsPerUnit:times[1].doubleValue measuredDate:@"2026-11-11"
+															 note:nil extensions:nil] ];
 }
 
 #pragma mark Registry

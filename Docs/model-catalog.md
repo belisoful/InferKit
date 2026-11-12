@@ -1242,7 +1242,8 @@ model needs its units in order.
 | `note` | string | no | A sentence on how the timing was measured. |
 
 A model is malformed when a timing names a variant it does not have, or when two timings of one variant
-share a chip and a frame size.
+share a chip and a frame size. A shipped timing is measured in a release build through the stream a client
+opens, and includes converting each unit to and from the model's own tensors.
 
 - `-[NFKModelLiveProfile keepsUpWithRate:variant:width:height:chip:]` answers whether a release keeps up:
   a video timing at the frame size, or the smallest measured size above it, within `1000 / rate`

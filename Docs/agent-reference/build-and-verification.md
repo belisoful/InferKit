@@ -139,8 +139,8 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
 `Tests/`, and `Examples/` found that one instance.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 2093 tests
-   (2026-11-10): the Objective-C `- (void)test` methods under `Tests/` (1969) and in
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 2094 tests
+   (2026-11-11): the Objective-C `- (void)test` methods under `Tests/` (1970) and in
    `Examples/NFKExamples.m` (65, the `InferKitExamples` target), plus the `func test` methods in
    `SwiftExamples/` (59).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
@@ -215,7 +215,7 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 3371 — the model and API suite
+   xcodebuild test -scheme InferKitMLXTests        …    # 3373 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  160 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   68 — the Objective-C ones
    ```
@@ -256,8 +256,9 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    them, since this package evaluates under `swift test`; they exist so an Xcode run cannot quietly
    cover less than the command line does.
 6. `InferKitAppleSwift/` `swift build` + `swift test` when a change touches that companion. That covers
-   all 45 tests across its three test targets (33 / 7 / 5). One skips without an installed translation
-   model, and the analyzer's live-stream tests skip without installed English speech assets. The package carries no per-target shared schemes, so `swift test` is the run that
+   all 46 tests across its three test targets (34 / 7 / 5). One skips without an installed translation
+   model, and the analyzer's live-stream tests skip without installed English speech assets. The live timing
+   tests skip unless `IK_TIME_LIVE`, `IK_TIME_LIVE_APPLE`, or `IK_TIME_LIVE_SPEECH` names a report path. The package carries no per-target shared schemes, so `swift test` is the run that
    covers all three targets.
 
 7. `Tools/doc-snippets/check-objc.py` when a change touches an Objective-C code block in `README.md`,

@@ -70,6 +70,66 @@ final class NFKSpeechAnalyzerLiveStreamTests: XCTestCase {
         return try backend.openLiveStream(parameters: nil)
     }
 
+    /// The analyzer's throughput through the stream, written as a JSON report to the path
+    /// IK_TIME_LIVE_SPEECH names. The analyzer answers asynchronously, so a unit's call returns at once.
+    /// Each run therefore feeds a spoken sentence and 1.5 s of silence in 0.1 s chunks as fast as the stream
+    /// takes them, then drains with empty units until the transcript, final or tentative, reaches the
+    /// sentence's last word: the analyzer has then heard all of it. The time per chunk is that wall time over the chunks fed, and the real-time factor is that wall
+    /// time over the audio fed. The median of three runs after a warm-up run. Runs only in a release
+    /// build, under the Large Model Coordination lock, on a quiet machine.
+    func testTheStreamIsTimedPerChunk() throws {
+        guard let reportPath = ProcessInfo.processInfo.environment["IK_TIME_LIVE_SPEECH"], !reportPath.isEmpty else {
+            throw XCTSkip("set IK_TIME_LIVE_SPEECH to the report's path to time the speech analyzer's stream")
+        }
+        #if DEBUG
+        let debugBuild = true
+        #else
+        let debugBuild = false
+        #endif
+        try XCTSkipIf(debugBuild, "time the stream in a release build (swift test -c release -Xswiftc -enable-testing)")
+        let sentence = try spokenSamples("The weather today is sunny with a light breeze from the west.")
+        let samples = sentence + [Float](repeating: 0, count: 24000)
+        let chunk = 1600
+        let chunks = (samples.count + chunk - 1) / chunk
+        var runs: [Double] = []
+        for run in 0 ..< 4 {
+            let stream = try openStream()
+            defer { stream.close() }
+            var heard = ""
+            func hear(_ result: NFKInferenceResult) throws {
+                let finals = try XCTUnwrap(result.output(forKey: NFKOutputSegments) as? [NFKAudioSegment])
+                heard += finals.compactMap(\.label).joined(separator: " ").lowercased()
+                heard += " " + (try XCTUnwrap(result.output(forKey: NFKOutputTentativeText) as? String)).lowercased()
+            }
+            let started = DispatchTime.now().uptimeNanoseconds
+            for start in stride(from: 0, to: samples.count, by: chunk) {
+                try hear(try stream.result(for: unit(samples[start ..< min(start + chunk, samples.count)])))
+            }
+            let deadline = Date().addingTimeInterval(60)
+            while !heard.contains("west"), Date() < deadline {
+                try hear(try stream.result(for: unit(samples[0 ..< 0])))
+                Thread.sleep(forTimeInterval: 0.002)
+            }
+            let elapsed = Double(DispatchTime.now().uptimeNanoseconds - started) / 1e6
+            XCTAssertTrue(heard.contains("west"), "run \(run): the stream hears the sentence's last word: \(heard)")
+            if run > 0 {
+                runs.append(elapsed)
+            }
+        }
+        runs.sort()
+        let elapsed = runs[runs.count / 2]
+        let milliseconds = elapsed / Double(chunks)
+        let realTimeFactor = elapsed / (Double(samples.count) / 16)
+        let row: [String: Any] = ["model": "apple-speech-analyzer", "chip": NFKHardwareProfile.current.chipName,
+                                  "milliseconds": milliseconds, "realTimeFactor": realTimeFactor,
+                                  "measured": ISO8601DateFormatter.string(from: Date(), timeZone: .current, formatOptions: [.withFullDate]),
+                                  "note": "Fed faster than real time; the wall time until the transcript reaches the last word, over the chunks fed."]
+        print("LIVE-TIMING apple-speech-analyzer: \(milliseconds) ms per 0.1 s chunk, real-time factor \(realTimeFactor) "
+              + "(runs \(runs.map { $0 / 1000 }) s over \(Double(samples.count) / 16000) s of audio)")
+        try JSONSerialization.data(withJSONObject: [row], options: [.prettyPrinted, .sortedKeys])
+            .write(to: URL(fileURLWithPath: reportPath))
+    }
+
     func testAStreamTranscribesItsUnitsAsTheyArrive() throws {
         let stream = try openStream()
         defer { stream.close() }

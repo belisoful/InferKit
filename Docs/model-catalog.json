@@ -1087,6 +1087,22 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 86.459999999999994,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 185.97999999999999,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -1195,6 +1211,22 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 79.510000000000005,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 177.34999999999999,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -4840,6 +4872,13 @@
         ],
         "sampleRate" : 48000,
         "stateful" : true,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "measured" : "2026-11-11",
+            "milliseconds" : 6.3200000000000003
+          }
+        ],
         "unit" : "audioChunk"
       },
       "options" : [
@@ -4948,6 +4987,22 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 280.11000000000001,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 625.14999999999998,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -6759,6 +6814,22 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 191.69999999999999,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 204.34,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -7185,6 +7256,22 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 60.18,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 74.060000000000002,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -11467,6 +11554,13 @@
         ],
         "sampleRate" : 16000,
         "stateful" : true,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "measured" : "2026-11-11",
+            "milliseconds" : 48.979999999999997
+          }
+        ],
         "unit" : "audioChunk"
       },
       "options" : [
@@ -18236,6 +18330,13 @@
         ],
         "sampleRate" : 16000,
         "stateful" : true,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "measured" : "2026-11-11",
+            "milliseconds" : 15.26
+          }
+        ],
         "unit" : "audioChunk"
       },
       "options" : [
@@ -31624,6 +31725,22 @@
           "mask"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 137.19999999999999,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 302.63,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -33367,6 +33484,13 @@
         ],
         "sampleRate" : 16000,
         "stateful" : true,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "measured" : "2026-11-11",
+            "milliseconds" : 30.960000000000001
+          }
+        ],
         "unit" : "audioChunk"
       },
       "modelTypes" : [
@@ -37586,6 +37710,22 @@
           "pose"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 19.489999999999998,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 27.539999999999999,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -49887,6 +50027,22 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 672.69000000000005,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 1497.9000000000001,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -50486,6 +50642,22 @@
           "detections"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 17.289999999999999,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 32.549999999999997,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -50954,6 +51126,22 @@
           "detections"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 22.68,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 30.949999999999999,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -51566,6 +51754,22 @@
           "mask"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 29.109999999999999,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 37.240000000000002,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -51942,6 +52146,22 @@
           "detections"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 29.460000000000001,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 37.670000000000002,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -52381,6 +52601,22 @@
           "mask"
         ],
         "stateful" : true,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 52.450000000000003,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 81.909999999999997,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -52613,6 +52849,22 @@
           "mask"
         ],
         "stateful" : true,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 61.729999999999997,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 91.239999999999995,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -53061,6 +53313,22 @@
           "detections"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 36.18,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 44.509999999999998,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -62261,6 +62529,22 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 102.18000000000001,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 268.66000000000003,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -64556,6 +64840,13 @@
         ],
         "sampleRate" : 16000,
         "stateful" : true,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "measured" : "2026-11-11",
+            "milliseconds" : 0.84899999999999998
+          }
+        ],
         "unit" : "audioChunk"
       },
       "options" : [
@@ -68284,6 +68575,24 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 4100.8999999999996,
+            "note" : "The median of 15 frames, as many as a minute of timing holds.",
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 14884.9,
+            "note" : "The median of 5 frames, as many as a minute of timing holds.",
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -68392,6 +68701,24 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 4157.8999999999996,
+            "note" : "The median of 15 frames, as many as a minute of timing holds.",
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 15198.700000000001,
+            "note" : "The median of 4 frames, as many as a minute of timing holds.",
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -68500,6 +68827,24 @@
           "image"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 4181.3999999999996,
+            "note" : "The median of 15 frames, as many as a minute of timing holds.",
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 15999.799999999999,
+            "note" : "The median of 4 frames, as many as a minute of timing holds.",
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -73983,6 +74328,22 @@
           "mask"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 282.43000000000001,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 600.75,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -74893,6 +75254,22 @@
           "pose"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 6.7290000000000001,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 6.5709999999999997,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -75152,6 +75529,22 @@
           "pose"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 8.1389999999999993,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 8.7690000000000001,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [
@@ -75501,6 +75894,22 @@
           "mask"
         ],
         "stateful" : false,
+        "timings" : [
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 720,
+            "measured" : "2026-11-11",
+            "milliseconds" : 26.25,
+            "width" : 1280
+          },
+          {
+            "chip" : "Apple M1 Max",
+            "height" : 1080,
+            "measured" : "2026-11-11",
+            "milliseconds" : 28.32,
+            "width" : 1920
+          }
+        ],
         "unit" : "videoFrame"
       },
       "options" : [

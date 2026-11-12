@@ -993,6 +993,23 @@ millisecond: GTCRN 511 samples (32 ms), DeepFilterNet3 1,919 samples (40 ms), an
 (1 s).
 `NFKMLXCatalogLiveTests` holds the tables to the shipped entries and their ports.
 
+`NFKMLXCatalogLive.timings` holds each live model's measured time per unit, which `live(_:)` attaches to its
+profile: a video model at 1280 × 720 and 1920 × 1080, an audio model per chunk. The figures come from
+`NFKMLXLiveTimingTests` (`IK_TIME_LIVE`, the report's path), which opens each model's stream on its released
+weights and times `resultForUnit:` on a BGRA frame or a chunk of the profile's duration: the median of 30
+units after 3 warm-up units, at most a minute per size. A unit slower than 5 s warms up once and is timed at
+least once (SwinIR, 4 to 15 frames, named in the timing's note). The time includes the unit's conversion to
+and from tensors. The core's `NFKLiveTimingTests` (`IK_TIME_LIVE_APPLE`) times the Vision engines the same
+way, and InferKitAppleSwift's `testTheStreamIsTimedPerChunk` (`IK_TIME_LIVE_SPEECH`) times the speech
+analyzer by throughput, since its stream answers a unit before the analyzer has read it.
+- Time in a release build (`swift test -c release -Xswiftc -enable-testing`, then
+  `Tools/mlx-metallib.sh --release`). Each test skips in a debug build. A debug build's per-pixel conversion
+  loops alone take about 2 s of BiSeNet's 2.2 s at 720p, against 89 ms for the whole request in release.
+- The 2026-11-11 figures are an M1 Max at rest. Per frame at 720p: detectors 17 to 36 ms, matting, depth, and
+  segmentation models 52 to 282 ms, Real-ESRGAN 673 ms, SwinIR 4.1 s. Real-time factors per chunk: Silero VAD 0.027,
+  Nemotron ASR Streaming 0.028, FRCRN 0.065, DeepFilterNet3 0.63, and GTCRN 0.95, which keeps up by 0.7 ms
+  per 16 ms hop.
+
 ### Live streams
 
 A backend whose model carries state answers `openLiveStream(parameters:)` with an `NFKBlockLiveStream`

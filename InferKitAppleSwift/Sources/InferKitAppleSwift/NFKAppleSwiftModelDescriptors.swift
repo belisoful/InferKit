@@ -34,6 +34,14 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         let build: () -> any NFKInferenceBackend
     }
 
+    /// The speech analyzer's measured time per 0.1 s chunk through its live stream, as
+    /// `NFKSpeechAnalyzerLiveStreamTests` reports it in a release build.
+    private static let speechAnalyzerTiming = NFKModelLiveTiming(
+        variantIdentifier: nil, chip: "Apple M1 Max", width: 0, height: 0, millisecondsPerUnit: 1.251,
+        measuredDate: "2026-11-11",
+        note: "Fed faster than real time; the wall time until the transcript reaches the last word, over the chunks fed.",
+        extensions: nil)
+
     private static let engines: [Engine] = [
         Engine(identifier: "apple-speech-analyzer", displayName: "Apple Speech Analyzer", family: "apple-speech",
                summary: "Transcribes speech on device with Apple's speech analyzer, with a time range for each span.",
@@ -43,7 +51,7 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
                liveProfile: .audioChunkProfile(withInputKeys: [NFKInputAudio],
                                                outputKeys: [NFKOutputSegments, NFKOutputText, NFKOutputTentativeText],
                                                stateful: true, chunkDuration: 0.1, sampleRate: 16000, channelCount: 1,
-                                               lookaheadMilliseconds: 0, timings: nil),
+                                               lookaheadMilliseconds: 0, timings: [speechAnalyzerTiming]),
                build: { NFKSpeechAnalyzerBackend() }),
         Engine(identifier: "apple-translation", displayName: "Apple Translation", family: "apple-translation",
                summary: "Translates text on device with Apple's Translation framework.",

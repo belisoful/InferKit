@@ -228,6 +228,13 @@
 		XCTAssertEqualObjects(profile.inputKeys, @[ NFKInputImage ], @"%@", identifier);
 		XCTAssertEqualObjects(profile.outputKeys, expected[identifier], @"%@", identifier);
 		XCTAssertFalse(profile.isStateful, @"%@", identifier);
+		NSMutableSet<NSString *> *sizes = [NSMutableSet set];
+		for (NFKModelLiveTiming *timing in profile.timings) {
+			[sizes addObject:[NSString stringWithFormat:@"%ldx%ld", (long)timing.width, (long)timing.height]];
+			XCTAssertGreaterThan(timing.millisecondsPerUnit, 0.0, @"%@", identifier);
+		}
+		NSSet<NSString *> *measured = [NSSet setWithObjects:@"1280x720", @"1920x1080", nil];
+		XCTAssertEqualObjects(sizes, measured, @"%@ carries a measured time at each frame size", identifier);
 	}
 	XCTAssertNil([catalog descriptorWithIdentifier:@"vision-text"].liveProfile);
 }

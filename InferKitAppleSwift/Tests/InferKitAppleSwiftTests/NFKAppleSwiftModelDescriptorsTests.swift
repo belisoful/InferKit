@@ -53,6 +53,11 @@ final class NFKAppleSwiftModelDescriptorsTests: XCTestCase {
         XCTAssertTrue(live.isStateful)
         XCTAssertEqual(live.sampleRate, 16000)
         XCTAssertEqual(live.channelCount, 1)
+        let timing = try XCTUnwrap(live.timings.first, "the stream carries its measured time per chunk")
+        XCTAssertEqual(live.timings.count, 1)
+        XCTAssertEqual(timing.width, 0)
+        XCTAssertGreaterThan(timing.millisecondsPerUnit, 0)
+        XCTAssertNotNil(timing.note, "the note says how an asynchronous analyzer was timed")
         XCTAssertEqual(analyzer.outputs.first { $0.key == NFKOutputTentativeText }?.isRequired, false,
                        "only a live stream writes the tentative transcript")
         XCTAssertEqual(descriptors.filter { $0.liveProfile != nil }.map(\.identifier), ["apple-speech-analyzer"])

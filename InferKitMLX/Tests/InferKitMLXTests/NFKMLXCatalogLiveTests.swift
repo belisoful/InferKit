@@ -25,6 +25,26 @@ final class NFKMLXCatalogLiveTests: XCTestCase {
         }
     }
 
+    func testEveryLiveModelCarriesItsMeasuredTimings() throws {
+        let live = descriptors.filter { $0.liveProfile != nil }
+        XCTAssertEqual(Set(live.map(\.identifier)), Set(NFKMLXCatalogLive.timings.keys), "every live model is timed, and only those")
+        for descriptor in live {
+            let profile = try XCTUnwrap(descriptor.liveProfile)
+            let sizes = profile.timings.map { "\($0.width)x\($0.height)" }
+            if profile.unit == NFKModelLiveUnitVideoFrame {
+                XCTAssertEqual(Set(sizes), ["1280x720", "1920x1080"], descriptor.identifier)
+            } else {
+                XCTAssertEqual(sizes, ["0x0"], descriptor.identifier)
+            }
+            for timing in profile.timings {
+                XCTAssertNil(timing.variantIdentifier, "\(descriptor.identifier): the default variant was measured")
+                XCTAssertEqual(timing.chip, NFKMLXCatalogLive.measuredChip, descriptor.identifier)
+                XCTAssertEqual(timing.measuredDate, NFKMLXCatalogLive.measuredDate, descriptor.identifier)
+                XCTAssertGreaterThan(timing.millisecondsPerUnit, 0, descriptor.identifier)
+            }
+        }
+    }
+
     func testTheStatefulModelsDeclareTheirState() throws {
         for (identifier, outputs) in NFKMLXCatalogLive.statefulVideoFrameOutputs {
             let live = try XCTUnwrap(descriptors.first { $0.identifier == identifier }?.liveProfile, identifier)
