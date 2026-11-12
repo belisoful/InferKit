@@ -650,16 +650,32 @@ final class NFKMLXTrellisTests: XCTestCase {
     func testAStructureLoRAFineTuneLowersTheLossAndMovesOnlyTheAdapters() throws {
         var configuration = tinyConfiguration()
         configuration.conditionWidth = 16
+        MLXRandom.seed(11)
         let flow = try NFKMLXTrellis.structureFlow(weightsURL: nil, configuration: configuration)
         let frozenBefore = flow.inputLayer.weight
         eval(frozenBefore)
         let example = NFKMLXTrellisStructureExample(condition: MLXRandom.normal([1, 7, 16], key: MLXRandom.key(1)),
                                                     latent: MLXRandom.normal([1, 4, 4, 4, 2], key: MLXRandom.key(2)))
+        // Each training step draws its own time and noise, so single-step losses swing with the draw. The
+        // objective is scored instead on eight fixed draws spanning the times, before and after training.
+        let draws = (0 ..< 8).map { index in
+            (noise: MLXRandom.normal([1, 4, 4, 4, 2], key: MLXRandom.key(UInt64(100 + index))),
+             t: MLXArray([Float(index) / 8 + 1 / 16]))
+        }
+        func heldOut() -> Float {
+            draws.map { draw in
+                NFKMLXTrellisObjective.structureLoss(flow, x0: example.latent, condition: example.condition, noise: draw.noise,
+                                                     t: draw.t).item(Float.self)
+            }.reduce(0, +) / Float(draws.count)
+        }
+        let before = heldOut()
         let losses = try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: [example],
                                                                      trainable: .attentionLoRA(rank: 4, alpha: 4),
                                                                      optimizer: NFKMLXAdam(learningRate: 1e-2), steps: 30, seed: 3)
+        let after = heldOut()
+        report("TRELLIS LoRA fine-tune: held-out objective \(before) before, \(after) after 30 steps")
         XCTAssertEqual(losses.count, 30)
-        XCTAssertLessThan(losses.suffix(5).reduce(0, +), losses.prefix(5).reduce(0, +))
+        XCTAssertLessThan(after, before)
         XCTAssertEqual(flow.inputLayer.weight.asArray(Float.self), frozenBefore.asArray(Float.self))
         XCTAssertGreaterThan(NFKMLXLoRA.trainableParameterCount(of: flow), 0)
         XCTAssertTrue(flow.blocks[0].selfAttention.toQKV is NFKMLXLoRAAdapter)
