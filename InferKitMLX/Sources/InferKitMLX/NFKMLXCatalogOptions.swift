@@ -274,6 +274,8 @@ struct NFKMLXLoadProfile {
         // The float32 releases convert to bfloat16 where asked, held to the reference's bfloat16 run.
         "siglip2": [.imageModule(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16],
                                  tasks: [NFKModelTaskImageEmbedding])],
+        "nemotron-asr": [.imageModule(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16],
+                                      tasks: [NFKModelTaskTranscription])],
         "stable-diffusion": [.imageModule(property: "precision", halvesSteps: true, tasks: [NFKModelTaskTextToImage])],
         // The float32 release converts to bfloat16 where asked, and its linear layers pack to 2 to 8 bits.
         "triposr": [NFKMLXLoadProfile(tasks: [NFKModelTaskImageTo3D],

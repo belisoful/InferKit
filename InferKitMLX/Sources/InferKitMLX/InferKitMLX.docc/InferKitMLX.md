@@ -472,6 +472,7 @@ The figures have three limits:
 - ``NFKMLXParakeet``
 - ``NFKMLXNemotronASR``
 - ``NFKMLXNemotronASRBackend``
+- ``NFKMLXNemotronASRTokenizer``
 - ``NFKMLXGraniteSpeech``
 - ``NFKMLXGraniteSpeechBackend``
 - ``NFKMLXGraniteSpeechNet``

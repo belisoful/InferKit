@@ -649,6 +649,72 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement("siglip2", endToEnd: rows, isolated: isolatedRows)
     }
 
+    // MARK: Nemotron ASR Streaming at half precision
+
+    // Nemotron ASR Streaming (`IK_VAL_NEMOTRON_ASR_STREAMING`) with its float32 release converted to bf16 as
+    // it loads, against transformers' `NemotronAsrStreamingForRNNT` at bf16 and at float32 on the same
+    // bf16-rounded features (`nemotron_asr_streaming_precision`, `IK_PROBE_DTYPE`): the subsampler, every
+    // conformer layer end to end and on the reference's own input, the encoder, the cache-aware stream over
+    // the reference's chunks, and greedy decoding's tokens.
+    func testNemotronASRInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let release = URL(fileURLWithPath: try existing(config["IK_VAL_NEMOTRON_ASR_STREAMING"], "IK_VAL_NEMOTRON_ASR_STREAMING"))
+        let bf16 = try record("nemotron-asr-bf16.safetensors"), f32 = try record("nemotron-asr-f32.safetensors")
+        let configuration = try NFKMLXNemotronASR.configuration(directoryURL: release)
+        let net = NFKMLXNemotronASRNet(configuration)
+        try NFKMLXNemotronASR.loadWeights(into: net, from: release.appendingPathComponent("model.safetensors"), castingTo: .bfloat16)
+        let lookahead = try XCTUnwrap(bf16["lookahead"]).item(Int.self)
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let features = try recorded("features")
+        let encoder = net.encoder
+        let positions: (Int) -> MLXArray = { encoder.positionTable(keys: $0) }
+
+        var hidden = encoder.subsampling(features)
+        XCTAssertEqual(hidden.dtype, .bfloat16, "a bf16 load computes the encoder in bf16")
+        let mask = encoder.chunkedMask(frames: hidden.dim(1), lookahead: lookahead)
+        var states = [("subsampler", hidden[0])], keys = ["hidden.0"]
+        var isolated = [("subsampler", hidden[0])], isolatedKeys = ["hidden.0"]
+        for (index, layer) in encoder.layers.enumerated() {
+            hidden = layer(hidden, positions: positions, mask: mask)
+            states.append(("layer \(index)", hidden[0]))
+            keys.append("hidden.\(index + 1)")
+            isolated.append(("layer \(index)", layer(try recorded("hidden.\(index)"), positions: positions, mask: mask)[0]))
+            isolatedKeys.append("hidden.\(index + 1)")
+        }
+        let encoded = net.encode(features: features, lookahead: lookahead)
+        let count = features.dim(1)
+        let first = configuration.firstChunkFrames(lookahead: lookahead), later = configuration.chunkFrames(lookahead: lookahead)
+        let carry = NFKMLXStreamCarry()
+        var streamed: [MLXArray] = []
+        var start = 0
+        while start < count {
+            let size = start == 0 ? first : later
+            let frames = carry.streaming { encoder(features[0..., start ..< start + size, 0...], lookahead: nil) }
+            carry.evaluate([frames])
+            streamed.append(frames)
+            start += size
+        }
+        let stream = concatenated(streamed, axis: 1)
+        states += [("encoder", encoded[0]), ("stream", stream[0])]
+        keys += ["encoded", "streamed"]
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("nemotron-asr", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("nemotron-asr isolated", isolatedRows)
+
+        let tokens = net.decode(encoded: encoded, state: NFKMLXNemotronASRDecodingState()).map(\.id)
+        let referenceTokens = try XCTUnwrap(bf16["tokens"]).asArray(Int.self)
+        let float32Tokens = try XCTUnwrap(f32["tokens"]).asArray(Int.self)
+        print("VALIDATION bf16 nemotron-asr tokens: ours \(tokens.count), reference bf16 \(referenceTokens.count) "
+              + "(\(tokens == referenceTokens ? "equal" : "differ")), reference float32 \(float32Tokens.count) "
+              + "(\(tokens == float32Tokens ? "equal" : "differ"))")
+        XCTAssertEqual(tokens, referenceTokens, "greedy decoding at bf16 reads the reference's tokens")
+        assertRoundingPlacement("nemotron-asr", endToEnd: rows, isolated: isolatedRows)
+    }
+
     // CLIP ViT-B/32 (`IK_VAL_CLIP`) with its weights rounded to float16, the type OpenAI's own `.pt` stores,
     // against transformers' `CLIPModel` at float16 with eager attention (`clip_probe`, `IK_PROBE_FLOOR=float16`
     // for the floor), on four images: every vision and text layer, the pooled class token, and both

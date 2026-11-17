@@ -33556,6 +33556,9 @@
         ],
         "unit" : "audioChunk"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "modelTypes" : [
         "nemotron_asr_streaming"
       ],
@@ -33585,6 +33588,33 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Lookahead"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 2472339460,
+                "residentBytes" : 2472339460
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1236169730,
+                "residentBytes" : 1236169730
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [

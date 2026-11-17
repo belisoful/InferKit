@@ -20540,6 +20540,182 @@ def run_gtcrn(image, checkpoint):
 
 
 
+def run_nemotron_asr_streaming_precision(image, checkpoint):
+    """Nemotron ASR Streaming at the precision `IK_PROBE_DTYPE` names (`bfloat16`, else float32), for the
+    bfloat16 floor: transformers' `NemotronAsrStreamingForRNNT` on the RELEASED folder (`--checkpoint`),
+    loaded at that precision with `IK_PROBE_ATTENTION` attention (default `sdpa`), at lookahead
+    `IK_PROBE_LOOKAHEAD` (default the release's). Both precisions see the same input: the validation
+    clip's float32 features rounded to bfloat16 (`features`, the first `count` frames, the longest whole
+    chunks), so the two records differ in the network's precision alone. Records each layer's input
+    `hidden.i` (`hidden.0` the subsampler's output) and the last layer's output as `[frames, width]`, the
+    relative position table (`positions`), every submodule's input and output in the first layer
+    (`L0.<module>.in` / `.out`), the
+    encoder output (`encoded`), the cache-aware stream over the same chunks (`streamed`), and greedy decoding's
+    tokens and frames (`tokens`, `frames`). Every array is stored as float32. Runs under the `nemo` env.
+    """
+    import wave as wavemodule
+    from transformers import AutoProcessor, NemotronAsrStreamingForRNNT
+
+    dtype = torch.bfloat16 if os.environ.get("IK_PROBE_DTYPE") == "bfloat16" else torch.float32
+    attention = os.environ.get("IK_PROBE_ATTENTION", "sdpa")
+    model = NemotronAsrStreamingForRNNT.from_pretrained(checkpoint, attn_implementation=attention,
+                                                        torch_dtype=dtype).eval()
+    processor = AutoProcessor.from_pretrained(checkpoint)
+    path = os.environ.get("IK_VAL_AUDIO", os.path.expanduser(VALIDATION_ROOT + "/inputs/speech.wav"))
+    with wavemodule.open(path) as handle:
+        pcm = np.frombuffer(handle.readframes(handle.getnframes()), dtype=np.int16)
+    wave = pcm.astype(np.float32) / 32768.0
+    inputs = processor.feature_extractor(wave, sampling_rate=16000, return_tensors="pt", center=True)
+    valid = int(inputs["attention_mask"].sum())
+    config = model.config.encoder_config
+    right = int(os.environ.get("IK_PROBE_LOOKAHEAD", config.default_num_lookahead_tokens))
+    factor = config.subsampling_factor
+    first, later = 1 + factor * right, factor * (right + 1)
+    count = first + max(0, (valid - first) // later) * later
+    features = inputs["input_features"][:, :count].to(torch.bfloat16).float()
+    extra = {"features": features[0].contiguous(), "count": torch.tensor([count], dtype=torch.int64),
+             "lookahead": torch.tensor([right], dtype=torch.int64)}
+
+    def keep(key, value):
+        if isinstance(value, tuple):
+            value = value[0]
+        if torch.is_tensor(value) and key not in extra:
+            extra[key] = value.detach().float().clone().contiguous()
+
+    # A forward hook that returns a value replaces the module's output, so each hook returns None.
+    def layer_hook(index):
+        def hook(module, args, kwargs, output):
+            keep(f"hidden.{index}", args[0][0])
+            keep(f"hidden.{index + 1}", (output[0] if isinstance(output, tuple) else output)[0])
+            keep("positions", kwargs.get("position_embeddings"))
+        return hook
+
+    def submodule_hook(name):
+        def hook(module, args, output):
+            if args:
+                keep(f"L0.{name}.in", args[0])
+            keep(f"L0.{name}.out", output)
+        return hook
+
+    encoder = model.encoder
+    hooks = []
+    for index, layer in enumerate(encoder.layers):
+        hooks.append(layer.register_forward_hook(layer_hook(index), with_kwargs=True))
+    for name, module in encoder.layers[0].named_modules():
+        if name:
+            hooks.append(module.register_forward_hook(submodule_hook(name)))
+    model_input = features.to(dtype)
+    with torch.no_grad():
+        encoded = model.get_audio_features(input_features=model_input, num_lookahead_tokens=right)
+    for hook in hooks:
+        hook.remove()
+    extra["encoded"] = encoded.last_hidden_state[0].float().contiguous()
+    extra["pooler"] = encoded.pooler_output[0].float().contiguous()
+    with torch.no_grad():
+        streamed, past, padding, start = [], None, None, 0
+        while start < count:
+            size = first if start == 0 else later
+            out = model.get_audio_features(input_features=model_input[:, start:start + size], past_key_values=past,
+                                           padding_cache=padding, num_lookahead_tokens=right, use_cache=True,
+                                           output_attention_mask=False)
+            past, padding = out.past_key_values, out.padding_cache
+            streamed.append(out.last_hidden_state)
+            start += size
+        generated = model.generate(input_features=model_input, num_lookahead_tokens=right, return_dict_in_generate=True)
+    extra["streamed"] = torch.cat(streamed, dim=1)[0].float().contiguous()
+    sequence = generated.sequences[0]
+    keepers = [i for i, t in enumerate(sequence.tolist()) if t not in (model.config.blank_token_id, model.config.pad_token_id)]
+    extra["tokens"] = torch.tensor([sequence[i].item() for i in keepers], dtype=torch.int64)
+    durations = getattr(generated, "durations", None)
+    if durations is not None:
+        steps = durations[0]
+        starts = (steps.cumsum(-1) - steps).tolist()
+        extra["frames"] = torch.tensor([int(starts[i]) for i in keepers], dtype=torch.int64)
+    text = processor.decode(sequence, skip_special_tokens=True)
+    gap = (extra["streamed"] - extra["encoded"]).abs().max().item()
+    print(f"nemotron-asr {dtype} R={right}: {count} frames, {len(extra['tokens'])} tokens: {text!r}; "
+          f"stream vs clip max |d| {gap:.3e}; {len(extra)} arrays")
+    globals()["_extra"] = extra
+    return extra["encoded"].clone()
+
+
+_NEMOTRON_ASR_TRANSCRIPTS = [
+    "The quick brown fox jumps over the lazy dog.",
+    "Hello, world! How are you today?",
+    "It's a dog's life, isn't it? Yes - it is.",
+    "Numbers 1234567890, 3.14, 1/2 and 50% off.",
+    "UPPER lower MiXeD case WORDS",
+    "  leading and trailing spaces  ",
+    "multiple   internal    spaces",
+    "tabs\tand\nnewlines\r\nhere",
+    "\u201cCurly quotes\u201d and \u2018single\u2019 ones\u2026 \u2014 dashes \u2013 too",
+    "caf\u00e9 na\u00efve fa\u00e7ade r\u00e9sum\u00e9",
+    "cafe\u0301 decomposed accents",
+    "\ufb01ne \ufb02ower ligatures",
+    "\uff26\uff55\uff4c\uff4c\uff57\uff49\uff44\uff54\uff48 \uff21\uff22\uff23 \uff11\uff12\uff13",
+    "non\u00a0breaking\u2009thin\u3000ideographic spaces",
+    "emoji \U0001F642\U0001F44D\U0001F3FD family \U0001F468\u200d\U0001F469\u200d\U0001F467 flag \U0001F1FA\U0001F1F8",
+    "\u65e5\u672c\u8a9e\u306e\u30c6\u30ad\u30b9\u30c8",
+    "\u0627\u0644\u0639\u0631\u0628\u064a\u0629",
+    "\ud55c\uad6d\uc5b4 and jamo \u1100\u1161\u11a8",
+    "\u00c5ngstr\u00f6m \u212b \u2126 \u00b5 \u00bd \u00b2 \u2122 \u00a9",
+    "zero\u200bwidth\u200cnon\u200djoiner",
+    "a\u0300\u0301\u0302\u0303 stacked marks",
+    "\u01c4 \u01c5 \u01c6 \u210c \u210d \u210e \u2460\u2461\u2462 \u00df \u1e9e",
+    "e-mail someone@example.com and https://example.org/path?q=1&r=2",
+    "<blank> and <unk> written literally",
+    "x",
+    "",
+    "   ",
+    "So, um, I think we should, uh, start the meeting at nine.",
+    "Dr. Smith's appointment is at 3:45 p.m. on Tuesday, March 4th.",
+]
+
+
+def run_nemotron_asr_tokenizer(image, checkpoint):
+    """How Nemotron ASR Streaming's tokenizer encodes transcripts, for its fine-tune's labels: the release's
+    converted `tokenizer.json` through `tokenizers` (`hf.<i>`), its normalizer's output (`normalized.<i>`,
+    UTF-8 bytes), and, where the folder holds it, the SentencePiece model NeMo trained with
+    (`*_tokenizer.model`, `sp.<i>`), encoded as NeMo's `SentencePieceTokenizer.text_to_ids` does. Each
+    transcript is `text.<i>` as UTF-8 bytes. `--checkpoint` is the release folder. Runs under the `nemo`
+    oracle env; no weights.
+    """
+    import glob
+    from tokenizers import Tokenizer
+
+    hf = Tokenizer.from_file(os.path.join(checkpoint, "tokenizer.json"))
+    models = sorted(glob.glob(os.path.join(checkpoint, "*_tokenizer.model")))
+    sp = None
+    if models:
+        from nemo.collections.common.tokenizers.sentencepiece_tokenizer import SentencePieceTokenizer
+        sp = SentencePieceTokenizer(model_path=models[0])
+        print(f"nemotron-asr tokenizer: SentencePiece {os.path.basename(models[0])}, vocabulary {sp.vocab_size}")
+    else:
+        print("nemotron-asr tokenizer: no SentencePiece model beside the release; recording tokenizers alone")
+    extra = {}
+
+    def ids(values):
+        return torch.tensor(list(values), dtype=torch.int64)
+
+    disagreements = 0
+    for index, text in enumerate(_NEMOTRON_ASR_TRANSCRIPTS):
+        extra[f"text.{index}"] = ids(text.encode("utf-8"))
+        encoded = hf.encode(text).ids
+        extra[f"hf.{index}"] = ids(encoded)
+        extra[f"normalized.{index}"] = ids(hf.normalizer.normalize_str(text).encode("utf-8"))
+        if sp is not None:
+            reference = sp.text_to_ids(text)
+            extra[f"sp.{index}"] = ids(reference)
+            if reference != encoded:
+                disagreements += 1
+                print(f"nemotron-asr tokenizer {index}: tokenizers {encoded} vs SentencePiece {reference} for {text!r}")
+    print(f"nemotron-asr tokenizer: {len(_NEMOTRON_ASR_TRANSCRIPTS)} transcripts, "
+          f"{disagreements} where tokenizers and SentencePiece differ")
+    extra["count"] = torch.tensor([len(_NEMOTRON_ASR_TRANSCRIPTS)], dtype=torch.int64)
+    globals()["_extra"] = extra
+    return extra["count"].clone().float()
+
+
 def run_nemotron_asr_streaming_loss(image):
     """The transducer loss Nemotron ASR Streaming trains with, NeMo's own, on fixed joint logits for a batch
     of two utterances of unequal length. Runs under the `nemo` oracle env; no weights.
@@ -26785,7 +26961,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
                      "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_adapters": run_qwen3_adapters, "gemma3_adapters": run_gemma3_adapters, "gemma4_adapters": run_gemma4_adapters, "gemma3n_adapters": run_gemma3n_adapters, "qwen3vl_adapters": run_qwen3vl_adapters, "pixtral_tiny_adapters": run_pixtral_tiny_adapters, "madlad_adapters": run_madlad_adapters, "generated_decoder_adapters": run_generated_decoder_adapters, "whisper_adapters": run_whisper_adapters, "flux_adapters": run_flux_adapters, "flux2_adapters": run_flux2_adapters, "zimage_adapters": run_zimage_adapters, "sd35_adapters": run_sd35_adapters, "ltxv_adapters": run_ltxv_adapters, "stable_audio_adapters": run_stable_audio_adapters, "qwen_image_adapters": run_qwen_image_adapters, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "style_transfer_training": run_style_transfer_training, "adain_training": run_adain_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "qwen3_5_cached": run_qwen3_5_cached, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
-                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "nemotron_asr_streaming": run_nemotron_asr_streaming, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
+                     "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "nemotron_asr_streaming": run_nemotron_asr_streaming, "nemotron_asr_tokenizer": run_nemotron_asr_tokenizer, "nemotron_asr_streaming_precision": run_nemotron_asr_streaming_precision, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,
                      "chatterbox_t3": run_chatterbox_t3,
                      "chatterbox_s3gen": run_chatterbox_s3gen,

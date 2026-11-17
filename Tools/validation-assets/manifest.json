@@ -3902,7 +3902,7 @@
       "config": {
         "IK_VAL_NEMOTRON_ASR_STREAMING": "."
       },
-      "note": "Nemotron ASR Streaming 0.6B (NVIDIA Open Model License): the cache-aware streaming FastConformer-RNNT, as the Hugging Face release (2.47 GB model.safetensors, a Metaspace BPE tokenizer.json with <pad> 1024 and <blank> 1025 added while the head's blank is 1024). NFKMLXNemotronASR.backend(directoryURL:) reads it. model_config.yaml beside it is the .nemo's training configuration, range-fetched from the archive's first 4 MB. Parity via run_reference.py nemotron_asr_streaming --checkpoint <the folder> under the nemo oracle env (transformers 5.16.1 NemotronAsrStreamingForRNNT, sdpa) on the validation speech clip (IK_VAL_AUDIO) with IK_PROBE_OUTPUT_ORDER_FLOOR=1, which adds the clip rerun in every fixed summation order and the float64 clip and stream -> records/nemotron-asr-streaming-orders.safetensors, IK_PARITY_NEMOTRON_ASR_STREAMING_ORDERS; the transducer loss via run_reference.py nemotron_asr_streaming_loss (NeMo RNNTLoss numba and RNNTLossPytorch, no weights) -> IK_PARITY_NEMOTRON_ASR_STREAMING_LOSS."
+      "note": "Nemotron ASR Streaming 0.6B (NVIDIA Open Model License): the cache-aware streaming FastConformer-RNNT, as the Hugging Face release (2.47 GB model.safetensors, a Metaspace BPE tokenizer.json with <pad> 1024 and <blank> 1025 added while the head's blank is 1024). NFKMLXNemotronASR.backend(directoryURL:) reads it. model_config.yaml beside it is the .nemo's training configuration, range-fetched from the archive's first 4 MB. Parity via run_reference.py nemotron_asr_streaming --checkpoint <the folder> under the nemo oracle env (transformers 5.16.1 NemotronAsrStreamingForRNNT, sdpa) on the validation speech clip (IK_VAL_AUDIO) with IK_PROBE_OUTPUT_ORDER_FLOOR=1, which adds the clip rerun in every fixed summation order and the float64 clip and stream -> records/nemotron-asr-streaming-orders.safetensors, IK_PARITY_NEMOTRON_ASR_STREAMING_ORDERS; the transducer loss via run_reference.py nemotron_asr_streaming_loss (NeMo RNNTLoss numba and RNNTLossPytorch, no weights) -> IK_PARITY_NEMOTRON_ASR_STREAMING_LOSS. e8dc9587bf16427491071501d9080e4e_tokenizer.model, 26b131bdef564f2cbe451e9219efcbab_tokenizer.vocab, and 5f463a58a6f9401796aae466cbf12f7d_vocab.txt beside it are the .nemo's SentencePiece members, range-fetched from the archive, which NeMo trains with; run_reference.py nemotron_asr_tokenizer encodes 29 transcripts through tokenizer.json and that model -> records/nemotron-asr-tokenizer.safetensors, IK_PARITY_NEMOTRON_ASR_TOKENIZER."
     },
     {
       "key": "CANARY",
@@ -6322,7 +6322,9 @@
         "vad_training",
         "hymt_moe_tiny",
         "nemotron_asr_streaming",
-        "nemotron_asr_streaming_loss"
+        "nemotron_asr_streaming_loss",
+        "nemotron_asr_streaming_precision",
+        "nemotron_asr_tokenizer"
       ]
     },
     "phi4mm": {
@@ -7478,6 +7480,11 @@
       "command": "IK_PROBE_DTYPE=bfloat16 | (float32) siglip2_probe --size 224 (google/siglip2-base-patch16-224 from the hub cache)"
     },
     {
+      "records": "nemotron-asr-bf16 / -f32",
+      "environment": "nemo",
+      "command": "IK_PROBE_DTYPE=bfloat16 | (float32) nemotron_asr_streaming_precision --checkpoint $IK_VAL_NEMOTRON_ASR_STREAMING (validation speech clip, sdpa, the release's lookahead)"
+    },
+    {
       "records": "clip_b32{,_photo,_face,_subject}_f16 / _f32",
       "environment": "llm",
       "command": "IK_PROBE_DTYPE=float16 | IK_PROBE_FLOOR=float16 clip_probe [--image <validation root>/inputs/photo.jpg | face960.jpg | subject384.jpg --size 224] (openai/clip-vit-base-patch32; the process hangs at exit after writing its record)"
@@ -7908,6 +7915,7 @@
       "environment": "wantrain_musubi",
       "command": "wan_lora_musubi (musubi-tuner's shift sampling, forward, and loss over its own tiny WanModel under its lora_wan network, attending in float32 with musubi's bfloat16-attention run under as_run.*; adapter gradients, the saved file, its merge_to under fused::, sampler.* 64 shift draws and table.* 64 sigma-mode draws)"
     },
-    {"key": "IK_PARITY_NEMOTRON_ASR_STREAMING_LOSS", "record": "records/nemotron-asr-streaming-loss-release.safetensors", "environment": "nemo", "command": "nemotron_asr_streaming_loss (NeMo's RNNTLoss with the numba kernel at the release's FastEmit 0.005 and mean_volume, and RNNTLossPytorch, over fixed logits: each utterance's negative log-likelihood, the loss, and its gradient)"}
+    {"key": "IK_PARITY_NEMOTRON_ASR_STREAMING_LOSS", "record": "records/nemotron-asr-streaming-loss-release.safetensors", "environment": "nemo", "command": "nemotron_asr_streaming_loss (NeMo's RNNTLoss with the numba kernel at the release's FastEmit 0.005 and mean_volume, and RNNTLossPytorch, over fixed logits: each utterance's negative log-likelihood, the loss, and its gradient)"},
+    {"key": "IK_PARITY_NEMOTRON_ASR_TOKENIZER", "record": "records/nemotron-asr-tokenizer.safetensors", "environment": "nemo", "command": "nemotron_asr_tokenizer --checkpoint $IK_VAL_NEMOTRON_ASR_STREAMING (29 transcripts: their UTF-8 bytes, tokenizers' tokenizer.json ids and normalized text, and NeMo's SentencePieceTokenizer ids from the .nemo's tokenizer.model beside the release)"}
   ]
 }

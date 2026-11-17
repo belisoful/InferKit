@@ -21,6 +21,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Nemotron ASR Streaming loads at bfloat16 and fine-tunes from transcripts
+
+- `nemotron-asr-streaming` offers `NFKModelPrecisionBFloat16` under `NFKModelLoadOptionPrecision`, and
+  `NFKMLXNemotronASR.backend(directoryURL:castingTo:)` converts the float32 release as it loads, at half the
+  resident memory. Every encoder layer rounds as the reference does at bfloat16, held to the reference's own
+  bfloat16-to-float32 distance, and greedy decoding reads the reference's tokens.
+- `NFKMLXNemotronASRTokenizer.encode(_:)` encodes text as the SentencePiece model NeMo trained the release with
+  does, its precompiled normalization included, from the release's `tokenizer.json`. `NFKMLXNemotronASRTraining.fineTune(_:transcribed:tokenizer:…)`
+  trains on transcripts given as text, and `tokenizer(directoryURL:)` reads the release's tokenizer.
+
 #### Codestral Mamba and Nemotron-H decode through their state and continue conversations
 
 - The Mamba-2 decoder (Codestral Mamba) and the Nemotron-H decoders (Nemotron Nano 2, Nemotron 3 Nano 4B)

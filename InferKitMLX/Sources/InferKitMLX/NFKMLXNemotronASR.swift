@@ -243,8 +243,20 @@ final class NFKNemotronASRCausalConv2d: Module {
         } else {
             h = MLX.padded(h, widths: [IntOrPair(0), IntOrPair((front, back)), IntOrPair(0), IntOrPair(0)], mode: .constant)
         }
-        return conv2d(h, weight, stride: IntOrPair(stride), groups: groups) + bias
+        return nemotronASRConvolved(h, weight: weight, bias: bias) { conv2d($0, $1, stride: IntOrPair(stride), groups: groups) }
     }
+}
+
+/// A biased convolution as torch computes it in half precision: the products and the bias summed in float32
+/// and rounded once. MLX rounds the convolution and then the bias's sum. A float32 input takes MLX's.
+func nemotronASRConvolved(_ x: MLXArray, weight: MLXArray, bias: MLXArray?,
+                          _ convolve: (MLXArray, MLXArray) -> MLXArray) -> MLXArray {
+    guard NFKReferenceRounding.isReduced(x) else {
+        let y = convolve(x, weight)
+        return bias.map { y + $0 } ?? y
+    }
+    let y = convolve(x.asType(.float32), weight.asType(.float32))
+    return (bias.map { y + $0.asType(.float32) } ?? y).asType(x.dtype)
 }
 
 /// One depthwise-separable stage: a depthwise causal stride-2 convolution and a pointwise one.
@@ -259,7 +271,9 @@ final class NFKNemotronASRSubsamplingLayer: Module {
         _pointwise.wrappedValue = Conv2d(inputChannels: c, outputChannels: c, kernelSize: 1)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { pointwise(depthwise(x)) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        nemotronASRConvolved(depthwise(x), weight: pointwise.weight, bias: pointwise.bias) { conv2d($0, $1) }
+    }
 }
 
 /// The 8× causal subsampler: a stride-2 stem, two depthwise-separable stride-2 stages, ReLU after each,
@@ -335,16 +349,28 @@ final class NFKNemotronASRAttention: Module {
         let keys = NFKMLXStreamCarry.history(split(k(x)), keep: leftContext, axis: 2, owner: k).joined
         let values = NFKMLXStreamCarry.history(split(v(x)), keep: leftContext, axis: 2, owner: v).joined
         let total = keys.dim(2)
-        let p = relative(positions(total)).reshaped([1, -1, heads, headDim]).transposed(0, 2, 1, 3)
+        let p = relative(positions(total).asType(x.dtype)).reshaped([1, -1, heads, headDim]).transposed(0, 2, 1, 3)
         let qU = (qh + biasU).transposed(0, 2, 1, 3)
         let qV = (qh + biasV).transposed(0, 2, 1, 3)
         let scaling = 1 / sqrt(Float(headDim))
-        var bd = relShift(matmul(qV, p.transposed(0, 1, 3, 2)))[0..., 0..., 0..., 0 ..< total] * scaling
-        if let mask {
-            bd = MLX.where(mask, bd, MLXArray(-Float.infinity))
+        let attended: MLXArray
+        if NFKReferenceRounding.isReduced(x) {
+            // transformers' half-precision path: the positional scores rounded, scaled as by a Python float,
+            // masked, and passed as the additive mask of torch's CPU flash attention over the content scores.
+            var bd = NFKReferenceRounding.scaled(relShift(matmul(qV, p.transposed(0, 1, 3, 2)))[0..., 0..., 0..., 0 ..< total],
+                                                 by: scaling)
+            if let mask {
+                bd = MLX.where(mask, bd, MLXArray(-Float.infinity).asType(bd.dtype))
+            }
+            attended = NFKReferenceRounding.flashAttention(queries: qU, keys: keys, values: values, scale: scaling, mask: bd)
+        } else {
+            var bd = relShift(matmul(qV, p.transposed(0, 1, 3, 2)))[0..., 0..., 0..., 0 ..< total] * scaling
+            if let mask {
+                bd = MLX.where(mask, bd, MLXArray(-Float.infinity))
+            }
+            let scores = matmul(qU, keys.transposed(0, 1, 3, 2)) * scaling + bd
+            attended = matmul(softmax(scores, axis: -1, precise: true), values)
         }
-        let scores = matmul(qU, keys.transposed(0, 1, 3, 2)) * scaling + bd
-        let attended = matmul(softmax(scores, axis: -1, precise: true), values)
         return o(attended.transposed(0, 2, 1, 3).reshaped([b, queries, heads * headDim]))
     }
 }
@@ -364,16 +390,23 @@ final class NFKNemotronASRConvModule: Module {
         _pointwise1.wrappedValue = Conv1d(inputChannels: d, outputChannels: 2 * d, kernelSize: 1, bias: config.convolutionBias)
         _depthwise.wrappedValue = Conv1d(inputChannels: d, outputChannels: d, kernelSize: config.convKernel, groups: d,
                                          bias: config.convolutionBias)
-        _norm.wrappedValue = LayerNorm(dimensions: d)
+        _norm.wrappedValue = NFKLayerNorm(dimensions: d)
         _pointwise2.wrappedValue = Conv1d(inputChannels: d, outputChannels: d, kernelSize: 1, bias: config.convolutionBias)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let gated = pointwise1(x)
+        let gated = nemotronASRConvolved(x, weight: pointwise1.weight, bias: pointwise1.bias) { conv1d($0, $1) }
         let half = gated.dim(2) / 2
-        let glu = gated[0..., 0..., 0 ..< half] * sigmoid(gated[0..., 0..., half...])
+        // torch's `glu` forms `a · sigmoid(b)` in float32 and rounds once in half precision.
+        let glu = NFKReferenceRounding.isReduced(gated)
+            ? (gated[0..., 0..., 0 ..< half].asType(.float32) * MLX.sigmoid(gated[0..., 0..., half...].asType(.float32))).asType(gated.dtype)
+            : gated[0..., 0..., 0 ..< half] * sigmoid(gated[0..., 0..., half...])
         let causal = NFKMLXStreamCarry.causallyPadded(glu, frames: kernel - 1, axis: 1, owner: self)
-        return pointwise2(silu(norm(depthwise(causal))))
+        let filtered = nemotronASRConvolved(causal, weight: depthwise.weight, bias: depthwise.bias) {
+            conv1d($0, $1, groups: $0.dim(-1))
+        }
+        let activated = NFKReferenceRounding.silu(norm(filtered))
+        return nemotronASRConvolved(activated, weight: pointwise2.weight, bias: pointwise2.bias) { conv1d($0, $1) }
     }
 }
 
@@ -387,7 +420,7 @@ final class NFKNemotronASRFeedForward: Module {
         _linear2.wrappedValue = Linear(config.intermediate, config.dModel, bias: config.attentionBias)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(silu(linear1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.silu(linear1(x))) }
 }
 
 /// One pre-norm conformer block: half a feed-forward, attention, the convolution module, half a
@@ -405,15 +438,15 @@ final class NFKNemotronASRLayer: Module {
 
     init(_ config: NFKMLXNemotronASRConfiguration) {
         let d = config.dModel
-        _normFF1.wrappedValue = LayerNorm(dimensions: d)
+        _normFF1.wrappedValue = NFKLayerNorm(dimensions: d)
         _ff1.wrappedValue = NFKNemotronASRFeedForward(config)
-        _normAttention.wrappedValue = LayerNorm(dimensions: d)
+        _normAttention.wrappedValue = NFKLayerNorm(dimensions: d)
         _attention.wrappedValue = NFKNemotronASRAttention(config)
-        _normConv.wrappedValue = LayerNorm(dimensions: d)
+        _normConv.wrappedValue = NFKLayerNorm(dimensions: d)
         _conv.wrappedValue = NFKNemotronASRConvModule(config)
-        _normFF2.wrappedValue = LayerNorm(dimensions: d)
+        _normFF2.wrappedValue = NFKLayerNorm(dimensions: d)
         _ff2.wrappedValue = NFKNemotronASRFeedForward(config)
-        _normOut.wrappedValue = LayerNorm(dimensions: d)
+        _normOut.wrappedValue = NFKLayerNorm(dimensions: d)
     }
 
     func callAsFunction(_ x: MLXArray, positions: (Int) -> MLXArray, mask: MLXArray?) -> MLXArray {
@@ -468,7 +501,8 @@ final class NFKNemotronASREncoder: Module {
     /// Features `[1, T, mels]` → encoder frames `[1, T', D]`. A clip forward passes its lookahead for the
     /// chunked mask; a stream runs inside its carry, chunk by chunk, with `lookahead` nil.
     func callAsFunction(_ features: MLXArray, lookahead: Int?) -> MLXArray {
-        var x = subsampling(features)
+        // A half-precision encoder takes its features at its own type, as transformers casts them.
+        var x = subsampling(features.asType(NFKReferenceRounding.parameterType(of: subsampling)))
         if configuration.scaleInput {
             x = x * sqrtf(Float(configuration.dModel))
         }
@@ -632,12 +666,28 @@ public final class NFKMLXNemotronASRNet: Module {
 
 // MARK: - Tokenizer
 
-/// The release's `tokenizer.json` piece table, read for decoding: a SentencePiece model, BPE (a piece →
-/// id map) or Unigram (`[piece, score]` in id order), whose `▁` marks a word start and whose `<0xNN>`
-/// pieces are byte fallbacks. Added special tokens (the blank among them) decode to nothing.
+/// The release's `tokenizer.json`: its piece table for decoding, and its encoding of transcript text into
+/// the label ids a fine-tune trains on.
+///
+/// @discussion The release converts NeMo's SentencePiece BPE model, and NeMo trains on that model's ids, so
+/// encoding follows SentencePiece rather than the converted pipeline, which parts from it on runs of
+/// spaces, leading and trailing spaces, and long combining sequences. The model's `nmt_nfkc` map, the
+/// `precompiled_charsmap` the conversion keeps, normalizes the text at the longest match. Every space is
+/// kept as `▁`, and one more `▁` leads the text. BPE then joins the adjacent pair whose concatenation is the
+/// highest-scoring piece, the leftmost among equals. A SentencePiece BPE model scores its pieces in id
+/// order, so the lowest id wins. A character outside the vocabulary is the unknown id, and a run of them is
+/// one. The model holds no byte pieces and no added tokens, so `<blank>` written in a transcript is text.
 public struct NFKMLXNemotronASRTokenizer: Sendable {
     public let pieces: [String]
     public let specialIds: Set<Int>
+
+    // The vocabulary compares by exact scalars, as SentencePiece does; a `String` key would merge
+    // canonically equivalent pieces.
+    private let vocabulary: [[UInt32]: Int]
+    private let charsmap: NFKMLXPrecompiledCharsmap?
+    private let unknownId: Int?
+    private static let metaspace: Unicode.Scalar = "\u{2581}"
+    private static func key(_ text: String) -> [UInt32] { text.unicodeScalars.map(\.value) }
 
     public init(tokenizerURL: URL) throws {
         let data = try Data(contentsOf: tokenizerURL)
@@ -646,13 +696,24 @@ public struct NFKMLXNemotronASRTokenizer: Sendable {
             throw NFKMLXError.malformedCheckpoint("tokenizer.json has no model")
         }
         var pieces: [String] = []
-        if let vocab = model["vocab"] as? [String: Int] {
-            pieces = [String](repeating: "", count: (vocab.values.max() ?? -1) + 1)
-            for (piece, id) in vocab where id >= 0 {
+        var vocabulary: [[UInt32]: Int] = [:]
+        // Read through NSDictionary, whose keys compare literally, so every spelling of a piece survives.
+        if let vocab = model["vocab"] as? NSDictionary {
+            for (key, value) in vocab {
+                guard let piece = key as? String, let id = (value as? NSNumber)?.intValue, id >= 0 else {
+                    continue
+                }
+                if id >= pieces.count {
+                    pieces += [String](repeating: "", count: id + 1 - pieces.count)
+                }
                 pieces[id] = piece
+                vocabulary[Self.key(piece)] = id
             }
         } else if let vocab = model["vocab"] as? [[Any]] {
             pieces = vocab.map { ($0.first as? String) ?? "" }
+            for (id, piece) in pieces.enumerated() {
+                vocabulary[Self.key(piece)] = id
+            }
         } else {
             throw NFKMLXError.malformedCheckpoint("tokenizer.json's model has no vocab")
         }
@@ -669,13 +730,74 @@ public struct NFKMLXNemotronASRTokenizer: Sendable {
                 specialIds.insert(id)
             }
         }
+        let normalizer = root["normalizer"] as? [String: Any]
+        let steps = normalizer?["type"] as? String == "Sequence"
+            ? (normalizer?["normalizers"] as? [[String: Any]]) ?? [] : normalizer.map { [$0] } ?? []
+        charsmap = (steps.first { $0["type"] as? String == "Precompiled" }?["precompiled_charsmap"] as? String)
+            .flatMap(NFKMLXPrecompiledCharsmap.init(base64:))
         self.pieces = pieces
         self.specialIds = specialIds
+        self.vocabulary = vocabulary
+        unknownId = (model["unk_token"] as? String).flatMap { vocabulary[Self.key($0)] }
     }
 
-    init(pieces: [String], specialIds: Set<Int>) {
+    init(pieces: [String], specialIds: Set<Int>, unknownId: Int? = nil) {
         self.pieces = pieces
         self.specialIds = specialIds
+        vocabulary = Dictionary(pieces.enumerated().filter { !specialIds.contains($0.offset) }.map { (Self.key($0.element), $0.offset) },
+                                uniquingKeysWith: { first, _ in first })
+        charsmap = nil
+        self.unknownId = unknownId
+    }
+
+    /// The label ids of a transcript, as the release's SentencePiece model encodes it: no blank, no start
+    /// or end marker.
+    public func encode(_ text: String) -> [Int] {
+        guard !text.isEmpty else {
+            return []
+        }
+        let normalized = charsmap?.normalize(text) ?? text
+        var ids: [Int] = []
+        var word: [Unicode.Scalar] = [Self.metaspace]
+        for scalar in normalized.unicodeScalars {
+            let symbol = scalar == " " ? Self.metaspace : scalar
+            // No piece holds a `▁` past its first character, so no merge crosses one.
+            if symbol == Self.metaspace, !word.isEmpty {
+                ids += encodeWord(word, after: ids.last)
+                word = []
+            }
+            word.append(symbol)
+        }
+        return ids + encodeWord(word, after: ids.last)
+    }
+
+    /// One word's ids: each character a symbol, then merged pair by pair into the pair whose piece has the
+    /// lowest id, the leftmost among equals. `previous` is the id before the word, so a run of unknowns
+    /// stays one.
+    private func encodeWord(_ word: [Unicode.Scalar], after previous: Int?) -> [Int] {
+        var symbols = word.map { [$0.value] }
+        while symbols.count > 1 {
+            var best = (id: Int.max, index: -1)
+            for index in 0 ..< symbols.count - 1 {
+                if let id = vocabulary[symbols[index] + symbols[index + 1]], id < best.id {
+                    best = (id, index)
+                }
+            }
+            guard best.index >= 0 else {
+                break
+            }
+            symbols[best.index] += symbols[best.index + 1]
+            symbols.remove(at: best.index + 1)
+        }
+        var ids: [Int] = []
+        for symbol in symbols {
+            if let id = vocabulary[symbol] {
+                ids.append(id)
+            } else if let unknownId, (ids.last ?? previous) != unknownId {
+                ids.append(unknownId)
+            }
+        }
+        return ids
     }
 
     /// The text of `ids`: the pieces joined, byte fallbacks decoded as UTF-8, `▁` as a space, and a
@@ -713,8 +835,9 @@ public final class NFKMLXNemotronASR: NSObject {
 
     /// Loads a release's `model.safetensors` (or a checkpoint `NFKMLXWeights.save` wrote) into `net`:
     /// the LSTM's `weight_ih_l<n>`/`weight_hh_l<n>` and summed biases fold into each layer's `Wx`/`Wh`/
-    /// `bias`, and a release's convolutions transpose to MLX's channels-last layouts.
-    public static func loadWeights(into net: NFKMLXNemotronASRNet, from url: URL) throws {
+    /// `bias`, and a release's convolutions transpose to MLX's channels-last layouts. A `dtype` converts
+    /// every floating tensor to it, the folded LSTM biases after they are summed.
+    public static func loadWeights(into net: NFKMLXNemotronASRNet, from url: URL, castingTo dtype: DType? = nil) throws {
         let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         var arrays = checkpoint.arrays
         var folded: [String: MLXArray] = [:]
@@ -749,6 +872,9 @@ public final class NFKMLXNemotronASR: NSObject {
             mapped.append((name, array))
         }
         mapped += folded.map { ($0.key, $0.value) }
+        if let dtype {
+            mapped = mapped.map { ($0.0, $0.1.dtype.isFloatingPoint ? $0.1.asType(dtype) : $0.1) }
+        }
         try NFKMLXWeights.apply(mapped, to: net)
         net.train(false)
     }
@@ -769,10 +895,17 @@ public final class NFKMLXNemotronASR: NSObject {
     /// `tokenizer.json`. Blocking on the load; run off the render thread. Introduced in InferKit 0.4.0.
     @objc(backendWithDirectoryURL:error:)
     public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, castingTo: nil)
+    }
+
+    /// The recognizer from a release directory with its float32 weights converted to `dtype` as they load:
+    /// `.bfloat16` halves the 2.5 GB release and computes in bfloat16, as transformers does at that type.
+    /// Nil keeps the release's float32. Introduced in InferKit 0.4.0.
+    public static func backend(directoryURL: URL, castingTo dtype: DType?) throws -> any NFKInferenceBackend {
         try NFKMLXBuildHolds.keeping {
             let configuration = try configuration(directoryURL: directoryURL)
             let net = NFKMLXNemotronASRNet(configuration)
-            try loadWeights(into: net, from: directoryURL.appendingPathComponent("model.safetensors"))
+            try loadWeights(into: net, from: directoryURL.appendingPathComponent("model.safetensors"), castingTo: dtype)
             let tokenizer = try NFKMLXNemotronASRTokenizer(tokenizerURL: directoryURL.appendingPathComponent("tokenizer.json"))
             return NFKMLXNemotronASRBackend(net: net, tokenizer: tokenizer, identifier: modelName)
         }
@@ -803,8 +936,15 @@ public final class NFKMLXNemotronASR: NSObject {
     }
 
     /// Registers `nemotron-asr-streaming`; the registry's URL is a release directory.
+    /// `NFKModelLoadOptionPrecision` `bfloat16` converts the float32 release to bfloat16 as it loads,
+    /// `checkpoint` keeps it as stored, and any other precision is refused.
     @objc public static func register() {
-        NFKMLXGenerationBackend.registerDirectoryModel(modelName) { try backend(directoryURL: $0) }
+        NFKMLXModelRegistry.register(name: modelName, consumes: [NFKModelLoadOptionPrecision]) { url, options in
+            guard let url else {
+                throw NFKMLXError.unsupportedConfiguration("\(modelName) needs the release directory; there is no random-weights form")
+            }
+            return try backend(directoryURL: url, castingTo: try options.bfloat16Cast(of: modelName))
+        }
     }
 
     /// A random-weights recognizer at `configuration`, for shape and stream checks.

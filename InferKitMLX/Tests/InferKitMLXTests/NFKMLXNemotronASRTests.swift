@@ -161,6 +161,64 @@ final class NFKMLXNemotronASRTests: XCTestCase {
         XCTAssertEqual(tokenizer.text(for: [3, 4], atStart: false), " world", "a later unit keeps its word's space")
     }
 
+    /// A tokenizer.json in the release's form over a tiny vocabulary, its pieces in score order as a
+    /// SentencePiece BPE model's are, and the blank as an added special token.
+    private func tinyTokenizer() throws -> NFKMLXNemotronASRTokenizer {
+        let vocab: [String: Int] = ["<unk>": 0, "\u{2581}ab": 1, "\u{2581}a": 2, "ab": 3, "\u{2581}c": 4, "\u{2581}": 5,
+                                    "a": 6, "b": 7, "c": 8, ".": 9, "ca": 10]
+        let json: [String: Any] = [
+            "pre_tokenizer": ["type": "Metaspace", "replacement": "\u{2581}", "prepend_scheme": "always", "split": true],
+            "model": ["type": "BPE", "unk_token": "<unk>", "fuse_unk": true, "vocab": vocab, "merges": [] as [Any]],
+            "added_tokens": [["id": 11, "content": "<blank>", "special": true]],
+        ]
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("nemotron-tokenizer-\(UUID().uuidString).json")
+        try JSONSerialization.data(withJSONObject: json).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        return try NFKMLXNemotronASRTokenizer(tokenizerURL: url)
+    }
+
+    func testTheTokenizerEncodesWordsAsSentencePieceDoes() throws {
+        let tokenizer = try tinyTokenizer()
+        XCTAssertEqual(tokenizer.encode("ab c."), [1, 4, 9], "each word takes a ▁ and merges into its pieces")
+        XCTAssertEqual(tokenizer.encode("ca"), [4, 6], "the pair whose piece has the lower id merges first")
+        XCTAssertEqual(tokenizer.encode("a  b"), [2, 5, 5, 7], "every space is a ▁")
+        XCTAssertEqual(tokenizer.encode("  a  "), [5, 5, 2, 5, 5], "leading and trailing spaces are kept")
+        XCTAssertEqual(tokenizer.encode("a<blank>b"), [2, 0, 7, 0, 6, 0, 7], "an added token written in the text is text")
+        XCTAssertEqual(tokenizer.encode("zz"), [5, 0], "consecutive unknown characters fuse into one")
+        XCTAssertEqual(tokenizer.encode("\u{E9}"), [5, 0], "a character outside the vocabulary is unknown")
+        XCTAssertEqual(tokenizer.encode(""), [])
+        XCTAssertEqual(tokenizer.text(for: tokenizer.encode("ab c.")), "ab c.")
+    }
+
+    /// The release's tokenizer against the SentencePiece model NeMo trained the release with, on transcripts
+    /// that exercise the normalizer (`run_reference.py nemotron_asr_tokenizer`). The converted `tokenizer.json`
+    /// through `tokenizers` is printed beside it: it parts from SentencePiece on whitespace and long
+    /// combining sequences.
+    func testTheTokenizerEncodesTranscriptsAsTheReference() throws {
+        let environment = NFKMLXValidationConfig.environment
+        guard let directory = environment["IK_VAL_NEMOTRON_ASR_STREAMING"],
+              let recordPath = environment["IK_PARITY_NEMOTRON_ASR_TOKENIZER"] else {
+            throw XCTSkip("set IK_VAL_NEMOTRON_ASR_STREAMING and IK_PARITY_NEMOTRON_ASR_TOKENIZER (run_reference.py nemotron_asr_tokenizer)")
+        }
+        let tokenizer = try NFKMLXNemotronASR.tokenizer(directoryURL: URL(fileURLWithPath: directory))
+        let record = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: recordPath)).arrays
+        let count = try XCTUnwrap(record["count"]).item(Int.self)
+        var agreeing = (trained: 0, converted: 0), converterDisagreements: [Int] = []
+        for index in 0 ..< count {
+            let text = String(decoding: try XCTUnwrap(record["text.\(index)"]).asArray(Int.self).map(UInt8.init), as: UTF8.self)
+            let trained = try XCTUnwrap(record["sp.\(index)"], "the record holds the SentencePiece encoding NeMo trained with")
+                .asArray(Int.self)
+            let converted = try XCTUnwrap(record["hf.\(index)"]).asArray(Int.self)
+            let ours = tokenizer.encode(text)
+            agreeing.trained += ours == trained ? 1 : 0
+            agreeing.converted += ours == converted ? 1 : 0
+            converterDisagreements += converted == trained ? [] : [index]
+            XCTAssertEqual(ours, trained, "\(index) \(text.debugDescription): the ids NeMo trained on")
+        }
+        print("VALIDATION PARITY nemotron-asr tokenizer: of \(count) transcripts, \(agreeing.trained) encode as SentencePiece "
+              + "and \(agreeing.converted) as tokenizers; tokenizers differs from SentencePiece on \(converterDisagreements)")
+    }
+
     // MARK: Training
 
     /// The objective against NeMo's `RNNTLoss` and `RNNTLossPytorch` on fixed logits
@@ -222,6 +280,24 @@ final class NFKMLXNemotronASRTests: XCTestCase {
         let encoderAfter = net.encoder.parameters().flattened().map { $0.1 }
         XCTAssertTrue(zip(encoderBefore, encoderAfter).allSatisfy { maxGap($0, $1) == 0 }, "the frozen encoder does not move")
         XCTAssertGreaterThan(maxGap(headBefore, net.joint.head.weight), 0, "the joint head moves")
+    }
+
+    func testAFineTuneFromTranscriptsTrainsOnTheirEncodedLabels() throws {
+        try requireMLXRuntime()
+        let tokenizer = try tinyTokenizer()
+        let samples = NFKMLXSpeechEnhancerLiveStreamTests.signal(count: 16000, sampleRate: 16000)
+        let text = "ab c. ab"
+        let net = tinyNet()
+        // A copy of the same parameters, taken before either network trains.
+        let twin = NFKMLXNemotronASRNet(.tiny)
+        twin.update(parameters: net.parameters().mapValues { $0 + 0 })
+        eval(twin)
+        let fromText = try NFKMLXNemotronASR.fineTune(net, transcribed: { _ in [(samples, text)] }, tokenizer: tokenizer,
+                                                       optimizer: Adam(learningRate: 3e-3), steps: 3)
+        let fromLabels = try NFKMLXNemotronASR.fineTune(twin, examples: { _ in [(samples, tokenizer.encode(text))] },
+                                                         optimizer: Adam(learningRate: 3e-3), steps: 3)
+        XCTAssertEqual(tokenizer.encode(text), [1, 4, 9, 1])
+        XCTAssertEqual(fromText, fromLabels, "a transcript trains as its encoded labels do")
     }
 
     func testAFineTunedCheckpointReloadsThroughTheNetworkBuilder() throws {

@@ -137,7 +137,8 @@ extension NFKMLXNemotronASR {
     /// - Parameters:
     ///   - net: the network.
     ///   - examples: one batch per step: each utterance's 16 kHz samples and its transcript's token ids,
-    ///     without the blank.
+    ///     without the blank. ``fineTune(_:transcribed:tokenizer:trainable:lookahead:optimizer:steps:clipGradientNorm:accumulationSteps:learningRateSchedule:checkpoint:observer:)``
+    ///     takes the transcripts as text.
     ///   - trainable: which parameters update. Freezing is applied here and persists on `net`.
     ///   - lookahead: the encoder's right context while training; nil is the release's default.
     ///   - optimizer: the update rule. Nil uses ``referenceOptimizer(for:)``.
@@ -193,6 +194,54 @@ extension NFKMLXNemotronASR {
             clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
             learningRateSchedule: learningRateSchedule,
             checkpoint: checkpoint, observer: observer)
+    }
+
+    /// The release's tokenizer, which encodes the transcripts a fine-tune trains on.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func tokenizer(directoryURL: URL) throws -> NFKMLXNemotronASRTokenizer {
+        try NFKMLXNemotronASRTokenizer(tokenizerURL: directoryURL.appendingPathComponent("tokenizer.json"))
+    }
+
+    /// Fine-tunes `net` on 16 kHz audio and its transcripts, encoded by `tokenizer` into the labels
+    /// ``fineTune(_:examples:trainable:lookahead:optimizer:steps:clipGradientNorm:accumulationSteps:learningRateSchedule:checkpoint:observer:)``
+    /// trains on, and returns the loss from each step.
+    ///
+    /// - Parameters:
+    ///   - net: the network.
+    ///   - transcribed: one batch per step: each utterance's 16 kHz samples and its transcript, written as
+    ///     the release transcribes (cased, with punctuation).
+    ///   - tokenizer: the release's tokenizer, from ``tokenizer(directoryURL:)``.
+    ///   - trainable: which parameters update. Freezing is applied here and persists on `net`.
+    ///   - lookahead: the encoder's right context while training; nil is the release's default.
+    ///   - optimizer: the update rule. Nil uses ``referenceOptimizer(for:)``.
+    ///   - steps: how many batches to train on.
+    ///   - clipGradientNorm: bounds the global gradient norm before the update.
+    ///   - accumulationSteps: how many batches each update averages.
+    ///   - learningRateSchedule: multiplies the rate at each step. Nil holds the rate constant.
+    ///   - checkpoint: writes the network periodically.
+    ///   - observer: receives each step and can end the run early.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @discardableResult
+    public static func fineTune(
+        _ net: NFKMLXNemotronASRNet,
+        transcribed: (Int) -> [(samples: [Float], text: String)],
+        tokenizer: NFKMLXNemotronASRTokenizer,
+        trainable: NFKMLXNemotronASRTrainable = .transducer,
+        lookahead: Int? = nil,
+        optimizer: Optimizer? = nil,
+        steps: Int,
+        clipGradientNorm: Float? = nil,
+        accumulationSteps: Int = 1,
+        learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
+        checkpoint: NFKMLXTrainingCheckpoint? = nil,
+        observer: NFKMLXTrainer.Observer? = nil
+    ) throws -> [Float] {
+        try fineTune(net, examples: { step in transcribed(step).map { ($0.samples, tokenizer.encode($0.text)) } },
+                     trainable: trainable, lookahead: lookahead, optimizer: optimizer, steps: steps,
+                     clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+                     learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
     }
 
     /// The release's own optimizer, `model_config.yaml`'s `optim`: AdamW at a peak rate of 3.0 with betas

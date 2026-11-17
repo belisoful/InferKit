@@ -248,9 +248,39 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (`run_reference.py nemotron_asr_streaming_loss`, `IK_PARITY_NEMOTRON_ASR_STREAMING_LOSS`): each utterance's plain negative log-likelihood at 55.21628 and 38.548912 against 55.216278 and 38.548912, the release's loss at 11.779253 against 11.779252, and its gradient with respect to the logits at max |d| 6.2e-7 over a peak of 0.125.
   The reference optimizer is the configuration's: AdamW at 3.0, betas (0.9, 0.98), weight decay 0.001,
   under `NoamAnnealing` (`d_model` 1024, 8,000 warmup steps, floor 1e-6), with the folded LSTM bias at
-  twice the rate. The release is float32 and is not quantized or offered at a lower precision here: a
-  half-precision or quantized encoder needs its own floor measured against the reference at that
-  precision, which is open.
+  twice the rate.
+  - **Transcripts train as text.** `fineTune(_:transcribed:tokenizer:…)` encodes each transcript with
+    `NFKMLXNemotronASRTokenizer.encode` and trains on the ids; `tokenizer(directoryURL:)` reads the
+    release's. NeMo trains on the ids of the `.nemo`'s SentencePiece BPE model, so the encoder is
+    SentencePiece's: the model's `nmt_nfkc` map (`NFKMLXPrecompiledCharsmap`, the `precompiled_charsmap`
+    `tokenizer.json` keeps) replaces the longest match at each byte, every space stays a `▁`, one more `▁`
+    leads the text, and BPE joins the pair whose piece scores highest, the leftmost among equals. The model
+    scores its pieces in id order, `−(id − 1)`, so the lowest id wins. It has no byte fallback and no
+    added tokens, so a run of unknown characters is one `<unk>` and
+    `<blank>` written in a transcript is text.
+  - The converted `tokenizer.json` through `tokenizers` parts from that model: it strips trailing spaces,
+    folds a run of spaces into one `▁`, normalizes per grapheme cluster at the shortest match, and reads
+    `<blank>` and `<unk>` as added tokens. `run_reference.py nemotron_asr_tokenizer`
+    (`IK_PARITY_NEMOTRON_ASR_TOKENIZER`) encodes 29 transcripts (punctuation, digits, curly quotes,
+    precomposed and decomposed accents, stacked combining marks, ligatures, fullwidth forms, Unicode spaces,
+    tabs and newlines, emoji sequences, CJK, Arabic, Hangul jamo, zero-width characters, special tokens
+    written literally) through both. The port's ids equal SentencePiece's on all 29; `tokenizers` differs
+    from SentencePiece on 6 (leading and trailing spaces, space runs, a CR LF, a five-mark cluster, literal
+    special tokens, and spaces alone).
+  - **BFloat16 is offered** (`NFKModelPrecisionBFloat16` on the load, `backend(directoryURL:castingTo:)`):
+    the float32 release converts as it loads, 1.24 GB resident against 2.47 GB. It is held to transformers
+    at bfloat16 and at float32 on the same bfloat16-rounded features (`nemotron_asr_streaming_precision`,
+    records `nemotron-asr-bf16` / `-f32`, `testNemotronASRInBFloat16MatchesTheBFloat16Reference`). The
+    rounding follows torch's CPU kernels: each convolution rounds once with its bias, GLU and SiLU form in
+    float32 and round once, the position scores scale in float32, attention runs through the CPU flash
+    kernel's model with the position scores as its bfloat16 mask, and the position table is cast after it
+    forms in float32. Every LayerNorm is `NFKLayerNorm`. MLX's fused kernel rounds the normalized value,
+    then the scale, then the bias, which left 60–80% of each isolated layer's elements apart from the
+    reference and layers 19 and 20 at 0.26 of their floors. Measured on the M1 Max: every layer run on the
+    reference's input sits at most 0.077 of its floor (layer 20, floor 7.1e-5), the subsampler at 1.2e-4
+    of its floor, the encoder 2.2e-4 from float32 against the reference's 2.85e-4, the stream 2.6e-4 from
+    float32 against 4.5e-4, and the greedy tokens equal the reference's at bfloat16 and at float32. Weight
+    quantization is not offered: it needs its own floor measured against the reference.
 - `NFKMLXGraniteSpeech` / `NFKMLXGraniteSpeechNet` / `NFKMLXGraniteSpeechBackend` (`@objc`) — **Granite
   Speech 3.3-2b** (`GraniteSpeechForConditionalGeneration`, IBM, Apache-2.0), the first speech language
   model here: a Conformer acoustic encoder, a BLIP-2 Q-former projector, and a dense Granite decoder that
