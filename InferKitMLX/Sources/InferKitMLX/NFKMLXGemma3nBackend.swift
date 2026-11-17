@@ -98,20 +98,36 @@ extension NFKMLXGemma3n {
     public func generate(tokens: [Int], image: Any? = nil, audio: MLXArray? = nil,
                          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
                          onToken: (Int) -> Bool) throws {
+        try generate(tokens: tokens, image: image, audio: audio, options: options, promptCache: nil, onToken: onToken)
+    }
+
+    /// Generation that continues `promptCache` where it is given: the cache rolls back to the prefix it shares
+    /// with `tokens`, only the rest is prefilled, and the cache keeps every position the run writes. A run that
+    /// throws leaves the cache empty. A caller passes no cache with an image or a clip.
+    func generate(tokens: [Int], image: Any?, audio: MLXArray?, options: NFKMLXGenerationOptions,
+                  promptCache: NFKMLXGemma3nPromptCache?, onToken: (Int) -> Bool) throws {
         let pixels = try image.map { try NFKMLXGemma3nImageProcessor.pixelValues(from: $0) }
         let mel = audio.map { NFKMLXGemma3nAudioFeatures()($0) }
         if let seed = options.seed { MLXRandom.seed(seed) }
 
-        let cache = NFKMLXGemma3nCache(layerCount: model.decoder.configuration.layerCount)
-        var logits = try model(MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count]),
-                               image: pixels, audioMel: mel, cache: cache)[0, -1]
+        let start = promptCache?.align(to: tokens) ?? 0
+        let cache = promptCache?.cache ?? NFKMLXGemma3nCache(layerCount: model.decoder.configuration.layerCount)
+        let fresh = Array(tokens[start...])
         let stops: Set<Int> = [endOfTurn, endOfSequence]
-
-        for _ in 0 ..< max(options.maxTokens, 1) {
-            let next = NFKMLXLanguageNet.sample(logits, options: options)
-            if stops.contains(next) { break }
-            if !onToken(next) { break }
-            logits = try model(MLXArray([Int32(next)]).reshaped([1, 1]), cache: cache)[0, -1]
+        do {
+            var logits = try model(MLXArray(fresh.map(Int32.init)).reshaped([1, fresh.count]),
+                                   image: pixels, audioMel: mel, cache: cache)[0, -1]
+            promptCache?.record(fresh)
+            for _ in 0 ..< max(options.maxTokens, 1) {
+                let next = NFKMLXLanguageNet.sample(logits, options: options)
+                if stops.contains(next) { break }
+                if !onToken(next) { break }
+                logits = try model(MLXArray([Int32(next)]).reshaped([1, 1]), cache: cache)[0, -1]
+                promptCache?.record([next])
+            }
+        } catch {
+            promptCache?.reset()
+            throw error
         }
     }
 }
@@ -121,8 +137,10 @@ extension NFKMLXGemma3n {
 /// Text generation from Gemma 3n through the InferKit contract.
 ///
 /// @discussion `NFKInputImage` adds a picture and `NFKInputAudio` a clip; either needs a release that
-/// carries the matching tower. Inference is synchronous and multi-second, so a caller runs it off the
-/// render thread or takes the job form.
+/// carries the matching tower. A text request continues the conversation its `NFKParameterConversationKey`
+/// names, or, naming none, the kept conversation its prompt continues furthest, so a follow-up turn prefills
+/// only what it adds (``conversationCacheByteBudget``). Inference is synchronous and multi-second, so a caller
+/// runs it off the render thread or takes the job form.
 @objc(NFKMLXGemma3nBackend)
 public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
     private let holder: NFKGemma3nHolder
@@ -135,14 +153,19 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
     private let releaseSampling: NFKMLXReleaseSampling?
     /// The strengths the held adapters were loaded at, in load order; empty for a model that holds none.
     private let adapterStrengths: [Float]
+    /// The release directory, which names the default spill directory, or nil for a model built without one.
+    private let releaseDirectoryURL: URL?
+    /// The conversations' caches, read and written under `generationLock`.
+    private let conversations = NFKMLXConversationKeeper<NFKMLXGemma3nPromptCache>(byteBudget: 0)
 
     init(model: NFKMLXGemma3n, identifier: String, contextLength: Int? = nil, releaseSampling: NFKMLXReleaseSampling? = nil,
-         adapterStrengths: [Float] = []) {
+         adapterStrengths: [Float] = [], releaseDirectoryURL: URL? = nil) {
         holder = NFKGemma3nHolder(model)
         self.identifier = identifier
         self.contextLength = contextLength
         self.releaseSampling = releaseSampling
         self.adapterStrengths = adapterStrengths
+        self.releaseDirectoryURL = releaseDirectoryURL
         super.init()
     }
 
@@ -151,7 +174,7 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
         let keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
-                                 NFKParameterSeed]
+                                 NFKParameterSeed, NFKParameterConversationKey]
         return adapterStrengths.isEmpty ? keys : keys.union([NFKParameterAdapterStrengths])
     }
 
@@ -210,22 +233,149 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
         options.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: ids.count,
                                                           contextLength: contextLength, source: identifier)
 
+        // An image's or a clip's placeholder ids are the same whatever the media, so such a prompt keeps nothing.
+        let reuses = NFKMLXConversation.reuses(request) && image == nil && waveform == nil
         generationLock.lock(); defer { generationLock.unlock() }
+        let layerCount = gemma.model.decoder.configuration.layerCount
+        conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+        // A conversation's cache computed at other adapter strengths starts over.
+        let (name, kept) = conversations.conversation(
+            named: NFKMLXConversation.name(of: request), reuses: reuses, prompt: ids, signature: "gemma3n",
+            usable: { $0.adapterStrengths == strengths },
+            make: {
+                let made = NFKMLXGemma3nPromptCache(layerCount: layerCount)
+                made.adapterStrengths = strengths
+                return made
+            },
+            read: { url, record in try NFKMLXGemma3nPromptCache.load(from: url, tokens: record.tokens, layerCount: layerCount) })
+        let promptCache = name == nil ? nil : kept
+        var failed = true
+        defer {
+            conversations.finish(name, failed: failed, afforded: NFKMLXConversationBudget.afforded(
+                info: modelInfo, runBytes: keyValueBytes(positions: contextLength)), spills: adapterStrengths.isEmpty)
+        }
         var produced = [Int]()
         // The held adapters read the run's strengths as each pass builds its graph.
         try NFKMLXAdapterRun.$strengths.withValue(strengths) {
-            try gemma.generate(tokens: ids, image: image, audio: waveform, options: options) { token in
+            try gemma.generate(tokens: ids, image: image, audio: waveform, options: options,
+                               promptCache: promptCache) { token in
                 produced.append(token)
                 return onToken?(token, produced) ?? true
             }
         }
+        failed = false
         return NFKInferenceResult(outputs: [
             NFKOutputText: gemma.decode(produced),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: 0,
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: promptCache?.sharedPrefixLength ?? 0,
                                                 outputTokens: produced.count, reasoningTokens: nil),
             NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: max(options.maxTokens, 1)),
         ])
     }
+
+    /// The bytes one conversation's keys and values take over `positions` positions: the layers before the
+    /// shared tail store them, at the decoder's activation width.
+    private func keyValueBytes(positions: Int?) -> Int {
+        let c = holder.model.model.decoder.configuration
+        let storing = c.sharedKeyValueLayers > 0 ? c.firstSharedKeyValueLayer : c.layerCount
+        let elementBytes = holder.model.model.decoder.norm.weight?.dtype.size ?? 4
+        return 2 * storing * c.keyValueHeadCount * c.headDimensions * elementBytes * (positions ?? 0)
+    }
+
+    // MARK: Conversation caches
+
+    /// The bytes the conversations' prompt caches may hold together.
+    ///
+    /// @discussion A text request continues the conversation its `NFKParameterConversationKey` names, or,
+    /// naming none, the kept conversation its prompt continues furthest, so the turns of several chats served
+    /// at once each prefill only what they add. When the caches outgrow the budget, the least recently used
+    /// conversations are written to ``conversationSpillDirectoryURL`` and dropped, never the one a request
+    /// just ran. Until it is set, the budget is what the memory planned beside the model affords after one
+    /// run's keys and values at the context length, recomputed each run; setting it fixes it, and lowering it
+    /// drops down to it at once. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversations.states.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.fixBudget(newValue)
+        }
+    }
+
+    /// How many conversations hold a prompt cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.count
+    }
+
+    /// The bytes the conversations' prompt caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.heldBytes
+    }
+
+    /// Drops one named conversation's prompt cache, in memory and on disk. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.remove(conversation)
+        conversations.spill?.remove(named: conversation)
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's prompt cache in memory; spilled ones stay on disk. Introduced in InferKit 0.4.0.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.removeAll()
+        conversations.refresh()
+    }
+
+    /// Writes every conversation's prompt cache to the spill directory and drops it from memory when no run is
+    /// in progress, and returns the bytes they held; returns 0 at once while a run holds them.
+    /// `NFKInferenceServer` calls it to relieve memory, and the reloadable backend before it unloads the model.
+    /// Introduced in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        return conversations.releaseAll(spills: adapterStrengths.isEmpty)
+    }
+
+    /// The directory conversations the memory budget lets go are written to, so a later request continues one
+    /// without its prefill, after an unload or a restart too; nil writes none. A backend over a release
+    /// directory defaults to a directory under the user's caches that only the same release and weights read.
+    /// A model that holds adapters writes none. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillDirectoryURL: URL? {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.directory
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.setSpillDirectory(newValue)
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk; the least recently written go first past it.
+    /// Defaults to 8 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            conversations.spill?.byteBudget = newValue
+        }
+    }
+
+    /// The conversation caches as of the last run or change: `conversation_caches`,
+    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it under
+    /// the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] { conversations.status }
 
     /// The input tokens a run of the request costs: its prompt or chat turns, with the soft tokens an
     /// image or a clip takes, tokenized as a run tokenizes them. Runs no model. Introduced in
@@ -346,7 +496,7 @@ extension NFKMLXGemma3n {
         return NFKMLXGemma3nBackend(model: gemma, identifier: modelName,
                                     contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory),
                                     releaseSampling: NFKMLXReleaseSampling(directoryURL: directory),
-                                    adapterStrengths: try holdAdapters(adapters, in: gemma))
+                                    adapterStrengths: try holdAdapters(adapters, in: gemma), releaseDirectoryURL: directory)
     }
 
     /// Holds released LoRA adapters beside `gemma`'s decoder layers, unmerged, and returns their strengths in

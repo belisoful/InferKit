@@ -7648,6 +7648,57 @@ def run_gemma3n(image, checkpoint):
     return logits.float().contiguous()
 
 
+def run_gemma3n_conversation(image, checkpoint):
+    """Gemma 3n's decoder over a two-turn chat, each turn a whole run of transformers' cached generation, at float32.
+
+    `--checkpoint` is a released model DIRECTORY (E2B by default in the manifest); the decoder loads on its own.
+    Turn 1 renders a question through the release's chat template and generates
+    `IK_GEMMA3N_CONVERSATION_STEPS` greedy tokens. Turn 2 renders turn 1, its reply as the model's turn, and a
+    follow-up, and generates again from the whole prompt. The port continues turn 2 from what it kept of turn 1
+    and is compared with this full re-run. The record carries both turns' prompt ids, both continuations, and
+    turn 2's raw logits before each generated token. `min_new_tokens` holds each turn to the step count by
+    suppressing the end ids, so a chosen token can differ from the raw argmax. `image` unused.
+    """
+    import torch
+    from transformers import AutoConfig, AutoTokenizer, Gemma3nForCausalLM
+
+    steps = int(os.environ.get("IK_GEMMA3N_CONVERSATION_STEPS", "16"))
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    config = AutoConfig.from_pretrained(checkpoint)
+    text_config = getattr(config, "text_config", config)
+    model = Gemma3nForCausalLM.from_pretrained(checkpoint, config=text_config, dtype=torch.float32).eval()
+    first = [{"role": "user", "content": " ".join(
+        ["The river bends past the old mill, where the miller's daughter counts the sacks of grain "
+         "and writes each number in a ledger bound in green cloth."] * 3)
+        + " What does the miller's daughter keep her numbers in?"}]
+
+    def tokens(messages):
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        return tokenizer(text, return_tensors="pt", add_special_tokens=False).input_ids
+
+    # The prompts hold the turn markers; an explicit mask keeps generate from inferring one from a pad id.
+    def generate(ids):
+        with torch.no_grad():
+            out = model.generate(ids, attention_mask=torch.ones_like(ids), max_new_tokens=steps, min_new_tokens=steps,
+                                 do_sample=False, use_cache=True, output_logits=True, return_dict_in_generate=True,
+                                 pad_token_id=tokenizer.pad_token_id)
+        return out.sequences[0, ids.shape[1]:], torch.stack([step[0] for step in out.logits])
+
+    first_ids = tokens(first)
+    first_reply, _ = generate(first_ids)
+    second = first + [{"role": "assistant", "content": tokenizer.decode(first_reply, skip_special_tokens=True)},
+                      {"role": "user", "content": "And what colour is its binding?"}]
+    second_ids = tokens(second)
+    second_reply, logits = generate(second_ids)
+    globals()["_extra"] = {
+        "turn1.tokens": first_ids[0].to(torch.int32).contiguous(),
+        "turn1.continuation": first_reply.to(torch.int32).contiguous(),
+        "turn2.tokens": second_ids[0].to(torch.int32).contiguous(),
+        "continuation": second_reply.to(torch.int32).contiguous(),
+    }
+    return logits.float().contiguous()
+
+
 def run_gemma3n_vision_probe(image, checkpoint):
     """`gemma3n_vision_real`'s timm MobileNetV5 tower and the vision embedder at bf16 or on its float32
     floor (`IK_PROBE_DTYPE`, see `_probe_precision`), block by block, on its seeded random frame in 0…1,
@@ -31803,6 +31854,8 @@ def run_wan_lora_musubi(image):
 
 MODELS["wan_lora_musubi"] = run_wan_lora_musubi
 CHECKPOINT_MODELS["qwen3_5_conversation"] = run_qwen3_5_conversation
+
+CHECKPOINT_MODELS["gemma3n_conversation"] = run_gemma3n_conversation
 
 
 if __name__ == "__main__":

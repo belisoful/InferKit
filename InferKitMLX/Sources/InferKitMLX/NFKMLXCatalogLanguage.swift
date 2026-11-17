@@ -956,7 +956,7 @@ extension NFKMLXCatalogLanguage {
             inputs: [promptInput, messagesInput, imageInput(help: "An image the reply is about."),
                      .input(NFKInputAudio, title: "Audio", help: "A recording the reply is about.")],
             outputs: [textOutput, usageOutput, finishReasonOutput],
-            parameters: samplingOptions(gemmaSampling) + [maxTokensOption(), seedOption()],
+            parameters: samplingOptions(gemmaSampling) + [maxTokensOption(), seedOption(), conversationKeyOption()],
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemma3n.requiredFiles,
                                                             optional: NFKMLXGemma3n.optionalFiles,
                                                             weights: NFKMLXGemma3n.weightFiles))],

@@ -724,8 +724,10 @@ public final class NFKMLXGemma3nNet: Module {
 /// `num_kv_shared_layers` store nothing at all — so the layers that remain can afford to be exact.
 public final class NFKMLXGemma3nCache {
     private let store: NFKMLXKeyValueCache
+    private let layerCount: Int
 
     public init(layerCount: Int) {
+        self.layerCount = layerCount
         store = NFKMLXKeyValueCache(layerCount: layerCount)
     }
 
@@ -737,6 +739,104 @@ public final class NFKMLXGemma3nCache {
     }
 
     func advance(by count: Int) { store.advance(by: count) }
+
+    /// The bytes the cached arrays occupy, their unused capacity included.
+    var allocatedBytes: Int { store.allocatedBytes }
+
+    /// The layers that store rows: the shared tail stores none, so a rollback moves the others alone.
+    private var storingLayers: [Int] { (0 ..< layerCount).filter { store.retainedLength(layer: $0) > 0 } }
+
+    /// Discards the newest `count` positions, so the next pass writes over them. Every layer keeps its
+    /// whole history, so a rollback to any held position is exact.
+    func rollback(by count: Int) -> Bool { store.rollback(by: count, layers: storingLayers) }
+
+    /// Every stored row, keyed for a safetensors file, and the element type they were computed in.
+    var exported: (arrays: [String: MLXArray], dtype: DType) { (store.exportedArrays(), store.storedDTypeForExport) }
+
+    /// Restores what ``exported`` wrote, at position count `offset`.
+    func restore(arrays: [String: MLXArray], offset: Int, dtype: DType) {
+        store.restore(arrays: arrays, offset: offset, storedDType: dtype)
+    }
+}
+
+/// A Gemma 3n cache kept between generations, with the token ids it holds rows for.
+///
+/// @discussion A chat turn's prompt is the previous turn's prompt and reply plus the new message, so
+/// rolling the cache back to the last position the new prompt shares leaves only what is new to
+/// prefill, and every retained row is one an ordinary pass wrote. The cache keeps every layer's rows in
+/// full, so any held position can be rolled back to. A prompt with an image or a clip is never continued,
+/// because its placeholder tokens are the same whatever the media is.
+final class NFKMLXGemma3nPromptCache: NFKMLXConversationState {
+    let layerCount: Int
+    private(set) var cache: NFKMLXGemma3nCache
+    /// The token ids the cache holds rows for, in order.
+    private(set) var tokens: [Int] = []
+    /// How many of the last aligned prompt's tokens the cache already held.
+    private(set) var sharedPrefixLength = 0
+    /// The length of the prompt the cache last aligned to, or 0 for a cache read back from disk.
+    private var lastPromptLength = 0
+    /// The strengths of the held adapters the cached rows were computed at, or nil for a model that holds none.
+    var adapterStrengths: [Float]?
+
+    init(layerCount: Int) {
+        self.layerCount = layerCount
+        cache = NFKMLXGemma3nCache(layerCount: layerCount)
+    }
+
+    var allocatedBytes: Int { cache.allocatedBytes }
+
+    /// Rolls the cache back to the longest prefix it shares with `prompt`, at most one short of the
+    /// prompt so a token runs through the model, and returns that prefix's length.
+    func align(to prompt: [Int]) -> Int {
+        defer { lastPromptLength = prompt.count }
+        let shared = resumablePosition(for: prompt)
+        guard cache.rollback(by: tokens.count - shared) else {
+            reset()
+            return 0
+        }
+        tokens.removeLast(tokens.count - shared)
+        sharedPrefixLength = shared
+        return shared
+    }
+
+    /// Records tokens whose rows a pass has just written.
+    func record(_ fed: [Int]) { tokens.append(contentsOf: fed) }
+
+    /// Empties the cache.
+    func reset() {
+        cache = NFKMLXGemma3nCache(layerCount: layerCount)
+        tokens = []
+        sharedPrefixLength = 0
+    }
+}
+
+extension NFKMLXGemma3nPromptCache: NFKMLXSpillableConversation {
+    var resumablePositions: [Int]? { nil }
+    var optionsSignature: String { "gemma3n" }
+    var promptLength: Int { lastPromptLength > 0 ? lastPromptLength : tokens.count }
+
+    func resumablePosition(for prompt: [Int]) -> Int {
+        let limit = Swift.min(tokens.count, Swift.max(prompt.count - 1, 0))
+        return zip(tokens[..<limit], prompt).prefix { $0.0 == $0.1 }.count
+    }
+
+    /// Writes every stored row and the token count to a safetensors file.
+    func save(to url: URL) throws {
+        var (arrays, dtype) = cache.exported
+        arrays["token_count"] = MLXArray(Int32(tokens.count))
+        try MLX.save(arrays: arrays, metadata: ["dtype": NFKMLXConversationSpill.name(of: dtype)], url: url)
+    }
+
+    /// Reads what ``save(to:)`` wrote for `tokens`, or nil where the file holds another count.
+    static func load(from url: URL, tokens: [Int], layerCount: Int) throws -> NFKMLXGemma3nPromptCache? {
+        let (arrays, metadata) = try loadArraysAndMetadata(url: url)
+        guard arrays["token_count"].map({ Int($0.item(Int32.self)) }) == tokens.count else { return nil }
+        let restored = NFKMLXGemma3nPromptCache(layerCount: layerCount)
+        restored.cache.restore(arrays: arrays.filter { $0.key != "token_count" }, offset: tokens.count,
+                               dtype: NFKMLXConversationSpill.dtype(named: metadata["dtype"] ?? "float32"))
+        restored.tokens = tokens
+        return restored
+    }
 }
 
 // MARK: - Building from a release

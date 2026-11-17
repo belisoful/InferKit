@@ -21,6 +21,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Gemma 3n continues a conversation from its kept cache
+
+- `NFKMLXGemma3nBackend` keeps each conversation's cache between requests, so a follow-up turn prefills only what
+  it adds. A request continues the conversation its `NFKParameterConversationKey` names, or, naming none, the kept
+  conversation its prompt continues furthest; `NFKMLXGenerationParameterKey.reusesPromptCache` set to NO keeps
+  nothing. The usage reports the reused positions under `NFKUsageCachedTokens`.
+- The cache keeps every layer's keys and values whole, so a prompt that parts anywhere in the held history,
+  further back than the sliding window too, resumes there exactly.
+- The conversations share a budget the memory beside the model affords (`conversationCacheByteBudget`), and the
+  ones it lets go, or that `releaseIdleConversationCaches` or an unload releases, are written to
+  `conversationSpillDirectoryURL` and read back by a later request. A prompt with an image or a clip keeps nothing,
+  and a model that holds adapters writes nothing to disk.
+
 #### TRELLIS generates a 3D object from an image or a prompt
 
 - `NFKMLXTrellisFactory` builds TRELLIS image-large (`trellis-image-large`, conditioned on DINOv2 ViT-L/14

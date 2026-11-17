@@ -196,6 +196,19 @@ quarter of the floor.
   1.0000000000, logit cosine 0.9999999999999682, cached greedy continuation 6/6 with worst step
   1 − cosine 5.0e-14; released E2B every one of the 30 hidden states 1.0000000000, logit cosine
   0.9999999999943566, argmax 6/6, cached continuation 11/11 token for token.
+  **Conversations (2026-11-17):** `NFKMLXGemma3nBackend` keeps an `NFKMLXGemma3nPromptCache` per conversation
+  through `NFKMLXConversationKeeper`, as Gemma 3 does: the key, else the unnamed conversation the prompt resumes
+  furthest into, a memory-derived budget (the keys and values of the layers before the shared tail at the
+  context length), and spill to the release's directory under the user's caches (none while adapters are
+  held). Because the cache keeps every layer whole, `align(to:)` rolls back to any held position:
+  `NFKMLXGemma3nCache.rollback(by:)` moves the layers that store rows (the shared tail stores none), so a
+  prompt parting further back than the sliding window still resumes, unlike Gemma 3's trimmed sliding cache.
+  A prompt with an image or a clip keeps nothing, since its placeholder ids are the same for any media.
+  Parity: `NFKMLXGemma3nConversationTests/testTheReleasedDecoderContinuesATurnAsAFullRerunDoes`
+  (`IK_PARITY_GEMMA3N_CONVERSATION`, oracle mode `gemma3n_conversation`, gemma env): the float32 E2B's second
+  turn (147 tokens) resumed at 129 and gave transformers 5.16's full re-run at worst logit cosine
+  0.99999999999937 over 16 steps, the greedy tokens equal; a fresh run of the whole prompt measures
+  0.99999999999931, and the resumed run agrees with it to 0.99999999999949.
   **The audio encoder** (`NFKMLXGemma3nAudioNet`) is a Universal Speech Model Conformer, a different
   network from the Gemma 4 Conformer rather than a configuration of it: two strided 2-D convolutions
   under a **cumulative group normalization** (a frame is normalized by every frame up to and including
