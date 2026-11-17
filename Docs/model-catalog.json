@@ -2831,6 +2831,13 @@
           "title" : "Seed"
         },
         {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
+        },
+        {
           "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
           "key" : "adapterStrengths",
           "kind" : "number-list",
@@ -33240,6 +33247,13 @@
           "title" : "Tool-call format"
         },
         {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
+        },
+        {
           "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
           "key" : "adapterStrengths",
           "kind" : "number-list",
@@ -33834,6 +33848,13 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         },
         {
           "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",

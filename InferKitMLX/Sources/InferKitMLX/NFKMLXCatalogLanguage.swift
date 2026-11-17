@@ -876,7 +876,7 @@ extension NFKMLXCatalogLanguage {
                                                          optional: NFKMLXNemotronH.optionalFiles,
                                                          weights: NFKMLXNemotronH.weightFiles))],
             license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
-            parameters: toolDecoderOptions(), residencies: streamedResidencies)
+            parameters: toolDecoderOptions() + [conversationKeyOption()], residencies: streamedResidencies)
         entry.modelTypes = ["nemotron_h"]
         entry.takesAdapters(trainedOn: [repository])
         return entry
@@ -893,7 +893,7 @@ extension NFKMLXCatalogLanguage {
                                                          optional: NFKMLXNemotronH.optionalFiles,
                                                          weights: NFKMLXNemotronH.weightFiles))],
             license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
-            parameters: toolDecoderOptions(), residencies: streamedResidencies)
+            parameters: toolDecoderOptions() + [conversationKeyOption()], residencies: streamedResidencies)
         entry.modelTypes = ["nemotron_h"]
         entry.takesAdapters(trainedOn: [repository])
         return entry
@@ -909,7 +909,8 @@ extension NFKMLXCatalogLanguage {
                                      files: releaseFiles(required: NFKMLXMamba.requiredFiles, optional: NFKMLXMamba.optionalFiles,
                                                          weights: NFKMLXMamba.weightFiles))],
             license: .apache2(), readsReasoning: false, outputs: [textOutput, usageOutput, finishReasonOutput],
-            parameters: samplingOptions(nil) + [maxTokensOption(), seedOption()], residencies: streamedResidencies)
+            parameters: samplingOptions(nil) + [maxTokensOption(), seedOption(), conversationKeyOption()],
+            residencies: streamedResidencies)
         // A state-space decoder has no position table; Mistral states retrieval tested to 256k tokens.
         entry.outputTokenLimit = 262_144
         entry.takesAdapters(trainedOn: ["mistralai/Mamba-Codestral-7B-v0.1"])

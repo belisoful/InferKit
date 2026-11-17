@@ -106,7 +106,8 @@ weights:
 - **`NFKMLXMambaBackend`** — on-device text generation for Codestral-Mamba
   (`NFKMLXMamba.backend(directoryURL:)` / `mambaBackendWithDirectoryURL:error:`), the toolkit's first
   state-space model. Every layer is a Mamba-2 selective scan (SSD) instead of attention, carrying a
-  fixed-size state rather than a growing key-value cache, and it runs prefill-only. The tokenizer is the
+  fixed-size state rather than a growing key-value cache, which the prompt fills and each new token then
+  advances; a request continues the conversation its key names or its prompt extends. The tokenizer is the
   Mistral byte-fallback BPE (`NFKMLXMistralTokenizer`) read from the release's `tokenizer.json`. At
   reference parity against transformers' `Mamba2ForCausalLM`: the released Codestral-Mamba-7B matches by
   shape across all 579 tensors and, at bfloat16, reproduces the prefill logits (cosine 0.9999146) and
@@ -118,8 +119,8 @@ weights:
   are grouped-query attention with no positional embedding, and Granite's scalar multipliers scale the embedding, each
   residual, the attention logits, and the output logits. The dense sizes (h-350m, h-1b) carry a
   gated-linear shared MLP; the MoE sizes (h-tiny, h-small) add a routed mixture of experts beside it. The
-  tokenizer is Granite's byte-level BPE, read from the release's `tokenizer.json`, and it runs
-  prefill-only. At reference parity against transformers' `GraniteMoeHybridForCausalLM`: the released
+  tokenizer is Granite's byte-level BPE, read from the release's `tokenizer.json`, and it decodes through
+  its layers' caches. At reference parity against transformers' `GraniteMoeHybridForCausalLM`: the released
   granite-4.0-h-1b matches by shape across all 466 tensors and reproduces the float32 prefill logits and
   greedy continuation, and the routed mixture is measured at a tiny configuration. Adapts to a
   consumer's own text with LoRA on the attention projections through `NFKMLXGraniteHybrid.fineTune`.
@@ -130,7 +131,9 @@ weights:
   positional embedding at the standard scale. There are no scalar multipliers, each block carries a
   single pre-norm, and the output projection is untied. The Mamba mixer's gated norm is grouped by
   `n_groups`, the one numeric difference from the Codestral/Granite mixer. The tokenizer is Nemotron's
-  byte-level BPE, read from the release's `tokenizer.json`, and it runs prefill-only. At reference parity
+  byte-level BPE, read from the release's `tokenizer.json`. It decodes through its Mamba layers' state and
+  its attention layers' keys and values, and a request continues the conversation its key names or its
+  prompt extends. At reference parity
   against transformers' `NemotronHForCausalLM`: the tiny config reaches logit cosine 1.0, and the
   released Nemotron-Nano-9B-v2 matches by shape across all 341 tensors (its `backbone.*` naming remapped
   to `model.*`). Adapts to a consumer's own text with LoRA on the attention projections through

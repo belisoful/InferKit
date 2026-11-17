@@ -554,9 +554,9 @@ attention and feed-forward.
   nothing. Gemma 3 is built without its release URL, so its spill is off until set.
   `NFKMLXLanguageBackend`,
   `NFKMLXGemma3Backend`, `NFKMLXDeepSeekBackend`, `NFKMLXGraniteBackend`, and the cached
-  `NFKMLXDecoderBackend` (Qwen3.5/3.8, below), `NFKMLXGemma3nBackend`, and `NFKMLXGemmaBackend` (Gemma 4,
-  `mlx-models-gemma.md`) keep conversation caches; the multimodal backends and the prefill-only backends do
-  not. The store is generic
+  `NFKMLXDecoderBackend` (Qwen3.5/3.8, below), `NFKMLXGemma3nBackend`, `NFKMLXGemmaBackend` (Gemma 4,
+  `mlx-models-gemma.md`), `NFKMLXMambaBackend`, and `NFKMLXNemotronBackend` keep conversation caches; the
+  multimodal backends and the prefill-only backends do not. The store is generic
   (`NFKMLXConversationStates<State>`) and `NFKMLXConversationKeeper` pairs it with the status
   snapshot; `NFKMLXConversation.name(of:)` reads the key for all three.
   - Gemma 3 (`NFKMLXGemma3PromptCache`) keeps rows the way the dense cache does, generated ones
@@ -1498,8 +1498,8 @@ attention and feed-forward.
   a growing key-value cache. The mixer is a fused input projection, a depthwise causal convolution over
   the concatenated `x`/`B`/`C`, the scan, a gated RMS normalization, and an output projection; `B` and
   `C` are per-group and broadcast to the heads. One selective-scan serves the whole SSM class, so
-  Granite 4.0-H and Nemotron Nano 2 build their hybrid Mamba-attention layers on this mixer. Prefill
-  only, like the hybrid decoder. **Reference parity** against transformers' own
+  Granite 4.0-H and Nemotron Nano 2 build their hybrid Mamba-attention layers on this mixer. Cached
+  decode and conversations: see "Mamba-2 and Nemotron-H conversations" under Nemotron-H. **Reference parity** against transformers' own
   `Mamba2ForCausalLM` at a tiny random configuration (`run_reference.py mamba2`): logit cosine 1.0, and
   every hidden state exact (embedding 0.9999983, block 0 0.9999963, block 1 0.9999994, the final-normed
   state 0.9999999). **Released Codestral-Mamba-7B**: the checkpoint's 579 tensors all match by name and
@@ -1522,7 +1522,7 @@ attention and feed-forward.
   release's `tokenizer.json`, token-exact against the `tokenizers` fast library; it differs from the
   Gemma reader in the leading-`▁` prepend on encode (`prepend_scheme: "first"`) and the leading-space
   strip on decode. `NFKMLXMamba.backend(directoryURL:)` (`@objc mambaBackendWithDirectoryURL:error:`)
-  builds a prefill-only text-generation backend that prepends `<s>` and stops at `</s>`. **Customization
+  builds a text-generation backend that prepends `<s>` and stops at `</s>`. **Customization
   is ruled out**, on the constraint the dense and hybrid decoders name: the smallest release of this
   architecture is 7B, which leaves no room on a consumer machine to fine-tune, so there is nothing here
   to train. An adapter trained elsewhere merges through `NFKMLXLoRA` onto the `in_proj`/`out_proj`
@@ -1554,8 +1554,8 @@ attention and feed-forward.
   the released `[experts, out, in]` stacks (`block_sparse_moe.input_linear` the fused gate+lift,
   `output_linear` the down projection, `router.layer` the scorer) and run through one gathered matrix
   multiplication over the chosen experts (`NFKLMSwitchLinear`, shared with the language-model MoE); the
-  router's softmax is taken over the top-`k` raw logits. Prefill only, like the pure-Mamba and hybrid
-  decoders. **Reference parity** against transformers' own `GraniteMoeHybridForCausalLM`. Tiny dense
+  router's softmax is taken over the top-`k` raw logits. Generation runs through the cache below.
+  **Reference parity** against transformers' own `GraniteMoeHybridForCausalLM`. Tiny dense
   config (`run_reference.py granite_hybrid`, the four multipliers set to non-default values so a port that
   hard-codes them diverges): logit cosine 0.99999577, every hidden state ≥ 0.9999953 (embedding
   0.99999994, the final-normed state 0.99999565). Tiny MoE config (`run_reference.py granite_hybrid_moe`,
@@ -1630,8 +1630,7 @@ attention and feed-forward.
   numeric departure from the Codestral/Granite mixer: Nemotron's gated output norm is **grouped by
   `n_groups`** (HF `Zamba2RMSNormGated`, `group_size = intermediate / n_groups`), and the discretization
   step clamps its lower bound at `time_step_min`; `NFKMambaRMSNormGated` gained a `groups` parameter
-  (`1` = the ungrouped Codestral/Granite path, byte-identical). Prefill only, like the pure-Mamba and
-  Granite decoders. **Reference parity** against transformers' own `NemotronHForCausalLM` (transformers
+  (`1` = the ungrouped Codestral/Granite path, byte-identical). **Reference parity** against transformers' own `NemotronHForCausalLM` (transformers
   ≥ 5, the musicvenv oracle). Tiny config (`run_reference.py nemotron_h`, a Mamba/MLP/attention stack
   with `n_groups` 2 so the grouped gated norm is exercised): logit cosine 1.0, every hidden state ≥
   0.99999994 (embedding 1.0, the final-normed state 1.0; no multipliers to amplify a seam). **Released
@@ -1671,8 +1670,7 @@ attention and feed-forward.
   0.0054 of the reference's bf16-versus-float32 distance. The release sets `residual_in_fp32` false,
   so its residual stays in the weights' type.
   The decoder streams its blocks (`NFKMLXNemotronH.loadWeights(into:fromDirectory:precision:residency:budget:)`,
-  `NFKMLXNemotronHNet.layerStream`). Generation reruns the growing sequence each step, so no recurrent
-  state outlives a pass. The stream reads each Mamba convolution `[C, 1, K]` as the block's `[C, K]`
+  `NFKMLXNemotronHNet.layerStream`). The stream reads each Mamba convolution `[C, 1, K]` as the block's `[C, K]`
   (`NFKMLXLayerStream.streaming(…shaping:)`). Under `.automatic` the bf16 9B (17.8 GB) loads whole on a
   32 GB machine and the float32 9B (35.6 GB) streams. The whole 9B at float32, streamed (33 of 56 blocks,
   9.15 GB read per pass, 1.74 GB/s), against transformers built on the meta device with each block read
@@ -1698,6 +1696,30 @@ attention and feed-forward.
   reference's bf16-versus-float32 distance (layer 41, Mamba), and its logits sit at 9.527e-05 from
   float32 against the reference's own 8.737e-05. The 4B's read at most 0.0081 (layer 2, Mamba), and its
   logits 3.155e-05 against 4.168e-05.
+  **Mamba-2 and Nemotron-H conversations (2026-11-17).** `NFKMLXRecurrentConversation.swift` holds what
+  both backends share. `NFKMLXRecurrentCache` is one `NFKMLXMamba2Cache` per Mamba layer and, for
+  Nemotron-H, an `NFKMLXKeyValueCache` whose slots are the attention layers' indices (no positional
+  embedding, so a cached attention layer only offsets its causal mask). `NFKRecurrentCachedGeneration`
+  prefills in passes of at most 2048 positions (halved past the 1 GiB score budget for Nemotron's
+  attention) and then runs one token a pass; `NFKMLXMamba2Net.lastLogits(_:cache:)` and
+  `NFKMLXNemotronHNet.lastLogits(_:cache:)` are the passes. A cached pass runs the sequential scan, the
+  uncached path's default, so a prefill costs what it did. `NFKMLXRecurrentConversation` keeps a
+  conversation through `NFKMLXConversationKeeper` (key, else the unnamed conversation the prompt resumes
+  furthest into; memory budget; spill). A Mamba layer's state holds no earlier position, so the
+  conversation keeps evaluated copies of every Mamba layer's convolution inputs and state at the prompt's
+  end and every 4096 positions, four at most (the backends render no chat turns, so `turnStart` is nil). A
+  prompt that extends every held token continues the live cache; otherwise the attention rows roll back to
+  the newest snapshot inside the shared prefix and the Mamba layers restore it. A follow-up that carries the
+  last reply verbatim continues live; one whose reply differs resumes at the last prompt's end. A drafted run
+  keeps no conversation. On the tiny nets (`NFKMLXRecurrentConversationTests`) every cached and resumed
+  position is within 1e-4 of the full pass. Released Nemotron 3 Nano 4B at float32
+  (`run_reference.py nemotron_h_conversation`, `IK_PARITY_NEMOTRON3_CONVERSATION`): turn 2 resumes at the first
+  prompt's end (115 of 130) and its 16 steps measure 0.9999999999693262 against transformers' uncached pass
+  over the same sequence, a fresh cached run 0.9999999999648465, resumed against fresh 0.999999999995444,
+  every greedy token equal. **Transformers' own cached generation is not the reference here:** its cached Mamba
+  steps drift from its uncached pass, 0.9999918870631854 at worst over the 16 steps, so the record's `output` is
+  the uncached pass and `cached` keeps the generated logits for that figure. Codestral Mamba 7B is not measured
+  (no float32 fit); its mixer is the one Nemotron-H's Mamba layers run.
 - `NFKMLXChatTemplateRenderer` (`NFKMLXChatTemplate.swift` / `…Engine.swift` / `…Expr.swift`) — a
   native Jinja renderer for the release's `chat_template`, so the language backend reproduces an
   instruct model's trained input instead of the hand-coded ChatML approximation. Rendering the template

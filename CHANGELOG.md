@@ -21,6 +21,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Codestral Mamba and Nemotron-H decode through their state and continue conversations
+
+- The Mamba-2 decoder (Codestral Mamba) and the Nemotron-H decoders (Nemotron Nano 2, Nemotron 3 Nano 4B)
+  generate through a cache: the prompt fills each Mamba layer's convolution inputs and scan state, and
+  Nemotron-H's attention layers' keys and values, and each new token runs alone, where every token used to
+  re-run the whole sequence. A drafted Nemotron run still re-runs the growing sequence each round.
+- `NFKMLXMambaBackend` and `NFKMLXNemotronBackend` keep each conversation's cache between requests: a request
+  continues the conversation its `NFKParameterConversationKey` names, or, naming none, the kept conversation
+  its prompt continues furthest, under a budget the memory affords, and conversations the budget or an unload
+  lets go are written to `conversationSpillDirectoryURL`. The Mamba layers' state is snapshotted at the
+  prompt's end and every 4096 positions, so a follow-up whose last reply differs from what was generated
+  resumes at the last prompt's end. The usage reports the reused positions under `NFKUsageCachedTokens`.
+
 #### Gemma 4 decodes through a key-value cache and continues conversations
 
 - The Gemma 4 decoders (E2B, E4B, the 26B-A4B mixture, the 12B unified, and the 31B) generate through a

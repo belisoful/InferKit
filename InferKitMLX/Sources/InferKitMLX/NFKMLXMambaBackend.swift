@@ -3,8 +3,9 @@
 //  InferKitMLX
 //
 //  A text-generation backend for the Mamba-2 decoder (Codestral-Mamba and the other pure-Mamba
-//  releases). The decoder is prefill-only — it carries no key-value cache — so generation re-runs the
-//  growing sequence each step, which the tiny per-token cost of a code-completion reply tolerates.
+//  releases). Generation runs through the decoder's recurrent cache: the prompt fills each layer's
+//  convolution inputs and scan state, and each new token then runs alone; a conversation's cache is kept
+//  between requests.
 //
 //  The tokenizer is the Mistral byte-fallback BPE (`NFKMLXMistralTokenizer`), read from the release's
 //  own `tokenizer.json`. A raw prompt is encoded after the begin-of-sequence marker `<s>`; generation
@@ -22,13 +23,17 @@ import MLXRandom
 final class NFKMambaBackendHolder: @unchecked Sendable {
     let logits: (MLXArray) -> MLXArray
     let tokenizer: NFKMLXMistralTokenizer
-    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXMistralTokenizer) {
+    /// Generation through the decoder's cache; nil for a decoder built without one.
+    let cached: NFKRecurrentCachedGeneration?
+    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXMistralTokenizer,
+         cached: NFKRecurrentCachedGeneration? = nil) {
         self.logits = logits
         self.tokenizer = tokenizer
+        self.cached = cached
     }
 }
 
-/// A prefill-only text-generation backend over a Mamba-2 decoder.
+/// A text-generation backend over a Mamba-2 decoder.
 @objc(NFKMLXMambaBackend)
 public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     private let holder: NFKMambaBackendHolder
@@ -41,6 +46,10 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     private let releaseSampling: NFKMLXReleaseSampling?
     private let modelInfoCache = NFKMLXModelInfoCache()
     private let layerStream: NFKMLXLayerStream?
+    /// One cached generation at a time: a run moves a conversation's cache through the shared decoder.
+    private let generationLock = NSLock()
+    /// The conversations' caches, read and written under `generationLock`.
+    private let conversations = NFKMLXConversationKeeper<NFKMLXRecurrentConversation>(byteBudget: 0)
 
     /// How many decoder blocks the model leaves in the release, read in their turn on every pass; 0
     /// where every block is held. Introduced in InferKit 0.4.0.
@@ -51,8 +60,9 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     @objc public var streamedBytesPerPass: Int { layerStream?.bytesPerPass ?? 0 }
 
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXMistralTokenizer, identifier: String,
-         modules: [Module] = [], releaseDirectoryURL: URL? = nil, layerStream: NFKMLXLayerStream? = nil) {
-        self.holder = NFKMambaBackendHolder(logits: logits, tokenizer: tokenizer)
+         modules: [Module] = [], releaseDirectoryURL: URL? = nil, layerStream: NFKMLXLayerStream? = nil,
+         cached: NFKRecurrentCachedGeneration? = nil) {
+        self.holder = NFKMambaBackendHolder(logits: logits, tokenizer: tokenizer, cached: cached)
         self.identifier = identifier
         self.layerStream = layerStream
         self.describedModules = modules
@@ -83,8 +93,11 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        let keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
+        var keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
                                  NFKParameterSeed]
+        if holder.cached != nil {
+            keys.insert(NFKParameterConversationKey)
+        }
         return adapterStrengths.isEmpty ? keys : keys.union([NFKParameterAdapterStrengths])
     }
 
@@ -117,10 +130,11 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
         }
 
         let promptTokens = try prompt(for: request)
-        let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed)
+        let (produced, limit, cachedTokens) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens,
+                                                           seed: seed, request: request)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cachedTokens,
                                                 outputTokens: produced.count, reasoningTokens: nil),
             NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit),
         ])
@@ -154,12 +168,27 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
         return try tokens(for: request)
     }
 
-    /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?) throws -> (tokens: [Int], limit: Int) {
+    /// Generation. A cached decoder continues the conversation the request names or its prompt continues and
+    /// runs each new token alone (``NFKMLXRecurrentGeneration``); a decoder without a cache runs the whole
+    /// growing sequence each step. Answers the tokens produced, the limit, and how many of the prompt's tokens a
+    /// kept cache already held.
+    private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
+                          request: NFKInferenceRequest) throws -> (tokens: [Int], limit: Int, cached: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
                                                   contextLength: contextLength, source: identifier)
+        if let cached = holder.cached {
+            guard limit > 0 else { return ([], limit, 0) }
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            let (produced, start) = try NFKMLXRecurrentGeneration.run(
+                promptTokens, turnStart: nil, cached: cached, conversations: conversations, request: request,
+                sampling: sampling, limit: limit, seed: seed, stops: stopTokens,
+                afforded: { NFKMLXConversationBudget.afforded(info: modelInfo, runBytes: conversationBytes(cached)) },
+                spills: adapterStrengths.isEmpty, verify: verifyStream)
+            return (produced, limit, start)
+        }
         for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
@@ -169,8 +198,113 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
             produced.append(next)
             tokens.append(next)
         }
-        return (produced, limit)
+        return (produced, limit, 0)
     }
+
+    /// The bytes one run's cache takes: the Mamba layers' state for the live cache and the kept snapshots.
+    private func conversationBytes(_ cached: NFKRecurrentCachedGeneration) -> Int {
+        guard let net = describedModules.first as? NFKMLXMamba2Net else { return 0 }
+        return NFKMLXRecurrentGeneration.bytes(positions: 0, attentionLayers: 0, keyValueHeads: 0, headDimensions: 0,
+                                               mamba: net.config, mambaLayers: cached.mambaLayers.count,
+                                               elementBytes: net.backbone.embeddings.weight.dtype.size)
+    }
+
+    // MARK: Conversation caches
+
+    /// The bytes the conversations' caches may hold together.
+    ///
+    /// @discussion A request continues the conversation its `NFKParameterConversationKey` names, or, naming
+    /// none, the kept conversation its prompt continues furthest, so a follow-up turn prefills only what it
+    /// adds. When the caches outgrow the budget, the least recently used conversations are written to
+    /// ``conversationSpillDirectoryURL`` and dropped, never the one a request just ran. Until it is set, the
+    /// budget is what the memory planned beside the model affords after one run's cache at the context
+    /// length, recomputed each run; setting it fixes it, and lowering it drops down to it at once. Introduced
+    /// in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversations.states.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.fixBudget(newValue)
+        }
+    }
+
+    /// How many conversations hold a cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.count
+    }
+
+    /// The bytes the conversations' caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.heldBytes
+    }
+
+    /// Drops one named conversation's cache, in memory and on disk. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.remove(conversation)
+        conversations.spill?.remove(named: conversation)
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's cache in memory; spilled ones stay on disk. Introduced in InferKit 0.4.0.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.removeAll()
+        conversations.refresh()
+    }
+
+    /// Writes every conversation's cache to the spill directory and drops it from memory when no run is in
+    /// progress, and returns the bytes they held; returns 0 at once while a run holds them.
+    /// `NFKInferenceServer` calls it to relieve memory, and the reloadable backend before it unloads the model.
+    /// Introduced in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        return conversations.releaseAll(spills: adapterStrengths.isEmpty)
+    }
+
+    /// The directory conversations the memory budget lets go are written to, so a later request continues one
+    /// without its prefill, after an unload or a restart too; nil writes none. A backend over a release
+    /// directory defaults to a directory under the user's caches that only the same release and weights read.
+    /// A model that holds adapters writes none. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillDirectoryURL: URL? {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.directory
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.setSpillDirectory(newValue)
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk; the least recently written go first past it.
+    /// Defaults to 8 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            conversations.spill?.byteBudget = newValue
+        }
+    }
+
+    /// The conversation caches as of the last run or change: `conversation_caches`,
+    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it under
+    /// the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] { conversations.status }
+
 
     /// Throws a streamed block's failed read and clears it, so the next request reads the release again.
     private func verifyStream() throws {
@@ -183,9 +317,15 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
 
 /// Building a text-generation backend from a Mamba-2 release directory.
 public extension NFKMLXMamba {
+    /// Generation through the decoder's recurrent cache, every layer a Mamba layer.
+    internal static func cachedGeneration(_ net: NFKMLXMamba2Net) -> NFKRecurrentCachedGeneration {
+        NFKRecurrentCachedGeneration(mambaLayers: Array(repeating: true, count: net.config.layerCount), attentionLayers: [],
+                                     attentionHeads: 0) { tokens, cache in net.lastLogits(tokens, cache: cache) }
+    }
 
     /// Builds a text-generation backend from a released Mamba-2 directory, reading its `config.json`,
-    /// weights, and `tokenizer.json`. Run inference off the render thread; the decoder is prefill-only.
+    /// weights, and `tokenizer.json`. Run inference off the render thread; the prompt fills the decoder's
+    /// recurrent cache, and each new token runs alone.
     static func backend(directoryURL: URL,
                         precision: NFKMLXWeightPrecision = .checkpoint) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, precision: precision, residency: .automatic)
@@ -211,7 +351,8 @@ public extension NFKMLXMamba {
         let net = makeNet(try configuration(fromDirectory: directoryURL))
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency, budget: budget)
         let backend = NFKMLXMambaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
-                                         modules: [net], releaseDirectoryURL: directoryURL, layerStream: net.layerStream)
+                                         modules: [net], releaseDirectoryURL: directoryURL, layerStream: net.layerStream,
+                                         cached: cachedGeneration(net))
         if !adapters.isEmpty {
             guard net.layerStream == nil else {
                 throw NFKMLXError.unsupportedConfiguration(

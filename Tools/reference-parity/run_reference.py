@@ -6601,6 +6601,65 @@ def _nemotron_h_record(model, ids, steps=12):
     return logits.contiguous(), extra
 
 
+def run_nemotron_h_conversation(image, checkpoint):
+    """A Nemotron-H decoder over a two-turn raw-text exchange, each turn a whole run of transformers' cached
+    generation, at float32.
+
+    `--checkpoint` is a released model DIRECTORY (Nemotron 3 Nano 4B by default). Turn 1 encodes a passage and
+    a question with no begin-of-sequence marker, as the backend encodes a raw prompt, and generates
+    `IK_NEMOTRON_CONVERSATION_STEPS` greedy tokens. Turn 2 is turn 1's prompt followed by a follow-up question
+    in place of the reply, so a port that kept turn 1 resumes at turn 1's prompt end, where its Mamba layers'
+    state was snapshotted. The record carries both prompts' ids, both continuations, and turn 2's logits before
+    each generated token from one uncached pass over the prompt and the continuation (`output`), with the
+    logits transformers' cached generation chose them from beside it (`cached`). Transformers' cached Mamba
+    steps drift from its own uncached pass (0.9999918 at worst over 16 steps), so the uncached pass is the
+    reference and the cached logits measure that drift. `min_new_tokens` holds each turn to the step count by
+    suppressing the end ids, so a chosen token can differ from the raw argmax. `image` unused. Requires the
+    music oracle (transformers >= 5).
+    """
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    steps = int(os.environ.get("IK_NEMOTRON_CONVERSATION_STEPS", "16"))
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    model, loading = AutoModelForCausalLM.from_pretrained(
+        checkpoint, dtype=torch.float32, trust_remote_code=False, output_loading_info=True)
+    assert not loading["missing_keys"], loading["missing_keys"]
+    model.eval()
+    passage = " ".join(["The river bends past the old mill, where the miller's daughter counts the sacks of grain "
+                        "and writes each number in a ledger bound in green cloth."] * 3)
+    first_text = passage + "\n\nQuestion: What does the miller's daughter keep her numbers in?\nAnswer:"
+    second_text = first_text + " A ledger.\n\nQuestion: And what colour is its binding?\nAnswer:"
+
+    def tokens(text):
+        return tokenizer(text, return_tensors="pt", add_special_tokens=False).input_ids
+
+    # A pad id other than the end id would mask prompt tokens equal to it; the explicit mask keeps every one.
+    def generate(ids):
+        with torch.no_grad():
+            out = model.generate(ids, attention_mask=torch.ones_like(ids), max_new_tokens=steps, min_new_tokens=steps,
+                                 do_sample=False, use_cache=True, output_logits=True, return_dict_in_generate=True,
+                                 pad_token_id=model.config.eos_token_id)
+        return out.sequences[0, ids.shape[1]:], torch.stack([step[0] for step in out.logits])
+
+    first_ids = tokens(first_text)
+    second_ids = tokens(second_text)
+    assert second_ids[0, :first_ids.shape[1]].tolist() == first_ids[0].tolist(), "turn 2 extends turn 1's ids"
+    first_reply, _ = generate(first_ids)
+    second_reply, cached = generate(second_ids)
+    sequence = torch.cat([second_ids[0], second_reply[:-1]]).unsqueeze(0)
+    with torch.no_grad():
+        logits = model(sequence, use_cache=False).logits[0, second_ids.shape[1] - 1:]
+    globals()["_extra"] = {
+        "turn1.tokens": first_ids[0].to(torch.int32).contiguous(),
+        "turn1.continuation": first_reply.to(torch.int32).contiguous(),
+        "turn2.tokens": second_ids[0].to(torch.int32).contiguous(),
+        "continuation": second_reply.to(torch.int32).contiguous(),
+        "cached": cached.float().contiguous(),
+    }
+    return logits.float().contiguous()
+
+
 def run_nemotron_h_layerwise(image, checkpoint):
     """Nemotron Nano 2 at float32 for a release too large to hold whole (the 9B: 35.6 GB), from
     transformers' own `NemotronHForCausalLM` built on the meta device, every tensor outside the blocks read
@@ -31924,6 +31983,8 @@ CHECKPOINT_MODELS["qwen3_5_conversation"] = run_qwen3_5_conversation
 CHECKPOINT_MODELS["gemma3n_conversation"] = run_gemma3n_conversation
 
 CHECKPOINT_MODELS["gemma4_conversation"] = run_gemma4_conversation
+
+CHECKPOINT_MODELS["nemotron_h_conversation"] = run_nemotron_h_conversation
 
 
 if __name__ == "__main__":

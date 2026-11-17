@@ -7759,6 +7759,12 @@
       "command": "qwen3_5_cached --checkpoint $IK_VAL_QWEN3_5_2B (16 MB)"
     },
     {
+      "key": "IK_PARITY_NEMOTRON3_CONVERSATION",
+      "record": "reference/nemotron3-nano-4b-conversation.safetensors",
+      "environment": "music",
+      "command": "nemotron_h_conversation --checkpoint $IK_VAL_NEMOTRON3_NANO_4B (17 MB)"
+    },
+    {
       "key": "IK_PARITY_GEMMA4_CONVERSATION",
       "record": "reference/gemma4-e2b-conversation.safetensors",
       "environment": "gemma",

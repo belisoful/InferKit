@@ -197,18 +197,19 @@ let text = try backend.runInference(for: request).text
 
 The Mamba-2 state-space decoder (Codestral-Mamba) loads the same way through
 `NFKMLXMamba.backend(directoryURL:)` (`mambaBackendWithDirectoryURL:error:`); every layer is a selective
-scan rather than attention, so it carries a fixed-size state and runs prefill-only. At float32 (29 GB)
+scan rather than attention, so it carries a fixed-size state, which the prompt fills and each new token
+then advances; a follow-up turn continues a conversation's kept state. At float32 (29 GB)
 it streams the blocks past the working set, as `backend(directoryURL:precision:residency:)` chooses.
 
 The Granite 4.0-H hybrid decoder loads through `NFKMLXGraniteHybrid.backend(directoryURL:)`
 (`graniteBackendWithDirectoryURL:error:`); most layers are the Mamba-2 scan and the few its
-`layer_types` names are grouped-query attention, so it too runs prefill-only. The dense sizes carry a shared MLP and the MoE
+`layer_types` names are grouped-query attention, and it decodes through both layers' caches. The dense sizes carry a shared MLP and the MoE
 sizes add a routed mixture of experts.
 
 The Nemotron Nano 2 hybrid decoder loads through `NFKMLXNemotronH.backend(directoryURL:)`
 (`nemotronBackendWithDirectoryURL:error:`); its layers interleave the Mamba-2 scan, a ReLU-squared
 feed-forward, and grouped-query attention with no positional embedding, one mixer per block from the
-release's `hybrid_override_pattern`, so it too runs prefill-only. Nemotron 3 Nano 4B shares the 9B's
+release's `hybrid_override_pattern`, and it decodes and continues conversations as Codestral-Mamba does. Nemotron 3 Nano 4B shares the 9B's
 vocabulary and drafts for it: each round the 4B proposes a few tokens and one pass of the 9B scores them.
 Measured on the 9B streamed beside the 4B at 4 bits: its 16-token greedy reply in 8 passes of the 9B.
 

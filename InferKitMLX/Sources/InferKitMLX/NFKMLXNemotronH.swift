@@ -214,6 +214,25 @@ final class NFKNemotronAttention: Module, UnaryLayer {
         super.init()
     }
 
+    /// The layer over `hidden` after the positions `cache` holds: the new keys and values join the layer's
+    /// slot, and the queries attend over everything it retains, the newest causally.
+    func callAsFunction(_ hidden: MLXArray, cache: NFKMLXKeyValueCache, layer: Int) -> MLXArray {
+        let batch = hidden.dim(0), length = hidden.dim(1)
+        let q = queryProjection(hidden).reshaped([batch, length, headCount, headDimensions]).transposed(0, 2, 1, 3)
+        var k = keyProjection(hidden).reshaped([batch, length, keyValueHeadCount, headDimensions]).transposed(0, 2, 1, 3)
+        var v = valueProjection(hidden).reshaped([batch, length, keyValueHeadCount, headDimensions]).transposed(0, 2, 1, 3)
+        (k, v) = cache.update(layer: layer, keys: k, values: v)
+        let mask = length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: k.dim(2) - length).asType(q.dtype) : nil
+        let out: MLXArray
+        if NFKReferenceRounding.isReduced(q) {
+            out = NFKReferenceRounding.attention(queries: q, keys: k, values: v, scale: scale, mask: mask)
+        } else {
+            out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale,
+                                                    mask: mask.map { .array($0) } ?? .none)
+        }
+        return outputProjection(out.transposed(0, 2, 1, 3).reshaped([batch, length, headCount * headDimensions]))
+    }
+
     func callAsFunction(_ hidden: MLXArray) -> MLXArray {
         let batch = hidden.dim(0), length = hidden.dim(1)
         // No rotary: Nemotron-H uses NoPE.
@@ -270,6 +289,19 @@ final class NFKMLXNemotronBlock: Module {
 
     func callAsFunction(_ hidden: MLXArray) -> MLXArray {
         hidden + mixer(norm(hidden))
+    }
+
+    /// The block after the positions `cache` holds: a Mamba mixer continues its slot's convolution and scan,
+    /// an attention mixer attends over its slot's rows, and a feed-forward reads the new positions alone.
+    func callAsFunction(_ hidden: MLXArray, cache: NFKMLXRecurrentCache, layer: Int) -> MLXArray {
+        let normalized = norm(hidden)
+        if let mamba = mixer as? NFKMLXMamba2Mixer {
+            return hidden + mamba(normalized, cache: cache.mamba[layer])
+        }
+        if let attention = mixer as? NFKNemotronAttention, let keyValues = cache.attention {
+            return hidden + attention(normalized, cache: keyValues, layer: layer)
+        }
+        return hidden + mixer(normalized)
     }
 }
 
@@ -334,6 +366,24 @@ public final class NFKMLXNemotronHNet: Module {
 
     public func hiddenStates(_ tokens: MLXArray) -> MLXArray {
         model.finalNorm(blockStates(tokens).last!)
+    }
+
+    /// The logits `[batch, vocabulary]` at the last of `tokens`, which follow the positions `cache` holds; the
+    /// cache takes the new positions.
+    func lastLogits(_ tokens: MLXArray, cache: NFKMLXRecurrentCache) -> MLXArray {
+        let length = tokens.dim(1)
+        var hidden = model.embeddings(tokens)
+        for (index, layer) in model.layers.enumerated() {
+            guard let next = NFKMLXLayerStream.run(layerStream, layer: layer, index: index, {
+                layer(hidden, cache: cache, layer: index)
+            }, keeping: { [$0] + [cache.mamba[index]?.convolutionInputs, cache.mamba[index]?.state].compactMap { $0 }
+                + (cache.attention?.arrays(layer: index) ?? []) }) else {
+                continue
+            }
+            hidden = next
+        }
+        cache.advance(by: length)
+        return lmHead(model.finalNorm(hidden[0..., (length - 1)...]))[0..., 0]
     }
 
     public func callAsFunction(_ tokens: MLXArray) -> MLXArray {

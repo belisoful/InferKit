@@ -413,8 +413,8 @@ final class NFKMLXMamba2Block: Module {
         super.init()
     }
 
-    func callAsFunction(_ hidden: MLXArray) -> MLXArray {
-        let mixed = mixer(norm(hidden.asType(norm.weight.dtype)))
+    func callAsFunction(_ hidden: MLXArray, cache: NFKMLXMamba2Cache? = nil) -> MLXArray {
+        let mixed = mixer(norm(hidden.asType(norm.weight.dtype)), cache: cache)
         return (residualInFloat32 ? hidden.asType(.float32) : hidden) + mixed
     }
 }
@@ -487,8 +487,28 @@ public final class NFKMLXMamba2Net: Module {
 
     /// The next-token logits over the whole sequence, `[B, L, vocab]`.
     public func callAsFunction(_ tokens: MLXArray) -> MLXArray {
-        let hidden = hiddenStates(tokens)
-        // A float32 residual stream is rounded to the head's type first, as the reference does.
+        head(hiddenStates(tokens))
+    }
+
+    /// The logits `[batch, vocabulary]` at the last of `tokens`, which follow the positions `cache` holds; each
+    /// block continues its convolution and scan from the cache, which takes the new positions.
+    func lastLogits(_ tokens: MLXArray, cache: NFKMLXRecurrentCache) -> MLXArray {
+        let length = tokens.dim(1)
+        var hidden = backbone.embeddings(tokens)
+        for (index, layer) in backbone.layers.enumerated() {
+            let slot = cache.mamba[index]
+            guard let next = NFKMLXLayerStream.run(layerStream, layer: layer, index: index, { layer(hidden, cache: slot) },
+                                                   keeping: { [$0] + [slot?.convolutionInputs, slot?.state].compactMap { $0 } }) else {
+                continue
+            }
+            hidden = next
+        }
+        cache.advance(by: length)
+        return head(backbone.finalNorm(hidden[0..., (length - 1)...]))[0..., 0]
+    }
+
+    /// The output projection; a float32 residual stream is rounded to the head's type first, as the reference does.
+    private func head(_ hidden: MLXArray) -> MLXArray {
         if let lmHead {
             return lmHead(hidden.asType(lmHead.weight.dtype))
         }
