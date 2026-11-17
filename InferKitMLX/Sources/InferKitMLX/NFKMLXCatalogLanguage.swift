@@ -972,7 +972,7 @@ extension NFKMLXCatalogLanguage {
             summary: "\(release.displayName), a \(kind) Gemma 4 decoder that writes text and calls tools.",
             registryName: release.name, tasks: [NFKModelTaskTextGeneration],
             inputs: [promptInput, messagesInput], outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
-            parameters: toolDecoderOptions(sampling: gemmaSampling),
+            parameters: toolDecoderOptions(sampling: gemmaSampling) + [conversationKeyOption()],
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemmaLanguage.requiredFiles,
                                                             optional: NFKMLXGemmaLanguage.optionalFiles,
                                                             weights: NFKMLXGemmaLanguage.weightFiles))],

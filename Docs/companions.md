@@ -140,9 +140,9 @@ weights:
   reply in fewer passes. Both releases stream the blocks they cannot hold.
 - **`NFKMLXGemmaBackend`** — text generation for the Gemma 4 decoders (`NFKMLXGemmaLanguage.backend(directoryURL:)`
   / `gemmaBackendWithDirectoryURL:error:`), dispatching on a release's config model type across the
-  E-series, the 26B-A4B mixture, and the 12B unified decoder. Gemma runs prefill-only, so generation
-  re-runs the growing sequence each step; the tokenizer is Gemma's byte-fallback BPE, and a message
-  list is rendered into Gemma's turn format. Measured end to end on the released E2B. A Gemma 3
+  E-series, the 26B-A4B mixture, and the 12B unified decoder. Generation runs through a key-value cache,
+  which a request continues from the conversation its key names or its prompt extends; the tokenizer is
+  Gemma's byte-fallback BPE, and a message list is rendered into Gemma's turn format. Measured end to end on the released E2B. A Gemma 3
   release handed to the same factory is routed to `NFKMLXGemma3`.
 - **`NFKMLXGemma3`** — the Gemma 3 line, end to end: the text decoder (`NFKMLXGemma3Net`: `(1 + w)`
   RMS norms, sandwich blocks, five sliding-window layers to one full layer at a local and a global

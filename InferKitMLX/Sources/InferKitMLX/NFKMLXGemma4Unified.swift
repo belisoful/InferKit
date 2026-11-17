@@ -40,9 +40,10 @@ final class NFKGemma4UnifiedBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray, mask: MLXArray?,
-                        shared: (keys: MLXArray, values: MLXArray)?)
+                        shared: (keys: MLXArray, values: MLXArray)?,
+                        cache: NFKMLXKeyValueCache? = nil, layer: Int = 0)
         -> (output: MLXArray, keys: MLXArray, values: MLXArray) {
-        let (mixed, keys, values) = attention(inputNorm(x), mask: mask, shared: shared)
+        let (mixed, keys, values) = attention(inputNorm(x), mask: mask, shared: shared, cache: cache, layer: layer)
         let attended = x + postAttentionNorm(mixed)
         let lifted = attended + postFeedForwardNorm(feedForward(preFeedForwardNorm(attended)))
         return (lifted * layerScalar, keys, values)
@@ -99,21 +100,30 @@ public final class NFKMLXGemma4UnifiedNet: Module {
         return (trace, logits)
     }
 
-    private func forward(_ tokens: MLXArray, trace: inout [MLXArray]) -> MLXArray {
+    /// The logits `[batch, vocabulary]` at the last of `tokens`, which follow the positions `cache` holds; the
+    /// cache takes the new positions.
+    func lastLogits(_ tokens: MLXArray, cache: NFKMLXGemma3Cache) -> MLXArray {
+        var trace = [MLXArray]()
+        return forward(tokens, trace: &trace, cache: cache)[0..., 0]
+    }
+
+    /// The pass over `tokens`, through `cache` where one is given; a cached pass projects only its last
+    /// position.
+    private func forward(_ tokens: MLXArray, trace: inout [MLXArray], cache: NFKMLXGemma3Cache? = nil) -> MLXArray {
         let c = configuration
         let length = tokens.shape[1]
 
         var hidden = embedTokens(tokens) * sqrt(Float(c.hiddenSize))
         trace.append(hidden)
 
-        let mask: MLXArray? = length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: 0) : nil
+        let masks = NFKMLXGemmaCachedPass.masks(length: length, cache: cache)
         // A sharing layer reuses the keys and values of the last non-sharing layer OF ITS OWN KIND.
         var latest = [NFKMLXGemmaAttentionKind: (keys: MLXArray, values: MLXArray)]()
         for (index, layer) in layers.enumerated() {
             let kind = c.layerTypes[index]
             let shared = index >= c.firstSharedLayer ? latest[kind] : nil
             guard let (next, keys, values) = NFKMLXLayerStream.run(layerStream, layer: layer, index: index, {
-                layer(hidden, mask: mask, shared: shared)
+                layer(hidden, mask: masks.mask(for: kind), shared: shared, cache: cache?.cache(for: kind), layer: index)
             }, keeping: { [$0.output, $0.keys, $0.values] }) else {
                 trace.append(hidden)
                 continue
@@ -124,8 +134,12 @@ public final class NFKMLXGemma4UnifiedNet: Module {
                 latest[kind] = (keys, values)
             }
         }
+        cache?.advance(by: length)
         hidden = norm(hidden)
         if !trace.isEmpty { trace[trace.count - 1] = hidden }
+        if cache != nil {
+            hidden = hidden[0..., (length - 1) ..< length]
+        }
 
         var logits = embedTokens.asLinear(hidden)
         if c.finalLogitSoftcap > 0 {

@@ -66,10 +66,10 @@ public enum NFKMLXGemma4Fusion {
 /// The full `Gemma4ForConditionalGeneration` chain: an image and/or audio and a token sequence with
 /// placeholder tokens in, a generated continuation out. It processes the image and audio into the
 /// towers, projects their soft tokens into the decoder's space, splices them at the placeholder
-/// positions, and runs the E-series decoder prefill-only over the fused embeddings.
+/// positions, and runs the E-series decoder over the fused embeddings.
 ///
-/// The decoder is prefill-only (Gemma carries no key-value cache), so each step re-runs the growing
-/// sequence with the same soft tokens spliced. The whole numeric path is verified only once the
+/// The fused prompt prefills the decoder's key-value cache, and each generated token, which is text, then
+/// runs alone through it. The whole numeric path is verified only once the
 /// released tri-modal weights are available; every component it chains is at reference parity.
 public final class NFKMLXGemma4ConditionalGeneration {
     private let decoder: NFKMLXGemmaNet
@@ -173,23 +173,27 @@ public final class NFKMLXGemma4ConditionalGeneration {
 
     private var decoderHidden: Int { decoder.configuration.hiddenSize }
 
-    /// Greedy prefill-only generation from an image and/or audio and a placeholder-carrying prompt. The
-    /// prompt carries one image placeholder per ``visionSoftTokens(for:)`` token and one audio
-    /// placeholder per ``audioSoftTokens(for:)`` token.
+    /// Greedy generation from an image and/or audio and a placeholder-carrying prompt, through the decoder's
+    /// cache: the prompt, its soft tokens spliced in, prefills it, and each new token runs alone. The prompt
+    /// carries one image placeholder per ``visionSoftTokens(for:)`` token and one audio placeholder per
+    /// ``audioSoftTokens(for:)`` token.
     public func generate(promptTokens: [Int], image: CGImage? = nil, waveform: [Float]? = nil,
                          maxTokens: Int = 64) -> [Int] {
+        guard maxTokens > 0 else { return [] }
         let visionSoft = image.flatMap(visionSoftTokens)
         let audioSoft = waveform.flatMap(audioSoftTokens)
-        var tokens = promptTokens
+        let (embeddings, ids) = fusedEmbeddings(tokens: promptTokens, visionSoftTokens: visionSoft,
+                                                audioSoftTokens: audioSoft)
+        let cached = NFKMLXGemmaLanguage.cachedGeneration(decoder)
+        let cache = cached.makeCache()
+        var logits = cached.prefill(ids.asArray(Int32.self).map(Int.init), embeddings: embeddings, cache: cache)
         var produced = [Int]()
-        for _ in 0 ..< max(maxTokens, 0) {
-            let (embeddings, ids) = fusedEmbeddings(tokens: tokens, visionSoftTokens: visionSoft,
-                                                    audioSoftTokens: audioSoft)
-            let logits = decoder.logits(fromEmbeddings: embeddings, tokens: ids)
-            let next = logits[0, tokens.count - 1].argMax(axis: -1).item(Int.self)
+        for index in 0 ..< maxTokens {
+            let next = logits.argMax(axis: -1).item(Int.self)
             if stopTokens.contains(next) { break }
             produced.append(next)
-            tokens.append(next)
+            guard index + 1 < maxTokens else { break }
+            logits = cached.step(MLXArray(Int32(next)), cache: cache)
         }
         return produced
     }

@@ -287,13 +287,19 @@ public final class NFKMLXGemma3Cache {
     /// `min(offset, window - 1)` positions its masks read: the window has already dropped the
     /// positions a rollback that far would need back.
     func rollback(by count: Int, kinds: [NFKMLXGemmaAttentionKind]) -> Bool {
+        guard canRollback(by: count, kinds: kinds) else { return false }
+        return full.rollback(by: count, layers: kinds.indices.filter { kinds[$0] == .full })
+            && sliding.rollback(by: count, layers: kinds.indices.filter { kinds[$0] != .full })
+    }
+
+    /// Whether ``rollback(by:kinds:)`` would succeed, without moving anything.
+    func canRollback(by count: Int, kinds: [NFKMLXGemmaAttentionKind]) -> Bool {
         let fullLayers = kinds.indices.filter { kinds[$0] == .full }
         let slidingLayers = kinds.indices.filter { kinds[$0] != .full }
         let needed = Swift.min(offset - count, window - 1)
-        guard full.canRollback(by: count, layers: fullLayers),
-              sliding.canRollback(by: count, layers: slidingLayers),
-              slidingLayers.allSatisfy({ sliding.retainedLength(layer: $0) - count >= needed }) else { return false }
-        return full.rollback(by: count, layers: fullLayers) && sliding.rollback(by: count, layers: slidingLayers)
+        return full.canRollback(by: count, layers: fullLayers)
+            && sliding.canRollback(by: count, layers: slidingLayers)
+            && slidingLayers.allSatisfy { sliding.retainedLength(layer: $0) - count >= needed }
     }
 
     /// Keeps the batch rows `rows` of both caches, in that order; see ``NFKMLXKeyValueCache/reorder(_:)``.

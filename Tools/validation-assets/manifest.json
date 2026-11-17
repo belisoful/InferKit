@@ -7759,6 +7759,12 @@
       "command": "qwen3_5_cached --checkpoint $IK_VAL_QWEN3_5_2B (16 MB)"
     },
     {
+      "key": "IK_PARITY_GEMMA4_CONVERSATION",
+      "record": "reference/gemma4-e2b-conversation.safetensors",
+      "environment": "gemma",
+      "command": "gemma4_conversation --checkpoint $IK_VAL_GEMMA4 (17 MB)"
+    },
+    {
       "key": "IK_PARITY_QWEN3_5_CONVERSATION",
       "record": "reference/qwen3-5-2b-conversation.safetensors",
       "environment": "qwenimage",

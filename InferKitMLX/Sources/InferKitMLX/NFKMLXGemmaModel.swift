@@ -282,27 +282,36 @@ final class NFKGemmaAttention: Module {
     /// This layer's rotary inverse frequencies `[width / 2]`, zero past a proportional rotary's turned pairs.
     let inverseFrequencies: [Float]
 
-    /// Applies the rotary to the leading channels only, which is what a partial factor means.
-    private func turned(_ x: MLXArray) -> MLXArray {
+    /// Applies the rotary at positions from `offset` to the leading channels only, which is what a partial
+    /// factor means.
+    private func turned(_ x: MLXArray, offset: Int) -> MLXArray {
         if NFKReferenceRounding.isReduced(x) {
-            return NFKReferenceRounding.rotary(x, inverseFrequencies: MLXArray(inverseFrequencies), offset: 0)
+            return NFKReferenceRounding.rotary(x, inverseFrequencies: MLXArray(inverseFrequencies), offset: offset)
         }
-        if let proportionalRope { return proportionalRope(x) }
-        return rope(x, offset: 0)
+        if let proportionalRope { return proportionalRope(x, offset: offset) }
+        return rope(x, offset: offset)
     }
 
-    /// - Parameter shared: keys and values from an earlier layer, for a layer that shares them.
+    /// - Parameters:
+    ///   - mask: an additive mask over the keys this pass attends to. Without a cache, a sliding layer of more
+    ///     than one position builds its own window mask in its place; with one, the caller's mask is the
+    ///     layer kind's, built against the rows the cache retains.
+    ///   - shared: keys and values from an earlier layer, for a layer that shares them.
+    ///   - cache: the cache of this layer's kind, whose position count is the rotary offset; a layer that
+    ///     computes its own keys and values writes them there and attends over everything it retains.
     /// - Returns: the attention output and the keys and values this layer used.
     func callAsFunction(_ x: MLXArray, mask: MLXArray?,
-                        shared: (keys: MLXArray, values: MLXArray)?)
+                        shared: (keys: MLXArray, values: MLXArray)?,
+                        cache: NFKMLXKeyValueCache? = nil, layer: Int = 0)
         -> (output: MLXArray, keys: MLXArray, values: MLXArray) {
         let c = configuration
         let (batch, length) = (x.shape[0], x.shape[1])
         let width = c.headDimensions(for: kind)
+        let offset = cache?.offset ?? 0
 
         var queries = queryNorm(queryProjection(x)
             .reshaped([batch, length, c.headCount, width])).transposed(0, 2, 1, 3)
-        queries = turned(queries)
+        queries = turned(queries, offset: offset)
 
         // A sharing layer reuses an earlier layer's keys and values rather than projecting its own.
         // Its checkpoint still carries k_proj and v_proj; the reference ignores them, so this does too.
@@ -315,7 +324,7 @@ final class NFKGemmaAttention: Module {
             let heads = c.keyValueHeadCount(for: kind)
             let projected = keyProjection(x).reshaped([batch, length, heads, width])
             keys = keyNorm(projected).transposed(0, 2, 1, 3)
-            keys = turned(keys)
+            keys = turned(keys, offset: offset)
             // A sharing layer takes the key PROJECTION as its value, before the norm and the rotary.
             var v: MLXArray
             if let valueProjection {
@@ -325,11 +334,14 @@ final class NFKGemmaAttention: Module {
             }
             v = NFKReferenceRounding.scaledNorm(v, weight: nil, eps: valueEpsilon)
             values = v.transposed(0, 2, 1, 3)
+            if let cache {
+                (keys, values) = cache.update(layer: layer, keys: keys, values: values)
+            }
         }
 
         // A sliding layer additionally forbids anything older than the window.
         var effective = mask
-        if kind == .sliding, length > 1 {
+        if cache == nil, kind == .sliding, length > 1 {
             effective = NFKMLXGemmaLanguage.windowMask(length, window: c.slidingWindow)
         }
         // The masks are built float32, and a `.checkpoint`-precision load makes this a bf16 module;
@@ -397,9 +409,10 @@ final class NFKGemmaBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray, perLayerInput: MLXArray?, mask: MLXArray?,
-                        shared: (keys: MLXArray, values: MLXArray)?)
+                        shared: (keys: MLXArray, values: MLXArray)?,
+                        cache: NFKMLXKeyValueCache? = nil, layer: Int = 0)
         -> (output: MLXArray, keys: MLXArray, values: MLXArray) {
-        let (mixed, keys, values) = attention(inputNorm(x), mask: mask, shared: shared)
+        let (mixed, keys, values) = attention(inputNorm(x), mask: mask, shared: shared, cache: cache, layer: layer)
         let attended = x + postAttentionNorm(mixed)
         let dense = feedForward(preFeedForwardNorm(attended))
         let combined = mixtureBranch(dense: dense, residual: attended) ?? dense
@@ -732,8 +745,17 @@ public final class NFKMLXGemmaNet: Module {
         return forward(embed(tokens), tokens: tokens, trace: &trace, lastPositionOnly: true)[0..., 0]
     }
 
+    /// The logits `[batch, vocabulary]` at the last of `tokens`, which follow the positions `cache` holds; the
+    /// cache takes the new positions. `embeddings`, where given, replace the token embedding, as
+    /// ``logits(fromEmbeddings:tokens:)``'s do.
+    func lastLogits(_ tokens: MLXArray, embeddings: MLXArray? = nil, cache: NFKMLXGemma3Cache) -> MLXArray {
+        var trace = [MLXArray]()
+        return forward(embeddings ?? embed(tokens), tokens: tokens, trace: &trace, lastPositionOnly: true,
+                       cache: cache)[0..., 0]
+    }
+
     private func forward(_ embeddings: MLXArray, tokens: MLXArray, trace: inout [MLXArray],
-                         lastPositionOnly: Bool = false) -> MLXArray {
+                         lastPositionOnly: Bool = false, cache: NFKMLXGemma3Cache? = nil) -> MLXArray {
         let c = configuration
         let length = tokens.shape[1]
 
@@ -743,7 +765,7 @@ public final class NFKMLXGemmaNet: Module {
         let normalized = perLayerInputs(embeddings: embeddings, tokens: tokens)
 
         trace.append(hidden)
-        let mask: MLXArray? = length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: 0) : nil
+        let masks = NFKMLXGemmaCachedPass.masks(length: length, cache: cache)
         // The sharing layers reuse the keys and values of the LAST non-sharing layer OF THEIR OWN
         // KIND: a sliding layer shares with the last sliding one, a full layer with the last full one.
         var latest = [NFKMLXGemmaAttentionKind: (keys: MLXArray, values: MLXArray)]()
@@ -751,7 +773,8 @@ public final class NFKMLXGemmaNet: Module {
             let kind = c.layerTypes[index]
             let shared = index >= c.firstSharedLayer ? latest[kind] : nil
             guard let (next, keys, values) = NFKMLXLayerStream.run(layerStream, layer: layer, index: index, {
-                layer(hidden, perLayerInput: normalized?[0..., 0..., index], mask: mask, shared: shared)
+                layer(hidden, perLayerInput: normalized?[0..., 0..., index], mask: masks.mask(for: kind), shared: shared,
+                      cache: cache?.cache(for: kind), layer: index)
             }, keeping: { [$0.output, $0.keys, $0.values] }) else {
                 trace.append(hidden)
                 continue
@@ -762,6 +785,7 @@ public final class NFKMLXGemmaNet: Module {
                 latest[kind] = (keys, values)
             }
         }
+        cache?.advance(by: length)
         hidden = norm(hidden)
         // The reference records its LAST hidden state after the final normalization, so the trace
         // matches its convention rather than ending on the raw last-layer output.

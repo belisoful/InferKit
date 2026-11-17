@@ -21,6 +21,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Gemma 4 decodes through a key-value cache and continues conversations
+
+- The Gemma 4 decoders (E2B, E4B, the 26B-A4B mixture, the 12B unified, and the 31B) generate through a
+  key-value cache: the prompt prefills it in passes, and each new token runs alone, where every token used to
+  re-run the whole sequence. The full-attention layers keep every position and the sliding layers their window,
+  as the reference's cache does. The image and audio backend decodes the same way after its fused prompt. A
+  drafted run still re-runs the growing sequence each round.
+- `NFKMLXGemmaBackend` keeps each conversation's cache between requests: a request continues the conversation
+  its `NFKParameterConversationKey` names, or, naming none, the kept conversation its prompt continues
+  furthest, under a budget the memory affords, and conversations the budget or an unload lets go are written to
+  `conversationSpillDirectoryURL`. The sliding layers' window rows are snapshotted at each turn's generation
+  prompt and at the prompt's end, so a follow-up whose template drops the last reply's thinking resumes there
+  however long the reply was. The usage reports the reused positions under `NFKUsageCachedTokens`.
+
 #### Gemma 3n continues a conversation from its kept cache
 
 - `NFKMLXGemma3nBackend` keeps each conversation's cache between requests, so a follow-up turn prefills only what

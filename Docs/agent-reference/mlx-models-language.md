@@ -554,8 +554,9 @@ attention and feed-forward.
   nothing. Gemma 3 is built without its release URL, so its spill is off until set.
   `NFKMLXLanguageBackend`,
   `NFKMLXGemma3Backend`, `NFKMLXDeepSeekBackend`, `NFKMLXGraniteBackend`, and the cached
-  `NFKMLXDecoderBackend` (Qwen3.5/3.8, below) and `NFKMLXGemma3nBackend` (`mlx-models-gemma.md`) keep
-  conversation caches; the multimodal backends and the prefill-only backends do not. The store is generic
+  `NFKMLXDecoderBackend` (Qwen3.5/3.8, below), `NFKMLXGemma3nBackend`, and `NFKMLXGemmaBackend` (Gemma 4,
+  `mlx-models-gemma.md`) keep conversation caches; the multimodal backends and the prefill-only backends do
+  not. The store is generic
   (`NFKMLXConversationStates<State>`) and `NFKMLXConversationKeeper` pairs it with the status
   snapshot; `NFKMLXConversation.name(of:)` reads the key for all three.
   - Gemma 3 (`NFKMLXGemma3PromptCache`) keeps rows the way the dense cache does, generated ones

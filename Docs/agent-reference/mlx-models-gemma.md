@@ -468,9 +468,32 @@ quarter of the floor.
   decoders, so a consumer runs them through the InferKit contract. `NFKMLXGemmaLanguage.backend(directoryURL:)`
   / `@objc gemmaBackendWithDirectoryURL:error:` reads a release's `config.json` and dispatches on its
   model type: the E-series and the 26B-A4B mixture through `configuration(fromHuggingFace:)` + `makeNet`,
-  the 12B through `unifiedConfiguration` + `makeUnifiedNet`. **Gemma runs prefill-only** — the decoders
-  carry no key-value cache — so generation re-runs the growing sequence each step (quadratic, fine for
-  the short outputs an on-device assistant produces). The tokenizer is `NFKMLXGemmaTokenizer` (the core
+  the 12B through `unifiedConfiguration` + `makeUnifiedNet`. **Cached decode (2026-11-17):** generation
+  runs through an `NFKMLXGemma3Cache` (Gemma 3's: the full layers' keys and values whole, the sliding
+  layers' bounded to the window), prefilled in passes by `NFKGemmaCachedGeneration` (at most 2048 positions,
+  halved past a 1 GiB score budget) and then one token a pass. `NFKGemmaAttention` rotates at the cache's
+  offset (all three rotaries take it), a non-shared layer writes its rows, and a layer of the shared tail
+  reads its donor's, retained history included; a cached pass takes the kind's mask from
+  `NFKMLXGemma3Masks`, and the uncached path keeps its own window mask, so every prefill-only parity
+  record is untouched. The 12B unified net takes the same cache. Measured on tiny nets with a six-wide
+  window, the shared tail, the mixture, and the unified net, every cached position within 1e-4 of the full
+  pass; the released E2B in the conversation parity below (the cached decode of a whole prompt 0.99999999999869).
+  **Conversations (2026-11-17):** `NFKMLXGemma4Conversation` per conversation through
+  `NFKMLXConversationKeeper` (key, else the unnamed conversation the prompt resumes furthest into; memory
+  budget; spill). The sliding layers keep only their window, so the conversation snapshots their rows
+  (`exportedArrays`, copied) at the prompt's last `<|turn>` marker, at the prompt's end, and every 4096
+  positions, keeping four. `resume(for:)` continues the live cache, else rolls back where the window
+  still reaches (`NFKMLXGemma3Cache.canRollback(by:kinds:)` over the layers before the shared tail, which
+  store nothing), else rolls the full layers back to the newest snapshot inside the shared prefix and
+  restores the sliding rows from it. Gemma 4's template drops an earlier turn's thinking, so a follow-up
+  parts at the last generation prompt: a reply shorter than the window rolls back, a longer one resumes
+  from that snapshot. The multimodal backend decodes through the cache but keeps no conversations.
+  Parity: `NFKMLXGemma4CacheTests/testTheReleasedDecoderContinuesATurnAsAFullRerunDoes`
+  (`IK_PARITY_GEMMA4_CONVERSATION`, oracle mode `gemma4_conversation`, gemma env; the E2B validation release
+  carries no chat template, so the oracle renders the turn format the port does): float32 E2B, turn 2 (151
+  tokens) resumed at 114, worst logit cosine 0.99999999999857 to transformers' full re-run over 16 steps, the
+  greedy tokens equal; the cached decode of the whole prompt measures 0.99999999999869, and the resumed run
+  agrees with it to 0.99999999999959. Bars 0.9999999999, a decade under the decoder's measured 0.9999999999994. The tokenizer is `NFKMLXGemmaTokenizer` (the core
   reader cannot produce Gemma's byte-fallback BPE), which gained `decode` and `id(forToken:)`; a raw
   prompt encodes after `<bos>`, and a message list builds Gemma's `<start_of_turn>role\n…<end_of_turn>`
   turns from the special-token IDS rather than encoding the markers as text. Generation is greedy at
@@ -492,9 +515,8 @@ quarter of the floor.
   reads the scaled embeddings and the E-series per-layer modules as the release builds them and
   prepends `<bos>`, which Gemma 4's tokenizer leaves to the chat template; without it the 12B
   continues "The capital of France is" with "111.1......".
-  **Drafting** (`backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)`): the decoders
-  carry no key-value cache, so a drafted round runs the draft once per proposal over the growing
-  sequence and the release once over the sequence and every proposal, keeping the agreed proposals
+  **Drafting** (`backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)`): a drafted
+  round runs without the cache, the draft once per proposal over the growing sequence and the release once over the sequence and every proposal, keeping the agreed proposals
   through the language family's `verifyGreedily` / `verifyBySampling` with the request's sampling. The
   draft loads first, held, quantized to `draftBits` with its embeddings, since the E2B's per-layer
   embedding alone is 4.7 GB at bf16; the release is planned against what the draft leaves. The streamed
@@ -529,8 +551,8 @@ quarter of the floor.
   to end: an image and/or a waveform and a placeholder-carrying token sequence in, a generated
   continuation out. It runs the image through the processor and the vision tower to soft tokens (and the
   waveform through the mel front end and the audio tower), projects each through its embedder, splices
-  them at the placeholder positions with `fusedEmbeddings`, and runs the E-series decoder prefill-only
-  over the fused embeddings. The decoder gained an `embed` / `logits(fromEmbeddings:tokens:)` seam so the
+  them at the placeholder positions with `fusedEmbeddings`, prefills the E-series decoder's cache with the
+  fused embeddings, and decodes each new token through it. The decoder gained an `embed` / `logits(fromEmbeddings:tokens:)` seam so the
   main stream is supplied pre-spliced while the per-layer input identity still reads the
   placeholder-padded token ids (the reference's split — the context projection reads the spliced
   embeddings, the identity reads the ids). A placeholder token embeds as the pad token and the soft

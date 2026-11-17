@@ -7049,8 +7049,8 @@ Only the dense `llama`/`qwen2`/`qwen3` families are read; another architecture t
 transformers reading the same GGUF, the decoder's logits match to cosine 0.9999999999.
 
 **Running a Gemma 4 decoder.** The Gemma decoders (E2B/E4B, the 26B-A4B mixture, the 12B unified) have
-their own backend, dispatched from the release's config model type. Gemma runs prefill-only (no
-key-value cache), and its byte-fallback BPE tokenizer is read from the release:
+their own backend, dispatched from the release's config model type. Generation runs through a key-value
+cache that a follow-up turn continues, and the byte-fallback BPE tokenizer is read from the release:
 
 ```objc
 // Objective-C.

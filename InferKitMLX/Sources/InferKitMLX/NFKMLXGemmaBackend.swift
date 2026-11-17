@@ -4,8 +4,8 @@
 //
 //  A text-generation backend for the Gemma 4 decoders (E2B/E4B, the 26B-A4B mixture, and the 12B
 //  unified), so a consumer runs them through the InferKit contract like any other backend. The Gemma
-//  decoders run prefill-only — they carry no key-value cache — so generation re-runs the growing
-//  sequence each step; this is quadratic and suits the short outputs an on-device assistant produces.
+//  decoders generate through a key-value cache: the prompt prefills it, and each new token then runs
+//  alone. A drafted run re-runs the growing sequence each round.
 //
 //  Gemma's tokenizer is a byte-fallback BPE the core reader cannot produce (its `tokenizer.model`
 //  scores are merge ranks, not unigram log-probabilities), so this backend uses `NFKMLXGemmaTokenizer`.
@@ -27,15 +27,18 @@ final class NFKGemmaBackendHolder: @unchecked Sendable {
     let tokenizer: NFKMLXGemmaTokenizer
     /// The draft decoder's logits, which propose tokens for `logits` to verify; nil where nothing drafts.
     let draft: ((MLXArray) -> MLXArray)?
+    /// Generation through the decoder's cache; nil for a decoder built without one.
+    let cached: NFKGemmaCachedGeneration?
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXGemmaTokenizer,
-         draft: ((MLXArray) -> MLXArray)? = nil) {
+         draft: ((MLXArray) -> MLXArray)? = nil, cached: NFKGemmaCachedGeneration? = nil) {
         self.logits = logits
         self.tokenizer = tokenizer
         self.draft = draft
+        self.cached = cached
     }
 }
 
-/// A prefill-only text-generation backend over a Gemma 4 decoder.
+/// A text-generation backend over a Gemma 4 decoder.
 @objc(NFKMLXGemmaBackend)
 public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     private let holder: NFKGemmaBackendHolder
@@ -55,6 +58,10 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     private let templateStopTokens: Set<Int>
     private let describedModules: [Module]
     private let releaseDirectoryURL: URL?
+    /// One cached generation at a time: a run moves a conversation's cache through the shared decoder.
+    private let generationLock = NSLock()
+    /// The conversations' caches, read and written under `generationLock`.
+    private let conversations = NFKMLXConversationKeeper<NFKMLXGemma4Conversation>(byteBudget: 0)
     /// The sampling the release's generation config sets: step 3 of ``NFKMLXGenerationOptions``' sampling order.
     private let releaseSampling: NFKMLXReleaseSampling?
     private let modelInfoCache = NFKMLXModelInfoCache()
@@ -93,8 +100,9 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
 
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXGemmaTokenizer, identifier: String,
          expertStore: NFKMLXExpertStore? = nil, layerStream: NFKMLXLayerStream? = nil,
-         draft: ((MLXArray) -> MLXArray)? = nil, modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
-        self.holder = NFKGemmaBackendHolder(logits: logits, tokenizer: tokenizer, draft: draft)
+         draft: ((MLXArray) -> MLXArray)? = nil, modules: [Module] = [], releaseDirectoryURL: URL? = nil,
+         cached: NFKGemmaCachedGeneration? = nil) {
+        self.holder = NFKGemmaBackendHolder(logits: logits, tokenizer: tokenizer, draft: draft, cached: cached)
         self.identifier = identifier
         self.describedModules = modules
         self.releaseDirectoryURL = releaseDirectoryURL
@@ -138,7 +146,98 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     /// The expert cache now, where the model pages its experts: `expert_cache_bytes` and
     /// `expert_cache_byte_budget`; empty where it holds them resident. `NFKInferenceServer` serves it under
     /// the model's "status". Introduced in InferKit 0.4.0.
-    @objc public var backendStatus: [String: Any] { expertStore?.statusFigures ?? [:] }
+    @objc public var backendStatus: [String: Any] {
+        conversations.status.merging(expertStore?.statusFigures ?? [:]) { $1 }
+    }
+
+    /// The bytes the conversations' caches may hold together.
+    ///
+    /// @discussion A request continues the conversation its `NFKParameterConversationKey` names, or, naming
+    /// none, the kept conversation its prompt continues furthest, so a follow-up turn prefills only what it
+    /// adds. When the caches outgrow the budget, the least recently used conversations are written to
+    /// ``conversationSpillDirectoryURL`` and dropped, never the one a request just ran. Until it is set, the
+    /// budget is what the memory planned beside the model affords after one run's keys and values at the
+    /// context length, recomputed each run; setting it fixes it, and lowering it drops down to it at once.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversations.states.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.fixBudget(newValue)
+        }
+    }
+
+    /// How many conversations hold a cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.count
+    }
+
+    /// The bytes the conversations' caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.heldBytes
+    }
+
+    /// Drops one named conversation's cache, in memory and on disk. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.remove(conversation)
+        conversations.spill?.remove(named: conversation)
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's cache in memory; spilled ones stay on disk. Introduced in InferKit 0.4.0.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.removeAll()
+        conversations.refresh()
+    }
+
+    /// Writes every conversation's cache to the spill directory and drops it from memory when no run is in
+    /// progress, and returns the bytes they held; returns 0 at once while a run holds them.
+    /// `NFKInferenceServer` calls it to relieve memory, and the reloadable backend before it unloads the model.
+    /// Introduced in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        return conversations.releaseAll(spills: adapterStrengths.isEmpty)
+    }
+
+    /// The directory conversations the memory budget lets go are written to, so a later request continues one
+    /// without its prefill, after an unload or a restart too; nil writes none. A backend over a release
+    /// directory defaults to a directory under the user's caches that only the same release and weights read.
+    /// A model that holds adapters writes none. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillDirectoryURL: URL? {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.directory
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.setSpillDirectory(newValue)
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk; the least recently written go first past it.
+    /// Defaults to 8 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            conversations.spill?.byteBudget = newValue
+        }
+    }
 
     /// Releases up to `byteCount` of the routed experts the model caches, keeping `keepingByteCount`, and
     /// returns the bytes freed; 0 where the model holds its experts resident. The cache's budget is
@@ -158,6 +257,9 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
         if !adapterStrengths.isEmpty {
             keys.insert(NFKParameterAdapterStrengths)
+        }
+        if holder.cached != nil {
+            keys.insert(NFKParameterConversationKey)
         }
         return keys
     }
@@ -193,22 +295,24 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
 
         if let (promptTokens, format) = try toolPrompt(for: request) {
-            let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                                 stops: templateStopTokens, draftTokens: draftTokens)
+            let (produced, limit, cachedTokens) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens,
+                                                               seed: seed, stops: templateStopTokens, draftTokens: draftTokens,
+                                                               request: request)
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced), reasoning: "",
                                                     request: request, format: format, source: identifier)
             outputs[NFKOutputFinishReason] = NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit, outputs: outputs)
-            outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+            outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cachedTokens,
                                                           outputTokens: produced.count, reasoningTokens: nil)
             return NFKInferenceResult(outputs: outputs)
         }
         let promptTokens = try tokens(for: request)
-        let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                             stops: rendersConversation(request) ? templateStopTokens : stopTokens,
-                                             draftTokens: draftTokens)
+        let (produced, limit, cachedTokens) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens,
+                                                           seed: seed,
+                                                           stops: rendersConversation(request) ? templateStopTokens : stopTokens,
+                                                           draftTokens: draftTokens, request: request)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cachedTokens,
                                                 outputTokens: produced.count, reasoningTokens: nil),
             NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit),
         ])
@@ -275,18 +379,28 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         return ids
     }
 
-    /// Prefill-only generation: the whole growing sequence runs through the decoder each step, or each
-    /// round where a draft proposes `draftTokens` tokens. A step whose streamed layer could not be read
-    /// throws, and the next request reads the release again.
+    /// Generation. With a draft and `draftTokens` above 0, each round of proposals runs the whole growing
+    /// sequence through the decoder. Otherwise a cached decoder continues the conversation `request` names or
+    /// its prompt's prefix finds, prefills the rest, and runs each new token alone, and a decoder without a
+    /// cache runs the whole growing sequence each step. A step whose streamed layer could not be read throws,
+    /// and the next request reads the release again. Answers the tokens produced, the limit, and how many of
+    /// the prompt's tokens a kept cache already held.
     func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
-                  stops: Set<Int>, draftTokens: Int) throws -> (tokens: [Int], limit: Int) {
+                  stops: Set<Int>, draftTokens: Int, request: NFKInferenceRequest? = nil)
+        throws -> (tokens: [Int], limit: Int, cached: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
                                                   contextLength: contextLength, source: identifier)
         if let draft = holder.draft, draftTokens > 0 {
             return (try speculate(promptTokens, draft: draft, proposals: draftTokens, sampling: sampling,
-                                  limit: limit, seed: seed, stops: stops), limit)
+                                  limit: limit, seed: seed, stops: stops), limit, 0)
+        }
+        if let cached = holder.cached {
+            guard limit > 0 else { return ([], limit, 0) }
+            let (produced, start) = try conversationGenerate(promptTokens, cached: cached, sampling: sampling, limit: limit,
+                                                             seed: seed, stops: stops, request: request)
+            return (produced, limit, start)
         }
         for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
@@ -297,7 +411,101 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
             produced.append(next)
             tokens.append(next)
         }
-        return (produced, limit)
+        return (produced, limit, 0)
+    }
+
+    /// Cached generation against the conversation the request names or its prompt continues, or a cache kept
+    /// for no later request where it turns reuse off. The kept conversation snapshots its sliding layers at
+    /// the prompt's generation prompt, the last turn marker, and at the prompt's end, and keeps every position
+    /// the run writes; a run
+    /// that fails discards it. Answers the tokens produced and the position the prefill started at.
+    private func conversationGenerate(_ promptTokens: [Int], cached: NFKGemmaCachedGeneration,
+                                      sampling: NFKMLXStepSampling, limit: Int, seed: UInt64?, stops: Set<Int>,
+                                      request: NFKInferenceRequest?) throws -> (produced: [Int], start: Int) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        let c = cached.configuration
+        let strengths = NFKMLXAdapterRun.strengths
+        conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+        // A conversation's cache computed at other adapter strengths starts over.
+        let (name, state) = conversations.conversation(
+            named: request.flatMap(NFKMLXConversation.name(of:)), reuses: request.map(NFKMLXConversation.reuses) ?? false,
+            prompt: promptTokens, signature: "gemma4 sliding \(c.slidingWindow)",
+            usable: { $0.adapterStrengths == strengths },
+            make: {
+                let made = NFKMLXGemma4Conversation(layerTypes: c.layerTypes, slidingWindow: c.slidingWindow,
+                                                    storingLayers: c.firstSharedLayer)
+                made.adapterStrengths = strengths
+                return made
+            },
+            read: { url, record in
+                try NFKMLXGemma4Conversation.load(from: url, tokens: record.tokens, layerTypes: c.layerTypes,
+                                                  slidingWindow: c.slidingWindow, storingLayers: c.firstSharedLayer)
+            })
+        var failed = true
+        defer {
+            conversations.finish(name, failed: failed, afforded: NFKMLXConversationBudget.afforded(
+                info: modelInfo, runBytes: keyValueBytes(c, positions: contextLength)), spills: adapterStrengths.isEmpty)
+        }
+        let start = state.resume(for: promptTokens)
+        let fresh = Array(promptTokens[start...])
+        let turnStart = turnMarker.flatMap { marker in promptTokens.lastIndex(of: marker) }
+        let snapshotAt = name == nil ? [] : NFKMLXGemma4Conversation.snapshotPositions(
+            start: start, end: promptTokens.count, turnStart: turnStart)
+        let (produced, fed) = try cachedGenerate(fresh, cached: cached, cache: state.cache, sampling: sampling,
+                                                 limit: limit, seed: seed, stops: stops,
+                                                 snapshotAt: snapshotAt) { _ in state.snapshot() }
+        guard !NFKMLXErrorScope.hasFailed else { return (produced, start) }
+        state.record(fresh + fed)
+        failed = false
+        return (produced, start)
+    }
+
+    /// The marker a turn opens with, whose last place in a prompt is where its generation prompt begins.
+    private var turnMarker: Int? { holder.tokenizer.id(forToken: "<|turn>") ?? startOfTurn }
+
+    /// The bytes one run's keys and values take over `positions` positions: every position for the full
+    /// layers, the window for the sliding ones, at the decoder's activation width, the shared tail storing none.
+    private func keyValueBytes(_ c: NFKMLXGemmaConfiguration, positions: Int?) -> Int {
+        let elementBytes = (describedModules.first?.parameters().flattened().first?.1.dtype.size) ?? 4
+        let storing = (0 ..< c.firstSharedLayer)
+        return storing.reduce(0) { total, layer in
+            let kind = c.layerTypes[layer]
+            let rows = kind == .full ? (positions ?? 0) : Swift.min(positions ?? 0, c.slidingWindow)
+            return total + 2 * c.keyValueHeadCount(for: kind) * c.headDimensions(for: kind) * rows * elementBytes
+        }
+    }
+
+    /// Generation through `cache`: the prompt prefills it, pausing at `snapshotAt` for `atSnapshot`, then each
+    /// new token runs alone. Answers the tokens produced and the produced tokens a step ran through the cache.
+    func cachedGenerate(_ promptTokens: [Int], cached: NFKGemmaCachedGeneration, cache: NFKMLXGemma3Cache,
+                        sampling: NFKMLXStepSampling, limit: Int, seed: UInt64?, stops: Set<Int>,
+                        snapshotAt: [Int] = [], atSnapshot: (NFKMLXGemma3Cache) -> Void = { _ in })
+        throws -> (produced: [Int], fed: [Int]) {
+        let logits = cached.prefill(promptTokens, cache: cache, stops: snapshotAt, atStop: atSnapshot)
+        try verifyStream()
+        var produced = [Int]()
+        var fed = [Int]()
+        // Each pass is built on the previous token before that token is read, so the graph of one pass is
+        // built while the GPU runs the one before it. A run that stops leaves one pass unread.
+        var token = sampling.token(logits, seed: seed, step: 0)
+        asyncEval(token)
+        for index in 0 ..< limit {
+            var following: MLXArray?
+            if index + 1 < limit {
+                following = sampling.token(cached.step(token, cache: cache), seed: seed, step: index + 1)
+                asyncEval(following!)
+            }
+            let next = token.item(Int.self)
+            if following != nil {
+                fed.append(next)
+            }
+            try verifyStream()
+            if stops.contains(next) || NFKMLXErrorScope.hasFailed { break }
+            produced.append(next)
+            guard let following else { break }
+            token = following
+        }
+        return (produced, fed)
     }
 
     /// Throws a streamed layer's failed read and clears it, so the next request reads the release again.
@@ -308,7 +516,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
     }
 
-    /// Drafted prefill-only generation, sampling as `sampling` says. Each round the draft proposes up to `proposals` tokens, one pass of
+    /// Drafted generation over the whole growing sequence, sampling as `sampling` says. Each round the draft proposes up to `proposals` tokens, one pass of
     /// its own over the growing sequence each, and one pass of the decoder over the sequence and every
     /// proposal scores them all: the leading proposals it agrees with are kept, with the decoder's own
     /// token after them, so a round yields up to `proposals` + 1 tokens for one pass of the decoder.
@@ -368,7 +576,8 @@ public extension NFKMLXGemmaLanguage {
         let decoder = try textDecoder(directoryURL: directoryURL, precision: precision, residency: residency, streams: true)
         let backend = NFKMLXGemmaBackend(logits: decoder.logits, tokenizer: tokenizer, identifier: modelName,
                                          expertStore: decoder.expertStore, layerStream: decoder.layerStream,
-                                         modules: [decoder.module], releaseDirectoryURL: directoryURL)
+                                         modules: [decoder.module], releaseDirectoryURL: directoryURL,
+                                         cached: decoder.cached)
         backend.adapterStrengths = try holdAdapters(adapters, in: decoder.module, layerStream: decoder.layerStream)
         return backend
     }
@@ -390,9 +599,9 @@ public extension NFKMLXGemmaLanguage {
     /// Builds a text-generation backend from a Gemma 4 release with a smaller Gemma 4 release of the same
     /// vocabulary drafting for it: the 31B streamed with the E2B held beside it, for instance.
     ///
-    /// @discussion The decoders run prefill-only, so each token of a plain run is one pass of the release,
-    /// and a streamed one reads every layer it does not hold on each. With a draft, a round is one pass of
-    /// the draft per proposal and one pass of the release over every proposal
+    /// @discussion A plain run decodes through the release's key-value cache, one pass of the release per
+    /// token, and a streamed one reads every layer it does not hold on each. With a draft, a round re-runs the
+    /// growing sequence: one pass of the draft per proposal and one pass of the release over every proposal
     /// (`NFKMLXGenerationParameterKey.draftTokens` a round, 4 by default, 0 to decode without it). At
     /// temperature 0 the reply is the release's greedy reply. The draft loads held at its release's own
     /// precision and is quantized to `draftBits` (4 by default; nil keeps it at that precision), its
@@ -438,7 +647,8 @@ public extension NFKMLXGemmaLanguage {
         }
         let backend = NFKMLXGemmaBackend(logits: decoder.logits, tokenizer: tokenizer, identifier: modelName,
                                          expertStore: decoder.expertStore, layerStream: decoder.layerStream,
-                                         draft: draft.logits, modules: [decoder.module], releaseDirectoryURL: directoryURL)
+                                         draft: draft.logits, modules: [decoder.module], releaseDirectoryURL: directoryURL,
+                                         cached: decoder.cached)
         backend.adapterStrengths = try holdAdapters(adapters, in: decoder.module, layerStream: decoder.layerStream)
         return backend
     }
@@ -459,18 +669,32 @@ public extension NFKMLXGemmaLanguage {
     internal static func textDecoder(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
                                      streams: Bool, budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0)
         throws -> (logits: (MLXArray) -> MLXArray, module: Module, layerStream: NFKMLXLayerStream?,
-                   expertStore: NFKMLXExpertStore?, vocabularySize: Int) {
+                   expertStore: NFKMLXExpertStore?, vocabularySize: Int, cached: NFKGemmaCachedGeneration) {
         let configURL = directoryURL.appendingPathComponent("config.json")
         if try isUnified(configURL) {
             let net = makeUnifiedNet(try unifiedConfiguration(fromHuggingFace: configURL))
             try loadUnifiedWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
                                    streams: streams, budget: budget, reserving: reserved)
-            return ({ net($0) }, net, net.layerStream, nil, net.configuration.vocabularySize)
+            return ({ net($0) }, net, net.layerStream, nil, net.configuration.vocabularySize, cachedGeneration(net))
         }
         let net = makeNet(try configuration(fromHuggingFace: configURL))
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
                         streams: streams, budget: budget, reserving: reserved)
-        return ({ net($0) }, net, net.layerStream, net.expertStore, net.configuration.vocabularySize)
+        return ({ net($0) }, net, net.layerStream, net.expertStore, net.configuration.vocabularySize, cachedGeneration(net))
+    }
+
+    /// Generation through the cache of the E-series, mixture, or 31B decoder.
+    internal static func cachedGeneration(_ net: NFKMLXGemmaNet) -> NFKGemmaCachedGeneration {
+        NFKGemmaCachedGeneration(configuration: net.configuration) { tokens, embeddings, cache in
+            net.lastLogits(tokens, embeddings: embeddings, cache: cache)
+        }
+    }
+
+    /// Generation through the cache of the 12B unified decoder.
+    internal static func cachedGeneration(_ net: NFKMLXGemma4UnifiedNet) -> NFKGemmaCachedGeneration {
+        NFKGemmaCachedGeneration(configuration: net.configuration) { tokens, _, cache in
+            net.lastLogits(tokens, cache: cache)
+        }
     }
 
     /// The Objective-C entry: builds a Gemma text-generation backend from a release directory.

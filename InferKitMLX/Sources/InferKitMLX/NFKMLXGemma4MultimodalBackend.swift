@@ -116,8 +116,8 @@ extension NFKMLXGemmaLanguage {
     /// `NFKInputImage`, and an `NFKAudioAsset` or WAV bytes under `NFKInputAudio`; an image or a clip
     /// needs a release that carries the matching tower. It returns the reply under `NFKOutputText` and
     /// the token counts under `NFKOutputUsage`. Parameters: `NFKParameterTemperature` (0, greedy),
-    /// `NFKParameterMaxTokens` (unset, the room the context leaves), and `NFKParameterSeed`. The decoder runs prefill-only, so each step
-    /// re-runs the growing sequence with the same soft tokens spliced in.
+    /// `NFKParameterMaxTokens` (unset, the room the context leaves), and `NFKParameterSeed`. The prompt, its
+    /// soft tokens spliced in, prefills the decoder's key-value cache, and each new token runs alone.
     static func multimodalBackend(_ model: NFKGemma4MultimodalModel) -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: gemmaMultimodalModelName, inputKeys: multimodalInputKeys,
                                 parameterKeys: multimodalParameterKeys,
@@ -140,22 +140,26 @@ extension NFKMLXGemmaLanguage {
 
             let limit = try NFKMLXContextRoom.bounded(maximumTokens, promptTokens: promptTokens.count,
                                                       contextLength: model.contextLength, source: gemmaMultimodalModelName)
-            var tokens = promptTokens
+            // The prompt, its soft tokens spliced in, prefills the cache; each new token is text and runs alone.
+            let cached = NFKMLXGemmaLanguage.cachedGeneration(model.decoder)
+            let cache = cached.makeCache()
+            let (embeddings, ids) = model.chain.fusedEmbeddings(tokens: promptTokens, visionSoftTokens: visionSoft,
+                                                                audioSoftTokens: audioSoft)
+            var logits = limit > 0
+                ? cached.prefill(ids.asArray(Int32.self).map(Int.init), embeddings: embeddings, cache: cache) : nil
             var produced = [Int]()
             for step in 0 ..< max(limit, 0) {
                 if job.status == .cancelled { return nil }
-                let (embeddings, ids) = model.chain.fusedEmbeddings(tokens: tokens, visionSoftTokens: visionSoft,
-                                                                     audioSoftTokens: audioSoft)
-                let logits = model.decoder.logits(fromEmbeddings: embeddings, tokens: ids)[0, tokens.count - 1]
-                let next = sampling.next(logits, seed: seed, step: step)
+                guard let current = logits else { break }
+                let next = sampling.next(current, seed: seed, step: step)
                 if let stream = model.decoder.layerStream, let failure = stream.readFailure {
                     stream.clearFailure()
                     throw failure
                 }
-                if stops.contains(next) { break }
+                if stops.contains(next) || NFKMLXErrorScope.hasFailed { break }
                 produced.append(next)
-                tokens.append(next)
                 job.reportProgress(min(Double(produced.count) / Double(max(limit, 1)), 0.99))
+                logits = step + 1 < limit ? cached.step(MLXArray(Int32(next)), cache: cache) : nil
             }
             return NFKInferenceResult(outputs: [
                 NFKOutputText: model.tokenizer.decode(produced, skipSpecial: true),
