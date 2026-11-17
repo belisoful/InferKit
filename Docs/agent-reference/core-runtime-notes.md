@@ -622,6 +622,15 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   an adapter's removal names in the base repository, and a complete adapter keeps them through the
   base model's removal. A URL target claims by its cached file name; a URL source's removal names that
   file, so the source is the same download as itself.
+- Shard indexes: a catalog source lists a sharded release's index (`model.safetensors.index.json`)
+  and never its shards. `planRepo:…` reads every chosen `*.index.json`, optional ones included, from
+  the cache or the repository, and plans each shard its `weight_map` names as a required file; an index
+  naming a file the listing lacks fails with `NFKDownloadErrorNotFound`. Status, removal, model folders,
+  and Hugging Face caches count a cached index's shards as required (`shardPathsNamedByCachedIndexes:`),
+  so an index without its shards reads partial and the catalog locator does not build from it. The
+  InferKitMLX release layer (`NFKMLXReleaseDownload.fetchWeights`) and the model resolver expand shards
+  on their own paths. Tests: `NFKDownloadTests` (`testASourceDownloadFetchesTheShardsItsIndexNames`
+  and its neighbors), `NFKHFHubModelFolderTests`, `NFKHFHubHuggingFaceCacheTests`.
 - Admission: a plan whose total exceeds a non-negative `cacheSizeLimit` is refused before any
   transfer (the limit could never hold it), and so is one whose remaining bytes exceed the volume's
   `NSURLVolumeAvailableCapacityForImportantUsageKey` (`NSURLVolumeAvailableCapacityKey` on tvOS, which
