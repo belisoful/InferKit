@@ -11,6 +11,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKit (core)
 
+#### The server's chat route counts each turn's media
+
+- Flattening a chat message's content parts, the server records how many images and audio clips the message
+  carried under its `NFKMessageMetadataKey` (`imageCount`, `audioCount`), so a local multimodal backend places each
+  in the turn that sent it, and passes every audio clip after the first under `NFKInputAudios`.
+
 #### Gaussian splats are a core value type
 
 - `NFKGaussianSplats` holds 3D Gaussians (positions, scales, rotations, opacities, and degree-0 spherical-
@@ -20,6 +26,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   names prompt-to-object generation.
 
 ### InferKitMLX (companion)
+
+#### Qwen3-VL, Pixtral, and SmolVLM2 chat over images and continue conversations
+
+- Their backends (`inferenceBackend()`, `NFKMLXVisionChatBackend`) take a prompt or a conversation under
+  `NFKInputMessages`, rendered through the release's chat template, with its images under `NFKInputImage` and
+  `NFKInputImages`; a message takes the images its `NFKMessageMetadataKey` `imageCount` states, and without counts
+  the first user turn takes them all. A prompt without an image is answered as text. The parameters are
+  `NFKParameterTemperature`, `NFKParameterTopP`, `NFKParameterTopK` (greedy unless set), `NFKParameterMaxTokens`
+  (128), `NFKParameterSeed`, and `NFKParameterConversationKey`; the result carries the usage and the finish reason.
+- Each conversation's cache is kept between requests: a request continues the conversation its key names, or the
+  one its prompt continues furthest, under a budget the memory affords, and spills to
+  `conversationSpillDirectoryURL`. The cache is keyed by the prompt with each image's positions keyed by a digest
+  of its pixels, so an image the kept prefix holds is not encoded again and another image at its place continues
+  nothing past it. The usage reports the reused positions under `NFKUsageCachedTokens`.
 
 #### Nemotron ASR Streaming loads at bfloat16 and fine-tunes from transcripts
 

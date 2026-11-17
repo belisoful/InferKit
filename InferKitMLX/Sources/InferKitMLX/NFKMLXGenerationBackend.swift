@@ -245,30 +245,6 @@ extension NFKMLXGenerationBackend {
     /// The answer length an image-question backend uses where the request names none.
     static let defaultAnswerTokens = 128
 
-    /// A backend that answers a question about an image: it reads `NFKInputImage` and `NFKInputPrompt`,
-    /// both required, bounds the answer by `NFKParameterMaxTokens` (``defaultAnswerTokens``), and returns
-    /// the text `answer` produces under `NFKOutputText`; an error `answer` throws fails the request. A model
-    /// that holds adapters, loaded at `adapterStrengths`, reads `NFKParameterAdapterStrengths` as well.
-    static func imageQuestion(identifier: String, modelInfo: [String: Any]? = nil, adapterStrengths: [Float] = [],
-                              answer: @escaping (_ image: CGImage, _ question: String, _ maxTokens: Int) throws -> String)
-        -> NFKMLXGenerationBackend {
-        NFKMLXGenerationBackend(identifier: identifier, inputKeys: [NFKInputImage, NFKInputPrompt],
-                                parameterKeys: adapterStrengths.isEmpty ? [NFKParameterMaxTokens]
-                                    : [NFKParameterMaxTokens, NFKParameterAdapterStrengths],
-                                outputKeys: [NFKOutputText], modelInfo: modelInfo) { request, job in
-            let image = try requiredImage(request, NFKInputImage)
-            let question = try requiredText(request, NFKInputPrompt)
-            let maxTokens = max(number(request, NFKParameterMaxTokens)?.intValue ?? defaultAnswerTokens, 0)
-            let strengths = try NFKMLXAdapterRun.strengths(for: request, loaded: adapterStrengths)
-            job.reportProgress(0)
-            // The held adapters read the run's strengths as each pass builds its graph.
-            let text = try NFKMLXAdapterRun.$strengths.withValue(strengths) { try answer(image, question, maxTokens) }
-            if job.status == .cancelled { return nil }
-            job.reportProgress(1)
-            return NFKInferenceResult(outputs: [NFKOutputText: text])
-        }
-    }
-
     /// Registers `factory` under `name`, reading the registry's URL as the release directory. A nil URL is
     /// refused: these models have no random-weights form.
     static func registerDirectoryModel(_ name: String,

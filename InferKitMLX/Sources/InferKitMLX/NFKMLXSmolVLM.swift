@@ -473,6 +473,10 @@ public final class NFKMLXSmolVLM: NSObject {
     private let holder: NFKSmolVLMHolder
     private let endToken: Int
     private let release: Release
+    /// The release directory the model loaded from, or nil for a model built in memory.
+    var releaseDirectoryURL: URL?
+    /// The release's chat template, which a conversation renders through.
+    var releaseTemplate: NFKMLXVisionTemplate?
 
     init(net: NFKMLXSmolVLMNet, tokenizer: NFKTokenizer?, endToken: Int, release: Release) {
         self.release = release
@@ -497,7 +501,10 @@ public final class NFKMLXSmolVLM: NSObject {
         }
         let net = try model(directoryURL: directoryURL)
         let end = specialToken("<end_of_utterance>", inDirectory: directoryURL) ?? 49_279
-        return NFKMLXSmolVLM(net: net, tokenizer: tokenizer, endToken: end, release: release)
+        let model = NFKMLXSmolVLM(net: net, tokenizer: tokenizer, endToken: end, release: release)
+        model.releaseDirectoryURL = directoryURL
+        model.releaseTemplate = NFKMLXVisionTemplate(directoryURL: directoryURL)
+        return model
     }
 
     /// Downloads a release into the hub cache and builds the model.
@@ -691,6 +698,13 @@ public final class NFKMLXSmolVLM: NSObject {
     ///
     /// - Since: InferKit 0.3.1
     static func prompt(rows: Int, cols: Int, question: String, tokensPerTile: Int) -> String {
+        "User:" + imageStructure(rows: rows, cols: cols, tokensPerTile: tokensPerTile) + question
+            + "<end_of_utterance>\nAssistant:"
+    }
+
+    /// The text one image's `<image>` placeholder expands to: each sub-tile's `<row_r_col_c>` marker and
+    /// image tokens, a newline after each row, and the global thumbnail tile.
+    static func imageStructure(rows: Int, cols: Int, tokensPerTile: Int) -> String {
         let images = String(repeating: "<image>", count: tokensPerTile)
         var structure = ""
         for row in 1 ... rows {
@@ -699,8 +713,7 @@ public final class NFKMLXSmolVLM: NSObject {
             }
             structure += "\n"
         }
-        structure += "\n<fake_token_around_image><global-img>" + images + "<fake_token_around_image>"
-        return "User:" + structure + question + "<end_of_utterance>\nAssistant:"
+        return structure + "\n<fake_token_around_image><global-img>" + images + "<fake_token_around_image>"
     }
 
     /// The byte-level BPE tokenizer a release describes, read by the language reader under the release's
@@ -716,5 +729,34 @@ public final class NFKMLXSmolVLM: NSObject {
     ///   not reproduce, or the files it found missing.
     static func tokenizer(inDirectory directory: URL) throws -> NFKTokenizer {
         try NFKMLXLanguage.readTokenizer(inDirectory: directory)
+    }
+}
+
+extension NFKMLXSmolVLM: NFKMLXVisionChatModel {
+    var chatDecoder: NFKMLXLanguageNet { holder.net.decoder }
+    var chatTokenizer: NFKTokenizer { holder.tokenizer ?? NFKTokenizer() }
+    var chatEndTokens: Set<Int> { [endToken] }
+    var chatImageTokenId: Int { holder.net.imageTokenId }
+    var chatTemplate: NFKMLXVisionTemplate? { releaseTemplate }
+    var chatImageMarker: String { "<image>" }
+    var chatTextAsParts: Bool { true }
+    var chatModules: [Module] { [holder.net.vision, holder.net.connector, holder.net.decoder] }
+    var chatReleaseDirectoryURL: URL? { releaseDirectoryURL }
+    var chatAdapterStrengths: [Float] { [] }
+
+    func prepareChatImage(_ image: CGImage) -> NFKMLXVisionImage {
+        let (pixelValues, rows, cols) = NFKMLXSmolVLMImageProcessor.process(
+            image, tileSize: release.tileSize, longestEdge: release.longestEdge)
+        return NFKMLXVisionImage(pixels: pixelValues,
+                                 expansion: Self.imageStructure(rows: rows, cols: cols, tokensPerTile: release.tokensPerTile),
+                                 tokenCount: (rows * cols + 1) * release.tokensPerTile)
+    }
+
+    func singleTurnPrompt(question: String, images: [NFKMLXVisionImage]) -> String {
+        "User:" + images.map(\.expansion).joined() + question + "<end_of_utterance>\nAssistant:"
+    }
+
+    func encodeChatImage(_ image: NFKMLXVisionImage) -> (features: MLXArray, deepstack: [MLXArray]) {
+        (holder.net.imageFeatures(pixelValues: image.pixels).reshaped([-1, holder.net.decoder.configuration.hiddenSize]), [])
     }
 }

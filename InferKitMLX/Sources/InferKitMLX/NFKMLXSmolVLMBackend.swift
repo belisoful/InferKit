@@ -12,17 +12,15 @@ import InferKit
 
 extension NFKMLXSmolVLM {
 
-    /// The model behind the InferKit contract.
+    /// The model behind the InferKit contract: an ``NFKMLXVisionChatBackend``.
     ///
-    /// @discussion The backend reads the image under `NFKInputImage` (a `CGImage` or an `MTLTexture`) and
-    /// the question under `NFKInputPrompt`, both required, and returns the answer under `NFKOutputText`.
-    /// `NFKParameterMaxTokens` bounds the answer (128). The model reads one user turn, so the backend
-    /// takes no `NFKInputMessages`. Introduced in InferKit 0.4.0.
+    /// @discussion The backend reads a prompt or a conversation and its images (`CGImage`s or textures) under
+    /// `NFKInputImage` and `NFKInputImages`, and keeps each conversation's cache between requests, so a
+    /// follow-up prefills only what it adds and a kept image does not run through the vision tower again.
+    /// Introduced in InferKit 0.4.0.
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
-        NFKMLXGenerationBackend.imageQuestion(identifier: Self.modelName) { [self] image, question, maxTokens in
-            answer(image: image, question: question, maxTokens: maxTokens)
-        }
+        NFKMLXVisionChatBackend(model: self, identifier: Self.modelName)
     }
 
     /// Builds the model from a downloaded release directory, as ``load(directoryURL:)`` does, and returns

@@ -37530,23 +37530,39 @@
       "family" : "pixtral",
       "id" : "pixtral-12b",
       "inputModalities" : [
+        "text",
+        "messages",
         "image",
-        "text"
+        "images"
       ],
       "inputs" : [
         {
-          "help" : "An image the question is about.",
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        },
+        {
+          "help" : "An image the reply is about.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
         },
         {
-          "help" : "The question about the image.",
-          "key" : "prompt",
-          "required" : true,
-          "title" : "Question",
-          "valueType" : "text"
+          "help" : "Further images, after the first, in the order the turns show them.",
+          "key" : "images",
+          "required" : false,
+          "title" : "Images",
+          "valueType" : "images"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -37565,8 +37581,37 @@
       },
       "options" : [
         {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 128,
-          "help" : "The most tokens the answer runs to.",
+          "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 1024000,
@@ -37574,6 +37619,20 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         },
         {
           "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
@@ -37653,14 +37712,29 @@
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
-          "help" : "The answer.",
+          "help" : "The model's reply.",
           "key" : "text",
           "required" : true,
-          "title" : "Answer",
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
           "valueType" : "text"
         }
       ],
@@ -45276,23 +45350,39 @@
       "family" : "qwen3-vl",
       "id" : "qwen3-vl-2b",
       "inputModalities" : [
+        "text",
+        "messages",
         "image",
-        "text"
+        "images"
       ],
       "inputs" : [
         {
-          "help" : "An image the question is about.",
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        },
+        {
+          "help" : "An image the reply is about.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
         },
         {
-          "help" : "The question about the image.",
-          "key" : "prompt",
-          "required" : true,
-          "title" : "Question",
-          "valueType" : "text"
+          "help" : "Further images, after the first, in the order the turns show them.",
+          "key" : "images",
+          "required" : false,
+          "title" : "Images",
+          "valueType" : "images"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -45314,8 +45404,37 @@
       ],
       "options" : [
         {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 128,
-          "help" : "The most tokens the answer runs to.",
+          "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -45323,6 +45442,20 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         },
         {
           "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
@@ -45402,14 +45535,29 @@
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
-          "help" : "The answer.",
+          "help" : "The model's reply.",
           "key" : "text",
           "required" : true,
-          "title" : "Answer",
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
           "valueType" : "text"
         }
       ],
@@ -45544,23 +45692,39 @@
       "family" : "qwen3-vl",
       "id" : "qwen3-vl-30b-a3b",
       "inputModalities" : [
+        "text",
+        "messages",
         "image",
-        "text"
+        "images"
       ],
       "inputs" : [
         {
-          "help" : "An image the question is about.",
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        },
+        {
+          "help" : "An image the reply is about.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
         },
         {
-          "help" : "The question about the image.",
-          "key" : "prompt",
-          "required" : true,
-          "title" : "Question",
-          "valueType" : "text"
+          "help" : "Further images, after the first, in the order the turns show them.",
+          "key" : "images",
+          "required" : false,
+          "title" : "Images",
+          "valueType" : "images"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -45583,8 +45747,37 @@
       ],
       "options" : [
         {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 128,
-          "help" : "The most tokens the answer runs to.",
+          "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -45592,6 +45785,20 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         },
         {
           "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
@@ -45644,14 +45851,29 @@
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
-          "help" : "The answer.",
+          "help" : "The model's reply.",
           "key" : "text",
           "required" : true,
-          "title" : "Answer",
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
           "valueType" : "text"
         }
       ],
@@ -45779,23 +46001,39 @@
       "family" : "qwen3-vl",
       "id" : "qwen3-vl-32b",
       "inputModalities" : [
+        "text",
+        "messages",
         "image",
-        "text"
+        "images"
       ],
       "inputs" : [
         {
-          "help" : "An image the question is about.",
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        },
+        {
+          "help" : "An image the reply is about.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
         },
         {
-          "help" : "The question about the image.",
-          "key" : "prompt",
-          "required" : true,
-          "title" : "Question",
-          "valueType" : "text"
+          "help" : "Further images, after the first, in the order the turns show them.",
+          "key" : "images",
+          "required" : false,
+          "title" : "Images",
+          "valueType" : "images"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -45817,8 +46055,37 @@
       ],
       "options" : [
         {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 128,
-          "help" : "The most tokens the answer runs to.",
+          "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -45826,6 +46093,20 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         },
         {
           "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
@@ -45905,14 +46186,29 @@
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
-          "help" : "The answer.",
+          "help" : "The model's reply.",
           "key" : "text",
           "required" : true,
-          "title" : "Answer",
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
           "valueType" : "text"
         }
       ],
@@ -46046,23 +46342,39 @@
       "family" : "qwen3-vl",
       "id" : "qwen3-vl-8b",
       "inputModalities" : [
+        "text",
+        "messages",
         "image",
-        "text"
+        "images"
       ],
       "inputs" : [
         {
-          "help" : "An image the question is about.",
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        },
+        {
+          "help" : "An image the reply is about.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
         },
         {
-          "help" : "The question about the image.",
-          "key" : "prompt",
-          "required" : true,
-          "title" : "Question",
-          "valueType" : "text"
+          "help" : "Further images, after the first, in the order the turns show them.",
+          "key" : "images",
+          "required" : false,
+          "title" : "Images",
+          "valueType" : "images"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -46084,8 +46396,37 @@
       ],
       "options" : [
         {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 128,
-          "help" : "The most tokens the answer runs to.",
+          "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -46093,6 +46434,20 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         },
         {
           "help" : "One strength per adapter loaded under adapters, in their order, for this run: 1 as trained, 0 off, and a negative strength reverses an adapter. A run without it uses the strengths they were loaded at.",
@@ -46172,14 +46527,29 @@
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
-          "help" : "The answer.",
+          "help" : "The model's reply.",
           "key" : "text",
           "required" : true,
-          "title" : "Answer",
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
           "valueType" : "text"
         }
       ],
@@ -65700,23 +66070,39 @@
       "family" : "smolvlm",
       "id" : "smolvlm2-2.2b",
       "inputModalities" : [
+        "text",
+        "messages",
         "image",
-        "text"
+        "images"
       ],
       "inputs" : [
         {
-          "help" : "An image the question is about.",
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        },
+        {
+          "help" : "An image the reply is about.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
         },
         {
-          "help" : "The question about the image.",
-          "key" : "prompt",
-          "required" : true,
-          "title" : "Question",
-          "valueType" : "text"
+          "help" : "Further images, after the first, in the order the turns show them.",
+          "key" : "images",
+          "required" : false,
+          "title" : "Images",
+          "valueType" : "images"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -65737,8 +66123,37 @@
       ],
       "options" : [
         {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 128,
-          "help" : "The most tokens the answer runs to.",
+          "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 8192,
@@ -65746,17 +66161,46 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
-          "help" : "The answer.",
+          "help" : "The model's reply.",
           "key" : "text",
           "required" : true,
-          "title" : "Answer",
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
           "valueType" : "text"
         }
       ],
@@ -65852,23 +66296,39 @@
       "family" : "smolvlm",
       "id" : "smolvlm2-256m",
       "inputModalities" : [
+        "text",
+        "messages",
         "image",
-        "text"
+        "images"
       ],
       "inputs" : [
         {
-          "help" : "An image the question is about.",
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        },
+        {
+          "help" : "An image the reply is about.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
         },
         {
-          "help" : "The question about the image.",
-          "key" : "prompt",
-          "required" : true,
-          "title" : "Question",
-          "valueType" : "text"
+          "help" : "Further images, after the first, in the order the turns show them.",
+          "key" : "images",
+          "required" : false,
+          "title" : "Images",
+          "valueType" : "images"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -65889,8 +66349,37 @@
       ],
       "options" : [
         {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 128,
-          "help" : "The most tokens the answer runs to.",
+          "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 8192,
@@ -65898,17 +66387,46 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
-          "help" : "The answer.",
+          "help" : "The model's reply.",
           "key" : "text",
           "required" : true,
-          "title" : "Answer",
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
           "valueType" : "text"
         }
       ],
@@ -66005,23 +66523,39 @@
       "family" : "smolvlm",
       "id" : "smolvlm2-500m",
       "inputModalities" : [
+        "text",
+        "messages",
         "image",
-        "text"
+        "images"
       ],
       "inputs" : [
         {
-          "help" : "An image the question is about.",
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        },
+        {
+          "help" : "An image the reply is about.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
         },
         {
-          "help" : "The question about the image.",
-          "key" : "prompt",
-          "required" : true,
-          "title" : "Question",
-          "valueType" : "text"
+          "help" : "Further images, after the first, in the order the turns show them.",
+          "key" : "images",
+          "required" : false,
+          "title" : "Images",
+          "valueType" : "images"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -66042,8 +66576,37 @@
       ],
       "options" : [
         {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 128,
-          "help" : "The most tokens the answer runs to.",
+          "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 8192,
@@ -66051,17 +66614,46 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
-          "help" : "The answer.",
+          "help" : "The model's reply.",
           "key" : "text",
           "required" : true,
-          "title" : "Answer",
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
           "valueType" : "text"
         }
       ],

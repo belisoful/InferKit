@@ -94,17 +94,17 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
                        parameters: [NFKMLXForecastKey.horizon], outputs: [NFKOutputStructured])
     }
 
-    func testTheImageQuestionEntriesDeclareTheBackendsKeys() throws {
-        let backend = NFKMLXGenerationBackend.imageQuestion(identifier: "image-question") { _, _, _ in "" }
+    func testTheVisionChatEntriesDeclareTheBackendsKeys() throws {
         for name in ["smolvlm2-256m", NFKMLXSmolVLM.modelName, "smolvlm2-2.2b"] {
-            try assertKeys(of: name, inputs: backend.supportedInputKeys, parameters: backend.supportedParameterKeys,
-                           outputs: backend.supportedOutputKeys)
+            try assertKeys(of: name, inputs: NFKMLXVisionChatBackend.inputKeys,
+                           parameters: NFKMLXVisionChatBackend.parameterKeys(holdsAdapters: false),
+                           outputs: NFKMLXVisionChatBackend.outputKeys)
         }
         // The decoders that hold adapters read their strengths as well.
-        let holding = NFKMLXGenerationBackend.imageQuestion(identifier: "image-question", adapterStrengths: [1]) { _, _, _ in "" }
         for name in [NFKMLXQwen3VL.modelName, "qwen3-vl-8b", "qwen3-vl-32b", "qwen3-vl-30b-a3b", NFKMLXPixtral.modelName] {
-            try assertKeys(of: name, inputs: holding.supportedInputKeys, parameters: holding.supportedParameterKeys,
-                           outputs: holding.supportedOutputKeys)
+            try assertKeys(of: name, inputs: NFKMLXVisionChatBackend.inputKeys,
+                           parameters: NFKMLXVisionChatBackend.parameterKeys(holdsAdapters: true),
+                           outputs: NFKMLXVisionChatBackend.outputKeys)
         }
     }
 

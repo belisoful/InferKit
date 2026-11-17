@@ -302,6 +302,12 @@ weights:
   float32 oracle with the reference's argmax at every position. The 12B decoder's released-weight fused
   pass needs ~24 GB resident, so it runs behind an opt-in. Customization is offline-only, the decoder
   being a language model above 4B.
+- **`NFKMLXVisionChatBackend`** — the backend Qwen3-VL, Pixtral, and SmolVLM2 answer through: a prompt or a
+  conversation (`NFKInputMessages`, rendered through the release's chat template) with its images under
+  `NFKInputImage` and `NFKInputImages`, each message taking the images the server's chat route counted for it.
+  A request continues the conversation its `NFKParameterConversationKey` names, or the one its prompt continues
+  furthest, so a follow-up prefills only what it adds, and an image the kept prefix already holds is not encoded
+  again; a different image at a kept image's place continues nothing past it.
 - **`NFKMLXFlorence2`** — Florence-2 (`microsoft/Florence-2-base` and `-large` and their fine-tuned `-ft` releases, Microsoft, MIT; the geometry
   read from the release's `config.json`), a unified
   vision model that reads one image and a task token and writes text: a caption, detected objects, or

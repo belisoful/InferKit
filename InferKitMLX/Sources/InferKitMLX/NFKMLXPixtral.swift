@@ -290,6 +290,10 @@ public final class NFKMLXPixtral: NSObject {
     private let tokenizer: NFKTokenizer
     private let processor: NFKMLXPixtralImageProcessor
     private let endTokens: Set<Int>
+    /// The release directory the model loaded from, or nil for a model built in memory.
+    var releaseDirectoryURL: URL?
+    /// The release's chat template, which a conversation renders through.
+    var releaseTemplate: NFKMLXVisionTemplate?
 
     init(visionNet: NFKMLXPixtralVisionNet, connector: NFKMLXPixtralConnector, decoder: NFKMLXLanguageNet,
          tokenizer: NFKTokenizer, endTokens: Set<Int>, processor: NFKMLXPixtralImageProcessor) {
@@ -325,8 +329,11 @@ public final class NFKMLXPixtral: NSObject {
         let (specials, endToken) = NFKMLXLanguage.specialTokens(inDirectory: directoryURL)
         var stops = Set([specials["</s>"], endToken].compactMap { $0 })
         if stops.isEmpty { stops = [2] }
-        return NFKMLXPixtral(visionNet: vision, connector: connector, decoder: decoder, tokenizer: tokenizer,
-                             endTokens: stops, processor: NFKMLXPixtralImageProcessor())
+        let model = NFKMLXPixtral(visionNet: vision, connector: connector, decoder: decoder, tokenizer: tokenizer,
+                                  endTokens: stops, processor: NFKMLXPixtralImageProcessor())
+        model.releaseDirectoryURL = directoryURL
+        model.releaseTemplate = NFKMLXVisionTemplate(directoryURL: directoryURL)
+        return model
     }
 
     /// Downloads a release into the hub cache and loads the whole model.
@@ -610,5 +617,31 @@ public struct NFKMLXPixtralImageProcessor {
             }
         }
         return (MLXArray(planar).reshaped([1, 3, height, width]), height / patchSize, width / patchSize)
+    }
+}
+
+extension NFKMLXPixtral: NFKMLXVisionChatModel {
+    var chatDecoder: NFKMLXLanguageNet { textDecoder }
+    var chatTokenizer: NFKTokenizer { tokenizer }
+    var chatEndTokens: Set<Int> { endTokens }
+    var chatImageTokenId: Int { Self.imageTokenId }
+    var chatTemplate: NFKMLXVisionTemplate? { releaseTemplate }
+    var chatImageMarker: String { "[IMG]" }
+    var chatModules: [Module] { [visionNet, connector, textDecoder] }
+    var chatReleaseDirectoryURL: URL? { releaseDirectoryURL }
+    var chatAdapterStrengths: [Float] { adapterStrengths }
+
+    func prepareChatImage(_ image: CGImage) -> NFKMLXVisionImage {
+        let (pixelValues, gridH, gridW) = processor.process(image)
+        return NFKMLXVisionImage(pixels: pixelValues, expansion: imagePlaceholders(gridH: gridH, gridW: gridW),
+                                 tokenCount: gridH * gridW, grid: (1, gridH, gridW))
+    }
+
+    func singleTurnPrompt(question: String, images: [NFKMLXVisionImage]) -> String {
+        "<s>[INST]" + images.map(\.expansion).joined() + question + "[/INST]"
+    }
+
+    func encodeChatImage(_ image: NFKMLXVisionImage) -> (features: MLXArray, deepstack: [MLXArray]) {
+        (connector(visionNet(image.pixels)).reshaped([-1, textDecoder.configuration.hiddenSize]), [])
     }
 }

@@ -1117,6 +1117,11 @@ the whole fused pipeline matches a tiny float32 oracle with the reference's argm
 image processor is CoreGraphics-based, so a caption is not token-identical to the reference's PIL
 pipeline; it is coherent and accurate.
 
+Behind the InferKit contract (`inferenceBackend()`, or `backendWithDirectoryURL:error:`), Pixtral, Qwen3-VL, and
+SmolVLM2 take a prompt or a conversation under `NFKInputMessages` with its images under `NFKInputImage` and
+`NFKInputImages`, and keep each conversation's cache: a follow-up turn, or a new question about the same image,
+prefills only what it adds.
+
 ### Unified vision (`NFKMLXFlorence2`)
 
 Florence-2 (base or large, whichever release directory it is given) reads one image and a task token and writes text: a caption, detected objects, or

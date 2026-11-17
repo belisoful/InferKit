@@ -79,7 +79,7 @@ attention and feed-forward.
     builds none there (`NFKGemma3nAttention.sharesKeyValues`), and a released adapter carries halves for them.
   - Any other missing layer is refused, a vision or audio tower's included.
   - The run's strengths: `NFKMLXTranslationBackend` wraps its run for all four translators, and
-    `NFKMLXGenerationBackend.imageQuestion(…, adapterStrengths:)` for Qwen3-VL and Pixtral. Gemma 3's
+    `NFKMLXVisionChatBackend` for Qwen3-VL and Pixtral, whose conversation caches start over at other strengths. Gemma 3's
     `NFKMLXGemma3PromptCache` and Granite's `NFKMLXGranitePromptCache` keep the strengths their rows were
     computed at; a run at other strengths starts the conversation over. Every family refuses adapters while
     layers stream.

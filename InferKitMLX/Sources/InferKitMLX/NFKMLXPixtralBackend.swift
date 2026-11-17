@@ -12,20 +12,16 @@ import InferKit
 
 extension NFKMLXPixtral {
 
-    /// The model behind the InferKit contract.
+    /// The model behind the InferKit contract: an ``NFKMLXVisionChatBackend``.
     ///
-    /// @discussion The backend reads the image under `NFKInputImage` (a `CGImage` or an `MTLTexture`) and
-    /// the question under `NFKInputPrompt`, both required, and returns the answer under `NFKOutputText`.
-    /// `NFKParameterMaxTokens` bounds the answer (128). The model reads one user turn, so the backend
-    /// takes no `NFKInputMessages`. A streamed decoder reports `streamed` under `NFKModelInfoResidency`,
-    /// and a read of a streamed layer that fails fails the request. Introduced in InferKit 0.4.0.
+    /// @discussion The backend reads a prompt or a conversation and its images (`CGImage`s or textures) under
+    /// `NFKInputImage` and `NFKInputImages`, and keeps each conversation's cache between requests, so a
+    /// follow-up prefills only what it adds and a kept image does not run through the vision tower again.
+    /// A streamed decoder reports `streamed` under `NFKModelInfoResidency`, and a read of a streamed layer
+    /// that fails fails the request. Introduced in InferKit 0.4.0.
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
-        let info: [String: Any]? = streamedLayerCount > 0 ? [NFKModelInfoResidency: NFKModelResidencyStreamed] : nil
-        return NFKMLXGenerationBackend.imageQuestion(identifier: Self.modelName, modelInfo: info,
-                                                     adapterStrengths: adapterStrengths) { [self] image, question, maxTokens in
-            try answer(image: image, question: question, maxTokens: maxTokens)
-        }
+        NFKMLXVisionChatBackend(model: self, identifier: Self.modelName)
     }
 
     /// Holds released LoRA adapters beside the decoder's layers, unmerged, at their strengths

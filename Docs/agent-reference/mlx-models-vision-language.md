@@ -171,6 +171,39 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   model above 4B, past what a device holds at float precision for training, so the reference route is a
   LoRA fine-tune in Python, merged, then loaded through the ordinary factory.
 
+## Vision chat and conversations
+
+- `NFKMLXVisionChatBackend` (`@objc`, `NFKMLXVisionChat.swift` / `NFKMLXVisionChatBackend.swift`, 2026-11-17) is
+  the backend `inferenceBackend()` returns for Qwen3-VL, Pixtral, and SmolVLM2, which each conform to
+  `NFKMLXVisionChatModel` (decoder, tokenizer, end ids, image-token id, template, image marker, image
+  preparation, encoding, and, for Qwen3-VL, the M-RoPE positions). It replaced `NFKMLXGenerationBackend.imageQuestion`
+  for them. A request is a prompt (the model's own single-turn string, byte-identical to `answer(image:question:)`'s)
+  or a message list rendered through the release's template, each message taking the images its
+  `NFKMessageMetadataKey` `imageCount` states (the server's chat route records it per flattened message; without
+  counts the first user turn takes every image), then each image marker (`<|image_pad|>`, `[IMG]`, `<image>`)
+  replaced by the image's expansion as the release's processor does. SmolVLM2's template iterates every
+  message's content as parts, so its text messages become parts too (`chatTextAsParts`). Decoding is greedy unless
+  the request samples (these downloads carry no `generation_config.json`, so the release's sampling would differ
+  between a 2B and an 8B directory); the default reply is 128 tokens.
+- Conversations: an `NFKMLXPromptCache` per conversation through `NFKMLXConversationKeeper` (key, else the
+  unnamed conversation the prompt resumes furthest into; memory budget from `NFKModelInfoKeyValueBytesPerToken`;
+  spill). The cache is keyed by the prompt's ids with each image-token position replaced by a negative id from the
+  image's SHA-256 pixel digest and the position's place in the image (`NFKMLXVisionChat.key`), so another image at a
+  kept image's place shares nothing past its first position. Only the images with a position past the kept prefix
+  run through the tower (`freshInput(from:)`); the rest prefills in passes (`prefill(_:embeddings:multimodal:cache:limit:)`),
+  each pass slicing the M-RoPE tables, the deepstack's feature index, and its mask. Qwen3-VL's positions depend only
+  on the prompt and its images' grids, so they are recomputed for the whole prompt and sliced
+  (`ropePositionIds(inputIds:grid:)`, the multi-image form; the single-grid form calls it); a generated token takes
+  the next position on all three axes. The digest hashes the pixels' bytes and the shape's elements:
+  `withUnsafeBytes(of: array)` hashes a Swift array's buffer pointer, not its elements, and gave each preparation
+  of the same image a different key.
+- Measured (`NFKMLXVisionChatTests`): on a tiny Qwen3-VL with a random decoder, the engine's input equals
+  `NFKMLXQwen3VL.hiddenStates` within 1e-5, and a follow-up adding a reply, a turn, and a third image resumes at the
+  whole first prompt in passes of five, its logits within 1e-4 of a full pass, encoding only the new image. Released
+  Qwen3-VL 2B at float32 (`IK_VAL_QWEN3_VL`, `IK_VAL_IMAGE` and its top-left quarter as the second image): turn 2
+  resumes at 161 of 270, its prompt-end logits 0.9999999999844348 against one uncached pass (a fresh cached run
+  1.0), and the backend's 16-token greedy reply equals a run that keeps nothing.
+
 ## Florence-2
 
 - `NFKMLXFlorence2` (`microsoft/Florence-2-large` and `-base`, Microsoft, MIT), a unified vision model: one image

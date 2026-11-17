@@ -14,8 +14,12 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /*! The message key under which InferKit keeps what a conversation needs beside the OpenAI chat
-	fields (NSDictionary): a backend's own record of an assistant turn, and a tool result's name,
-	error flag, and images. Every backend removes it before a message goes on the wire.
+	fields (NSDictionary): a backend's own record of an assistant turn, a tool result's name, error
+	flag, and images, and, for a message whose parts carried media, how many images and audio clips
+	they carried under "imageCount" and "audioCount" (NSNumber). The server's chat route writes the
+	counts when it flattens a message's parts into its text and the request's NFKInputImage,
+	NFKInputImages, NFKInputAudio, and NFKInputAudios, so a local multimodal backend places each
+	medium in the turn that carried it. Every backend removes it before a message goes on the wire.
 	Introduced in InferKit 0.4.0. */
 extern NSString * const NFKMessageMetadataKey;
 

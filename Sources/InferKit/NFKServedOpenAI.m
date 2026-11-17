@@ -13,6 +13,7 @@
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKAudioSegment.h>
 #import <InferKit/NFKErrors.h>
+#import <InferKit/NFKToolMessages.h>
 #import "NFKRemoteTransportPrivate.h"
 #import <AVFoundation/AVFoundation.h>
 #import <ImageIO/ImageIO.h>
@@ -135,6 +136,7 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 			continue;
 		}
 		NSMutableArray<NSString *> *texts = [NSMutableArray array];
+		NSUInteger imagesBefore = images.count, audiosBefore = audios.count;
 		for (NSDictionary *part in message[@"content"]) {
 			if (![self readContentPart:part texts:texts images:images audios:audios videos:videos documents:documents
 						temporaryFiles:temporaryFiles error:outError]) {
@@ -143,6 +145,7 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 		}
 		NSMutableDictionary *flattened = [message mutableCopy];
 		flattened[@"content"] = [texts componentsJoinedByString:@"\n"];
+		[self recordMediaCountsOf:flattened images:images.count - imagesBefore audios:audios.count - audiosBefore];
 		[messages addObject:flattened];
 	}
 
@@ -153,7 +156,7 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 	}
 	[self addMedia:images firstKey:NFKInputImage restKey:NFKInputImages to:inputs];
 	[self addMedia:documents firstKey:NFKInputDocument restKey:NFKInputDocuments to:inputs];
-	inputs[NFKInputAudio] = audios.firstObject;
+	[self addMedia:audios firstKey:NFKInputAudio restKey:NFKInputAudios to:inputs];
 	inputs[NFKInputVideo] = videos.firstObject;
 
 	NSArray *modalities = [body[@"modalities"] isKindOfClass:NSArray.class] ? body[@"modalities"] : @[];
@@ -191,6 +194,24 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 	if (media.count > 1) {
 		inputs[restKey] = [media subarrayWithRange:NSMakeRange(1, media.count - 1)];
 	}
+}
+
+// How many images and clips a flattened message's parts carried, under the message metadata, so a local
+// multimodal backend places each in its turn.
++ (void)recordMediaCountsOf:(NSMutableDictionary *)message images:(NSUInteger)imageCount audios:(NSUInteger)audioCount
+{
+	if (imageCount == 0 && audioCount == 0) {
+		return;
+	}
+	NSDictionary *existing = [message[NFKMessageMetadataKey] isKindOfClass:NSDictionary.class] ? message[NFKMessageMetadataKey] : @{};
+	NSMutableDictionary *metadata = [existing mutableCopy];
+	if (imageCount > 0) {
+		metadata[@"imageCount"] = @(imageCount);
+	}
+	if (audioCount > 0) {
+		metadata[@"audioCount"] = @(audioCount);
+	}
+	message[NFKMessageMetadataKey] = metadata;
 }
 
 // The parts the chat client writes: text, image_url, input_audio (an object, or Mistral's bare

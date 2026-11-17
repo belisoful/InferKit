@@ -63,8 +63,9 @@ final class NFKMLXQwen3VLBackendTests: XCTestCase {
         let model = try tinyModel()
         let backend = model.inferenceBackend()
         XCTAssertEqual(backend.backendIdentifier, NFKMLXQwen3VL.modelName)
-        XCTAssertEqual(backend.supportedInputKeys, [NFKInputImage, NFKInputPrompt])
-        XCTAssertEqual(backend.supportedParameterKeys, [NFKParameterMaxTokens])
+        XCTAssertEqual(backend.supportedInputKeys, [NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages])
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK,
+                                                        NFKParameterMaxTokens, NFKParameterSeed, NFKParameterConversationKey])
 
         let image = NFKMLXBackendTestSupport.solidImage(width: 8, height: 8)
         let bounded = try backend.runInference(for: NFKInferenceRequest(
@@ -78,12 +79,13 @@ final class NFKMLXQwen3VLBackendTests: XCTestCase {
                        "a request without a token limit takes the default, not the last request's")
     }
 
-    func testARequestWithoutAnImageOrAQuestionIsRefused() throws {
+    func testAPromptWithoutAnImageIsAnsweredAndARequestWithoutTextIsRefused() throws {
         try requireMLXRuntime()
         let backend = try tinyModel().inferenceBackend()
         let image = NFKMLXBackendTestSupport.solidImage(width: 8, height: 8)
-        XCTAssertThrowsError(try backend.runInference(for: NFKInferenceRequest(
-            inputs: [NFKInputPrompt: "Describe it."], parameters: [:])))
+        let text = try backend.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputPrompt: "Describe it."], parameters: [NFKParameterMaxTokens: 2]))
+        XCTAssertEqual(text.output(forKey: NFKOutputText) as? String, "!!")
         XCTAssertThrowsError(try backend.runInference(for: NFKInferenceRequest(
             inputs: [NFKInputImage: image], parameters: [:])))
     }

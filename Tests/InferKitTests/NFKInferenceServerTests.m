@@ -506,6 +506,37 @@
 	CVPixelBufferRelease(image);
 }
 
+// Each flattened turn records how many images and clips its parts carried, and every clip arrives, so a
+// local backend places each medium in the turn that sent it.
+- (void)testAFlattenedChatTurnRecordsTheMediaItsPartsCarried
+{
+	NFKServedTestBackend *backend = [[NFKServedTestBackend alloc] init];
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"vision": backend }];
+	CVPixelBufferRef image = [self pixelBufferWidth:6 height:3 format:kCVPixelFormatType_32BGRA];
+	NSString *dataURL = [NFKImageCoding dataURLForImage:(__bridge id)image];
+	CVPixelBufferRelease(image);
+	NSDictionary *imagePart = @{ @"type": @"image_url", @"image_url": @{ @"url": dataURL } };
+	NSDictionary *audioPart = @{ @"type": @"input_audio", @"input_audio": @{ @"data": @"AAAA", @"format": @"wav" } };
+	NSDictionary *chat = @{ @"messages": @[
+		@{ @"role": @"user", @"content": @[ imagePart, imagePart, @{ @"type": @"text", @"text": @"compare them" } ] },
+		@{ @"role": @"assistant", @"content": @"they match" },
+		@{ @"role": @"user", @"content": @[ audioPart, imagePart, audioPart, @{ @"type": @"text", @"text": @"and this?" } ] } ] };
+	NSHTTPURLResponse *response = nil;
+	[self send:[self postTo:[server.localBaseURL URLByAppendingPathComponent:@"chat/completions"] JSON:chat] response:&response];
+	XCTAssertEqual(response.statusCode, 200);
+
+	NSArray<NSDictionary *> *messages = backend.lastRequest.messages;
+	XCTAssertEqual(messages.count, 3u);
+	XCTAssertEqualObjects(messages[0][NFKMessageMetadataKey], (@{ @"imageCount": @2 }));
+	XCTAssertEqualObjects(messages[1], (@{ @"role": @"assistant", @"content": @"they match" }), @"a turn without media carries no count");
+	XCTAssertEqualObjects(messages[2][NFKMessageMetadataKey], (@{ @"imageCount": @1, @"audioCount": @2 }));
+	XCTAssertEqualObjects(messages[2][@"content"], @"and this?");
+	XCTAssertNotNil([backend.lastRequest inputForKey:NFKInputImage]);
+	XCTAssertEqual([(NSArray *)[backend.lastRequest inputForKey:NFKInputImages] count], 2u);
+	XCTAssertNotNil([backend.lastRequest inputForKey:NFKInputAudio]);
+	XCTAssertEqual([(NSArray *)[backend.lastRequest inputForKey:NFKInputAudios] count], 1u, @"every clip after the first arrives");
+}
+
 - (void)testARunErrorReachesTheChatClientWithItsCode
 {
 	NFKServedTestBackend *backend = [[NFKServedTestBackend alloc] init];

@@ -463,6 +463,10 @@ public final class NFKMLXQwen3VL: NSObject {
     private let tokenizer: NFKTokenizer
     private let processor: NFKMLXQwen3VLImageProcessor
     private let endTokens: Set<Int>
+    /// The release directory the model loaded from, or nil for a model built in memory.
+    var releaseDirectoryURL: URL?
+    /// The release's chat template, which a conversation renders through.
+    var releaseTemplate: NFKMLXVisionTemplate?
 
     init(visionNet: NFKMLXQwen3VLVisionNet, decoder: NFKMLXLanguageNet, tokenizer: NFKTokenizer,
          endTokens: Set<Int>, processor: NFKMLXQwen3VLImageProcessor = NFKMLXQwen3VLImageProcessor()) {
@@ -516,8 +520,11 @@ public final class NFKMLXQwen3VL: NSObject {
         let (specials, endToken) = NFKMLXLanguage.specialTokens(inDirectory: directoryURL)
         var stops = Set([specials["<|im_end|>"], endToken].compactMap { $0 })
         if stops.isEmpty { stops = [151_645] }
-        return NFKMLXQwen3VL(visionNet: vision, decoder: decoder, tokenizer: tokenizer, endTokens: stops,
-                             processor: NFKMLXQwen3VLImageProcessor.processor(inDirectory: directoryURL))
+        let model = NFKMLXQwen3VL(visionNet: vision, decoder: decoder, tokenizer: tokenizer, endTokens: stops,
+                                  processor: NFKMLXQwen3VLImageProcessor.processor(inDirectory: directoryURL))
+        model.releaseDirectoryURL = directoryURL
+        model.releaseTemplate = NFKMLXVisionTemplate(directoryURL: directoryURL)
+        return model
     }
 
     /// Downloads a release into the hub cache and loads the whole model.
@@ -795,10 +802,15 @@ public final class NFKMLXQwen3VL: NSObject {
     /// image block holds the temporal axis constant while the height and width axes range over the
     /// merged patch grid, both offset past the text that precedes it.
     static func ropePositionIds(inputIds: [Int], gridT: Int, gridH: Int, gridW: Int) -> [[Int]] {
+        ropePositionIds(inputIds: inputIds) { _ in (gridT, gridH, gridW) }
+    }
+
+    /// ``ropePositionIds(inputIds:gridT:gridH:gridW:)`` over several images, the `n`th image block taking
+    /// `grid(n)`, the reference's `get_rope_index` over a prompt with several images.
+    static func ropePositionIds(inputIds: [Int], grid: (Int) -> (t: Int, h: Int, w: Int)) -> [[Int]] {
         let sequence = inputIds.count
-        let llmH = gridH / spatialMergeSize, llmW = gridW / spatialMergeSize
         var temporal = [Int](), height = [Int](), width = [Int]()
-        var start = 0, nextStart = 0
+        var start = 0, nextStart = 0, image = 0
         while start < sequence {
             let imageStart = inputIds[start...].firstIndex(of: imageTokenId)
             let end = imageStart ?? sequence
@@ -812,6 +824,9 @@ public final class NFKMLXQwen3VL: NSObject {
                 continue
             }
             // The image block's positions start past the text, the reference's `text_len + st_idx`.
+            let (gridT, gridH, gridW) = grid(image)
+            image += 1
+            let llmH = gridH / spatialMergeSize, llmW = gridW / spatialMergeSize
             let base = textLength + nextStart
             for t in 0 ..< gridT {
                 for h in 0 ..< llmH {
@@ -989,5 +1004,43 @@ public final class NFKMLXQwen3VL: NSObject {
                 cache: cache, multimodal: decodeMultimodal)
         }
         return (produced, nil)
+    }
+}
+
+extension NFKMLXQwen3VL: NFKMLXVisionChatModel {
+    var chatDecoder: NFKMLXLanguageNet { textDecoder }
+    var chatTokenizer: NFKTokenizer { tokenizer }
+    var chatEndTokens: Set<Int> { endTokens }
+    var chatImageTokenId: Int { Self.imageTokenId }
+    var chatTemplate: NFKMLXVisionTemplate? { releaseTemplate }
+    var chatImageMarker: String { "<|image_pad|>" }
+    var chatModules: [Module] { [visionNet, textDecoder] }
+    var chatReleaseDirectoryURL: URL? { releaseDirectoryURL }
+    var chatAdapterStrengths: [Float] { adapterStrengths }
+
+    func prepareChatImage(_ image: CGImage) -> NFKMLXVisionImage {
+        let (pixelValues, grid) = processor.process(image)
+        let merged = grid.t * (grid.h / processor.mergeSize) * (grid.w / processor.mergeSize)
+        return NFKMLXVisionImage(pixels: pixelValues, expansion: String(repeating: "<|image_pad|>", count: merged),
+                                 tokenCount: merged, grid: grid)
+    }
+
+    func singleTurnPrompt(question: String, images: [NFKMLXVisionImage]) -> String {
+        "<|im_start|>user\n" + images.map { "<|vision_start|>" + $0.expansion + "<|vision_end|>" }.joined()
+            + question + "<|im_end|>\n<|im_start|>assistant\n"
+    }
+
+    func encodeChatImage(_ image: NFKMLXVisionImage) -> (features: MLXArray, deepstack: [MLXArray]) {
+        let (output, deepstack) = visionNet(image.pixels, grid: image.grid)
+        return (output, deepstack)
+    }
+
+    func chatPositions(inputIds: [Int], images: [NFKMLXVisionImage]) -> [[Int]]? {
+        Self.ropePositionIds(inputIds: inputIds) { images[$0].grid }
+    }
+
+    func chatRope(_ positions: [[Int]]) -> (cos: MLXArray, sin: MLXArray) {
+        Self.mropeCosSin(positionIds: positions, headDimensions: textDecoder.configuration.headDimensions,
+                         theta: textDecoder.configuration.ropeTheta)
     }
 }

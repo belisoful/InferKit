@@ -672,20 +672,6 @@ extension NFKMLXCatalogLanguage {
         [.output(NFKOutputText, required: true, title: "Translation", help: "The translated text.")]
     }
 
-    /// The ports and option of a backend that answers one question about one image.
-    fileprivate static var imageQuestionInputs: [NFKModelPort] {
-        [imageInput(required: true),
-         .input(NFKInputPrompt, required: true, title: "Question", help: "The question about the image.")]
-    }
-
-    fileprivate static var imageQuestionOptions: [NFKModelOption] {
-        [maxTokensOption(NFKMLXGenerationBackend.defaultAnswerTokens, help: "The most tokens the answer runs to.")]
-    }
-
-    fileprivate static var imageQuestionOutputs: [NFKModelPort] {
-        [.output(NFKOutputText, required: true, title: "Answer", help: "The answer.")]
-    }
-
     fileprivate static var embeddingInputs: [NFKModelPort] {
         [.input(NFKInputPrompt, title: "Text", help: "The text to embed. A request carries it or a conversation."),
          .input(NFKInputMessages, title: "Conversation", help: "A conversation whose contents are joined and embedded.")]
@@ -1163,18 +1149,32 @@ extension NFKMLXCatalogLanguage {
 
 extension NFKMLXCatalogLanguage {
 
-    /// A model that answers a question about an image through ``NFKMLXGenerationBackend/imageQuestion(identifier:answer:)``.
-    private static func imageQuestionEntry(_ release: NFKMLXLanguageRelease, summary: String, files: [NFKModelFile],
+    /// A model that chats about images through ``NFKMLXVisionChatBackend``.
+    private static func visionChatEntry(_ release: NFKMLXLanguageRelease, summary: String, files: [NFKModelFile],
                                            residencies: [String] = [NFKModelResidencyResident]) -> NFKMLXCatalogEntry {
         NFKMLXCatalogEntry(identifier: release.name, displayName: release.displayName, family: release.family,
                            summary: summary, registryName: release.name, tasks: [NFKModelTaskVisionQuestionAnswering],
-                           inputs: imageQuestionInputs, outputs: imageQuestionOutputs, parameters: imageQuestionOptions,
-                           variants: [variant(release, files: files)], license: license(release.repository),
-                           residencies: residencies)
+                           inputs: visionChatInputs, outputs: [textOutput, usageOutput, finishReasonOutput],
+                           parameters: visionChatOptions, variants: [variant(release, files: files)],
+                           license: license(release.repository), residencies: residencies)
+    }
+
+    /// The ports of ``NFKMLXVisionChatBackend``: a prompt or a conversation, and its images.
+    private static var visionChatInputs: [NFKModelPort] {
+        [promptInput, messagesInput,
+         imageInput(help: "An image the reply is about."),
+         .input(NFKInputImages, title: "Images", help: "Further images, after the first, in the order the turns show them.")]
+    }
+
+    /// The options of ``NFKMLXVisionChatBackend``: sampling over the release's generation config, the reply's
+    /// length, the seed, and the conversation a request continues.
+    private static var visionChatOptions: [NFKModelOption] {
+        samplingOptions(nil) + [maxTokensOption(NFKMLXGenerationBackend.defaultAnswerTokens, help: "The most tokens the reply runs to."),
+                                seedOption(), conversationKeyOption()]
     }
 
     fileprivate static func smolVLMEntry(_ size: SmolVLMSize) -> NFKMLXCatalogEntry {
-        var entry = imageQuestionEntry(
+        var entry = visionChatEntry(
             size.release,
             summary: "\(size.release.displayName), a SigLIP tower and a SmolLM2 decoder that answer a question about an image.",
             files: releaseFiles(required: NFKMLXSmolVLM.requiredFiles, optional: NFKMLXSmolVLM.optionalFiles,
@@ -1184,7 +1184,7 @@ extension NFKMLXCatalogLanguage {
     }
 
     fileprivate static func qwen3VLEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
-        var entry = imageQuestionEntry(
+        var entry = visionChatEntry(
             release, summary: "\(release.displayName), the Qwen3-VL vision tower and decoder answering a question about an image.",
             files: releaseFiles(required: NFKMLXQwen3VL.requiredFiles, optional: NFKMLXQwen3VL.optionalFiles,
                                 weights: NFKMLXQwen3VL.weightFiles),
@@ -1199,7 +1199,7 @@ extension NFKMLXCatalogLanguage {
     }
 
     fileprivate static var pixtralEntry: NFKMLXCatalogEntry {
-        var entry = imageQuestionEntry(
+        var entry = visionChatEntry(
             NFKMLXLanguageRelease(name: NFKMLXPixtral.modelName, displayName: "Pixtral 12B",
                                   repository: "mistral-experimental/pixtral-12b", family: "pixtral"),
             summary: "Pixtral 12B, a 2D-rotary vision encoder and a Mistral NeMo decoder answering a question about an image.",
