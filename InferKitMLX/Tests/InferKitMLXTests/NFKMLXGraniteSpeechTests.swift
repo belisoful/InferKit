@@ -11,6 +11,7 @@
 import XCTest
 import InferKit
 import MLX
+import MLXRandom
 import MLXNN
 @testable import InferKitMLX
 
@@ -45,6 +46,77 @@ final class NFKMLXGraniteSpeechTests: XCTestCase {
             embeddingMultiplier: 2.0, residualMultiplier: 0.5, attentionMultiplier: 0.25,
             logitsScaling: 3.0, tiesWordEmbeddings: false)
         return NFKMLXGraniteSpeechNet(encoder: encoder, projector: projector, text: text, audioTokenId: 39)
+    }
+
+    // MARK: Cached decoding and conversations
+
+    /// The tiny net with random weights, its norms varied.
+    private func randomNet() -> NFKMLXGraniteSpeechNet {
+        MLXRandom.seed(29)
+        let net = tinyNet()
+        let varied = net.parameters().flattened().map { key, value in
+            (key, key.hasSuffix("norm.weight") || key.hasSuffix("layernorm.weight") ? 1 + MLXRandom.normal(value.shape) * 0.1 : value)
+        }
+        net.update(parameters: ModuleParameters.unflattened(varied))
+        eval(net)
+        return net
+    }
+
+    // A prompt with audio frames prefilled through the decoder's cache in two parts, then tokens run one at a
+    // time, gives the logits the whole sequence gives.
+    func testTheCachedDecoderGivesTheFullSequencesLogits() throws {
+        try requireMLXRuntime()
+        let net = randomNet()
+        let audio = MLXRandom.normal([1, 6, 32], key: MLXRandom.key(3))
+        var tokens = [1, 2, 3] + Array(repeating: 39, count: 6) + [4, 5, 6, 7]
+        let decoder = net.languageModel
+        let cache = decoder.makeCache()
+        func part(_ range: Range<Int>) -> MLXArray {
+            let slice = Array(tokens[range])
+            let embeddings = NFKMLXGraniteSpeechNet.fusedEmbeddings(
+                decoder, tokens: MLXArray(slice.map(Int32.init)).reshaped([1, slice.count]), audio: audio, audioToken: 39,
+                audioOffset: tokens[..<range.lowerBound].filter { $0 == 39 }.count)
+            return decoder.logits(fromHidden: decoder.hiddenStates(fromEmbeddings: embeddings, cache: cache))[0, slice.count - 1]
+        }
+        func full() -> MLXArray {
+            net.logits(tokens: MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count]), audioEmbeddings: audio)[0, tokens.count - 1]
+        }
+        _ = part(0 ..< 6)
+        var logits = part(6 ..< tokens.count)
+        XCTAssertLessThan(abs(logits - full()).max().item(Float.self), 1e-4, "a prefill split inside the audio")
+        for token in [8, 9, 10] {
+            tokens.append(token)
+            logits = part(tokens.count - 1 ..< tokens.count)
+            XCTAssertLessThan(abs(logits - full()).max().item(Float.self), 1e-4, "after \(tokens.count) tokens")
+        }
+    }
+
+    // A conversation about a clip continues past it and answers as a run that keeps nothing; another clip
+    // continues nothing past its first position.
+    func testAConversationAboutAClipContinuesPastIt() throws {
+        try requireMLXRuntime()
+        let net = randomNet()
+        let audio = MLXRandom.normal([1, 6, 32], key: MLXRandom.key(3))
+        let otherAudio = MLXRandom.normal([1, 6, 32], key: MLXRandom.key(4))
+        let keeper = NFKMLXConversationKeeper<NFKMLXPromptCache>(byteBudget: 1 << 30)
+        func run(_ tokens: [Int], _ clip: MLXArray, digest: UInt64, key: String?) throws -> (produced: [Int], cached: Int) {
+            var parameters: [String: Any] = [:]
+            parameters[NFKParameterConversationKey] = key
+            if key == nil { parameters[NFKMLXGenerationParameterKey.reusesPromptCache] = false }
+            return try NFKMLXAudioConversation.run(
+                decoder: net.languageModel, tokens: tokens, audio: clip, audioToken: 39, digest: digest,
+                conversations: keeper, request: NFKInferenceRequest(inputs: [:], parameters: parameters),
+                limit: 3, stop: -1) { 1 << 30 }
+        }
+        let first = [1, 2, 3] + Array(repeating: 39, count: 6) + [4, 5, 6]
+        let reply = try run(first, audio, digest: 7, key: "a").produced
+        let next = first + reply + [11, 12, 13]
+        let continued = try run(next, audio, digest: 7, key: "a")
+        XCTAssertEqual(continued.cached, first.count + reply.count - 1, "the prompt and the fed reply, the last token unfed")
+        XCTAssertEqual(continued.produced, try run(next, audio, digest: 7, key: nil).produced, "a run that keeps nothing")
+        let parted = try run(next, otherAudio, digest: 8, key: "a")
+        XCTAssertEqual(parted.cached, 3, "another clip parts at its first position")
+        XCTAssertEqual(parted.produced, try run(next, otherAudio, digest: 8, key: nil).produced)
     }
 
     private func loadRecordWeights(into net: NFKMLXGraniteSpeechNet, from record: [String: MLXArray]) throws {

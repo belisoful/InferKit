@@ -148,23 +148,8 @@ public final class NFKMLXVoxtralNet: Module {
 
     /// Fuses audio embeddings into the token embeddings at the audio-token positions, then decodes.
     public func logits(tokens: MLXArray, audioEmbeddings audio: MLXArray) -> MLXArray {
-        let safeTokens = MLX.where(tokens .== MLXArray(Int32(config.audioTokenId)), MLXArray(Int32(0)), tokens)
-        var embeddings = languageModel.tokenEmbeddings(safeTokens)
-        let ids = tokens.asArray(Int32.self)
-        let hidden = embeddings.dim(2)
-        let flatAudio = audio.reshaped([-1, hidden])
-        var audioIndex = 0
-        var rows = [MLXArray]()
-        rows.reserveCapacity(ids.count)
-        for (position, id) in ids.enumerated() {
-            if Int(id) == config.audioTokenId {
-                rows.append(flatAudio[audioIndex].reshaped([1, 1, hidden]))
-                audioIndex += 1
-            } else {
-                rows.append(embeddings[0..., position, 0...].reshaped([1, 1, hidden]))
-            }
-        }
-        embeddings = concatenated(rows, axis: 1)
+        let embeddings = NFKMLXGraniteSpeechNet.fusedEmbeddings(languageModel, tokens: tokens, audio: audio,
+                                                                audioToken: config.audioTokenId)
         return languageModel.logits(fromHidden: languageModel.hiddenStates(fromEmbeddings: embeddings))
     }
 }

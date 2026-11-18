@@ -18124,10 +18124,18 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
@@ -18136,6 +18144,13 @@
           "required" : true,
           "title" : "Text",
           "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
         }
       ],
       "registryName" : "granite-speech-3.3-2b",
@@ -78474,10 +78489,18 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         }
       ],
       "outputModalities" : [
-        "text"
+        "text",
+        "json"
       ],
       "outputs" : [
         {
@@ -78486,6 +78509,13 @@
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
         }
       ],
       "qualityScores" : [

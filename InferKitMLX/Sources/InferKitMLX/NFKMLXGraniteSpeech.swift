@@ -604,6 +604,27 @@ final class NFKGraniteTextAttention: Module {
             : MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: .causal)
         return outputProjection(out.transposed(0, 2, 1, 3).reshaped([batch, length, headCount * headDimensions]))
     }
+
+    /// The layer over `hidden` after the positions `cache` holds: the rotary turns at the cache's offset, the new
+    /// keys and values join layer `layer`'s rows, and the queries attend over every row, the newest causally.
+    func callAsFunction(_ hidden: MLXArray, cache: NFKMLXKeyValueCache, layer: Int) -> MLXArray {
+        let batch = hidden.dim(0), length = hidden.dim(1)
+        var q = queryProjection(hidden).reshaped([batch, length, headCount, headDimensions]).transposed(0, 2, 1, 3)
+        var k = keyProjection(hidden).reshaped([batch, length, keyValueHeadCount, headDimensions]).transposed(0, 2, 1, 3)
+        var v = valueProjection(hidden).reshaped([batch, length, keyValueHeadCount, headDimensions]).transposed(0, 2, 1, 3)
+        q = NFKReferenceRounding.rotary(q, dimensions: headDimensions, base: ropeBase, offset: cache.offset)
+        k = NFKReferenceRounding.rotary(k, dimensions: headDimensions, base: ropeBase, offset: cache.offset)
+        (k, v) = cache.update(layer: layer, keys: k, values: v)
+        let mask = length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: k.dim(2) - length).asType(q.dtype) : nil
+        let out: MLXArray
+        if NFKReferenceRounding.isReduced(q) {
+            out = NFKReferenceRounding.attention(queries: q, keys: k, values: v, scale: scale, mask: mask)
+        } else {
+            out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale,
+                                                    mask: mask.map { .array($0) } ?? .none)
+        }
+        return outputProjection(out.transposed(0, 2, 1, 3).reshaped([batch, length, headCount * headDimensions]))
+    }
 }
 
 /// The SwiGLU feed-forward, `down(silu(gate(x)) · up(x))`.
@@ -641,6 +662,14 @@ final class NFKGraniteTextBlock: Module {
 
     func callAsFunction(_ hidden: MLXArray) -> MLXArray {
         var h = hidden + NFKReferenceRounding.scaled(attention(inputNorm(hidden)), by: residualMultiplier)
+        h = h + NFKReferenceRounding.scaled(mlp(postNorm(h)), by: residualMultiplier)
+        return h
+    }
+
+    /// The block after the positions `cache` holds.
+    func callAsFunction(_ hidden: MLXArray, cache: NFKMLXKeyValueCache, layer: Int) -> MLXArray {
+        var h = hidden + NFKReferenceRounding.scaled(attention(inputNorm(hidden), cache: cache, layer: layer),
+                                                     by: residualMultiplier)
         h = h + NFKReferenceRounding.scaled(mlp(postNorm(h)), by: residualMultiplier)
         return h
     }
@@ -684,6 +713,17 @@ public final class NFKMLXGraniteTextNet: Module {
         for layer in model.layers { h = layer(h) }
         return model.norm(h)
     }
+
+    /// ``hiddenStates(fromEmbeddings:)`` for positions after those `cache` holds, which the cache then takes.
+    func hiddenStates(fromEmbeddings embeddings: MLXArray, cache: NFKMLXKeyValueCache) -> MLXArray {
+        var h = embeddings * config.embeddingMultiplier
+        for (index, layer) in model.layers.enumerated() { h = layer(h, cache: cache, layer: index) }
+        cache.advance(by: embeddings.dim(1))
+        return model.norm(h)
+    }
+
+    /// A cache for this decoder's layers.
+    func makeCache() -> NFKMLXKeyValueCache { NFKMLXKeyValueCache(layerCount: config.layerCount) }
 
     func logits(fromHidden hidden: MLXArray) -> MLXArray {
         let raw = lmHead.map { $0(hidden) } ?? model.embedTokens.asLinear(hidden)
@@ -741,26 +781,34 @@ public final class NFKMLXGraniteSpeechNet: Module {
     /// The same fusion and decode, from already-computed audio embeddings — so a generation loop runs
     /// the encoder and projector once and only re-decodes the growing token sequence.
     public func logits(tokens: MLXArray, audioEmbeddings audio: MLXArray) -> MLXArray {
-        // Audio positions embed token 0 (they are overwritten with audio features below); this also
-        // keeps the audio token id, which may sit outside the base vocabulary, from indexing the table.
-        let safeTokens = MLX.where(tokens .== MLXArray(Int32(audioTokenId)), MLXArray(Int32(0)), tokens)
-        var embeddings = languageModel.tokenEmbeddings(safeTokens)          // raw, before the embedding multiplier
+        let embeddings = Self.fusedEmbeddings(languageModel, tokens: tokens, audio: audio, audioToken: audioTokenId)
+        return languageModel.logits(fromHidden: languageModel.hiddenStates(fromEmbeddings: embeddings))
+    }
+
+    /// The decoder's raw input embeddings for `tokens` `[1, L]`, before the embedding multiplier: each
+    /// `audioToken` position takes the next row of `audio`, from row `audioOffset`, and every other position
+    /// its token's embedding. Audio positions embed token 0 first, which keeps an audio id outside the base
+    /// vocabulary from indexing the table.
+    static func fusedEmbeddings(_ decoder: NFKMLXGraniteTextNet, tokens: MLXArray, audio: MLXArray?,
+                                audioToken: Int, audioOffset: Int = 0) -> MLXArray {
+        let safeTokens = MLX.where(tokens .== MLXArray(Int32(audioToken)), MLXArray(Int32(0)), tokens)
+        let embeddings = decoder.tokenEmbeddings(safeTokens)
+        guard let audio else { return embeddings }
         let ids = tokens.asArray(Int32.self)
         let hidden = embeddings.dim(2)
         let flatAudio = audio.reshaped([-1, hidden])
-        var audioIndex = 0
+        var audioIndex = audioOffset
         var rows = [MLXArray]()
         rows.reserveCapacity(ids.count)
         for (position, id) in ids.enumerated() {
-            if Int(id) == audioTokenId {
+            if Int(id) == audioToken {
                 rows.append(flatAudio[audioIndex].reshaped([1, 1, hidden]))
                 audioIndex += 1
             } else {
                 rows.append(embeddings[0..., position, 0...].reshaped([1, 1, hidden]))
             }
         }
-        embeddings = concatenated(rows, axis: 1)
-        return languageModel.logits(fromHidden: languageModel.hiddenStates(fromEmbeddings: embeddings))
+        return concatenated(rows, axis: 1)
     }
 }
 

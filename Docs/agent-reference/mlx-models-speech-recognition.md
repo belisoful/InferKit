@@ -392,6 +392,16 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `x + table` once, which the encoder now does. transformers' Whisper attention scales the query by
   `head_dim^-0.5` in float32; the openai layout splits the scale over queries and keys, and the shared
   encoder keeps that on its float32 path.
+  **Cached decode and conversations (2026-11-17, Voxtral and Granite Speech alike).** Both decoders are
+  `NFKMLXGraniteTextNet`, which gained a cached path (`hiddenStates(fromEmbeddings:cache:)`: rotary at the
+  cache's offset, the layer's rows appended, a causal mask offset by the cached count); the uncached path is
+  unchanged. The fusion is one helper (`NFKMLXGraniteSpeechNet.fusedEmbeddings(_:tokens:audio:audioToken:audioOffset:)`)
+  both nets' `logits(tokens:audioEmbeddings:)` call, its `audioOffset` the frames before a fresh slice.
+  `NFKMLXAudioConversation.run` keeps an `NFKMLXPromptCache` per conversation through `NFKMLXConversationKeeper`,
+  keyed by the prompt with the clip's positions keyed by a digest of its log-mel features, so another instruction
+  or language about the same clip prefills only what it adds. The towers run on every request, since the clip's
+  token count comes from them. On the tiny Granite Speech net, a prefill split inside the audio and three steps
+  give the whole sequence's logits within 1e-4, and a conversation answers as a run that keeps nothing.
 - `NFKMLXCanary` / `NFKMLXCanaryNet` / `NFKMLXCanaryBackend` (`@objc`) — **Canary-1B-v2** (NVIDIA NeMo
   `EncDecMultiTaskModel`, CC-BY-4.0), a multitask speech model that transcribes and translates, built
   from the FastConformer encoder already at parity and a new attention encoder-decoder. The acoustic

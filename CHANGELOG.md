@@ -27,6 +27,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Voxtral and Granite Speech decode through a key-value cache and continue conversations about a clip
+
+- The two speech language models' shared Granite decoder runs the prompt once into a key-value cache and each new
+  token alone, where every token used to re-run the whole sequence.
+- `NFKMLXVoxtralBackend` and `NFKMLXGraniteSpeechBackend` keep each conversation's cache, keyed by the prompt with
+  the clip's positions keyed by a digest of its features: a request continues the conversation its
+  `NFKParameterConversationKey` names, or the one its prompt continues furthest, so another instruction or language
+  about the same clip prefills only what it adds. Both write `NFKOutputUsage`, the reused positions under
+  `NFKUsageCachedTokens`.
+
 #### Gemma 3, 3n, and 4, Phi-4-multimodal, and DeepSeek continue conversations with images and audio
 
 - A prompt with a picture or a clip continues a kept conversation as a text prompt does: the media's positions are

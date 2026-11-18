@@ -300,6 +300,17 @@ extension NFKMLXCatalogAudio {
         return NFKMLXCanary.supportedLanguages.map { code in (code, "\(names[code] ?? code) (\(code))") }
     }
 
+    /// The usage an audio-text backend writes, its reused positions among them.
+    static var audioTextUsage: NFKModelPort {
+        .output(NFKOutputUsage, required: true, title: "Usage", help: "The prompt and reply token counts.")
+    }
+
+    /// The conversation an audio-text request continues, whose cache a later request about the same clip reuses.
+    static var audioTextConversationKey: NFKModelOption {
+        .option(NFKParameterConversationKey, kind: NFKModelOptionKindText, title: "Conversation key",
+                help: "A name for the conversation, whose prompt cache a later request of the same name continues from.")
+    }
+
     static var voxtral: NFKMLXCatalogEntry {
         model(NFKMLXVoxtral.voxtralModelName, displayName: "Voxtral Mini 3B", family: "voxtral",
               summary: "Mistral's speech language model: a Whisper large-v3 audio encoder feeding a Ministral 3B decoder.",
@@ -307,8 +318,8 @@ extension NFKMLXCatalogAudio {
               inputs: [audioInput("A WAV recording of speech. The backend reads its first 30 seconds at 16 kHz."),
                        .input(NFKInputPrompt, title: "Language",
                               help: "The language code of the speech, such as en. English when absent.")],
-              outputs: [.output(NFKOutputText, required: true, title: "Transcript", help: "The transcript.")],
-              parameters: [maximumTokens],
+              outputs: [.output(NFKOutputText, required: true, title: "Transcript", help: "The transcript."), audioTextUsage],
+              parameters: [maximumTokens, audioTextConversationKey],
               license: .apache2(),
               release: "2507",
               source: .hub("mistralai/Voxtral-Mini-3B-2507",
@@ -323,8 +334,9 @@ extension NFKMLXCatalogAudio {
               inputs: [audioInput("A WAV recording of speech."),
                        .input(NFKInputPrompt, title: "Instruction",
                               help: "The instruction the model follows. A request to transcribe the speech when absent.")],
-              outputs: [.output(NFKOutputText, required: true, title: "Text", help: "The model's answer, a transcript by default.")],
-              parameters: [maximumTokens],
+              outputs: [.output(NFKOutputText, required: true, title: "Text", help: "The model's answer, a transcript by default."),
+                        audioTextUsage],
+              parameters: [maximumTokens, audioTextConversationKey],
               license: .apache2(),
               release: "3.3-2b",
               source: .hub("ibm-granite/granite-speech-3.3-2b",
