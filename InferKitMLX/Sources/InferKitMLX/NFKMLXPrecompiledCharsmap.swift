@@ -35,15 +35,22 @@ struct NFKMLXPrecompiledCharsmap: Sendable {
         guard bytes.count >= 4 else {
             return nil
         }
-        let size = Int(UInt32(bytes[0]) | UInt32(bytes[1]) << 8 | UInt32(bytes[2]) << 16 | UInt32(bytes[3]) << 24)
+        let size = Int(Self.littleEndianWord(in: bytes, at: 0))
         guard size % 4 == 0, 4 + size <= bytes.count else {
             return nil
         }
         units = stride(from: 4, to: 4 + size, by: 4).map { start in
-            UInt32(bytes[start]) | UInt32(bytes[start + 1]) << 8 | UInt32(bytes[start + 2]) << 16
-                | UInt32(bytes[start + 3]) << 24
+            Self.littleEndianWord(in: bytes, at: start)
         }
         normalized = Array(bytes[(4 + size)...])
+    }
+
+    private static func littleEndianWord(in bytes: [UInt8], at offset: Int) -> UInt32 {
+        var word: UInt32 = 0
+        for index in 0..<4 {
+            word |= UInt32(bytes[offset + index]) << (8 * index)
+        }
+        return word
     }
 
     /// `text` normalized as SentencePiece's normalizer does.
