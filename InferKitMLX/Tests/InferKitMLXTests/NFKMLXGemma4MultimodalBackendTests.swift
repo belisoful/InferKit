@@ -93,6 +93,46 @@ final class NFKMLXGemma4MultimodalBackendTests: XCTestCase {
         XCTAssertNotNil(result.output(forKey: NFKOutputUsage))
     }
 
+    // The soft-token count a prepared image states before the tower runs is the count the tower yields.
+    func testAPreparedImageKnowsItsSoftTokenCountBeforeTheTower() throws {
+        try requireMLXRuntime()
+        let model = try model()
+        for (width, height) in [(8, 8), (12, 8), (8, 16)] {
+            let image = NFKMLXFluxControlNetBackendTests.plate(width: width, height: height)
+            let prepared = try model.preparedImage(image)
+            XCTAssertEqual(prepared.count, try model.visionSoftTokens(image).dim(0), "\(width) × \(height)")
+        }
+    }
+
+    // A follow-up about the same image continues the kept conversation, keyed or not, and answers as a run that
+    // keeps nothing; another image continues nothing past its first position.
+    func testAFollowUpAboutTheSameImageContinuesTheConversation() throws {
+        try requireMLXRuntime()
+        let backend = NFKMLXGemmaLanguage.multimodalBackend(try model())
+        let picture = NFKMLXFluxControlNetBackendTests.plate(width: 8, height: 8)
+        func run(_ messages: [[String: Any]], image: CGImage, _ parameters: [String: Any] = [:]) throws -> (text: String, cached: Int) {
+            var all: [String: Any] = [NFKParameterMaxTokens: 3, NFKParameterTemperature: 0]
+            all.merge(parameters) { $1 }
+            let result = try backend.runInference(for: NFKInferenceRequest(
+                inputs: [NFKInputMessages: messages, NFKInputImage: image], parameters: all))
+            let usage = try XCTUnwrap(result.output(forKey: NFKOutputUsage) as? [String: Int])
+            return (result.output(forKey: NFKOutputText) as? String ?? "", usage[NFKUsageCachedTokens] ?? -1)
+        }
+        let opening: [[String: Any]] = [["role": "user", "content": "what is it"]]
+        for key in ["a", nil] as [String?] {
+            let parameters: [String: Any] = key.map { [NFKParameterConversationKey: $0] } ?? [:]
+            let first = try run(opening, image: picture, parameters)
+            let followUp = opening + [["role": "assistant", "content": first.text], ["role": "user", "content": "and the colour"]]
+            let continued = try run(followUp, image: picture, parameters)
+            XCTAssertGreaterThan(continued.cached, 4, "\(key ?? "keyless") keeps the image's positions")
+            XCTAssertEqual(continued.text, try run(followUp, image: picture,
+                                                   [NFKMLXGenerationParameterKey.reusesPromptCache: false]).text)
+        }
+        let other = try run(opening + [["role": "assistant", "content": "x"], ["role": "user", "content": "and the colour"]],
+                            image: NFKMLXFluxControlNetBackendTests.plate(width: 12, height: 8), [NFKParameterConversationKey: "a"])
+        XCTAssertLessThan(other.cached, 8, "another image parts at its first position")
+    }
+
     func testAClipForAReleaseWithoutAnAudioTowerIsRefused() throws {
         try requireMLXRuntime()
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("gemma4mm-\(UUID().uuidString).wav")

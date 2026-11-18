@@ -160,6 +160,54 @@ final class NFKMLXGemma3nConversationTests: XCTestCase {
         XCTAssertGreaterThan(worstAgreement, 0.9999999999, "resuming adds nothing to a fresh run's error")
     }
 
+    // MARK: Media
+
+    /// The tiny decoder with the tiny audio tower, its clip's six soft tokens at id 131 inside a ten-id audio
+    /// vocabulary from 130, which the tiny decoder's table reaches.
+    private func audioModel() throws -> NFKMLXGemma3n {
+        MLXRandom.seed(17)
+        let tokens = NFKMLXGemma3nTokens(imageToken: 129, audioToken: 131, visionOffset: 128, visionVocabularySize: 2,
+                                         audioOffset: 130, audioVocabularySize: 10, visionSoftTokens: 4, audioSoftTokens: 6)
+        let model = NFKMLXGemma3nModel(decoder: net(), vision: nil, audio: NFKMLXGemma3nAudioNet(.tiny), visionEmbedder: nil,
+                                       audioEmbedder: NFKGemma3nMultimodalEmbedder(hiddenSize: 32, textHiddenSize: 64,
+                                                                                   vocabularySize: 10, vocabularyOffset: 130),
+                                       tokens: tokens)
+        eval(model)
+        return NFKMLXGemma3n(model: model, tokenizer: try tokenizer())
+    }
+
+    private func reply(_ gemma: NFKMLXGemma3n, _ prompt: [Int], mel: MLXArray, cache: NFKMLXGemma3nPromptCache?) throws -> [Int] {
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = 3
+        var produced = [Int]()
+        try gemma.generate(tokens: prompt, pixels: nil, mel: mel, options: options, promptCache: cache) { token in
+            produced.append(token)
+            return true
+        }
+        return produced
+    }
+
+    // A clip's positions are kept under its features' digest: the next turn about the same clip continues past
+    // it and answers what a fresh run answers, and a turn with another clip parts at the clip's first position.
+    func testAConversationWithAClipContinuesPastItAndAnotherClipPartsAtIt() throws {
+        try requireMLXRuntime()
+        let gemma = try audioModel()
+        let clip = MLXRandom.normal([1, 40, 16], key: MLXRandom.key(1))
+        let otherClip = MLXRandom.normal([1, 40, 16], key: MLXRandom.key(2))
+        let first = [2, 100, 5, 6, 7] + Array(repeating: 131, count: 6) + [8, 9, 101, 31, 100, 10, 31]
+        let cache = NFKMLXGemma3nPromptCache(layerCount: gemma.model.decoder.configuration.layerCount)
+        let answer = try reply(gemma, first, mel: clip, cache: cache)
+        let next = first + answer + [101, 31, 100, 11, 12, 31]
+        let continued = try reply(gemma, next, mel: clip, cache: cache)
+        XCTAssertEqual(cache.sharedPrefixLength, first.count + answer.count, "only the new turn prefills")
+        XCTAssertEqual(continued, try reply(gemma, next, mel: clip, cache: nil), "the answer of a fresh run")
+
+        let parted = try reply(gemma, next, mel: otherClip, cache: cache)
+        XCTAssertEqual(cache.sharedPrefixLength, 5, "another clip parts at its first position")
+        XCTAssertEqual(parted, try reply(gemma, next, mel: otherClip, cache: nil))
+    }
+
     // MARK: The backend
 
     /// A Gemma tokenizer over the lowercase letters (ids 5 … 30), the newline byte (31), and Gemma's markers.

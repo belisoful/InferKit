@@ -376,6 +376,40 @@ final class NFKMLXPhi4MMTests: XCTestCase {
                        "the backend captions the photo as the reference does")
     }
 
+    // A follow-up about the same photo continues the kept conversation, its image not encoded again, and answers
+    // as a run that keeps nothing; a text-only turn runs another adapter, so it starts over.
+    func testAConversationAboutAPhotoContinuesFromTheKeptCache() throws {
+        try requireMLXRuntime()
+        let arrays = try record()
+        guard let directory = NFKMLXValidationConfig.environment["IK_VAL_PHI4MM"] else {
+            throw XCTSkip("set IK_VAL_PHI4MM")
+        }
+        let model = try NFKMLXPhi4MM.model(directoryURL: URL(fileURLWithPath: directory), precision: .float32)
+        let backend = NFKMLXPhi4MMBackend(model: model, identifier: NFKMLXPhi4MM.modelName)
+        let rgb = arrays["vision_rgb"]!
+        let picture = image(rgb: bytes(rgb), width: rgb.dim(1), height: rgb.dim(0))
+        func run(_ messages: [[String: Any]], image: CGImage?, _ parameters: [String: Any] = [:]) throws -> (text: String, cached: Int) {
+            var all: [String: Any] = [NFKParameterMaxTokens: 16, NFKParameterTemperature: 0]
+            all.merge(parameters) { $1 }
+            var inputs: [String: Any] = [NFKInputMessages: messages]
+            inputs[NFKInputImage] = image
+            let result = try backend.runInference(for: NFKInferenceRequest(inputs: inputs, parameters: all))
+            let usage = try XCTUnwrap(result.output(forKey: NFKOutputUsage) as? [String: Int])
+            return (result.output(forKey: NFKOutputText) as? String ?? "", usage[NFKUsageCachedTokens] ?? -1)
+        }
+        let opening: [[String: Any]] = [["role": "user", "content": "Describe the image in one sentence."]]
+        let first = try run(opening, image: picture, [NFKParameterConversationKey: "photo"])
+        let followUp = opening + [["role": "assistant", "content": first.text],
+                                  ["role": "user", "content": "What colours stand out?"]]
+        let continued = try run(followUp, image: picture, [NFKParameterConversationKey: "photo"])
+        let fresh = try run(followUp, image: picture, [NFKMLXGenerationParameterKey.reusesPromptCache: false])
+        print("VALIDATION PARITY phi4mm-conversation: \(continued.cached) positions reused; continued \"\(continued.text)\"")
+        XCTAssertGreaterThan(continued.cached, 0)
+        XCTAssertEqual(continued.text, fresh.text, "the greedy answer of a run that keeps nothing")
+        let textOnly = try run(followUp, image: nil, [NFKParameterConversationKey: "photo"])
+        XCTAssertEqual(textOnly.cached, 0, "another adapter computed the kept rows")
+    }
+
     /// The HD image's unpadded patch extent from the reference's per-crop masks (global crop first).
     private func referenceValidPatches(mask: [Int], imageSize: (height: Int, width: Int)) -> (rows: Int, columns: Int) {
         let side = 32, h = imageSize.height / 448, w = imageSize.width / 448

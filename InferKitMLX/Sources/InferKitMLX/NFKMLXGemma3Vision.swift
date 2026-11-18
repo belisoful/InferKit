@@ -308,9 +308,30 @@ public final class NFKMLXGemma3Model {
 
     /// The projected soft tokens for an image, `[1, tokensPerImage, hidden]`.
     public func softTokens(for image: Any) throws -> MLXArray {
-        guard let vision, let projector else { throw NFKMLXError.unsupportedInput }
+        try softTokens(pixels: try preparedImage(image).pixels)
+    }
+
+    /// The image's pixels as the tower reads them, and their digest, which keys the image's positions in a kept
+    /// conversation.
+    func preparedImage(_ image: Any) throws -> (pixels: MLXArray, digest: UInt64) {
+        guard let vision else { throw NFKMLXError.unsupportedInput }
         let pixels = try NFKMLXGemma3ImageProcessor.pixelValues(from: image, imageSize: vision.configuration.imageSize)
+        return (pixels, NFKMLXVisionImage.digest(of: pixels))
+    }
+
+    /// The projected soft tokens for prepared pixels.
+    func softTokens(pixels: MLXArray) throws -> MLXArray {
+        guard let vision, let projector else { throw NFKMLXError.unsupportedInput }
         return projector(vision(pixels))
+    }
+
+    /// The key a conversation keeps `ids` under: the ids, with the image's soft-token positions keyed by the
+    /// digest of its pixels, so a prompt with another image shares nothing past the image's first position.
+    func conversationKey(tokens ids: [Int], digest: UInt64?) throws -> [Int] {
+        guard let digest else { return ids }
+        let soft = tokens.imageSoftToken
+        return try NFKMLXVisionChat.mediaKey(inputIds: ids, isMedia: { $0 == soft },
+                                             media: [(digest: digest, tokenCount: ids.filter { $0 == soft }.count)])
     }
 
     /// The decoder's input embeddings with the soft tokens spliced at the placeholder positions.
@@ -342,32 +363,40 @@ public final class NFKMLXGemma3Model {
     public func generate(tokens ids: [Int], image: Any? = nil,
                          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
                          onToken: (Int) -> Bool = { _ in true }) throws -> [Int] {
-        try generate(tokens: ids, image: image, options: options, promptCache: nil, onToken: onToken)
+        try generate(tokens: ids, image: try image.map { try preparedImage($0) }, options: options, promptCache: nil,
+                     onToken: onToken)
     }
 
     /// ``generate(tokens:image:options:onToken:)`` continuing from `promptCache`, which prefills only
-    /// what `ids` adds to the tokens it holds and records what this run feeds. A prompt with an image
-    /// empties it and runs on a cache of its own.
+    /// what `ids` adds to the tokens it holds and records what this run feeds.
+    ///
+    /// @discussion The cache holds the prompt's key (``conversationKey(tokens:digest:)``), so a prompt with the
+    /// same image continues past it and one with another image stops at its first position. The tokens of one
+    /// image attend to each other in both directions, so a resume inside the image starts at its first token.
+    /// The vision tower runs only where the positions to prefill reach the image.
     @discardableResult
-    func generate(tokens ids: [Int], image: Any?, options: NFKMLXGenerationOptions,
+    func generate(tokens ids: [Int], image: (pixels: MLXArray, digest: UInt64)?, options: NFKMLXGenerationOptions,
                   promptCache: NFKMLXGemma3PromptCache?, onToken: (Int) -> Bool) throws -> [Int] {
-        let soft = try image.map { try softTokens(for: $0) }
-        if soft != nil {
-            promptCache?.reset()
+        let key = try conversationKey(tokens: ids, digest: image?.digest)
+        let blocks = blockIds(for: ids)
+        var start = promptCache?.align(to: key) ?? 0
+        if let blocks, start > 0, start < ids.count, blocks[start] >= 0, blocks[start - 1] == blocks[start] {
+            let first = blocks[..<start].lastIndex { $0 != blocks[start] }.map { $0 + 1 } ?? 0
+            start = promptCache?.rollback(by: start - first) ?? 0
         }
-        let continued = soft == nil ? promptCache : nil
-        let start = continued?.align(to: ids) ?? 0
-        let cache = continued?.cache ?? NFKMLXGemma3Cache(layerCount: decoder.configuration.layerCount,
-                                                          slidingWindow: decoder.configuration.slidingWindow)
+        let cache = promptCache?.cache ?? NFKMLXGemma3Cache(layerCount: decoder.configuration.layerCount,
+                                                            slidingWindow: decoder.configuration.slidingWindow)
         if let seed = options.seed { MLXRandom.seed(seed) }
         let stops = options.stopTokens.isEmpty ? Set([tokens.endOfSequence, tokens.endOfTurn]) : options.stopTokens
 
         let fed = Array(ids[start...])
+        let soft = try fed.contains(tokens.imageSoftToken) ? image.map { try softTokens(pixels: $0.pixels) } : nil
         var hidden = decoder.hiddenStates(fromEmbeddings: fusedEmbeddings(tokens: fed, softTokens: soft),
-                                          cache: cache, blockIds: blockIds(for: ids))
+                                          cache: cache, blockIds: blocks)
         try verifyStream(clearing: promptCache)
-        continued?.record(fed)
-        if let draft, soft == nil, options.draftTokens > 0 {
+        let continued = promptCache
+        continued?.record(Array(key[start...]))
+        if let draft, image == nil, options.draftTokens > 0 {
             return try speculate(after: hidden, prompt: ids, cache: cache, promptCache: continued, draft: draft,
                                  options: options, stops: stops, onToken: onToken)
         }

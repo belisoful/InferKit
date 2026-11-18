@@ -42,25 +42,25 @@ public extension NFKMLXDeepSeekNet {
     }
 
     /// ``generate(prompt:embeddings:images:options:onToken:)`` continuing a conversation's kept
-    /// prefill where the prompt extends it, and leaving `promptCache` holding this prompt's prefill.
-    /// A prompt with pictures empties it and prefills from the start.
-    internal func generate(prompt: [Int], embeddings: MLXArray?, images: MLXArray?,
+    /// prefill where the prompt's `key` extends it, and leaving `promptCache` holding this prompt's
+    /// prefill. The key is the prompt with each picture's positions keyed by a digest of its features
+    /// (``NFKMLXDeepSeekBackend``), so a prompt with the same pictures continues past them and one with
+    /// other pictures prefills from the start.
+    internal func generate(prompt: [Int], key: [Int]? = nil, embeddings: MLXArray?, images: MLXArray?,
                            options: NFKMLXGenerationOptions, promptCache: NFKMLXDeepSeekPromptCache?,
                            onToken: ((Int) -> Bool)?) -> [Int] {
         guard !prompt.isEmpty else { return [] }
+        let key = key ?? prompt
         if let seed = options.seed { MLXRandom.seed(seed) }
 
-        if embeddings != nil {
-            promptCache?.reset()
-        }
-        let continued = embeddings == nil ? promptCache : nil
-        let (cache, start) = continued?.begin(prompt) ?? (NFKMLXDeepSeekCache(configuration), 0)
+        let continued = promptCache
+        let (cache, start) = continued?.begin(key) ?? (NFKMLXDeepSeekCache(configuration), 0)
         // Only the prompt carries pictures. A token the model produces is text, so every step after
         // this one embeds its own id and marks nothing, which is what holds images to the prompt.
-        var logits = prefill(Array(prompt[start...]), embeddings: embeddings, images: images, cache: cache,
-                             chunkSize: options.prefillChunkSize)
+        var logits = prefill(Array(prompt[start...]), embeddings: embeddings.map { $0[0..., start...] },
+                             images: images.map { $0[0..., start...] }, cache: cache, chunkSize: options.prefillChunkSize)
         eval(logits)
-        continued?.finish(prompt, cache: cache)
+        continued?.finish(key, cache: cache)
         var produced = [Int]()
         let cursor = options.constraint?.makeCursor()
 
@@ -391,10 +391,10 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             embeddings = inputs.embeddings
             spanMask = inputs.images
         }
-        let conversation = NFKMLXConversation.name(of: request)
-        let (produced, cached) = generate(promptTokens, embeddings: embeddings, images: spanMask, options: options,
-                                          conversation: conversation,
-                                          reuses: NFKMLXConversation.reuses(request) && (conversation != nil || embeddings == nil))
+        let key = Self.conversationKey(promptTokens, spans: spans ?? [])
+        let (produced, cached) = generate(promptTokens, key: key, embeddings: embeddings, images: spanMask, options: options,
+                                          conversation: NFKMLXConversation.name(of: request),
+                                          reuses: NFKMLXConversation.reuses(request))
         var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map(NSNumber.init(value:))),
                                                 reasoning: "", request: request, format: toolCallFormat, source: identifier)
         outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
@@ -490,7 +490,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
 
     /// One generation at a time. A run threads its own cache through the shared decoder, so two
     /// interleaving their steps would read each other's positions.
-    private func generate(_ tokens: [Int], embeddings: MLXArray? = nil, images: MLXArray? = nil,
+    private func generate(_ tokens: [Int], key: [Int], embeddings: MLXArray? = nil, images: MLXArray? = nil,
                           options: NFKMLXGenerationOptions, conversation: String?,
                           reuses: Bool) -> (produced: [Int], cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
@@ -506,7 +506,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         let configuration = holder.net.configuration
         resolveSpill()
         let (name, kept) = conversations.conversation(
-            named: conversation, reuses: reuses, prompt: tokens, signature: "deepseek",
+            named: conversation, reuses: reuses, prompt: key, signature: "deepseek",
             make: { NFKMLXDeepSeekPromptCache(configuration: configuration) },
             read: { url, record in try NFKMLXDeepSeekPromptCache.load(from: url, tokens: record.tokens, configuration: configuration) })
         let promptCache = name == nil ? nil : kept
@@ -515,9 +515,24 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             conversations.finish(name, failed: NFKMLXErrorScope.hasFailed, afforded: NFKMLXConversationBudget.afforded(
                 info: modelInfo, runBytes: NFKMLXConversationBudget.runBytes(info: modelInfo, positions: options.contextWindow)), spills: true)
         }
-        let produced = holder.net.generate(prompt: tokens, embeddings: embeddings, images: images,
+        let produced = holder.net.generate(prompt: tokens, key: key, embeddings: embeddings, images: images,
                                            options: resolved, promptCache: promptCache, onToken: nil)
         return (produced, promptCache?.sharedPrefixLength ?? 0)
+    }
+
+    /// The key a conversation keeps `tokens` under: each picture's span positions keyed by a digest of the
+    /// span's aligned features and the position's place in the span, so a prompt with another picture there
+    /// continues nothing past it.
+    static func conversationKey(_ tokens: [Int], spans: [NFKMLXDeepSeekImageStack.Span]) -> [Int] {
+        var key = tokens
+        for span in spans {
+            let digest = NFKMLXVisionImage.digest(of: span.aligned)
+            for (index, slot) in span.slots.enumerated() where slot.position < key.count {
+                let mixed = digest &+ UInt64(index) &* 0x9E37_79B9_7F4A_7C15
+                key[slot.position] = -1 - Int(truncatingIfNeeded: mixed >> 1)
+            }
+        }
+        return key
     }
 
     /// Settles the spill directory, defaulting it from the release on first use.

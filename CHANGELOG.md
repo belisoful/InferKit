@@ -27,6 +27,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Gemma 3, 3n, and 4, Phi-4-multimodal, and DeepSeek continue conversations with images and audio
+
+- A prompt with a picture or a clip continues a kept conversation as a text prompt does: the media's positions are
+  kept under digests of their pixels or features, so a follow-up about the same media prefills only what it adds,
+  keyed or not, and one with other media continues nothing past the first position where they differ. Where a
+  medium's token count is known before its tower (Gemma 3, 3n, and Gemma 4's pictures, Phi-4-multimodal), a kept
+  medium does not run through its tower again.
+- Gemma 4's image and audio backend (`NFKMLXGemma4MultimodalBackend`) keeps conversations, with the conversation
+  API the text backends carry, and takes `NFKParameterConversationKey`; so does `NFKMLXPhi4MMBackend`, whose
+  conversation starts over when a turn runs another modality's adapter.
+
 #### Qwen3-VL, Pixtral, and SmolVLM2 chat over images and continue conversations
 
 - Their backends (`inferenceBackend()`, `NFKMLXVisionChatBackend`) take a prompt or a conversation under
@@ -88,8 +99,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   further back than the sliding window too, resumes there exactly.
 - The conversations share a budget the memory beside the model affords (`conversationCacheByteBudget`), and the
   ones it lets go, or that `releaseIdleConversationCaches` or an unload releases, are written to
-  `conversationSpillDirectoryURL` and read back by a later request. A prompt with an image or a clip keeps nothing,
-  and a model that holds adapters writes nothing to disk.
+  `conversationSpillDirectoryURL` and read back by a later request. A model that holds adapters writes nothing to
+  disk.
 
 #### TRELLIS generates a 3D object from an image or a prompt
 

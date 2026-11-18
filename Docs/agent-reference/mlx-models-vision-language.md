@@ -893,6 +893,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   tower's features before the decoder graph, and the tests cap MLX's cache at 1 GiB, because freed
   buffers held in the cache count against the same working set. Measured 2026-09-24 under the swap
   guard: the conversation test peaks at 16.5 GB (it was killed at 24.6), the whole class at 18.4.
+- **Conversations (2026-11-17).** `NFKMLXPhi4MMBackend` keeps an `NFKMLXPromptCache` per conversation through
+  `NFKMLXConversationKeeper`. The key (`NFKMLXPhi4MMModel.conversationKey`) keys each image's and clip's
+  placeholder positions by a digest of its pixels or log-mel features, and the first position by the modality,
+  since the mixture of LoRAs computes every row under the modality's adapter: a turn in another modality starts
+  over. A resume inside a span steps back to its start; only the images and clips whose spans the fresh positions
+  hold run through their towers (each one's token count is known before its tower). Released at float32
+  (`NFKMLXPhi4MMTests/testAConversationAboutAPhotoContinuesFromTheKeptCache`): the follow-up reuses 570
+  positions and answers as a run that keeps nothing; a text-only turn after it reuses none.
 - **Reuse and customization**: the decoder is `NFKMLXLanguageNet` and the image encoder layers are the
   shared SigLIP blocks. The new work is LongRoPE, partial rotary, the NaViT embedding and mask, the HD
   layout, the Conformer, the mixture-of-LoRAs layer, and both preprocessors. The factories take a release

@@ -203,7 +203,11 @@ quarter of the floor.
   held). Because the cache keeps every layer whole, `align(to:)` rolls back to any held position:
   `NFKMLXGemma3nCache.rollback(by:)` moves the layers that store rows (the shared tail stores none), so a
   prompt parting further back than the sliding window still resumes, unlike Gemma 3's trimmed sliding cache.
-  A prompt with an image or a clip keeps nothing, since its placeholder ids are the same for any media.
+  **Media (2026-11-17):** a picture's and a clip's soft-token positions are keyed by SHA-256 digests of their
+  pixels and mel features (`conversationKey(tokens:pixels:mel:)`, the shared `NFKMLXVisionChat.mediaKey`), so a
+  prompt with other media shares nothing past the first position where they differ. The features fill whole
+  spans, so `align(to:limit:)` steps a resume that would land inside a span back to its start, and a tower runs
+  only where the fresh positions reach its span (`generate(tokens:pixels:mel:options:promptCache:onToken:)`).
   Parity: `NFKMLXGemma3nConversationTests/testTheReleasedDecoderContinuesATurnAsAFullRerunDoes`
   (`IK_PARITY_GEMMA3N_CONVERSATION`, oracle mode `gemma3n_conversation`, gemma env): the float32 E2B's second
   turn (147 tokens) resumed at 129 and gave transformers 5.16's full re-run at worst logit cosine
@@ -487,7 +491,12 @@ quarter of the floor.
   store nothing), else rolls the full layers back to the newest snapshot inside the shared prefix and
   restores the sliding rows from it. Gemma 4's template drops an earlier turn's thinking, so a follow-up
   parts at the last generation prompt: a reply shorter than the window rolls back, a longer one resumes
-  from that snapshot. The multimodal backend decodes through the cache but keeps no conversations.
+  from that snapshot. The multimodal backend (`NFKMLXGemma4MultimodalBackend`, 2026-11-17) keeps
+  `NFKMLXGemma4Conversation`s too, the image's and the clip's placeholder positions keyed by digests. A prepared
+  image (`NFKMLXGemma4ConditionalGeneration.preparedImage`) states its soft-token count before the tower runs
+  (the pooled cells a patch reaches, over patches / kernel²), so a kept image is not encoded again; a clip's
+  count comes from its tower, which runs. The fused prefill is causal, so a resume inside a span takes that
+  medium's soft tokens from the first position it holds.
   Parity: `NFKMLXGemma4CacheTests/testTheReleasedDecoderContinuesATurnAsAFullRerunDoes`
   (`IK_PARITY_GEMMA4_CONVERSATION`, oracle mode `gemma4_conversation`, gemma env; the E2B validation release
   carries no chat template, so the oracle renders the turn format the port does): float32 E2B, turn 2 (151

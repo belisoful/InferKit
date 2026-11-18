@@ -16357,6 +16357,13 @@
           "kind" : "integer",
           "stage" : "request",
           "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         }
       ],
       "outputModalities" : [
@@ -37383,6 +37390,13 @@
           "kind" : "integer",
           "stage" : "request",
           "title" : "Seed"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         }
       ],
       "outputModalities" : [

@@ -133,8 +133,25 @@ public final class NFKMLXGemma4ConditionalGeneration {
     /// placeholders for. The pooled cells only the processor's padding reaches are dropped, as the
     /// reference's `Gemma4VisionModel` strips them after its pooler.
     public func visionSoftTokens(for image: CGImage) -> MLXArray? {
-        guard let visionTower, let visionEmbedder else { return nil }
+        preparedImage(image).flatMap(visionSoftTokens(prepared:))
+    }
+
+    /// An image as the vision tower reads it: its patches and their positions, how many soft tokens it yields
+    /// (the pooled cells a patch reaches, known before the tower runs), and a digest of its pixels; nil when no
+    /// vision tower is configured.
+    func preparedImage(_ image: CGImage) -> (pixels: MLXArray, positions: MLXArray, count: Int, digest: UInt64)? {
+        guard let visionTower else { return nil }
         let (pixels, positions) = imageProcessor.process(image)
+        let kernel = visionTower.configuration.poolingKernelSize
+        let count = Self.pooledCells(positionIds: positions, kernel: kernel,
+                                     cellCount: pixels.shape[0] / (kernel * kernel)).count
+        return (pixels, positions, count, NFKMLXVisionImage.digest(of: pixels))
+    }
+
+    /// The projected vision soft tokens of a prepared image, `[count, hidden]`.
+    func visionSoftTokens(prepared: (pixels: MLXArray, positions: MLXArray, count: Int, digest: UInt64)) -> MLXArray? {
+        guard let visionTower, let visionEmbedder else { return nil }
+        let (pixels, positions) = (prepared.pixels, prepared.positions)
         let soft = visionTower.softTokens(pixels.reshaped([1, pixels.shape[0], pixels.shape[1]]),
                                           positionIds: positions.reshaped([1, positions.shape[0], 2]))
         let projected = visionEmbedder(soft).reshaped([-1, decoderHidden])
@@ -165,13 +182,25 @@ public final class NFKMLXGemma4ConditionalGeneration {
 
     /// The projected audio soft tokens for a waveform, or nil when no audio tower is configured.
     public func audioSoftTokens(for waveform: [Float]) -> MLXArray? {
+        preparedAudio(waveform)?.soft
+    }
+
+    /// A clip's projected soft tokens and a digest of the features the tower read; nil when no audio tower is
+    /// configured.
+    func preparedAudio(_ waveform: [Float]) -> (soft: MLXArray, digest: UInt64)? {
         guard let audioTower, let audioEmbedder else { return nil }
         let features = featureExtractor.features(waveform)
         let encoded = audioTower(features.reshaped([1, features.shape[0], features.shape[1]]))
-        return audioEmbedder(encoded).reshaped([-1, decoderHidden])
+        return (audioEmbedder(encoded).reshaped([-1, decoderHidden]), NFKMLXVisionImage.digest(of: features))
     }
 
     private var decoderHidden: Int { decoder.configuration.hiddenSize }
+
+    /// The towers and embedders the chain holds, which a description of the model counts.
+    var towerModules: [Module] { [visionTower, visionEmbedder, audioTower, audioEmbedder].compactMap { $0 } }
+
+    /// The placeholder ids an image's and a clip's soft tokens take in a prompt.
+    var placeholderIds: (image: Int, audio: Int) { (imageTokenId, audioTokenId) }
 
     /// Greedy generation from an image and/or audio and a placeholder-carrying prompt, through the decoder's
     /// cache: the prompt, its soft tokens spliced in, prefills it, and each new token runs alone. The prompt

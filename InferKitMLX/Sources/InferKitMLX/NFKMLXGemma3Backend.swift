@@ -40,9 +40,10 @@ final class NFKGemma3CancelFlag: @unchecked Sendable {
 /// the reference processor places them. Returns `NFKOutputText`. `NFKParameterTemperature`,
 /// `NFKParameterTopP`, `NFKParameterMaxTokens`, and `NFKParameterSeed` override the defaults. A
 /// submitted job reports each token through `partialResult` and honors cancellation between tokens. A
-/// request that names its conversation under `NFKParameterConversationKey` continues that
-/// conversation's own cache and prefills only what its prompt adds; a request with an image starts
-/// the conversation's cache over.
+/// request continues the conversation its `NFKParameterConversationKey` names, or, naming none, the kept
+/// conversation its prompt continues furthest, and prefills only what its prompt adds. The image's positions
+/// are kept under a digest of its pixels, so a follow-up about the same image does not run the vision tower
+/// again, and one with another image continues nothing past the image's first position.
 @objc(NFKMLXGemma3Backend)
 public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     private let holder: NFKGemma3Holder
@@ -253,14 +254,15 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
                                                           source: identifier)
 
         let conversation = NFKMLXConversation.name(of: request)
-        // An image's placeholder ids are the same for every image, so an unnamed prompt with one matches nothing.
-        let reuses = NFKMLXConversation.reuses(request) && (conversation != nil || image == nil)
+        let reuses = NFKMLXConversation.reuses(request)
+        let prepared = try image.map { try model.preparedImage($0) }
+        let key = try model.conversationKey(tokens: ids, digest: prepared?.digest)
         generationLock.lock(); defer { generationLock.unlock() }
         let configuration = model.decoder.configuration
         resolveSpill()
         // A conversation's cache computed at other adapter strengths starts over.
         let (name, kept) = conversations.conversation(
-            named: conversation, reuses: reuses, prompt: ids, signature: "sliding \(configuration.slidingWindow)",
+            named: conversation, reuses: reuses, prompt: key, signature: "sliding \(configuration.slidingWindow)",
             usable: { $0.adapterStrengths == strengths },
             make: {
                 let made = NFKMLXGemma3PromptCache(kinds: configuration.layerTypes, slidingWindow: configuration.slidingWindow)
@@ -279,7 +281,7 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
         var produced = [Int]()
         // The held adapters read the run's strengths as each pass builds its graph.
         try NFKMLXAdapterRun.$strengths.withValue(strengths) {
-            try model.generate(tokens: ids, image: image, options: options, promptCache: promptCache) { token in
+            try model.generate(tokens: ids, image: prepared, options: options, promptCache: promptCache) { token in
                 produced.append(token)
                 return onToken?(token, produced) ?? true
             }

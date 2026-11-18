@@ -167,26 +167,34 @@ enum NFKMLXVisionPrompt {
 
 /// A generation through a kept conversation's cache over a prompt that splices image features in.
 enum NFKMLXVisionChat {
-    /// The positions each image's tokens take, in prompt order, and the key a conversation keeps the prompt
-    /// under: the ids, with each image-token position replaced by a negative id from the image's digest and
-    /// the token's place in the image, so a prompt with another image there shares nothing past it.
+    /// The key a conversation keeps the prompt under: the ids, with each image-token position replaced by a
+    /// negative id from the image's digest and the token's place in the image, so a prompt with another image
+    /// there shares nothing past it.
     static func key(inputIds: [Int], images: [NFKMLXVisionImage], imageTokenId: Int) throws -> [Int] {
+        try mediaKey(inputIds: inputIds, isMedia: { $0 == imageTokenId },
+                     media: images.map { (digest: $0.digest, tokenCount: $0.tokenCount) })
+    }
+
+    /// ``key(inputIds:images:imageTokenId:)`` for any media whose positions `isMedia` marks: the `n`th run of
+    /// `media[n].tokenCount` marked positions is keyed by `media[n].digest`, in prompt order.
+    static func mediaKey(inputIds: [Int], isMedia: (Int) -> Bool,
+                         media: [(digest: UInt64, tokenCount: Int)]) throws -> [Int] {
         var key = inputIds
-        var image = 0, within = 0
-        for position in inputIds.indices where inputIds[position] == imageTokenId {
-            guard image < images.count else {
-                throw NFKMLXError.unsupportedConfiguration("the prompt holds more image positions than its images fill")
+        var item = 0, within = 0
+        for position in inputIds.indices where isMedia(inputIds[position]) {
+            guard item < media.count else {
+                throw NFKMLXError.unsupportedConfiguration("the prompt holds more media positions than its media fill")
             }
-            let mixed = images[image].digest &+ UInt64(within) &* 0x9E37_79B9_7F4A_7C15
+            let mixed = media[item].digest &+ UInt64(within) &* 0x9E37_79B9_7F4A_7C15
             key[position] = -1 - Int(truncatingIfNeeded: mixed >> 1)
             within += 1
-            if within == images[image].tokenCount {
-                image += 1
+            if within == media[item].tokenCount {
+                item += 1
                 within = 0
             }
         }
-        guard image == images.count, within == 0 else {
-            throw NFKMLXError.unsupportedConfiguration("the prompt's image positions do not match its images")
+        guard item == media.count, within == 0 else {
+            throw NFKMLXError.unsupportedConfiguration("the prompt's media positions do not match its media")
         }
         return key
     }

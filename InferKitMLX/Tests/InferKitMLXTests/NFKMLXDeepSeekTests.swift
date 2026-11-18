@@ -3059,6 +3059,39 @@ final class NFKMLXDeepSeekTests: XCTestCase {
               + "\(span.plan.tokenCount) positions and generates \(whole.count) tokens")
     }
 
+    // A conversation's prefill keeps a picture's span under a digest of its features: the next turn with the same
+    // picture continues past it and answers as a fresh run, and a turn with another picture prefills from the start.
+    func testAConversationWithAPictureContinuesPastIt() throws {
+        try requireMLXRuntime()
+        let c = imageShaped
+        let net = NFKMLXDeepSeekNet(c, compressedTokens: oracleTokens)
+        let stack = NFKMLXDeepSeekImageStack(try XCTUnwrap(c.vision))
+        let (width, height) = (21, 13)
+        func picture(_ seed: Int) -> [UInt8] { (0 ..< (width * height * 3)).map { UInt8(($0 * 37 + seed * 11) % 256) } }
+        let text = [3, 9, 200, 14, 2, 7]
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 3
+
+        func turn(_ prompt: [Int], _ seed: Int, cache: NFKMLXDeepSeekPromptCache?) throws -> [Int] {
+            let (tokens, spans) = try stack.expanded(prompt, pictures: [(picture(seed), width, height)])
+            let inputs = stack.inputs(for: tokens, spans: spans) { net.embed($0) }
+            return net.generate(prompt: tokens, key: NFKMLXDeepSeekBackend.conversationKey(tokens, spans: spans),
+                                embeddings: inputs.embeddings, images: inputs.images, options: options,
+                                promptCache: cache, onToken: nil)
+        }
+        let cache = NFKMLXDeepSeekPromptCache(configuration: c)
+        let reply = try turn(text, 1, cache: cache)
+        let expandedCount = cache.tokens.count
+        let next = text + reply + Array(repeating: 5, count: Swift.max(c.minimumPrefillChunk, 4))
+        let continued = try turn(next, 1, cache: cache)
+        XCTAssertEqual(cache.sharedPrefixLength, expandedCount, "the first prompt, its picture included, is kept")
+        XCTAssertEqual(continued, try turn(next, 1, cache: nil), "the answer of a fresh run")
+
+        let parted = try turn(next, 2, cache: cache)
+        XCTAssertEqual(cache.sharedPrefixLength, 0, "another picture prefills from the start")
+        XCTAssertEqual(parted, try turn(next, 2, cache: nil))
+    }
+
     // The count has to agree, because a prompt that names two pictures and is handed one would
     // otherwise leave a span of placeholders holding nothing.
     func testAPictureCountThatDisagreesWithThePromptIsRefused() throws {

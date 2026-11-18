@@ -786,10 +786,11 @@ final class NFKMLXGemma3nPromptCache: NFKMLXConversationState {
     var allocatedBytes: Int { cache.allocatedBytes }
 
     /// Rolls the cache back to the longest prefix it shares with `prompt`, at most one short of the
-    /// prompt so a token runs through the model, and returns that prefix's length.
-    func align(to prompt: [Int]) -> Int {
+    /// prompt so a token runs through the model, and no further than `limit` allows of it, and returns that
+    /// prefix's length.
+    func align(to prompt: [Int], limit: (Int) -> Int = { $0 }) -> Int {
         defer { lastPromptLength = prompt.count }
-        let shared = resumablePosition(for: prompt)
+        let shared = limit(resumablePosition(for: prompt))
         guard cache.rollback(by: tokens.count - shared) else {
             reset()
             return 0

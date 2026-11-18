@@ -550,8 +550,12 @@ attention and feed-forward.
   `fixBudget`) and `NFKMLXConversationBudget` (weights, reserve, and `NFKModelInfoKeyValueBytesPerToken` at
   the window or context length). Their records: Gemma 3 any position (`full.`/`sliding.` exports; signature
   the sliding window), DeepSeek and Granite only the last prompt's end (`resumablePositions` empty; DeepSeek's
-  `Snapshot` arrays, Granite's Mamba and attention arrays). A keyless Gemma 3 prompt with an image reuses
-  nothing. Gemma 3 is built without its release URL, so its spill is off until set.
+  `Snapshot` arrays, Granite's Mamba and attention arrays). A Gemma 3 image's soft tokens and a DeepSeek
+  picture's span are keyed by digests (the pixels; the span's aligned features), so a prompt with media, keyed or
+  not, reuses what it shares (2026-11-17). Gemma 3's image block attends both ways, so a resume inside it steps
+  back to its first token (`NFKMLXGemma3PromptCache.rollback(by:)`), and the tower runs only where the fresh
+  positions reach the image. DeepSeek resumes only at the last prompt's end, past every picture, and its tower
+  runs each request. Gemma 3 is built without its release URL, so its spill is off until set.
   `NFKMLXLanguageBackend`,
   `NFKMLXGemma3Backend`, `NFKMLXDeepSeekBackend`, `NFKMLXGraniteBackend`, and the cached
   `NFKMLXDecoderBackend` (Qwen3.5/3.8, below), `NFKMLXGemma3nBackend`, `NFKMLXGemmaBackend` (Gemma 4,

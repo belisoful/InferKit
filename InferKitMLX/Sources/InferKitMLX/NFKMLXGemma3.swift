@@ -365,6 +365,19 @@ final class NFKMLXGemma3PromptCache: NFKMLXConversationState {
     /// Records tokens whose rows a pass has just written.
     func record(_ fed: [Int]) { tokens.append(contentsOf: fed) }
 
+    /// Discards the newest `count` positions, or empties the cache where the window no longer holds them.
+    /// Answers the positions it keeps.
+    func rollback(by count: Int) -> Int {
+        guard count > 0 else { return tokens.count }
+        guard cache.rollback(by: count, kinds: kinds) else {
+            reset()
+            return 0
+        }
+        tokens.removeLast(count)
+        sharedPrefixLength = Swift.min(sharedPrefixLength, tokens.count)
+        return tokens.count
+    }
+
     /// Empties the cache.
     func reset() {
         cache = NFKMLXGemma3Cache(layerCount: kinds.count, slidingWindow: slidingWindow)

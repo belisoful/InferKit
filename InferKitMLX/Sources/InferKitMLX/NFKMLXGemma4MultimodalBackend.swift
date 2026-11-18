@@ -65,6 +65,37 @@ final class NFKGemma4MultimodalModel: @unchecked Sendable {
     /// The prompt as Gemma 4's chat template renders it, with the media placed at the start of the
     /// first user turn the way the release's processor expands it: `<|image>`, one `<|image|>` per soft
     /// token, `<image|>`, and the same for audio. A raw prompt is the one user turn.
+    /// The modules whose weights the model holds.
+    var modules: [Module] { [decoder] + chain.towerModules }
+
+    /// An image prepared for the tower, with its soft-token count and pixel digest.
+    func preparedImage(_ image: CGImage) throws -> (pixels: MLXArray, positions: MLXArray, count: Int, digest: UInt64) {
+        guard let prepared = chain.preparedImage(image) else {
+            throw NFKMLXError.unsupportedConfiguration("the release carries no vision tower")
+        }
+        return prepared
+    }
+
+    /// A clip's soft tokens and the digest of its features.
+    func preparedAudio(_ waveform: [Float]) throws -> (soft: MLXArray, digest: UInt64) {
+        guard let prepared = chain.preparedAudio(waveform) else {
+            throw NFKMLXError.unsupportedConfiguration("the release carries no audio tower")
+        }
+        return prepared
+    }
+
+    /// The key a conversation keeps `tokens` under: the ids, with the image's and the clip's placeholder
+    /// positions keyed by their digests.
+    func conversationKey(_ tokens: [Int], image: UInt64?, audio: UInt64?) throws -> [Int] {
+        var key = tokens
+        for (digest, token) in [(image, chain.placeholderIds.image), (audio, chain.placeholderIds.audio)] {
+            guard let digest else { continue }
+            key = try NFKMLXVisionChat.mediaKey(inputIds: key, isMedia: { $0 == token },
+                                                media: [(digest, key.filter { $0 == token }.count)])
+        }
+        return key
+    }
+
     func promptText(_ request: NFKInferenceRequest, imageTokens: Int?, audioTokens: Int?) throws -> String {
         var media = ""
         if let imageTokens {
@@ -95,7 +126,7 @@ extension NFKMLXGemmaLanguage {
 
     /// The request parameters the multimodal backend reads.
     static let multimodalParameterKeys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
-                                                        NFKParameterSeed]
+                                                        NFKParameterSeed, NFKParameterConversationKey]
 
     /// The samples an `NFKAudioAsset` or raw WAV bytes carry, resampled to 16 kHz, the rate the audio
     /// tower is trained at.
@@ -118,59 +149,10 @@ extension NFKMLXGemmaLanguage {
     /// the token counts under `NFKOutputUsage`. Parameters: `NFKParameterTemperature` (0, greedy),
     /// `NFKParameterMaxTokens` (unset, the room the context leaves), and `NFKParameterSeed`. The prompt, its
     /// soft tokens spliced in, prefills the decoder's key-value cache, and each new token runs alone.
-    static func multimodalBackend(_ model: NFKGemma4MultimodalModel) -> any NFKInferenceBackend {
-        NFKMLXGenerationBackend(identifier: gemmaMultimodalModelName, inputKeys: multimodalInputKeys,
-                                parameterKeys: multimodalParameterKeys,
-                                outputKeys: [NFKOutputText, NFKOutputUsage, NFKOutputFinishReason]) { request, job in
-            try NFKMLXUsage.refuseReasoningEffort(in: request, model: gemmaMultimodalModelName)
-            var sampling = NFKMLXStepSampling(release: model.releaseSampling)
-            sampling.read(request)
-            let maximumTokens = NFKMLXGenerationBackend.number(request, NFKParameterMaxTokens)?.intValue
-            let seed = NFKMLXGenerationBackend.number(request, NFKParameterSeed)?.uint64Value
-
-            let visionSoft = try NFKMLXGenerationBackend.image(request, NFKInputImage).map(model.visionSoftTokens)
-            let audioSoft = try waveform(request).map(model.audioSoftTokens)
-            if request.input(forKey: NFKInputAudio) != nil, audioSoft == nil {
-                throw NFKMLXError.unsupportedInput
-            }
-            let text = try model.promptText(request, imageTokens: visionSoft?.dim(0), audioTokens: audioSoft?.dim(0))
-            let promptTokens = model.tokenizer.encode(text)
-            let stops = Set([model.tokenizer.id(forToken: "<turn|>"), model.tokenizer.id(forToken: "<eos>")]
-                .compactMap { $0 })
-
-            let limit = try NFKMLXContextRoom.bounded(maximumTokens, promptTokens: promptTokens.count,
-                                                      contextLength: model.contextLength, source: gemmaMultimodalModelName)
-            // The prompt, its soft tokens spliced in, prefills the cache; each new token is text and runs alone.
-            let cached = NFKMLXGemmaLanguage.cachedGeneration(model.decoder)
-            let cache = cached.makeCache()
-            let (embeddings, ids) = model.chain.fusedEmbeddings(tokens: promptTokens, visionSoftTokens: visionSoft,
-                                                                audioSoftTokens: audioSoft)
-            var logits = limit > 0
-                ? cached.prefill(ids.asArray(Int32.self).map(Int.init), embeddings: embeddings, cache: cache) : nil
-            var produced = [Int]()
-            for step in 0 ..< max(limit, 0) {
-                if job.status == .cancelled { return nil }
-                guard let current = logits else { break }
-                let next = sampling.next(current, seed: seed, step: step)
-                if let stream = model.decoder.layerStream, let failure = stream.readFailure {
-                    stream.clearFailure()
-                    throw failure
-                }
-                if stops.contains(next) || NFKMLXErrorScope.hasFailed { break }
-                produced.append(next)
-                job.reportProgress(min(Double(produced.count) / Double(max(limit, 1)), 0.99))
-                logits = step + 1 < limit ? cached.step(MLXArray(Int32(next)), cache: cache) : nil
-            }
-            return NFKInferenceResult(outputs: [
-                NFKOutputText: model.tokenizer.decode(produced, skipSpecial: true),
-                NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
-                                                    outputTokens: produced.count, reasoningTokens: nil),
-                NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit),
-            ])
-        }
+    static func multimodalBackend(_ model: NFKGemma4MultimodalModel, releaseDirectoryURL: URL? = nil) -> any NFKInferenceBackend {
+        NFKMLXGemma4MultimodalBackend(model: model, releaseDirectoryURL: releaseDirectoryURL)
     }
 
-    /// The vision tower geometry a release's `vision_config` states.
     static func visionConfiguration(_ json: [String: Any]) -> NFKMLXGemma4VisionConfiguration {
         let base = NFKMLXGemma4VisionConfiguration()
         func integer(_ key: String, _ fallback: Int) -> Int { (json[key] as? NSNumber)?.intValue ?? fallback }
@@ -293,7 +275,7 @@ extension NFKMLXGemmaLanguage {
             chatTemplate: NFKMLXLanguage.chatTemplate(inDirectory: directoryURL),
             contextLength: ((json["text_config"] as? [String: Any])?["max_position_embeddings"] as? NSNumber)?.intValue,
             releaseSampling: NFKMLXReleaseSampling(directoryURL: directoryURL))
-        return multimodalBackend(model)
+        return multimodalBackend(model, releaseDirectoryURL: directoryURL)
     }
 
     /// ``gemmaMultimodalBackend(directoryURL:residency:)`` under ``NFKMLXResidency/automatic``.
@@ -337,4 +319,267 @@ extension NFKMLXGemmaLanguage {
             try gemmaMultimodalBackend(directoryURL: $0)
         }
     }
+}
+
+/// Text generation from a Gemma 4 release with a picture or a clip in the prompt.
+///
+/// @discussion The backend reads `NFKInputPrompt` or `NFKInputMessages`, a `CGImage` or texture under
+/// `NFKInputImage`, and a recording under `NFKInputAudio`; the media sit at the start of the first user turn.
+/// The prompt, its soft tokens spliced in, prefills the decoder's cache, and each new token runs alone. A request
+/// continues the conversation its `NFKParameterConversationKey` names, or, naming none, the kept conversation its
+/// prompt continues furthest, and prefills only what it adds. The image's and the clip's positions are kept under
+/// digests of their pixels and features, so a follow-up about the same picture does not run the vision tower
+/// again (a clip's tower runs, since its soft-token count comes from it), and one with other media continues
+/// nothing past the first position where they differ. Introduced in InferKit 0.4.0.
+public final class NFKMLXGemma4MultimodalBackend: NSObject, NFKInferenceBackend {
+    let model: NFKGemma4MultimodalModel
+    private let releaseDirectoryURL: URL?
+    private let modelInfoCache = NFKMLXModelInfoCache()
+    /// One generation at a time: a run moves a conversation's cache through the shared decoder.
+    private let generationLock = NSLock()
+    /// The conversations' caches, read and written under `generationLock`.
+    private let conversations = NFKMLXConversationKeeper<NFKMLXGemma4Conversation>(byteBudget: 0)
+
+    init(model: NFKGemma4MultimodalModel, releaseDirectoryURL: URL? = nil) {
+        self.model = model
+        self.releaseDirectoryURL = releaseDirectoryURL
+        super.init()
+    }
+
+    public var isReady: Bool { true }
+    public var backendIdentifier: String { NFKMLXGemmaLanguage.gemmaMultimodalModelName }
+    private var identifier: String { backendIdentifier }
+    /// The model holds no adapters.
+    private var adapterStrengths: [Float] { [] }
+
+    /// The model's parameter count, weight bytes, precision, and quantization, with the bytes its release
+    /// directory occupies on disk, the context length, and the residency (`NFKModelInfo*` keys).
+    /// Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        modelInfoCache.value {
+            var info = NFKMLXModelDescription.info(of: model.modules, releaseDirectoryURL: releaseDirectoryURL)
+            info[NFKModelInfoResidency] = model.decoder.layerStream != nil ? NFKModelResidencyStreamed : NFKModelResidencyResident
+            info[NFKModelInfoContextLength] = info[NFKModelInfoContextLength] ?? model.contextLength
+            return info
+        }
+    }
+
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { NFKMLXGemmaLanguage.multimodalParameterKeys }
+
+    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> { NFKMLXGemmaLanguage.multimodalInputKeys }
+
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage, NFKOutputFinishReason] }
+
+    public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
+        var sampling = NFKMLXStepSampling(release: model.releaseSampling)
+        sampling.read(request)
+        let maximumTokens = NFKMLXGenerationBackend.number(request, NFKParameterMaxTokens)?.intValue
+        let seed = NFKMLXGenerationBackend.number(request, NFKParameterSeed)?.uint64Value
+
+        let image = try NFKMLXGenerationBackend.image(request, NFKInputImage).map { try model.preparedImage($0) }
+        let waveform = NFKMLXGemmaLanguage.waveform(request)
+        if request.input(forKey: NFKInputAudio) != nil, waveform == nil {
+            throw NFKMLXError.unsupportedInput
+        }
+        let audio = try waveform.map { try model.preparedAudio($0) }
+        let text = try model.promptText(request, imageTokens: image?.count, audioTokens: audio?.soft.dim(0))
+        let promptTokens = model.tokenizer.encode(text)
+        let key = try model.conversationKey(promptTokens, image: image?.digest, audio: audio?.digest)
+        let stops = Set([model.tokenizer.id(forToken: "<turn|>"), model.tokenizer.id(forToken: "<eos>")].compactMap { $0 })
+        let limit = try NFKMLXContextRoom.bounded(maximumTokens, promptTokens: promptTokens.count,
+                                                  contextLength: model.contextLength, source: identifier)
+        var produced = [Int]()
+        var cached = 0
+        if limit > 0 {
+            generationLock.lock(); defer { generationLock.unlock() }
+            (produced, cached) = try generate(promptTokens, key: key, image: image, audio: audio?.soft, request: request,
+                                              sampling: sampling, limit: limit, seed: seed, stops: stops)
+        }
+        return NFKInferenceResult(outputs: [
+            NFKOutputText: model.tokenizer.decode(produced, skipSpecial: true),
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
+                                                outputTokens: produced.count, reasoningTokens: nil),
+            NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit),
+        ])
+    }
+
+    /// Generation through the conversation `request` names or `key` continues: the cache resumes as far as the
+    /// conversation reaches, the rest of the prompt prefills with the soft tokens of the media whose positions it
+    /// holds, from the first of them it holds, pausing to snapshot the sliding rows at the last turn's start and
+    /// the prompt's end, and each new token runs alone. Runs under `generationLock`. Answers the tokens produced
+    /// and how many prompt positions the cache already held.
+    private func generate(_ promptTokens: [Int], key: [Int],
+                          image: (pixels: MLXArray, positions: MLXArray, count: Int, digest: UInt64)?, audio: MLXArray?,
+                          request: NFKInferenceRequest, sampling: NFKMLXStepSampling, limit: Int, seed: UInt64?,
+                          stops: Set<Int>) throws -> (produced: [Int], cached: Int) {
+        let cached = NFKMLXGemmaLanguage.cachedGeneration(model.decoder)
+        let c = cached.configuration
+        conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+        let (name, state) = conversations.conversation(
+            named: NFKMLXConversation.name(of: request), reuses: NFKMLXConversation.reuses(request), prompt: key,
+            signature: "gemma4 sliding \(c.slidingWindow)",
+            make: { NFKMLXGemma4Conversation(layerTypes: c.layerTypes, slidingWindow: c.slidingWindow,
+                                             storingLayers: c.firstSharedLayer) },
+            read: { url, record in
+                try NFKMLXGemma4Conversation.load(from: url, tokens: record.tokens, layerTypes: c.layerTypes,
+                                                  slidingWindow: c.slidingWindow, storingLayers: c.firstSharedLayer)
+            })
+        var failed = true
+        defer {
+            conversations.finish(name, failed: failed, afforded: NFKMLXConversationBudget.afforded(
+                info: modelInfo, runBytes: Self.keyValueBytes(c, positions: model.contextLength)), spills: true)
+        }
+        let start = state.resume(for: key)
+        let fresh = Array(promptTokens[start...])
+        // A medium's soft tokens from the first of its positions the fresh part holds; nil where it holds none.
+        func soft(_ token: Int, _ all: () -> MLXArray?) -> MLXArray? {
+            guard fresh.contains(token), let whole = all() else { return nil }
+            let before = promptTokens[..<start].filter { $0 == token }.count
+            return before > 0 ? whole[before...] : whole
+        }
+        let ids = model.chain.placeholderIds
+        let visionSoft = soft(ids.image) { image.flatMap { model.chain.visionSoftTokens(prepared: $0) } }
+        let audioSoft = soft(ids.audio) { audio }
+        let (embeddings, padded) = model.chain.fusedEmbeddings(tokens: fresh, visionSoftTokens: visionSoft,
+                                                               audioSoftTokens: audioSoft)
+        let turnStart = model.tokenizer.id(forToken: "<|turn>").flatMap { promptTokens.lastIndex(of: $0) }
+        let snapshotAt = name == nil ? [] : NFKMLXGemma4Conversation.snapshotPositions(
+            start: start, end: promptTokens.count, turnStart: turnStart)
+        var logits = cached.prefill(padded.asArray(Int32.self).map(Int.init), embeddings: embeddings, cache: state.cache,
+                                    stops: snapshotAt) { _ in state.snapshot() }
+        try verify()
+        var produced = [Int]()
+        var fed = [Int]()
+        for step in 0 ..< limit {
+            let next = sampling.next(logits, seed: seed, step: step)
+            try verify()
+            if stops.contains(next) || NFKMLXErrorScope.hasFailed { break }
+            produced.append(next)
+            guard step + 1 < limit else { break }
+            logits = cached.step(MLXArray(Int32(next)), cache: state.cache)
+            fed.append(next)
+        }
+        guard !NFKMLXErrorScope.hasFailed else { return (produced, start) }
+        state.record(Array(key[start...]) + fed)
+        failed = false
+        return (produced, start)
+    }
+
+    /// Throws a failed read of a streamed layer.
+    private func verify() throws {
+        if let stream = model.decoder.layerStream, let failure = stream.readFailure {
+            stream.clearFailure()
+            throw failure
+        }
+    }
+
+    /// The bytes one run's keys and values take over `positions` positions: every position for the full
+    /// layers, the window for the sliding ones, the shared tail storing none.
+    static func keyValueBytes(_ c: NFKMLXGemmaConfiguration, positions: Int?) -> Int {
+        (0 ..< c.firstSharedLayer).reduce(0) { total, layer in
+            let kind = c.layerTypes[layer]
+            let rows = kind == .full ? (positions ?? 0) : Swift.min(positions ?? 0, c.slidingWindow)
+            return total + 2 * c.keyValueHeadCount(for: kind) * c.headDimensions(for: kind) * rows * 4
+        }
+    }
+
+    // MARK: Conversation caches
+
+    /// The bytes the conversations' caches may hold together.
+    ///
+    /// @discussion A request continues the conversation its `NFKParameterConversationKey` names, or, naming
+    /// none, the kept conversation its prompt continues furthest, so a follow-up turn prefills only what it
+    /// adds. When the caches outgrow the budget, the least recently used conversations are written to
+    /// ``conversationSpillDirectoryURL`` and dropped, never the one a request just ran. Until it is set, the
+    /// budget is what the memory planned beside the model affords after one run's cache at the context
+    /// length, recomputed each run; setting it fixes it, and lowering it drops down to it at once. Introduced
+    /// in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversations.states.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.fixBudget(newValue)
+        }
+    }
+
+    /// How many conversations hold a cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.count
+    }
+
+    /// The bytes the conversations' caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.heldBytes
+    }
+
+    /// Drops one named conversation's cache, in memory and on disk. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.remove(conversation)
+        conversations.spill?.remove(named: conversation)
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's cache in memory; spilled ones stay on disk. Introduced in InferKit 0.4.0.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.removeAll()
+        conversations.refresh()
+    }
+
+    /// Writes every conversation's cache to the spill directory and drops it from memory when no run is in
+    /// progress, and returns the bytes they held; returns 0 at once while a run holds them.
+    /// `NFKInferenceServer` calls it to relieve memory, and the reloadable backend before it unloads the model.
+    /// Introduced in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        return conversations.releaseAll(spills: adapterStrengths.isEmpty)
+    }
+
+    /// The directory conversations the memory budget lets go are written to, so a later request continues one
+    /// without its prefill, after an unload or a restart too; nil writes none. A backend over a release
+    /// directory defaults to a directory under the user's caches that only the same release and weights read.
+    /// A model that holds adapters writes none. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillDirectoryURL: URL? {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.directory
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.setSpillDirectory(newValue)
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk; the least recently written go first past it.
+    /// Defaults to 8 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            conversations.spill?.byteBudget = newValue
+        }
+    }
+
+    /// The conversation caches as of the last run or change: `conversation_caches`,
+    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it under
+    /// the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] { conversations.status }
 }

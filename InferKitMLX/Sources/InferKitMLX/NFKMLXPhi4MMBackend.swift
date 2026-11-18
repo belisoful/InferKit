@@ -162,19 +162,23 @@ public final class NFKMLXPhi4MMModel: @unchecked Sendable {
     }
 
     /// Each clip's log-mel features.
-    private static func logMels(_ audios: [NFKMLXPhi4MMAudioInput]) throws -> [MLXArray] {
+    static func logMels(_ audios: [NFKMLXPhi4MMAudioInput]) throws -> [MLXArray] {
         try audios.map { try NFKMLXPhi4MMAudioFeatures.logMel($0.samples, sampleRate: $0.sampleRate) }
     }
 
     /// A conversation's prompt ids, each picture's and each clip's placeholder run at the length its
     /// features take.
-    private func promptIds(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput], mels: [MLXArray]) throws -> [Int] {
+    func promptIds(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput], mels: [MLXArray]) throws -> [Int] {
         try promptIds(messages: messages, imageTokens: images.map(\.tokenCount),
                       audioTokens: mels.map { NFKMLXPhi4MMAudioFeatures.tokenCount(frames: $0.dim(0)) })
     }
 
     /// The input tokens a conversation costs, the ids ``prepare(messages:images:audios:)`` builds,
     /// without running a tower.
+    func promptIds(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput], audios: [NFKMLXPhi4MMAudioInput]) throws -> [Int] {
+        try promptIds(messages: messages, images: images, mels: Self.logMels(audios))
+    }
+
     func promptTokenCount(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput],
                           audios: [NFKMLXPhi4MMAudioInput]) throws -> Int {
         try promptIds(messages: messages, images: images, mels: Self.logMels(audios)).count
@@ -200,6 +204,94 @@ public final class NFKMLXPhi4MMModel: @unchecked Sendable {
     }
 
     /// The answer's ids and the prompt's length, which the backend reports as usage.
+    /// ``answer(messages:images:audios:options:onToken:)`` continuing `promptCache`.
+    ///
+    /// @discussion The cache holds the prompt's key: the ids, each image's and clip's placeholder positions keyed by
+    /// a digest of its pixels or log-mel features, and the first position keyed by the modality whose adapter the
+    /// rows were computed under, so a turn in another modality starts over. The cache rolls back to the key it shares
+    /// and further to a span's start where that ends inside a medium; only the media whose spans the rest of the
+    /// prompt holds run through their towers. Answers the reply, the prompt's length, and how many of its positions
+    /// the cache already held.
+    func answer(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput], audios: [NFKMLXPhi4MMAudioInput],
+                options: NFKMLXGenerationOptions, promptCache: NFKMLXPromptCache,
+                onToken: ((Int) -> Bool)?) throws -> (ids: [Int], promptTokens: Int, cached: Int) {
+        lock.lock(); defer { lock.unlock() }
+        let mode = Self.modality(hasImage: !images.isEmpty, hasAudio: !audios.isEmpty)
+        NFKMLXPhi4MM.select(mode, in: decoder)
+        let mels = try Self.logMels(audios)
+        let ids = try promptIds(messages: messages, images: images, mels: mels)
+        let key = try conversationKey(ids, mode: mode, images: images, mels: mels)
+        let placeholders: Set<Int> = [NFKMLXPhi4MM.imageTokenId, NFKMLXPhi4MM.audioTokenId]
+        var start = promptCache.align(to: key)
+        if start > 0, start < ids.count, placeholders.contains(ids[start]), ids[start - 1] == ids[start] {
+            var first = start
+            while first > 0, ids[first - 1] == ids[start] { first -= 1 }
+            start = promptCache.rollback(by: start - first) ? first : 0
+            if start == 0 { promptCache.reset() }
+        }
+        // The media whose spans the fresh positions hold, from the first such of each kind.
+        let skippedImages = ids[..<start].filter { $0 == NFKMLXPhi4MM.imageTokenId }.count
+        let skippedClips = ids[..<start].filter { $0 == NFKMLXPhi4MM.audioTokenId }.count
+        var features = [(placeholder: Int, features: MLXArray)]()
+        var held = 0
+        let neededImages = images.filter { image in defer { held += image.tokenCount }; return held >= skippedImages }
+        if !neededImages.isEmpty {
+            features.append((NFKMLXPhi4MM.imageTokenId, concatenated(neededImages.map {
+                imageNet.projected(pixels: $0.pixels, imageSize: $0.imageSize, validPatches: $0.validPatches)
+                    .reshaped([-1, decoder.configuration.hiddenSize])
+            }, axis: 0)))
+        }
+        held = 0
+        let neededClips = mels.filter { mel in
+            defer { held += NFKMLXPhi4MMAudioFeatures.tokenCount(frames: mel.dim(0)) }
+            return held >= skippedClips
+        }
+        if !neededClips.isEmpty {
+            features.append((NFKMLXPhi4MM.audioTokenId, concatenated(audioNet.projected(clips: neededClips, mode: mode), axis: 0)))
+        }
+        var bounded = options
+        bounded.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: ids.count,
+                                                          contextLength: decoder.configuration.contextLength,
+                                                          source: NFKMLXPhi4MM.modelName)
+        if let seed = bounded.seed { MLXRandom.seed(seed) }
+        let fresh = Array(ids[start...])
+        var hidden = NFKMLXPhi4MM.fusedHidden(decoder: decoder, inputIds: fresh, features: features, cache: promptCache.cache)
+        promptCache.record(Array(key[start...]))
+        var produced = [Int]()
+        for step in 0 ..< bounded.maxTokens {
+            let logits = decoder.logits(fromHidden: hidden[0..., (hidden.dim(1) - 1)...]).reshaped([-1])
+            let next = NFKMLXLanguageNet.sample(logits, options: bounded)
+            if NFKMLXPhi4MM.stopTokens.contains(next) || NFKMLXErrorScope.hasFailed { break }
+            produced.append(next)
+            if let onToken, !onToken(next) { break }
+            guard step + 1 < bounded.maxTokens else { break }
+            hidden = decoder.hiddenStates(fromEmbeddings: decoder.embed(MLXArray([Int32(next)]).reshaped([1, 1])),
+                                          cache: promptCache.cache)
+            promptCache.record([next])
+        }
+        if let failure = NFKMLXErrorScope.failure {
+            promptCache.reset()
+            throw failure
+        }
+        return (produced, ids.count, start)
+    }
+
+    /// The key a conversation keeps `ids` under: each image's and clip's placeholder positions keyed by a digest of
+    /// its pixels or log-mel features, and the first position by the modality whose adapter computed the rows.
+    func conversationKey(_ ids: [Int], mode: NFKMLXPhi4MMModality, images: [NFKMLXPhi4MMImageInput],
+                         mels: [MLXArray]) throws -> [Int] {
+        var key = try NFKMLXVisionChat.mediaKey(inputIds: ids, isMedia: { $0 == NFKMLXPhi4MM.imageTokenId },
+                                                media: images.map { (NFKMLXVisionImage.digest(of: $0.pixels), $0.tokenCount) })
+        key = try NFKMLXVisionChat.mediaKey(inputIds: key, isMedia: { $0 == NFKMLXPhi4MM.audioTokenId },
+                                            media: mels.map { (NFKMLXVisionImage.digest(of: $0),
+                                                               NFKMLXPhi4MMAudioFeatures.tokenCount(frames: $0.dim(0))) })
+        if !key.isEmpty {
+            let modes: [NFKMLXPhi4MMModality] = [.language, .vision, .speech]
+            key[0] = -(modes.firstIndex(of: mode) ?? 0) - 1 - (key[0] << 2)
+        }
+        return key
+    }
+
     func answer(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput], audios: [NFKMLXPhi4MMAudioInput],
                 options: NFKMLXGenerationOptions, onToken: ((Int) -> Bool)?) throws -> (ids: [Int], promptTokens: Int) {
         lock.lock(); defer { lock.unlock() }
@@ -288,9 +380,13 @@ public final class NFKMLXPhi4MMBackend: NSObject, NFKInferenceBackend {
     /// The instruction an audio-only request without text runs, the release's transcription prompt.
     static let transcriptionPrompt = "Transcribe the audio clip into text."
 
-    init(model: NFKMLXPhi4MMModel, identifier: String) {
+    /// The release directory, which names the default spill directory, or nil for a model built without one.
+    private let releaseDirectoryURL: URL?
+
+    init(model: NFKMLXPhi4MMModel, identifier: String, releaseDirectoryURL: URL? = nil) {
         self.model = model
         self.identifier = identifier
+        self.releaseDirectoryURL = releaseDirectoryURL
         super.init()
     }
 
@@ -315,8 +411,15 @@ public final class NFKMLXPhi4MMBackend: NSObject, NFKInferenceBackend {
         }
     }
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed]
+        [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterConversationKey]
     }
+
+    /// One generation at a time: a run moves a conversation's cache through the shared decoder.
+    private let generationLock = NSLock()
+    /// The conversations' caches, read and written under `generationLock`.
+    private let conversations = NFKMLXConversationKeeper<NFKMLXPromptCache>(byteBudget: 0)
+    /// The model holds no adapters a request sets.
+    private var adapterStrengths: [Float] { [] }
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
@@ -380,13 +483,35 @@ public final class NFKMLXPhi4MMBackend: NSObject, NFKInferenceBackend {
         let (messages, images, audios) = try inputs(for: request)
 
         var produced = [Int]()
-        let answer = try model.answer(messages: messages, images: images, audios: audios, options: options) { token in
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+        let layerCount = model.decoder.configuration.layerCount
+        let mode = NFKMLXPhi4MMModel.modality(hasImage: !images.isEmpty, hasAudio: !audios.isEmpty)
+        let key = try model.conversationKey(model.promptIds(messages: messages, images: images, audios: audios), mode: mode,
+                                            images: images, mels: try NFKMLXPhi4MMModel.logMels(audios))
+        let (name, state) = conversations.conversation(
+            named: NFKMLXConversation.name(of: request), reuses: NFKMLXConversation.reuses(request), prompt: key,
+            signature: NFKMLXHybridConversation.optionsSignature(window: nil, quantization: nil, adapterStrengths: nil),
+            usable: { $0.layerCount == layerCount },
+            make: { NFKMLXPromptCache(layerCount: layerCount) },
+            read: { url, record in
+                let restored = try NFKMLXPromptCache.load(from: url)
+                return restored.tokens == record.tokens && restored.layerCount == layerCount ? restored : nil
+            })
+        var failed = true
+        defer {
+            conversations.finish(name, failed: failed, afforded: NFKMLXConversationBudget.afforded(
+                info: modelInfo, runBytes: NFKMLXConversationBudget.runBytes(info: modelInfo, positions: nil)), spills: true)
+        }
+        let answer = try model.answer(messages: messages, images: images, audios: audios, options: options,
+                                      promptCache: state) { token in
             produced.append(token)
             return onToken?(produced) ?? true
         }
+        failed = false
         return NFKInferenceResult(outputs: [
             NFKOutputText: model.decode(answer.ids),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: answer.promptTokens, cachedTokens: 0,
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: answer.promptTokens, cachedTokens: answer.cached,
                                                 outputTokens: answer.ids.count, reasoningTokens: nil),
         ])
     }
@@ -426,6 +551,102 @@ public final class NFKMLXPhi4MMBackend: NSObject, NFKInferenceBackend {
             return NFKMLXPhi4MMAudioInput(samples: clip.samples, sampleRate: clip.sampleRate)
         }
     }
+
+    // MARK: Conversation caches
+
+    /// The bytes the conversations' caches may hold together.
+    ///
+    /// @discussion A request continues the conversation its `NFKParameterConversationKey` names, or, naming
+    /// none, the kept conversation its prompt continues furthest, so a follow-up turn prefills only what it
+    /// adds. When the caches outgrow the budget, the least recently used conversations are written to
+    /// ``conversationSpillDirectoryURL`` and dropped, never the one a request just ran. Until it is set, the
+    /// budget is what the memory planned beside the model affords after one run's cache at the context
+    /// length, recomputed each run; setting it fixes it, and lowering it drops down to it at once. Introduced
+    /// in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversations.states.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.fixBudget(newValue)
+        }
+    }
+
+    /// How many conversations hold a cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.count
+    }
+
+    /// The bytes the conversations' caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.heldBytes
+    }
+
+    /// Drops one named conversation's cache, in memory and on disk. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.remove(conversation)
+        conversations.spill?.remove(named: conversation)
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's cache in memory; spilled ones stay on disk. Introduced in InferKit 0.4.0.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.removeAll()
+        conversations.refresh()
+    }
+
+    /// Writes every conversation's cache to the spill directory and drops it from memory when no run is in
+    /// progress, and returns the bytes they held; returns 0 at once while a run holds them.
+    /// `NFKInferenceServer` calls it to relieve memory, and the reloadable backend before it unloads the model.
+    /// Introduced in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        return conversations.releaseAll(spills: adapterStrengths.isEmpty)
+    }
+
+    /// The directory conversations the memory budget lets go are written to, so a later request continues one
+    /// without its prefill, after an unload or a restart too; nil writes none. A backend over a release
+    /// directory defaults to a directory under the user's caches that only the same release and weights read.
+    /// A model that holds adapters writes none. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillDirectoryURL: URL? {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.directory
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.setSpillDirectory(newValue)
+        }
+    }
+
+    /// The bytes the spilled conversations may take on disk; the least recently written go first past it.
+    /// Defaults to 8 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationSpillByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            return conversations.spill?.byteBudget ?? NFKMLXConversationSpill.defaultByteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
+            conversations.spill?.byteBudget = newValue
+        }
+    }
+
+    /// The conversation caches as of the last run or change: `conversation_caches`,
+    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it under
+    /// the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] { conversations.status }
 }
 
 /// Building Phi-4-multimodal from a release directory.
@@ -457,7 +678,8 @@ public extension NFKMLXPhi4MM {
     /// thread.
     @objc(backendWithDirectoryURL:precision:error:)
     static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision) throws -> any NFKInferenceBackend {
-        NFKMLXPhi4MMBackend(model: try model(directoryURL: directoryURL, precision: precision), identifier: modelName)
+        NFKMLXPhi4MMBackend(model: try model(directoryURL: directoryURL, precision: precision), identifier: modelName,
+                            releaseDirectoryURL: directoryURL)
     }
 
     /// A multimodal backend from a release directory, at the released bfloat16.

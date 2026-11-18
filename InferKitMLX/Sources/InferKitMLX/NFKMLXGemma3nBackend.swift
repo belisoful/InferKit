@@ -101,23 +101,57 @@ extension NFKMLXGemma3n {
         try generate(tokens: tokens, image: image, audio: audio, options: options, promptCache: nil, onToken: onToken)
     }
 
-    /// Generation that continues `promptCache` where it is given: the cache rolls back to the prefix it shares
-    /// with `tokens`, only the rest is prefilled, and the cache keeps every position the run writes. A run that
-    /// throws leaves the cache empty. A caller passes no cache with an image or a clip.
     func generate(tokens: [Int], image: Any?, audio: MLXArray?, options: NFKMLXGenerationOptions,
                   promptCache: NFKMLXGemma3nPromptCache?, onToken: (Int) -> Bool) throws {
-        let pixels = try image.map { try NFKMLXGemma3nImageProcessor.pixelValues(from: $0) }
-        let mel = audio.map { NFKMLXGemma3nAudioFeatures()($0) }
-        if let seed = options.seed { MLXRandom.seed(seed) }
+        let media = try preparedMedia(image: image, audio: audio)
+        try generate(tokens: tokens, pixels: media.pixels, mel: media.mel, options: options, promptCache: promptCache,
+                     onToken: onToken)
+    }
 
-        let start = promptCache?.align(to: tokens) ?? 0
+    /// The picture's pixels and the clip's mel features as the towers read them.
+    func preparedMedia(image: Any?, audio: MLXArray?) throws -> (pixels: MLXArray?, mel: MLXArray?) {
+        (try image.map { try NFKMLXGemma3nImageProcessor.pixelValues(from: $0) },
+         audio.map { NFKMLXGemma3nAudioFeatures()($0) })
+    }
+
+    /// The key a conversation keeps `tokens` under: the ids, with the picture's and the clip's soft-token
+    /// positions keyed by digests of their pixels and mel features, so a prompt with other media shares nothing
+    /// past the first position where they differ.
+    func conversationKey(tokens: [Int], pixels: MLXArray?, mel: MLXArray?) throws -> [Int] {
+        var key = tokens
+        for (array, token) in [(pixels, model.tokens.imageToken), (mel, model.tokens.audioToken)] {
+            guard let array else { continue }
+            key = try NFKMLXVisionChat.mediaKey(inputIds: key, isMedia: { $0 == token },
+                                                media: [(NFKMLXVisionImage.digest(of: array), key.filter { $0 == token }.count)])
+        }
+        return key
+    }
+
+    /// Generation that continues `promptCache` where it is given: the cache rolls back to the prefix it shares
+    /// with `tokens`' key (``conversationKey(tokens:pixels:mel:)``), and further to a span's start where that
+    /// prefix ends inside a picture's or a clip's soft tokens, since their features fill a whole span; only the
+    /// rest is prefilled, a tower running only where it reaches the tower's span, and the cache keeps every
+    /// position the run writes. A run that throws leaves the cache empty.
+    func generate(tokens: [Int], pixels: MLXArray?, mel: MLXArray?, options: NFKMLXGenerationOptions,
+                  promptCache: NFKMLXGemma3nPromptCache?, onToken: (Int) -> Bool) throws {
+        if let seed = options.seed { MLXRandom.seed(seed) }
+        let key = try conversationKey(tokens: tokens, pixels: pixels, mel: mel)
+        let soft: Set<Int> = [model.tokens.imageToken, model.tokens.audioToken]
+        let start = promptCache?.align(to: key) { shared in
+            var first = shared
+            while first > 0, shared < tokens.count, soft.contains(tokens[shared]), tokens[first - 1] == tokens[shared] {
+                first -= 1
+            }
+            return first
+        } ?? 0
         let cache = promptCache?.cache ?? NFKMLXGemma3nCache(layerCount: model.decoder.configuration.layerCount)
         let fresh = Array(tokens[start...])
         let stops: Set<Int> = [endOfTurn, endOfSequence]
         do {
             var logits = try model(MLXArray(fresh.map(Int32.init)).reshaped([1, fresh.count]),
-                                   image: pixels, audioMel: mel, cache: cache)[0, -1]
-            promptCache?.record(fresh)
+                                   image: fresh.contains(model.tokens.imageToken) ? pixels : nil,
+                                   audioMel: fresh.contains(model.tokens.audioToken) ? mel : nil, cache: cache)[0, -1]
+            promptCache?.record(Array(key[start...]))
             for _ in 0 ..< max(options.maxTokens, 1) {
                 let next = NFKMLXLanguageNet.sample(logits, options: options)
                 if stops.contains(next) { break }
@@ -137,9 +171,11 @@ extension NFKMLXGemma3n {
 /// Text generation from Gemma 3n through the InferKit contract.
 ///
 /// @discussion `NFKInputImage` adds a picture and `NFKInputAudio` a clip; either needs a release that
-/// carries the matching tower. A text request continues the conversation its `NFKParameterConversationKey`
-/// names, or, naming none, the kept conversation its prompt continues furthest, so a follow-up turn prefills
-/// only what it adds (``conversationCacheByteBudget``). Inference is synchronous and multi-second, so a caller
+/// carries the matching tower. A request continues the conversation its `NFKParameterConversationKey` names,
+/// or, naming none, the kept conversation its prompt continues furthest, so a follow-up turn prefills only what
+/// it adds (``conversationCacheByteBudget``). A picture's and a clip's positions are kept under digests of
+/// their pixels and features, so a follow-up about the same media does not run their towers again, and one with
+/// other media continues nothing past the first position where they differ. Inference is synchronous and multi-second, so a caller
 /// runs it off the render thread or takes the job form.
 @objc(NFKMLXGemma3nBackend)
 public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
@@ -233,14 +269,15 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
         options.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: ids.count,
                                                           contextLength: contextLength, source: identifier)
 
-        // An image's or a clip's placeholder ids are the same whatever the media, so such a prompt keeps nothing.
-        let reuses = NFKMLXConversation.reuses(request) && image == nil && waveform == nil
+        let media = try gemma.preparedMedia(image: image, audio: waveform)
+        let key = try gemma.conversationKey(tokens: ids, pixels: media.pixels, mel: media.mel)
+        let reuses = NFKMLXConversation.reuses(request)
         generationLock.lock(); defer { generationLock.unlock() }
         let layerCount = gemma.model.decoder.configuration.layerCount
         conversations.resolveSpill(release: releaseDirectoryURL, identifier: identifier) { modelInfo }
         // A conversation's cache computed at other adapter strengths starts over.
         let (name, kept) = conversations.conversation(
-            named: NFKMLXConversation.name(of: request), reuses: reuses, prompt: ids, signature: "gemma3n",
+            named: NFKMLXConversation.name(of: request), reuses: reuses, prompt: key, signature: "gemma3n",
             usable: { $0.adapterStrengths == strengths },
             make: {
                 let made = NFKMLXGemma3nPromptCache(layerCount: layerCount)
@@ -257,7 +294,7 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
         var produced = [Int]()
         // The held adapters read the run's strengths as each pass builds its graph.
         try NFKMLXAdapterRun.$strengths.withValue(strengths) {
-            try gemma.generate(tokens: ids, image: image, audio: waveform, options: options,
+            try gemma.generate(tokens: ids, pixels: media.pixels, mel: media.mel, options: options,
                                promptCache: promptCache) { token in
                 produced.append(token)
                 return onToken?(token, produced) ?? true

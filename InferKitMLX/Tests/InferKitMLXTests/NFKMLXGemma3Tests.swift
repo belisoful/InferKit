@@ -7,6 +7,7 @@
 //  prompt expansion. Numeric parity against the reference lives in NFKMLXReferenceParityTests.
 //
 
+import CoreGraphics
 import XCTest
 import InferKit
 import MLX
@@ -430,6 +431,66 @@ final class NFKMLXGemma3Tests: XCTestCase {
         XCTAssertGreaterThan(backend.releaseIdleConversationCaches(), 0)
         XCTAssertEqual(backend.conversationCacheCount, 0)
         XCTAssertGreaterThanOrEqual(try cachedTokens("Hi Hi", conversation: "b"), 3, "continued from the spill directory")
+    }
+
+    /// The tiny decoder with a vision tower and a random projector: a 64-pixel image is a 4 × 4 patch grid
+    /// pooled to four soft tokens.
+    private func visionModel() throws -> NFKMLXGemma3Model {
+        try requireMLXRuntime()
+        MLXRandom.seed(13)
+        let projector = NFKMLXGemma3MultimodalProjector(visionHidden: 32, textHidden: 64, patchesPerSide: 4, tokensPerImage: 4)
+        projector.update(parameters: ModuleParameters.unflattened([("mm_input_projection_weight",
+                                                                    MLXRandom.normal([32, 64]) * 0.2)]))
+        return NFKMLXGemma3Model(decoder: NFKMLXGemma3Net(.tiny), vision: NFKMLXGemma3VisionNet(.tiny), projector: projector,
+                                 tokenizer: try tinyTokenizer(), tokens: NFKMLXGemma3Tokens(tokensPerImage: 4),
+                                 chatTemplate: nil)
+    }
+
+    /// A 64-pixel image whose pixels follow `seed`.
+    private func picture(seed: Int) -> CGImage {
+        var bytes = (0 ..< 64 * 64 * 4).map { UInt8(truncatingIfNeeded: ($0 * 31 + seed * 97) % 253) }
+        for pixel in 0 ..< 64 * 64 { bytes[pixel * 4 + 3] = 255 }
+        let context = CGContext(data: &bytes, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 256,
+                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        return context.makeImage()!
+    }
+
+    // A conversation with an image keeps the image's positions under its pixels' digest: the next turn about
+    // the same image continues past it and answers what a fresh run answers, and a turn with another image
+    // parts at the image's first position, further back than the window reaches, so the cache starts over.
+    func testAConversationWithAnImageContinuesPastItAndAnotherImageStartsOver() throws {
+        let model = try visionModel()
+        let options = continuingOptions
+        let configuration = model.decoder.configuration
+        let cache = NFKMLXGemma3PromptCache(kinds: configuration.layerTypes, slidingWindow: configuration.slidingWindow)
+        let image = try model.preparedImage(picture(seed: 1))
+        let first = model.promptTokens("Hi", withImage: true)
+        let reply = try model.generate(tokens: first, image: image, options: options, promptCache: cache) { _ in true }
+        let next = first + reply + [13, 11]
+        let continued = try model.generate(tokens: next, image: image, options: options, promptCache: cache) { _ in true }
+        XCTAssertEqual(cache.sharedPrefixLength, first.count + reply.count, "only the new message prefills")
+        XCTAssertEqual(continued, try model.generate(tokens: next, image: image, options: options, promptCache: nil) { _ in true },
+                       "the answer of a fresh run")
+
+        let other = try model.preparedImage(picture(seed: 2))
+        XCTAssertNotEqual(other.digest, image.digest)
+        let answered = try model.generate(tokens: next, image: other, options: options, promptCache: cache) { _ in true }
+        XCTAssertEqual(cache.sharedPrefixLength, 0, "another image parts past the window, so the cache starts over")
+        XCTAssertEqual(answered, try model.generate(tokens: next, image: other, options: options, promptCache: nil) { _ in true })
+    }
+
+    // A request that names no conversation continues the unnamed one its prompt and image extend.
+    func testAKeylessRequestWithAnImageContinuesItsConversation() throws {
+        let backend = NFKMLXGemma3Backend(model: try visionModel(), identifier: "tiny")
+        func cachedTokens(_ prompt: String, image seed: Int) throws -> Int {
+            let result = try backend.runInference(for: NFKInferenceRequest(
+                inputs: [NFKInputPrompt: prompt, NFKInputImage: picture(seed: seed)],
+                parameters: [NFKParameterTemperature: 0, NFKParameterMaxTokens: 1]))
+            return try XCTUnwrap((result.output(forKey: NFKOutputUsage) as? [String: Int])?[NFKUsageCachedTokens])
+        }
+        XCTAssertEqual(try cachedTokens("Hi", image: 1), 0)
+        XCTAssertGreaterThan(try cachedTokens("Hi Hi", image: 1), 7, "the image's positions and the words before it")
+        XCTAssertEqual(try cachedTokens("Hi Hi", image: 2), 0, "another image continues nothing")
     }
 
     func testThePromptExpandsAnImageAndTheBlockIdsMarkIt() throws {
