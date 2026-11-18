@@ -235,8 +235,10 @@ final class NFKTrellisSparseResidualBlock: Module {
         _skip.wrappedValue = channels == outputChannels ? nil : Linear(channels, outputChannels)
     }
 
-    func callAsFunction(_ x: MLXArray, grid: NFKTrellisVoxelGrid, timestep: MLXArray) -> MLXArray {
-        let modulation = split((embedding[1] as! Linear)(silu(timestep)), parts: 2, axis: 1)
+    var modulationLinear: Linear { embedding[1] as! Linear }
+
+    /// The block at `x` with its two modulation parts `[1, outputChannels]`, scale then shift.
+    func callAsFunction(_ x: MLXArray, grid: NFKTrellisVoxelGrid, modulation: [MLXArray]) -> MLXArray {
         var h = conv1(silu(norm1(x)), grid: grid)
         h = NFKTrellisAttention.normalized(h, eps: 1e-6) * (1 + modulation[0]) + modulation[1]
         h = conv2(silu(h), grid: grid)
@@ -307,26 +309,46 @@ public final class NFKMLXTrellisLatentFlow: Module {
     }
 
     func velocity(_ x: MLXArray, grid: NFKTrellisVoxelGrid, t: MLXArray, condition: MLXArray) -> MLXArray {
+        velocity(x, grid: grid, modulation: timestepEmbedder.modulation(t, linears: modulationLinears), condition: condition)
+    }
+
+    /// The modulation linears and their part counts: the input blocks', the cross blocks', then the output
+    /// blocks'.
+    var modulationLinears: [(Linear, Int)] {
+        inputBlocks.map { ($0.modulationLinear, 2) } + blocks.map { ($0.modulationLinear, 6) }
+            + outputBlocks.map { ($0.modulationLinear, 2) }
+    }
+
+    /// The blocks' modulation at the float32 time `t` on the 0...1000 scale, formed in float64 as the
+    /// samplers take it (``NFKTrellisTimestepEmbedder/wideModulation(at:linears:)``).
+    func wideModulation(at t: Float) -> [[MLXArray]] {
+        timestepEmbedder.wideModulation(at: t, linears: modulationLinears)
+    }
+
+    /// The velocity at `x` with each block's modulation parts given, in ``modulationLinears``' order.
+    func velocity(_ x: MLXArray, grid: NFKTrellisVoxelGrid, modulation: [[MLXArray]], condition: MLXArray) -> MLXArray {
         let (coarse, parent) = grid.halved()
-        let timestep = timestepEmbedder(t)
+        let input = Array(modulation[..<inputBlocks.count])
+        let cross = Array(modulation[inputBlocks.count ..< inputBlocks.count + blocks.count])
+        let output = Array(modulation[(inputBlocks.count + blocks.count)...])
         var h = inputLayer(x)
         var skips = [MLXArray]()
-        for block in inputBlocks.dropLast() {
-            h = block(h, grid: grid, timestep: timestep)
+        for (block, parts) in zip(inputBlocks.dropLast(), input) {
+            h = block(h, grid: grid, modulation: parts)
             skips.append(h)
         }
         h = inputBlocks[inputBlocks.count - 1](NFKTrellisResampling.halve(h, parent: parent, parents: coarse.count), grid: coarse,
-                                               timestep: timestep)
+                                               modulation: input[inputBlocks.count - 1])
         let coarseSkip = h
         h = h + NFKTrellisPositions.absolute(coarse.positions, width: configuration.flowWidth)
         var tokens = expandedDimensions(h, axis: 0)
-        for block in blocks {
-            tokens = block(tokens, timestep: timestep, context: condition)
+        for (block, parts) in zip(blocks, cross) {
+            tokens = block(tokens, modulation: parts, context: condition)
         }
         h = NFKTrellisResampling.restore(concatenated([tokens[0], coarseSkip], axis: 1), parent: parent)
-        h = outputBlocks[0](h, grid: grid, timestep: timestep)
-        for (block, skip) in zip(outputBlocks.dropFirst(), skips.reversed()) {
-            h = block(concatenated([h, skip], axis: 1), grid: grid, timestep: timestep)
+        h = outputBlocks[0](h, grid: grid, modulation: output[0])
+        for ((block, skip), parts) in zip(zip(outputBlocks.dropFirst(), skips.reversed()), output.dropFirst()) {
+            h = block(concatenated([h, skip], axis: 1), grid: grid, modulation: parts)
         }
         return outputLayer(NFKTrellisAttention.normalized(h, eps: 1e-5))
     }
@@ -476,9 +498,11 @@ struct NFKTrellisGaussians {
 
     /// Centers in −0.5...0.5.
     var positions: MLXArray { storedPositions - 0.5 }
-    /// softplus(stored + bias), widened by the minimum kernel size in quadrature.
+    /// softplus(stored + bias), widened by the minimum kernel size in quadrature. The softplus is torch's: MLX's
+    /// takes Metal's `log`, which holds an absolute error of 2⁻²¹ near 1, so `log1p` of the small exponentials
+    /// at these scales (softplus of about −5.5) loses up to a third of its value on the GPU.
     var scales: MLXArray {
-        let s = softplus(storedScales + scaleBias)
+        let s = NFKReferenceRounding.torchSoftplus(storedScales + scaleBias)
         return sqrt(s * s + minimumScale * minimumScale)
     }
     /// Unit quaternions (w, x, y, z) of stored + (1, 0, 0, 0).

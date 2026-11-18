@@ -340,6 +340,11 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     MLX's float32 `softplus` over 2 × 4,096 × 5,120 bfloat16 values. A float32 softplus takes it in
     `.reference`: a Mamba-2 step, the gated-delta decay of Qwen3.5 and Qwen4-Exp, DeepSeek V4's router, and
     TimesFM's query scale. Gemma 3n's and Gemma 4's audio query scales take `NFKReferenceRounding.softplus`.
+  - MLX's own float32 `softplus` (`logAddExp(x, 0)`) is inexact on the GPU where `exp(x)` is small. Its
+    Goldberg `log1p` divides `metal::log(1 + e)` by `(1 + e) − 1`, and Metal's precise `log` holds only an
+    absolute error of 2⁻²¹ on [0.5, 2], so the relative error grows as `e` shrinks: up to 0.386 over TRELLIS's
+    Gaussian scales (softplus of about −5.5), where the CPU stream matches torch. TRELLIS's scales take
+    `torchSoftplus` in either arithmetic. MLX's `log1p` on the GPU carries the same error.
     Over bfloat16 MLX's `softplus` already rounds every normal result as torch does; over float16 it rounds
     471 of 63,488 inputs apart.
   - torch softmaxes half-precision scores without widening them at Whisper's and Voxtral's attention, the
@@ -399,6 +404,13 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     count of rounded outputs apart from torch's.
   - Sleef's `expf` from MLX operations on the GPU: 20 to 25 times MLX's `exp`, and a whole denoiser forward
     2.3 to 4.7 times slower. `compile` of it is 3.2 times faster and 98% of its results are wrong.
+  - A float32 flow sampler's timestep modulation (the sinusoid, the timestep embedder, and each block's adaptive
+    shift, scale, and gate) is one vector applied to every token, so its rounding moves the whole latent the same
+    way each step, and a flow's last steps amplify that direction. TRELLIS's text releases sampled their structure
+    at 3.5 and 4.7 times the reference's float32 floor with every forward at its floor; the modulation formed in
+    float64 on the CPU stream and rounded once brings them to 1.00 and 1.43 (`NFKTrellisTimestepEmbedder`'s
+    `wideModulation(at:linears:)`, its weights evaluated on the default stream first so no GPU command buffer
+    waits on the CPU). Matching torch's float32 bits for the sinusoid alone moved the results non-monotonically.
   A half-precision flash attention without a `queryBlock` attends `automaticQueryBlock` rows at a time when
   its float32 scores would pass 1 GiB, each row computed as before: Wan at 480×832 and 33 frames held 9.5 GB
   of scores, and at 81 frames would hold 51 GB.

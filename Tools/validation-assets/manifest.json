@@ -5956,9 +5956,13 @@
       ],
       "config": {
         "IK_VAL_TRELLIS_IMAGE_LARGE": "",
-        "IK_PARITY_TRELLIS": "trellis/trellis-reference.safetensors"
+        "IK_PARITY_TRELLIS": "trellis/trellis-reference.safetensors",
+        "IK_PARITY_TRELLIS_FLOOR": "trellis/trellis-floor.safetensors",
+        "IK_PARITY_TRELLIS_FLOOR_STRUCTURE_SAMPLING": "trellis/trellis-floor-structure-sampling.safetensors",
+        "IK_PARITY_TRELLIS_FLOOR_LATENT_SAMPLING": "trellis/trellis-floor-latent-sampling.safetensors",
+        "IK_PARITY_TRELLIS_FLOOR_MESH": "trellis/trellis-floor-mesh.safetensors"
       },
-      "note": "TRELLIS image-large (microsoft/TRELLIS-image-large, MIT), float16 checkpoints the port reads at float32: the structure encoder (customization), both flows, and the structure, mesh, and Gaussian decoders. The text releases read their decoders from this directory. The parity record comes from `run_reference.py trellis --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment, which reads IK_TRELLIS_SRC, IK_DINOV2_SRC, and DINOV2_VITL14_REG4."
+      "note": "TRELLIS image-large (microsoft/TRELLIS-image-large, MIT), float16 checkpoints the port reads at float32: the structure encoder (customization), both flows, and the structure, mesh, and Gaussian decoders. The text releases read their decoders from this directory. The parity record comes from `run_reference.py trellis --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment, which reads IK_TRELLIS_SRC, IK_DINOV2_SRC, and DINOV2_VITL14_REG4. The floor records come from `trellis_floor`, `trellis_floor_structure_sampling`, `trellis_floor_latent_sampling`, and `trellis_floor_mesh` with the same arguments: the release's code rerun in float64 on the parity record's inputs."
     },
     {
       "key": "DINOV2_VITL14_REG4",
@@ -5991,7 +5995,10 @@
       ],
       "config": {
         "IK_VAL_TRELLIS_TEXT_BASE": "",
-        "IK_PARITY_TRELLIS_TEXT_BASE": "trellis/trellis-text-base-reference.safetensors"
+        "IK_PARITY_TRELLIS_TEXT_BASE": "trellis/trellis-text-base-reference.safetensors",
+        "IK_PARITY_TRELLIS_TEXT_BASE_FLOOR": "trellis/trellis-text-base-floor.safetensors",
+        "IK_PARITY_TRELLIS_TEXT_BASE_FLOOR_STRUCTURE_SAMPLING": "trellis/trellis-text-base-floor-structure-sampling.safetensors",
+        "IK_PARITY_TRELLIS_TEXT_BASE_FLOOR_LATENT_SAMPLING": "trellis/trellis-text-base-floor-latent-sampling.safetensors"
       },
       "note": "TRELLIS text-base (microsoft/TRELLIS-text-base, MIT): the two flows; its decoders are TRELLIS_IMAGE_LARGE's and its conditioner CLIP_L14_HF. The parity record comes from `run_reference.py trellis_text --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment."
     },
@@ -6010,7 +6017,10 @@
       ],
       "config": {
         "IK_VAL_TRELLIS_TEXT_LARGE": "",
-        "IK_PARITY_TRELLIS_TEXT_LARGE": "trellis/trellis-text-large-reference.safetensors"
+        "IK_PARITY_TRELLIS_TEXT_LARGE": "trellis/trellis-text-large-reference.safetensors",
+        "IK_PARITY_TRELLIS_TEXT_LARGE_FLOOR": "trellis/trellis-text-large-floor.safetensors",
+        "IK_PARITY_TRELLIS_TEXT_LARGE_FLOOR_STRUCTURE_SAMPLING": "trellis/trellis-text-large-floor-structure-sampling.safetensors",
+        "IK_PARITY_TRELLIS_TEXT_LARGE_FLOOR_LATENT_SAMPLING": "trellis/trellis-text-large-floor-latent-sampling.safetensors"
       },
       "note": "TRELLIS text-large (microsoft/TRELLIS-text-large, MIT): the two flows; its decoders are TRELLIS_IMAGE_LARGE's and its conditioner CLIP_L14_HF. The parity record comes from `run_reference.py trellis_text --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment."
     },
@@ -6029,7 +6039,10 @@
       ],
       "config": {
         "IK_VAL_TRELLIS_TEXT_XLARGE": "",
-        "IK_PARITY_TRELLIS_TEXT_XLARGE": "trellis/trellis-text-xlarge-reference.safetensors"
+        "IK_PARITY_TRELLIS_TEXT_XLARGE": "trellis/trellis-text-xlarge-reference.safetensors",
+        "IK_PARITY_TRELLIS_TEXT_XLARGE_FLOOR": "trellis/trellis-text-xlarge-floor.safetensors",
+        "IK_PARITY_TRELLIS_TEXT_XLARGE_FLOOR_STRUCTURE_SAMPLING": "trellis/trellis-text-xlarge-floor-structure-sampling.safetensors",
+        "IK_PARITY_TRELLIS_TEXT_XLARGE_FLOOR_LATENT_SAMPLING": "trellis/trellis-text-xlarge-floor-latent-sampling.safetensors"
       },
       "note": "TRELLIS text-xlarge (microsoft/TRELLIS-text-xlarge, MIT): the two flows; its decoders are TRELLIS_IMAGE_LARGE's and its conditioner CLIP_L14_HF. The parity record comes from `run_reference.py trellis_text --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment."
     },
@@ -6669,7 +6682,11 @@
       "modes": [
         "trellis",
         "trellis_text",
-        "trellis_objectives"
+        "trellis_objectives",
+        "trellis_floor",
+        "trellis_floor_structure_sampling",
+        "trellis_floor_latent_sampling",
+        "trellis_floor_mesh"
       ]
     },
     "ltxtrain": {

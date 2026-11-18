@@ -30575,6 +30575,284 @@ def run_trellis_objectives(image, checkpoint):
 CHECKPOINT_MODELS["trellis_objectives"] = run_trellis_objectives
 
 
+def _trellis_float64():
+    """Makes the release's code compute in float64 where it fixes float32: the LayerNorm and GroupNorm
+    wrappers (dense and sparse) that cast to float32, the per-head RMS norms, the timestep and position
+    sinusoids, and the sampler's timestep tensor. Each model's `dtype` attribute is set per model after
+    loading (`_trellis_widen`)."""
+    import torch.nn as nn
+    import torch.nn.functional as F
+    import numpy
+    from trellis.modules import norm
+    from trellis.modules.sparse import norm as sparse_norm
+    from trellis.modules.attention import modules as attention
+    from trellis.modules.sparse.attention import modules as sparse_attention
+    from trellis.modules.transformer import blocks
+    from trellis.models import sparse_structure_flow
+    from trellis.pipelines.samplers import flow_euler
+
+    norm.LayerNorm32.forward = nn.LayerNorm.forward
+    norm.GroupNorm32.forward = nn.GroupNorm.forward
+    sparse_norm.SparseGroupNorm32.forward = sparse_norm.SparseGroupNorm.forward
+    sparse_norm.SparseLayerNorm32.forward = sparse_norm.SparseLayerNorm.forward
+
+    def head_norm(self, x):
+        return F.normalize(x, dim=-1) * self.gamma * self.scale
+
+    from trellis.modules.sparse import SparseTensor
+
+    def sparse_head_norm(self, x):
+        if isinstance(x, SparseTensor):
+            return x.replace(F.normalize(x.feats, dim=-1)) * self.gamma * self.scale
+        return F.normalize(x, dim=-1) * self.gamma * self.scale
+
+    attention.MultiHeadRMSNorm.forward = head_norm
+    sparse_attention.SparseMultiHeadRMSNorm.forward = sparse_head_norm
+
+    def timestep_embedding(t, dim, max_period=10000):
+        half = dim // 2
+        freqs = torch.exp(-numpy.log(max_period) * torch.arange(half, dtype=torch.float64) / half)
+        args = t[:, None].double() * freqs[None]
+        return torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
+
+    sparse_structure_flow.TimestepEmbedder.timestep_embedding = staticmethod(timestep_embedding)
+
+    def sin_cos(self, x):
+        freqs = 1.0 / (10000 ** (torch.arange(self.freq_dim, dtype=torch.float64) / self.freq_dim))
+        out = torch.outer(x.double(), freqs)
+        return torch.cat([torch.sin(out), torch.cos(out)], dim=-1)
+
+    def position_embedding(self, x):
+        count = x.shape[0]
+        embed = sin_cos(self, x.reshape(-1)).reshape(count, -1)
+        if embed.shape[1] < self.channels:
+            embed = torch.cat([embed, torch.zeros(count, self.channels - embed.shape[1], dtype=torch.float64)], dim=-1)
+        return embed
+
+    blocks.AbsolutePositionEmbedder.forward = position_embedding
+    base_inference = flow_euler.FlowEulerSampler._inference_model
+
+    def inference_model(self, model, x_t, t, cond=None, **kwargs):
+        time = torch.tensor([1000 * t] * x_t.shape[0], dtype=torch.float64)
+        return model(x_t, time, cond, **kwargs)
+
+    flow_euler.FlowEulerSampler._inference_model = inference_model
+    return base_inference
+
+
+def _trellis_widen(model):
+    """The model in float64, with every `dtype` attribute its forward casts to set to float64."""
+    model = model.double()
+    for module in model.modules():
+        if isinstance(module.__dict__.get("dtype"), torch.dtype):
+            module.dtype = torch.float64
+    return model
+
+
+def _trellis_separation(reference, exact):
+    """One minus the cosine of `reference` against `exact`, as half the squared distance between their unit
+    vectors in float64. The plain 1 - a.b / (|a| |b|) keeps about 1e-13 of rounding from its sums over a
+    million elements, larger than the smallest floors."""
+    a = reference.double().reshape(-1)
+    b = exact.double().reshape(-1)
+    return ((a / a.norm() - b / b.norm()).square().sum() / 2).item()
+
+
+def _trellis_floor(checkpoint, part):
+    """The reference's own float32-against-float64 spread at the seams the TRELLIS tests compare: the
+    release's code rerun in float64 (`_trellis_float64`, the networks the part reads widened) on the inputs
+    its float32 record holds, for the image release (IK_PARITY_TRELLIS) or a text release (its
+    IK_PARITY_TRELLIS_TEXT_* record, chosen by `checkpoint`'s directory name). Each seam's float64 result is
+    recorded as its float32 rounding under its own name and the float32 residual under `<name>.residual`, and
+    its floor (one minus the cosine of the float32 record against the float64 result, `_trellis_separation`) is printed;
+    the tests recompute it from the two records.
+    A part fits one run's time:
+    - "main": the condition (and the empty prompt's for text), the flows' recorded forwards, the occupancy
+      logits, and the Gaussian decoder's features and fields (image);
+    - "structure_sampling": the 25-step structure sampler from the recorded noise;
+    - "latent_sampling": the 25-step structured-latent sampler from the recorded noise.
+    A sampling part also keeps every step's sample: the float32 chain's, run first and checked against the
+    record, as `<seam>.steps32`, and the float64 chain's as `<seam>.steps` with its residual.
+    The mesh decoder's features are `run_trellis_floor_mesh`'s."""
+    import contextlib
+    import gc
+    from safetensors.torch import load_file
+    from PIL import Image
+    name = os.path.basename(os.path.normpath(checkpoint))
+    text = name.startswith("TRELLIS-text-")
+    key = "IK_PARITY_TRELLIS_TEXT_" + name[len("TRELLIS-text-"):].upper() if text else "IK_PARITY_TRELLIS"
+    record = {k: v.double() if v.is_floating_point() else v for k, v in load_file(_trellis_setting(key)).items()}
+    pipeline, sparse = _trellis_pipeline(checkpoint, text=text)
+    extra = {}
+    seam = {"structure_sampling": "ss_latent", "latent_sampling": "slat_normalized"}.get(part)
+
+    def chain(precision):
+        cond = record["cond"].to(precision)
+        unconditional = record["neg_cond"].to(precision) if text else torch.zeros_like(cond)
+        if part == "structure_sampling":
+            sampler, params = pipeline.sparse_structure_sampler, pipeline.sparse_structure_sampler_params
+            flow, noise = pipeline.models["sparse_structure_flow_model"], record["ss_noise"].to(precision)
+        else:
+            sampler, params = pipeline.slat_sampler, pipeline.slat_sampler_params
+            flow = pipeline.models["slat_flow_model"]
+            noise = sparse.SparseTensor(feats=record["slat_noise"].to(precision), coords=record["slat_noise.coords"].int())
+        with torch.no_grad():
+            out = sampler.sample(flow, noise, cond=cond, neg_cond=unconditional, **params, verbose=False)
+        unwrap = lambda x: x.feats if isinstance(x, sparse.SparseTensor) else x
+        return unwrap(out.samples), torch.stack([unwrap(x) for x in out.pred_x_t])
+
+    if seam is not None:
+        samples, steps = chain(torch.float32)
+        verdict = "reproduces" if torch.equal(samples, record[seam].float()) else "does not reproduce"
+        print(f"trellis floor {seam}: the float32 chain {verdict} the record")
+        extra[seam + ".steps32"] = steps.float()
+    _trellis_float64()
+    reads = {"main": ["image_cond_model", "sparse_structure_flow_model", "sparse_structure_decoder", "slat_flow_model",
+                      "slat_decoder_gs"],
+             "structure_sampling": ["sparse_structure_flow_model"], "latent_sampling": ["slat_flow_model"]}[part]
+    models = pipeline.models
+    for model_name in list(models):
+        if model_name in reads:
+            models[model_name] = _trellis_widen(models[model_name])
+        else:
+            del models[model_name]
+    gc.collect()
+
+    @contextlib.contextmanager
+    def float64_default():
+        # transformers' CLIP builds its causal mask in the default dtype.
+        previous = torch.get_default_dtype()
+        torch.set_default_dtype(torch.float64)
+        try:
+            yield
+        finally:
+            torch.set_default_dtype(previous)
+
+    def put(seam, value):
+        if isinstance(value, sparse.SparseTensor):
+            value = value.feats
+        # The record writer stores float32, so the float64 result is kept as a float32 value and the float32
+        # residual the value leaves (about 48 bits together): a floor lives in the last few float32 units.
+        exact = value.detach().double()
+        extra[seam] = exact.float()
+        extra[seam + ".residual"] = (exact - exact.float().double()).float()
+        print(f"trellis floor {seam}: {_trellis_separation(record[seam], exact):.4e}")
+
+    def release(model_name):
+        del models[model_name]
+        gc.collect()
+
+    def tensor(prefix, field):
+        value = record[f"{prefix}.{field}"]
+        coords = record.get(f"{prefix}.{field}.coords")
+        return sparse.SparseTensor(feats=value, coords=coords.int()) if coords is not None else value
+
+    calls = ["call0", "call1", "last"] if text else ["call0", "call1", "call2", "last"]
+    cond = record["cond"]
+    unconditional = record["neg_cond"] if text else torch.zeros_like(cond)
+    with torch.no_grad():
+        if seam is not None:
+            samples, steps = chain(torch.float64)
+            put(seam, samples)
+            exact = steps.double()
+            extra[seam + ".steps"] = exact.float()
+            extra[seam + ".steps.residual"] = (exact - exact.float().double()).float()
+        else:
+            if text:
+                clip = _trellis_widen(pipeline.text_cond_model["model"])
+                empty = pipeline.text_cond_model["tokenizer"]([""], max_length=77, padding="max_length", truncation=True,
+                                                              return_tensors="pt")["input_ids"]
+                with float64_default():
+                    put("cond", clip(input_ids=record["prompt_tokens"].long()).last_hidden_state)
+                    put("neg_cond", clip(input_ids=empty).last_hidden_state)
+                del clip
+            else:
+                prepared = Image.fromarray(record["prepared_image"].byte().numpy())
+                pixels = torch.from_numpy(np.array(prepared.convert("RGB"))).double().permute(2, 0, 1)[None] / 255
+                mean = torch.tensor([0.485, 0.456, 0.406], dtype=torch.float64)[None, :, None, None]
+                deviation = torch.tensor([0.229, 0.224, 0.225], dtype=torch.float64)[None, :, None, None]
+                features = models["image_cond_model"]((pixels - mean) / deviation, is_training=True)["x_prenorm"]
+                put("cond", torch.nn.functional.layer_norm(features, features.shape[-1:]))
+                release("image_cond_model")
+            flow = models["sparse_structure_flow_model"]
+            for call in calls:
+                prefix = f"ss_flow.{call}"
+                put(f"{prefix}.out", flow(record[f"{prefix}.x"], record[f"{prefix}.t"], record[f"{prefix}.cond"]))
+            del flow
+            release("sparse_structure_flow_model")
+            put("ss_logits", models["sparse_structure_decoder"](record["ss_latent"]))
+            release("sparse_structure_decoder")
+            flow = models["slat_flow_model"]
+            for call in calls:
+                prefix = f"slat_flow.{call}"
+                put(f"{prefix}.out", flow(tensor(prefix, "x"), record[f"{prefix}.t"], record[f"{prefix}.cond"]))
+            del flow
+            release("slat_flow_model")
+            if not text:
+                slat = sparse.SparseTensor(feats=record["slat"], coords=record["slat.coords"].int())
+                decoder = models["slat_decoder_gs"]
+                features = {}
+                hook = decoder.out_layer.register_forward_hook(lambda module, inputs, output: features.setdefault("out", output))
+                gaussian = decoder(slat)[0]
+                hook.remove()
+                put("gaussian_decoder_out", features["out"])
+                for field in ("get_xyz", "get_features", "get_scaling", "get_rotation", "get_opacity"):
+                    put(f"gaussian.{field}", getattr(gaussian, field))
+
+    globals()["_extra"] = {k: v.contiguous().clone() for k, v in extra.items()}
+    first = next(iter(extra))
+    return extra[first].clone()
+
+
+def run_trellis_floor(image, checkpoint):
+    """`_trellis_floor`'s main part. `image` unused."""
+    return _trellis_floor(checkpoint, "main")
+
+
+def run_trellis_floor_structure_sampling(image, checkpoint):
+    """`_trellis_floor`'s structure sampler. `image` unused."""
+    return _trellis_floor(checkpoint, "structure_sampling")
+
+
+def run_trellis_floor_latent_sampling(image, checkpoint):
+    """`_trellis_floor`'s structured-latent sampler. `image` unused."""
+    return _trellis_floor(checkpoint, "latent_sampling")
+
+
+def run_trellis_floor_mesh(image, checkpoint):
+    """`_trellis_floor`'s mesh seam on its own: the image release's mesh decoder rerun in float64 on its
+    record's structured latent, its features before FlexiCubes recorded as a float32 value and residual and their
+    floor printed. The shim's
+    sparse convolution gathers in row chunks at float64, which holds the 256³ stage within this machine.
+    `image` unused."""
+    import gc
+    from safetensors.torch import load_file
+    record = {k: v.double() if v.is_floating_point() else v
+              for k, v in load_file(_trellis_setting("IK_PARITY_TRELLIS")).items() if k.startswith(("slat", "mesh_decoder_out"))}
+    pipeline, sparse = _trellis_pipeline(checkpoint)
+    _trellis_float64()
+    decoder = _trellis_widen(pipeline.models["slat_decoder_mesh"])
+    del pipeline
+    gc.collect()
+    features = {}
+    with torch.no_grad():
+        hook = decoder.out_layer.register_forward_hook(lambda module, inputs, output: features.setdefault("out", output))
+        decoder.to_representation = lambda x: []
+        decoder(sparse.SparseTensor(feats=record["slat"], coords=record["slat.coords"].int()))
+        hook.remove()
+    exact = features["out"].feats.double()
+    print(f"trellis floor mesh_decoder_out: {_trellis_separation(record['mesh_decoder_out'], exact):.4e}")
+    globals()["_extra"] = {"mesh_decoder_out": exact.float().contiguous().clone(),
+                           "mesh_decoder_out.residual": (exact - exact.float().double()).float().contiguous().clone()}
+    return globals()["_extra"]["mesh_decoder_out"].clone()
+
+
+CHECKPOINT_MODELS["trellis_floor"] = run_trellis_floor
+CHECKPOINT_MODELS["trellis_floor_structure_sampling"] = run_trellis_floor_structure_sampling
+CHECKPOINT_MODELS["trellis_floor_latent_sampling"] = run_trellis_floor_latent_sampling
+CHECKPOINT_MODELS["trellis_floor_mesh"] = run_trellis_floor_mesh
+
+
 def _ltx2_diffusion_decoder_tiny(**over):
     from diffusers import LTX2VideoDiffusionDecoderModel
 

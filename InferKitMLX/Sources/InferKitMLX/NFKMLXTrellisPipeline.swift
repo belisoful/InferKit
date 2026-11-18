@@ -45,15 +45,17 @@ public struct NFKMLXTrellisSampling: Sendable, Equatable {
         return (0 ..< steps).map { (points[$0], points[$0 + 1]) }
     }
 
-    /// The sample after every step from `noise`, where `velocity(x, t, conditional)` evaluates the flow
-    /// at `x` and t · 1000 with the condition (true) or the unconditional one (false).
-    func sample(_ noise: MLXArray, velocity: (MLXArray, MLXArray, Bool) -> MLXArray) -> MLXArray {
+    /// The sample after every step from `noise`. `modulation(time)` prepares the flow's timestep modulation
+    /// once per step for the float32 time t · 1000, and `velocity(x, modulation, conditional)` evaluates the
+    /// flow at `x` with the condition (true) or the unconditional one (false).
+    func sample<Modulation>(_ noise: MLXArray, modulation: (Float) -> Modulation,
+                            velocity: (MLXArray, Modulation, Bool) -> MLXArray) -> MLXArray {
         var x = noise
         for (t, next) in timetable {
-            let time = MLXArray([Float(1000 * t)])
-            var v = velocity(x, time, true)
+            let step = modulation(Float(1000 * t))
+            var v = velocity(x, step, true)
             if guidanceInterval.contains(t) {
-                v = (1 + guidance) * v - guidance * velocity(x, time, false)
+                v = (1 + guidance) * v - guidance * velocity(x, step, false)
             }
             x = x - Float(t - next) * v
             eval(x)
@@ -353,8 +355,8 @@ public final class NFKMLXTrellisPipeline: @unchecked Sendable {
     public func sampleStructure(noise: MLXArray, condition: MLXArray, unconditional: MLXArray,
                                 sampling: NFKMLXTrellisSampling? = nil) throws -> MLXArray {
         try structureFlow.use { flow in
-            (sampling ?? structureSampling).sample(noise) { x, t, conditional in
-                flow(x, t: t, condition: conditional ? condition : unconditional)
+            (sampling ?? structureSampling).sample(noise, modulation: flow.wideModulation(at:)) { x, modulation, conditional in
+                flow.velocity(x, modulation: modulation, condition: conditional ? condition : unconditional)
             }
         }
     }
@@ -373,8 +375,8 @@ public final class NFKMLXTrellisPipeline: @unchecked Sendable {
                              sampling: NFKMLXTrellisSampling? = nil) throws -> MLXArray {
         let grid = NFKTrellisVoxelGrid(voxels, resolution: configuration.occupancyResolution)
         return try latentFlow.use { flow in
-            (sampling ?? latentSampling).sample(noise) { x, t, conditional in
-                flow.velocity(x, grid: grid, t: t, condition: conditional ? condition : unconditional)
+            (sampling ?? latentSampling).sample(noise, modulation: flow.wideModulation(at:)) { x, modulation, conditional in
+                flow.velocity(x, grid: grid, modulation: modulation, condition: conditional ? condition : unconditional)
             }
         }
     }

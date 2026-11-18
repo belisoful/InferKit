@@ -92,10 +92,19 @@ class SubMConv3d(nn.Module):
             if self.indice_key is not None:
                 x.indice_dict[cache_key] = table
         padded = torch.cat([feats, feats.new_zeros(1, feats.shape[1])])
-        gathered = padded[torch.where(table >= 0, table, feats.shape[0])]
-        gathered = gathered.reshape(feats.shape[0], -1)
+        index = torch.where(table >= 0, table, feats.shape[0])
         weight = self.weight.reshape(self.out_channels, -1)
-        out = torch.addmm(self.bias, gathered, weight.t()) if self.bias is not None else gathered @ weight.t()
+
+        def product(rows):
+            gathered = padded[index[rows]].reshape(len(range(*rows.indices(feats.shape[0]))), -1)
+            return torch.addmm(self.bias, gathered, weight.t()) if self.bias is not None else gathered @ weight.t()
+
+        # A float64 run (the floor oracle) gathers 65,536 rows at a time: the whole gather of the 256³ stage
+        # holds 23 GB at float64. A float32 run gathers all rows at once, as every float32 record was made.
+        if feats.dtype == torch.float64:
+            out = torch.cat([product(slice(start, start + 65536)) for start in range(0, feats.shape[0], 65536)])
+        else:
+            out = product(slice(0, feats.shape[0]))
         return x.replace_feature(out)
 
 

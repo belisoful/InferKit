@@ -69,11 +69,62 @@ final class NFKMLXTrellisTests: XCTestCase {
         try MLX.loadArrays(url: try envPath("IK_PARITY_TRELLIS"))
     }
 
-    // The float32 cosine bars are thresholds, the convention the float32 ports hold (TripoSR, Stable Fast 3D):
-    // 0.9999999999 for each network's forward, 0.999999999 for the 25-step guided sampler chains, which compound
-    // each forward's float32 differences (text-large's structure chain reads 0.99999999988), and 0.9999999 for
-    // CLIP's condition. The reference's own float32-against-float64 spread is not measured, so no bar is a floor.
-    // Bytes, voxels, faces, and the sphere's counts are exact.
+    // Every float32 seam is held to the reference's measured floor. The floor records (`run_reference.py
+    // trellis_floor` and its sampling and mesh parts) hold each seam rerun through the release's code in float64
+    // on the parity record's inputs. The floor is the reference's own float32 gap to that result, one minus the
+    // cosine of the parity record's seam against it. The records store the float64 result as its float32
+    // rounding and the float32 residual (`<seam>.residual`), summed here in double: the rounding alone often
+    // equals the parity record, which hides the floor. The port's gap to the same result is held to twice
+    // the floor, the end-to-end level. A seam the floor records do not cover (the Gaussians' stored fields, linear
+    // in the decoder's held features) keeps a 0.9999999999 threshold. Bytes, voxels, faces, and the sphere's
+    // counts are exact.
+    private func assertWithinFloor(_ value: MLXArray, _ floors: [String: MLXArray], _ parity: [String: MLXArray],
+                                   _ seam: String, channelsFirst: Bool = false) {
+        guard let rounded = floors[seam], let residual = floors[seam + ".residual"], let recorded = parity[seam] else {
+            return XCTFail("the floor or parity record holds no \(seam) and its residual")
+        }
+        let exact = zip(doubles(rounded), doubles(residual)).map { $0 + $1 }
+        let floor = separation(doubles(recorded), exact)
+        let gap = separation(doubles(channelsFirst ? toChannelsFirst(value) : value), exact)
+        report("TRELLIS floor \(seam): port \(gap), reference \(floor), ratio \(gap / floor)")
+        XCTAssertLessThanOrEqual(gap, 2 * floor, seam)
+    }
+
+    /// A release's floor records merged: `key` and, where keyed, its `_STRUCTURE_SAMPLING`,
+    /// `_LATENT_SAMPLING`, and `_MESH` records, each one oracle run.
+    private func floors(_ key: String) throws -> [String: MLXArray] {
+        var merged = try MLX.loadArrays(url: try envPath(key))
+        for part in ["_STRUCTURE_SAMPLING", "_LATENT_SAMPLING", "_MESH"] {
+            if let path = NFKMLXValidationConfig.environment[key + part], FileManager.default.fileExists(atPath: path) {
+                merged.merge(try MLX.loadArrays(url: URL(fileURLWithPath: path))) { first, _ in first }
+            }
+        }
+        return merged
+    }
+
+    /// One minus the cosine, computed as half the squared distance between the unit vectors: the plain
+    /// 1 − a·b / (|a| |b|) loses about 1e-12 to the rounding of its sums over tens of millions of elements, the
+    /// size of the floors themselves.
+    private func separation(_ x: [Double], _ y: [Double]) -> Double {
+        XCTAssertEqual(x.count, y.count)
+        var na = 0.0, nb = 0.0
+        for i in 0 ..< min(x.count, y.count) {
+            na += x[i] * x[i]
+            nb += y[i] * y[i]
+        }
+        let sa = 1 / na.squareRoot(), sb = 1 / nb.squareRoot()
+        var sum = 0.0
+        for i in 0 ..< min(x.count, y.count) {
+            let d = x[i] * sa - y[i] * sb
+            sum += d * d
+        }
+        return sum / 2
+    }
+
+    private func doubles(_ a: MLXArray) -> [Double] {
+        a.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init)
+    }
+
     private func cosine(_ a: MLXArray, _ b: MLXArray) -> Double {
         let x = a.asType(.float32).reshaped([-1]).asArray(Float.self), y = b.asType(.float32).reshaped([-1]).asArray(Float.self)
         XCTAssertEqual(x.count, y.count)
@@ -95,6 +146,7 @@ final class NFKMLXTrellisTests: XCTestCase {
 
     /// A channels-first volume `[N, C, X, Y, Z]` channels last.
     private func channelsLast(_ x: MLXArray) -> MLXArray { x.transposed(0, 2, 3, 4, 1) }
+    private func toChannelsFirst(_ x: MLXArray) -> MLXArray { x.transposed(0, 4, 1, 2, 3) }
 
     // MARK: - Structure
 
@@ -248,6 +300,24 @@ final class NFKMLXTrellisTests: XCTestCase {
         XCTAssertLessThan(abs(sqrt(sum(gaussians.rotations * gaussians.rotations, axis: -1)) - 1).max().item(Float.self), 1e-5)
     }
 
+    func testTheSamplersFloat64ModulationMatchesTheTrainedPath() throws {
+        var configuration = tinyConfiguration()
+        configuration.latentChannels = 2
+        configuration.latentFlowIOWidth = 32
+        let condition = MLXRandom.normal([1, 7, 16])
+        let time = Float(986.30137)
+        func gap(_ a: MLXArray, _ b: MLXArray) -> Float { (abs(a - b).max() / abs(b).max()).item(Float.self) }
+        let structure = try NFKMLXTrellis.structureFlow(weightsURL: nil, configuration: configuration)
+        let dense = MLXRandom.normal([1, 4, 4, 4, 2])
+        XCTAssertLessThan(gap(structure.velocity(dense, modulation: structure.wideModulation(at: time), condition: condition),
+                              structure(dense, t: MLXArray([time]), condition: condition)), 1e-4)
+        let flow = try NFKMLXTrellis.latentFlow(weightsURL: nil, configuration: configuration)
+        let voxels = grid(side: 8) { x, y, z in x + y + z < 6 }
+        let latent = MLXRandom.normal([voxels.count, 2])
+        XCTAssertLessThan(gap(flow.velocity(latent, grid: voxels, modulation: flow.wideModulation(at: time), condition: condition),
+                              flow.velocity(latent, grid: voxels, t: MLXArray([time]), condition: condition)), 1e-4)
+    }
+
     // MARK: - Parity
 
     /// A sparse record entry's features and its voxel grid (`.coords` without the batch column).
@@ -259,14 +329,14 @@ final class NFKMLXTrellisTests: XCTestCase {
         let weights = try checkpoint("slat_flow_img_dit_L_64l8p2_fp16")
         let reference = try record()
         let flow = try NFKMLXTrellis.latentFlow(weightsURL: weights)
+        let held = try floors("IK_PARITY_TRELLIS_FLOOR")
         for call in ["call0", "call1", "call2", "last"] {
             let prefix = "slat_flow.\(call)."
             let (x, voxels) = sparse(reference, prefix + "x", resolution: 64)
             let velocity = flow.velocity(x, grid: voxels, t: reference[prefix + "t"]!, condition: reference[prefix + "cond"]!)
             let expected = reference[prefix + "out"]!
-            let similarity = cosine(velocity, expected)
-            report("TRELLIS latent flow \(call) cosine \(similarity), max difference \(maxDifference(velocity, expected))")
-            XCTAssertGreaterThan(similarity, 0.9999999999, call)
+            report("TRELLIS latent flow \(call) cosine \(cosine(velocity, expected)), max difference \(maxDifference(velocity, expected))")
+            assertWithinFloor(velocity, held, reference, prefix + "out")
         }
     }
 
@@ -284,12 +354,34 @@ final class NFKMLXTrellisTests: XCTestCase {
             ("gaussian.get_xyz", gaussians.positions), ("gaussian.get_scaling", gaussians.scales),
             ("gaussian.get_rotation", gaussians.rotations), ("gaussian.get_opacity", gaussians.opacities),
         ]
+        let held = try floors("IK_PARITY_TRELLIS_FLOOR")
         for (name, value) in pairs {
             let expected = reference[name]!
             XCTAssertEqual(value.shape, expected.shape, name)
             let similarity = cosine(value, expected)
             report("TRELLIS \(name) cosine \(similarity), max difference \(maxDifference(value, expected))")
-            XCTAssertGreaterThan(similarity, 0.9999999999, name)
+            if held[name] != nil {
+                assertWithinFloor(value, held, reference, name)
+            } else {
+                XCTAssertGreaterThan(similarity, 0.9999999999, name)
+            }
+        }
+    }
+
+    func testGaussianScalesKeepFloat32PrecisionWhereTheSoftplusIsSmall() throws {
+        let configuration = NFKMLXTrellisConfiguration.released
+        let bias = configuration.gaussianScaleBias + log(-expm1(-configuration.gaussianScaleBias))
+        let stored = (0 ..< 4096).map { Float($0) / 4096 * 30 - 25 }
+        let values = MLXArray(stored)
+        let gaussians = NFKTrellisGaussians(storedPositions: values, colors: values, storedScales: values, storedRotations: values,
+                                            storedOpacities: values, minimumScale: configuration.gaussianMinimumScale,
+                                            scaleBias: bias, opacityBias: 0)
+        let scales = gaussians.scales.asArray(Float.self)
+        let minimum = Double(configuration.gaussianMinimumScale)
+        for (x, scale) in zip(stored, scales) {
+            let s = Foundation.log1p(Foundation.exp(Double(Float(x + bias))))
+            let exact = (s * s + minimum * minimum).squareRoot()
+            XCTAssertLessThan(abs(Double(scale) - exact) / exact, 1e-6, "stored scale \(x)")
         }
     }
 
@@ -302,9 +394,8 @@ final class NFKMLXTrellisTests: XCTestCase {
         let expectedCoordinates = reference["mesh_decoder_out.coords"]![0..., 1...].asType(.int32).reshaped([-1]).asArray(Int32.self)
         XCTAssertEqual(fine.coordinates, expectedCoordinates)
         let expected = reference["mesh_decoder_out"]!
-        let similarity = cosine(features, expected)
-        report("TRELLIS mesh decoder features cosine \(similarity), max difference \(maxDifference(features, expected))")
-        XCTAssertGreaterThan(similarity, 0.9999999999)
+        report("TRELLIS mesh decoder features cosine \(cosine(features, expected)), max difference \(maxDifference(features, expected))")
+        assertWithinFloor(features, try floors("IK_PARITY_TRELLIS_FLOOR"), reference, "mesh_decoder_out")
     }
 
     func testImageEncoderMatchesReference() throws {
@@ -315,22 +406,21 @@ final class NFKMLXTrellisTests: XCTestCase {
         let tokens = encoder(image)
         let expected = reference["cond"]!
         XCTAssertEqual(tokens.shape, expected.shape)
-        let similarity = cosine(tokens, expected)
-        report("TRELLIS condition cosine \(similarity), max difference \(maxDifference(tokens, expected))")
-        XCTAssertGreaterThan(similarity, 0.9999999999)
+        report("TRELLIS condition cosine \(cosine(tokens, expected)), max difference \(maxDifference(tokens, expected))")
+        assertWithinFloor(tokens, try floors("IK_PARITY_TRELLIS_FLOOR"), reference, "cond")
     }
 
     func testStructureFlowMatchesReference() throws {
         let weights = try checkpoint("ss_flow_img_dit_L_16l8_fp16")
         let reference = try record()
         let flow = try NFKMLXTrellis.structureFlow(weightsURL: weights)
+        let held = try floors("IK_PARITY_TRELLIS_FLOOR")
         for call in ["call0", "call1", "call2", "last"] {
             let prefix = "ss_flow.\(call)."
             let velocity = flow(channelsLast(reference[prefix + "x"]!), t: reference[prefix + "t"]!, condition: reference[prefix + "cond"]!)
             let expected = channelsLast(reference[prefix + "out"]!)
-            let similarity = cosine(velocity, expected)
-            report("TRELLIS structure flow \(call) cosine \(similarity), max difference \(maxDifference(velocity, expected))")
-            XCTAssertGreaterThan(similarity, 0.9999999999, call)
+            report("TRELLIS structure flow \(call) cosine \(cosine(velocity, expected)), max difference \(maxDifference(velocity, expected))")
+            assertWithinFloor(velocity, held, reference, prefix + "out", channelsFirst: true)
         }
     }
 
@@ -341,12 +431,12 @@ final class NFKMLXTrellisTests: XCTestCase {
         let logits = decoder(channelsLast(reference["ss_latent"]!))
         let expected = channelsLast(reference["ss_logits"]!)
         let similarity = cosine(logits, expected)
+        assertWithinFloor(logits, try floors("IK_PARITY_TRELLIS_FLOOR"), reference, "ss_logits", channelsFirst: true)
         let voxels = NFKMLXTrellisStructureDecoder.occupiedVoxels(logits[0])
         let expectedVoxels = reference["coords"]![0..., 1...].asType(.int32)
         let same = voxels.shape == expectedVoxels.shape && voxels.asArray(Int32.self) == expectedVoxels.asArray(Int32.self)
         report("TRELLIS structure decoder cosine \(similarity), max difference \(maxDifference(logits, expected)), " +
               "occupied \(voxels.dim(0)) against \(expectedVoxels.dim(0)), identical \(same)")
-        XCTAssertGreaterThan(similarity, 0.9999999999)
         XCTAssertTrue(same)
     }
     // MARK: - Mesh extraction
@@ -480,9 +570,10 @@ final class NFKMLXTrellisTests: XCTestCase {
         let denormalizedCosine = cosine(pipeline.denormalized(latent), reference["slat"]!)
         report("TRELLIS structure sampling cosine \(structureCosine), occupied \(voxels.dim(0)) against \(expectedVoxels.dim(0)); "
                + "latent sampling cosine \(latentCosine), denormalized \(denormalizedCosine)")
-        XCTAssertGreaterThan(structureCosine, 0.999999999)
-        XCTAssertGreaterThan(latentCosine, 0.999999999)
-        XCTAssertGreaterThan(denormalizedCosine, 0.999999999)
+        let held = try floors("IK_PARITY_TRELLIS_FLOOR")
+        assertWithinFloor(structure, held, reference, "ss_latent", channelsFirst: true)
+        assertWithinFloor(latent, held, reference, "slat_normalized")
+        XCTAssertGreaterThan(denormalizedCosine, 0.9999999999)
         XCTAssertEqual(voxels.dim(0), expectedVoxels.dim(0))
     }
 
@@ -543,6 +634,8 @@ final class NFKMLXTrellisTests: XCTestCase {
     private func checkText(_ variant: NFKMLXTrellisVariant) throws {
         let (pipeline, reference) = try textCase(variant)
         let name = NFKMLXTrellisFactory.modelName(for: variant)
+        let suffix = ["", "BASE", "LARGE", "XLARGE"][variant.rawValue]
+        let held = try floors("IK_PARITY_TRELLIS_TEXT_\(suffix)_FLOOR")
         let tokens = pipeline.tokenizer!.tokens(for: "A wooden chair with a red cushion", contextLength: 77)
         XCTAssertEqual(tokens.map(Int32.init), reference["prompt_tokens"]!.reshaped([-1]).asArray(Int32.self))
         let (condition, unconditional) = try pipeline.condition(prompt: "A wooden chair with a red cushion")
@@ -554,7 +647,7 @@ final class NFKMLXTrellisTests: XCTestCase {
                 let out = flow(channelsLast(reference[prefix + "x"]!), t: reference[prefix + "t"]!, condition: reference[prefix + "cond"]!)
                 let value = cosine(out, channelsLast(reference[prefix + "out"]!))
                 flowCosines.append("structure \(call) \(value)")
-                XCTAssertGreaterThan(value, 0.9999999999, "\(name) structure \(call)")
+                assertWithinFloor(out, held, reference, prefix + "out", channelsFirst: true)
             }
         }
         try pipeline.latentFlow.use { flow in
@@ -564,7 +657,7 @@ final class NFKMLXTrellisTests: XCTestCase {
                 let out = flow.velocity(reference[prefix + "x"]!, grid: grid, t: reference[prefix + "t"]!, condition: reference[prefix + "cond"]!)
                 let value = cosine(out, reference[prefix + "out"]!)
                 flowCosines.append("latent \(call) \(value)")
-                XCTAssertGreaterThan(value, 0.9999999999, "\(name) latent \(call)")
+                assertWithinFloor(out, held, reference, prefix + "out")
             }
         }
         let structure = try pipeline.sampleStructure(noise: channelsLast(reference["ss_noise"]!), condition: reference["cond"]!,
@@ -575,10 +668,10 @@ final class NFKMLXTrellisTests: XCTestCase {
         let latentCosine = cosine(latent, reference["slat_normalized"]!)
         report("TRELLIS \(name) condition cosine \(conditionCosine), empty prompt \(unconditionalCosine), "
                + flowCosines.joined(separator: ", ") + ", structure sampling \(structureCosine), latent sampling \(latentCosine)")
-        XCTAssertGreaterThan(conditionCosine, 0.9999999)
-        XCTAssertGreaterThan(unconditionalCosine, 0.9999999)
-        XCTAssertGreaterThan(structureCosine, 0.999999999)
-        XCTAssertGreaterThan(latentCosine, 0.999999999)
+        assertWithinFloor(condition, held, reference, "cond")
+        assertWithinFloor(unconditional, held, reference, "neg_cond")
+        assertWithinFloor(structure, held, reference, "ss_latent", channelsFirst: true)
+        assertWithinFloor(latent, held, reference, "slat_normalized")
     }
 
     func testTextBaseMatchesReference() throws { try checkText(.textBase) }

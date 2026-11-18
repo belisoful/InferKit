@@ -244,8 +244,12 @@ final class NFKTrellisModulatedCrossBlock: Module {
         _modulation.wrappedValue = [NFKTrellisSlot(), Linear(width, width * 6)]
     }
 
-    func callAsFunction(_ x: MLXArray, timestep: MLXArray, context: MLXArray) -> MLXArray {
-        let parts = split((modulation[1] as! Linear)(silu(timestep)), parts: 6, axis: 1).map { expandedDimensions($0, axis: 1) }
+    var modulationLinear: Linear { modulation[1] as! Linear }
+
+    /// The block at `x` `[N, L, width]` with its six modulation parts `[N, width]` (the self-attention's shift,
+    /// scale, and gate, then the feed-forward's) from ``NFKTrellisTimestepEmbedder``.
+    func callAsFunction(_ x: MLXArray, modulation: [MLXArray], context: MLXArray) -> MLXArray {
+        let parts = modulation.map { expandedDimensions($0, axis: 1) }
         var x = x
         var h = NFKTrellisAttention.normalized(x, eps: 1e-6) * (1 + parts[1]) + parts[0]
         x = x + selfAttention(h) * parts[2]
@@ -276,6 +280,47 @@ final class NFKTrellisTimestepEmbedder: Module {
     func callAsFunction(_ t: MLXArray) -> MLXArray {
         let first = layers[0] as! Linear, last = layers[2] as! Linear
         return last(silu(first(Self.sinusoid(t, width: frequencyWidth))))
+    }
+
+    /// Each of `linears` applied to the SiLU of the embedding of `t` `[N]` and split into its count of parts
+    /// `[N, outputs / count]`. This is the trained path, differentiable through every weight.
+    func modulation(_ t: MLXArray, linears: [(Linear, Int)]) -> [[MLXArray]] {
+        let embedding = silu(callAsFunction(t))
+        return linears.map { linear, count in split(linear(embedding), parts: count, axis: 1) }
+    }
+
+    /// ``modulation(_:linears:)`` for the one float32 time `t`, with the sinusoid, both linears, the SiLUs,
+    /// and `linears` formed in float64 on the CPU stream, each part rounded once to float32 `[1, outputs / count]`.
+    /// @discussion The modulation reaches every token alike, so its float32 rounding moves the whole latent the
+    /// same way at every step, and the samplers' last steps amplify that direction: in float32 the text
+    /// releases' structure sampling stands 3.5 to 4.7 times its reference floor, and in float64 within it. The
+    /// weights are evaluated on the default stream first, so no GPU command buffer waits on the CPU stream.
+    func wideModulation(at t: Float, linears: [(Linear, Int)]) -> [[MLXArray]] {
+        let weights = ([layers[0] as! Linear, layers[2] as! Linear] + linears.map { $0.0 }).map(Self.dense)
+        eval(weights.flatMap { [$0.weight] + ($0.bias.map { [$0] } ?? []) })
+        func wide(_ x: MLXArray, _ layer: (weight: MLXArray, bias: MLXArray?)) -> MLXArray {
+            let y = MLX.matmul(x, layer.weight.asType(.float64, stream: .cpu).transposed(stream: .cpu), stream: .cpu)
+            return layer.bias.map { MLX.add(y, $0.asType(.float64, stream: .cpu), stream: .cpu) } ?? y
+        }
+        func wideSiLU(_ x: MLXArray) -> MLXArray { MLX.multiply(x, MLX.sigmoid(x, stream: .cpu), stream: .cpu) }
+        let half = frequencyWidth / 2
+        let angles = (0 ..< half).map { Double(t) * Foundation.exp(-Foundation.log(10000.0) * Double($0) / Double(half)) }
+        let sinusoid = MLXArray(angles.map { Foundation.cos($0) } + angles.map { Foundation.sin($0) }, [1, frequencyWidth])
+        let embedding = wideSiLU(wide(wideSiLU(wide(sinusoid, weights[0])), weights[1]))
+        eval(embedding)
+        return zip(linears, weights.dropFirst(2)).map { linear, weight in
+            let parts = MLX.split(wide(embedding, weight).asType(.float32, stream: .cpu), parts: linear.1, axis: 1, stream: .cpu)
+            eval(parts)
+            return parts
+        }
+    }
+
+    private static func dense(_ linear: Linear) -> (weight: MLXArray, bias: MLXArray?) {
+        guard let quantized = linear as? QuantizedLinear else {
+            return (linear.weight, linear.bias)
+        }
+        return (dequantized(quantized.weight, scales: quantized.scales, biases: quantized.biases, groupSize: quantized.groupSize,
+                            bits: quantized.bits, mode: quantized.mode, globalScale: quantized.globalScale), quantized.bias)
     }
 }
 
@@ -445,11 +490,24 @@ public final class NFKMLXTrellisStructureFlow: Module {
     /// The velocity `[N, R, R, R, C]` at latent `x` `[N, R, R, R, C]`, timestep `t` `[N]` on the
     /// 0...1000 scale, and condition tokens `[N, L, conditionWidth]`.
     public func callAsFunction(_ x: MLXArray, t: MLXArray, condition: MLXArray) -> MLXArray {
+        velocity(x, modulation: timestepEmbedder.modulation(t, linears: modulationLinears), condition: condition)
+    }
+
+    /// The blocks' modulation linears and their part counts, in block order.
+    var modulationLinears: [(Linear, Int)] { blocks.map { ($0.modulationLinear, 6) } }
+
+    /// The blocks' modulation at the float32 time `t` on the 0...1000 scale, formed in float64 as the
+    /// samplers take it (``NFKTrellisTimestepEmbedder/wideModulation(at:linears:)``).
+    func wideModulation(at t: Float) -> [[MLXArray]] {
+        timestepEmbedder.wideModulation(at: t, linears: modulationLinears)
+    }
+
+    /// The velocity at `x` with each block's modulation parts given.
+    func velocity(_ x: MLXArray, modulation: [[MLXArray]], condition: MLXArray) -> MLXArray {
         let batch = x.dim(0), side = x.dim(1)
         var h = inputLayer(x.reshaped([batch, side * side * side, x.dim(4)])) + positions
-        let timestep = timestepEmbedder(t)
-        for block in blocks {
-            h = block(h, timestep: timestep, context: condition)
+        for (block, parts) in zip(blocks, modulation) {
+            h = block(h, modulation: parts, context: condition)
         }
         return outputLayer(NFKTrellisAttention.normalized(h, eps: 1e-5)).reshaped([batch, side, side, side, -1])
     }

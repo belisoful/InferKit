@@ -340,7 +340,15 @@ the mesh type, the surface extraction, and the writers every later port uses.
   - Sampler (`FlowEulerGuidanceIntervalSampler`): the timetable is numpy's `linspace(1, 0, steps + 1)` bent by
     3t / (1 + 2t) in double precision, the flow evaluated at float32 t · 1000, guidance (1 + s) · v − s · v₀ where
     t lies in the interval, x ← x − (t − t_next) · v. The noise comes from MLX's generator, so a seed does not
-    reproduce torch's sample.
+    reproduce torch's sample. The samplers take each step's timestep modulation in float64
+    (`NFKTrellisTimestepEmbedder.wideModulation(at:linears:)`): the sinusoid, the timestep embedder, and every
+    block's SiLU and modulation linear on the CPU stream, each part rounded once to float32 and shared by the
+    step's two forwards. That vector reaches every token alike, so its float32 rounding moves the whole latent the
+    same way each step, and the last steps (t below 0.4) amplify it: with the float32 path the text releases'
+    structure sampling stood 4.68 (large) and 3.50 (xlarge) times its floor with every forward at its floor.
+    Swapping in torch's own float32 sinusoid moved them non-monotonically (3.42 and
+    1.65; base from 0.56 to 1.42). A single forward (`callAsFunction`, the latent flow's `velocity(…t:…)`) and
+    training keep the float32 path, differentiable through every weight.
   - Oracle: `run_reference.py trellis` (the image release at 25 steps on the subject plate with an elliptical
     alpha: every seam above, four flow forwards of each stage plus the last, 8,640 voxels, 247,172 vertices,
     492,012 faces, 276,480 Gaussians), `trellis_text` (each text release through the structured latent on "A
@@ -357,11 +365,22 @@ the mesh type, the surface extraction, and the writers every later port uses.
     0.9999999999937 in the reference's voxel order; the prepared image byte for byte (804,972 bytes); FlexiCubes on the reference's
     features the reference's mesh (247,172 vertices, identical faces, positions within 3.0e-8, colors exact); both samplers from the recorded noise over 25
     steps 0.99999999998208 (the structure, its 8,640 voxels identical) and 0.99999999999985 (the structured
-    latent; 0.99999999999987 denormalized). Text: (run 5, 2026-11-11; the CLIP condition 0.99999999999843 and the empty prompt's 0.99999999999863 for all three, the tokens identical) text-base: structure flow 0.99999999999988, 0.99999999999989, and 0.99999999999860 at its last forward, latent flow 0.99999999999956, 0.99999999999957, 0.99999999999492, samplers over 25 steps 0.99999999998588 and 0.99999999999934; text-large: structure flow 0.99999999999988, 0.99999999999988, 0.99999999999769, latent flow 0.99999999999953, 0.99999999999955, 0.99999999999591, samplers 0.99999999987970 and 0.99999999999927; text-xlarge: structure flow 0.99999999999989, 0.99999999999989, 0.99999999999867, latent flow 0.99999999999970, 0.99999999999970, 0.99999999999828, samplers 0.99999999986941 and 0.99999999999959. The tests hold each float32 cosine above a threshold,
-    the convention of the float32 ports (TripoSR, Stable Fast 3D): 0.9999999999 for each network's forward,
-    0.999999999 for the 25-step guided sampler chains (which compound each forward's float32 differences; the text
-    releases' structure chains read 0.9999999998797 and 0.9999999998694), 0.9999999 for CLIP's condition. These are thresholds, not floors: the reference's own float32 against
-    float64 spread is not measured. Bytes, voxels, faces, and the FlexiCubes sphere's counts are held exactly.
+    latent; 0.99999999999987 denormalized). Text: (run 5, 2026-11-11; the CLIP condition 0.99999999999843 and the empty prompt's 0.99999999999863 for all three, the tokens identical) text-base: structure flow 0.99999999999988, 0.99999999999989, and 0.99999999999860 at its last forward, latent flow 0.99999999999956, 0.99999999999957, 0.99999999999492, samplers over 25 steps 0.99999999998588 and 0.99999999999934; text-large: structure flow 0.99999999999988, 0.99999999999988, 0.99999999999769, latent flow 0.99999999999953, 0.99999999999955, 0.99999999999591, samplers 0.99999999987970 and 0.99999999999927; text-xlarge: structure flow 0.99999999999989, 0.99999999999989, 0.99999999999867, latent flow 0.99999999999970, 0.99999999999970, 0.99999999999828, samplers 0.99999999986941 and 0.99999999999959.
+    Floors (run 11, 2026-11-18): each seam is held to twice the reference's own float32 spread from float64.
+    `run_reference.py trellis_floor`, `trellis_floor_structure_sampling`, `trellis_floor_latent_sampling`, and
+    `trellis_floor_mesh` rerun the release's code in float64 on each parity record's inputs (`_trellis_float64`
+    widens the norms, the head norms, the sinusoids, and the sampler's time; spconv's gathers run in 65,536-row
+    chunks) and record the float64 result as its float32 rounding plus the float32 residual, since the rounding
+    alone often equals the float32 record. The floor is one minus the cosine of the float32 record against that
+    result, taken as half the squared distance between the unit vectors: the plain form keeps about 1e-13 of
+    float64 summation error over a million elements, more than `gaussian.get_xyz`'s floor of 8.7e-15. Port over
+    floor, image: condition 1.35; structure flow 1.03, 1.03, 1.03, and 1.05 at its last forward; occupancy logits
+    0.84; latent flow 0.56 to 0.80; Gaussian decoder features 1.10 and activated fields 1.08 to 1.12; mesh
+    features 0.76; samplers 0.63 (structure, floor 1.6e-10) and 0.37 (latent, floor 2.1e-13). Text, base /
+    large / xlarge: CLIP condition 0.32 and empty prompt 0.29; structure flow 0.99 to 1.02; latent flow 0.43 to
+    1.00; structure sampling 0.37 / 1.43 / 1.00 (floors 7.9e-11 / 3.4e-11 / 1.7e-10); latent sampling 0.45 /
+    0.49 / 0.66. The Gaussians' stored fields, which the floor records do not cover, keep 0.9999999999. Bytes,
+    voxels, faces, and the FlexiCubes sphere's counts are held exactly.
   - **Customization: LoRA (or full), both flows.** `NFKMLXTrellisObjective` is the trainers' rectified flow:
     x_t = (1 − t) x₀ + (1e-5 + (1 − 1e-5) t) ε, the target (1 − 1e-5) ε − x₀, mean squared error, times σ of a
     normal draw around 1 (`logitNormal`, mean 1, std 1), the condition replaced by zeros with probability 0.1, AdamW
