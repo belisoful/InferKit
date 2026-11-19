@@ -32393,6 +32393,127 @@ def run_wan_lora_diffsynth_experts(image):
 MODELS["wan_lora_diffsynth_experts"] = run_wan_lora_diffsynth_experts
 
 
+def _diffsynth_dense_flex_attention():
+    """Replaces DiffSynth-Studio's compiled flex attention with the same computation in dense form, which
+    runs on a CPU and differentiates there: `create_block_mask` returns the mask function itself, and the
+    attention evaluates `softmax(score_mod(q·kᵀ·scale))` over the keys the mask admits, a row no key admits
+    giving zeros, as flex attention defines it. The mask and score functions stay DiffSynth's own."""
+    import importlib
+    # The package re-exports the function under the module's name, so the module is read from sys.modules.
+    importlib.import_module("diffsynth.core.attention.flex_attention")
+    flex_module = sys.modules["diffsynth.core.attention.flex_attention"]
+    animate_module = importlib.import_module("diffsynth.models.wan_animate_2_dit")
+
+    def block_mask(mask_mod, B=None, H=None, Q_LEN=None, KV_LEN=None, device=None, _compile=False):
+        return (mask_mod, Q_LEN, KV_LEN)
+
+    def dense(query, key, value, block_mask=None, scale=None, score_mod=None):
+        mask_mod, q_len, kv_len = block_mask
+        q_idx = torch.arange(query.shape[2]).view(-1, 1)
+        kv_idx = torch.arange(key.shape[2]).view(1, -1)
+        zero = torch.zeros((), dtype=torch.long)
+        scale = scale if scale is not None else 1 / math.sqrt(query.shape[-1])
+        scores = torch.matmul(query, key.transpose(-2, -1)) * scale
+        if score_mod is not None:
+            scores = score_mod(scores, zero, zero, q_idx, kv_idx)
+        admitted = mask_mod(zero, zero, q_idx, kv_idx)
+        scores = scores.masked_fill(~admitted, float("-inf"))
+        weights = torch.softmax(scores, dim=-1).nan_to_num(0.0)
+        return torch.matmul(weights, value)
+
+    animate_module.create_block_mask = block_mask
+    flex_module.get_flex_attention_func = lambda: dense
+
+
+def run_wan_animate_lora_diffsynth(image):
+    """DiffSynth-Studio's Wan 2.2 Animate 2 LoRA objective (modelscope/DiffSynth-Studio at 1e8ae1d,
+    `examples/wanvideo/model_training/lora/Wan2.2-Animate-2-14B.sh`), under the `wantrain-diffsynth` env:
+    DiffSynth's own `WanAnimate2Transformer` at a tiny random geometry adapted by its `add_lora_to_model` on
+    `self_attn.q`, `self_attn.k`, and `self_attn.v` (rank 4, alpha 8), and its `FlowMatchSFTLoss` over
+    `model_fn_wananimate`'s training path, `forward_origin`: the reference pass over the driving video's
+    latents at timestep 1, then the generation pass over the noised stack of the reference image's latent and
+    the clip's latents, both in the loss. DiffSynth's flex attention is compiled for CUDA, so it runs in the
+    dense form `_diffsynth_dense_flex_attention` gives it. The latents, conditions, prompts, and image
+    features are random stand-ins for the encoders' outputs. Records the weights under DiffSynth's (the
+    release's original) names, the inputs, the drawn index, timestep, sigma, and weight, the noise, the
+    prediction, the loss, and each adapter's gradient (`grad::`, `lora::` under DiffSynth's names).
+    `image` unused.
+    """
+    _diffsynth_dense_flex_attention()
+    from diffsynth.diffusion.flow_match import FlowMatchScheduler
+    from diffsynth.diffusion.loss import FlowMatchSFTLoss
+    from diffsynth.diffusion.training_module import DiffusionTrainingModule
+    from diffsynth.models.wan_animate_2_dit import WanAnimate2Transformer
+    from diffsynth.pipelines.wan_video import model_fn_wananimate
+
+    frames, height, width = 5, 64, 48
+    lat_t, lat_h, lat_w = (frames + 1) // 4 + 2, height // 8, width // 8
+    ref_t = (frames - 1) // 4 + 1
+    model = _randomized(WanAnimate2Transformer(in_dim=36, dim=48, ffn_dim=96, freq_dim=256, text_dim=32, out_dim=16,
+                                               num_heads=2, num_layers=2, text_len=16), seed=121, scale=0.1)
+    extra = {f"w::{key}": value.float().contiguous() for key, value in model.state_dict().items()}
+    model = DiffusionTrainingModule.add_lora_to_model(None, model, ["self_attn.q", "self_attn.k", "self_attn.v"], 4, 8)
+    generator = torch.Generator().manual_seed(122)
+    for name, parameter in model.named_parameters():
+        if "lora_B" in name:
+            parameter.data = torch.randn(parameter.shape, generator=generator) * 0.1
+    for name, parameter in model.named_parameters():
+        parameter.requires_grad_("lora_" in name)
+
+    def randn(*shape):
+        return torch.randn(*shape, generator=generator)
+    inputs = dict(input_latents=randn(1, 16, lat_t, lat_h, lat_w), y=randn(1, 20, lat_t, lat_h, lat_w),
+                  condition_latents=randn(1, 16, ref_t, lat_h, lat_w), condition_y=randn(20, ref_t, lat_h, lat_w),
+                  context=randn(1, 16, 32), context_ref=randn(1, 16, 32), clip_feature=randn(1, 257, 1280),
+                  clip_fea_ref=randn(1, 257, 1280))
+    scheduler = FlowMatchScheduler("Wan")
+    scheduler.set_timesteps(1000, training=True)
+    pipe = type("Pipeline", (), {})()
+    pipe.scheduler, pipe.torch_dtype, pipe.device = scheduler, torch.float32, "cpu"
+    pipe.in_iteration_models, pipe.dit = ("dit",), model
+    pipe.model_fn = model_fn_wananimate
+    shared = dict(seq_len=lat_t * lat_h * lat_w // 4, seq_len_ref=ref_t * lat_h * lat_w // 4, origin_len=frames,
+                  origin_area=[width, height])
+    torch.manual_seed(123)
+    loss = FlowMatchSFTLoss(pipe, **inputs, **shared)
+    loss.backward()
+    torch.manual_seed(123)
+    index = torch.randint(0, 1000, (1,))
+    noise = torch.randn_like(inputs["input_latents"])[0]
+    timestep = scheduler.timesteps[index]
+    sigma = scheduler.sigmas[torch.argmin((scheduler.timesteps - timestep).abs())]
+    noisy = (1 - sigma) * inputs["input_latents"][0] + sigma * noise
+    with torch.no_grad():
+        prediction = model_fn_wananimate(dit=model, latents=noisy.unsqueeze(0), timestep=timestep,
+                                         context=inputs["context"], clip_feature=inputs["clip_feature"], y=inputs["y"],
+                                         condition_latents=inputs["condition_latents"],
+                                         clip_fea_ref=inputs["clip_fea_ref"], condition_y=inputs["condition_y"],
+                                         context_ref=inputs["context_ref"], **shared)[0]
+    extra.update({"latent": inputs["input_latents"][0].contiguous(), "condition": inputs["y"][0].contiguous(),
+                  "reference": inputs["condition_latents"][0].contiguous(),
+                  "reference_condition": inputs["condition_y"].contiguous(), "text": inputs["context"][0].contiguous(),
+                  "reference_text": inputs["context_ref"][0].contiguous(),
+                  "image_features": inputs["clip_feature"][0].contiguous(),
+                  "reference_image_features": inputs["clip_fea_ref"][0].contiguous(),
+                  "shape": torch.tensor([frames, height, width], dtype=torch.int32), "index": index.float(),
+                  "timestep": timestep.float().reshape(1), "sigma": sigma.float().reshape(1),
+                  "weight": scheduler.training_weight(timestep).float().reshape(1), "noise": noise.contiguous(),
+                  "prediction": prediction.float().contiguous(), "loss": loss.detach().reshape(1)})
+    for name, module in model.named_modules():
+        if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+            a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+            extra[f"lora::{name}.lora_a"] = a.detach().t().contiguous().float()
+            extra[f"lora::{name}.lora_b"] = b.detach().t().contiguous().float()
+            extra[f"grad::{name}.lora_a"] = a.grad.detach().t().contiguous().float()
+            extra[f"grad::{name}.lora_b"] = b.grad.detach().t().contiguous().float()
+    extra["lora_scale"] = torch.tensor([8 / 4])
+    globals()["_extra"] = {key: value.clone() for key, value in extra.items()}
+    return extra["prediction"].clone()
+
+
+MODELS["wan_animate_lora_diffsynth"] = run_wan_animate_lora_diffsynth
+
+
 def run_wan_lora_musubi(image):
     """musubi-tuner's Wan LoRA objective (kohya-ss/musubi-tuner at f8a1b03, `IK_MUSUBI_SRC/src` on PYTHONPATH),
     under the `wantrain-musubi` env: musubi's own `WanModel` at a tiny random geometry adapted by its

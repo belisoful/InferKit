@@ -545,6 +545,35 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(upper, 1)
     }
 
+    // Docs/examples.md: Fine-tuning Wan on your own clips (Wan 2.2 Animate 2)
+    func testExampleFineTuningWanAnimateOnOwnClips() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let adapters = FileManager.default.temporaryDirectory.appendingPathComponent("wan-animate-lora-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: adapters) }
+        // A real run builds from the release with NFKMLXWanAnimate.network(directoryURL:quantizationBits:) and makes
+        // each example with animator.trainingExample(referenceImage:drivingVideo:video:prompt:); the tiny
+        // geometry keeps this free of downloads.
+        let config = NFKMLXWanAnimateConfiguration.tiny
+        let net = NFKMLXWanAnimate.makeNet(config)
+        let conditionChannels = config.inChannels - config.outChannels
+        let example = NFKMLXWanAnimateTrainingExample(
+            latent: MLXRandom.normal([config.outChannels, 3, 4, 4]), condition: MLXRandom.normal([conditionChannels, 3, 4, 4]),
+            reference: MLXRandom.normal([config.outChannels, 2, 4, 4]),
+            referenceCondition: MLXRandom.normal([conditionChannels, 2, 4, 4]),
+            text: MLXRandom.normal([config.textLength, config.textDim]),
+            referenceText: MLXRandom.normal([config.textLength, config.textDim]),
+            imageFeatures: MLXRandom.normal([257, config.imageDim]), referenceImageFeatures: MLXRandom.normal([257, config.imageDim]),
+            videoFrames: 5, videoArea: 32 * 32)
+        var preset = NFKMLXWanAnimateTrainingPreset.diffSynth
+        preset.rank = 4
+        let history = try NFKMLXWanAnimate.fineTune(net, examples: { _ in [example] }, preset: preset, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWanAnimate.saveAdapters(of: net, to: adapters)
+        XCTAssertEqual(try NFKMLXWanLoRA.merge(adapterURL: adapters, into: NFKMLXWanAnimate.makeNet(config)).mergedLayers, 2 * 3)
+    }
+
     // Docs/examples.md: Adapting a decision model to your own decisions
     func testExampleAdaptingLayaOnOwnDecisions() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

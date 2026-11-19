@@ -5959,6 +5959,20 @@ try NFKMLXWanVideoGenerator.saveAdapters(of: lowNoise, to: lowNoiseURL, preset: 
 try i2v.addAdapter(at: lowNoiseURL, scale: 1, expert: .lowNoise)
 ```
 
+Wan 2.2 Animate 2 fine-tunes as DiffSynth-Studio trains it: LoRA on the blocks' self-attention, both of
+the model's passes in one forward, the reference image's latent noised and learned with the clip's. The
+generator turns a clip, its driving video, and the character's image into an example with its own
+encoders:
+
+```swift
+let example = try animator.trainingExample(referenceImage: character, drivingVideo: motion, video: clip,
+                                           prompt: appearance)
+let animateNet = try NFKMLXWanAnimate.network(directoryURL: animateRelease, quantizationBits: 4)
+try NFKMLXWanAnimate.fineTune(animateNet, examples: { _ in [example] }, steps: 1_000)
+try NFKMLXWanAnimate.saveAdapters(of: animateNet, to: animateLoRAURL)
+try animator.addAdapter(at: animateLoRAURL, scale: 1)
+```
+
 Every preset noises the clean latent to `(1 − σ)·clean + σ·noise` and holds the prediction to
 `noise − clean` by the mean squared error. finetrainers draws σ from a logit-normal over the unshifted
 table and samples the encoder's posterior; DiffSynth-Studio draws a uniform index over its shift-5 table

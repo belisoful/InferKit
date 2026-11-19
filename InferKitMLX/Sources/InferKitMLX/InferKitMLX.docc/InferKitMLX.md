@@ -598,6 +598,8 @@ The figures have three limits:
 - ``NFKMLXWanAnimateNet``
 - ``NFKMLXWanAnimateKVCache``
 - ``NFKMLXWanAnimateGenerator``
+- ``NFKMLXWanAnimateTrainingExample``
+- ``NFKMLXWanAnimateTrainingPreset``
 - ``NFKMLXWanLoRA``
 - ``NFKMLXWanTrainingPreset``
 - ``NFKMLXWanObjective``

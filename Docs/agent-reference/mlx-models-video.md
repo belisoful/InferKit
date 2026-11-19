@@ -248,6 +248,29 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   Distilled release (Euler, no guidance): the same encoder figures and clip 0.9999999999992134 (max |difference| 4.9e-6). The token ids of all three prompts are exact, and the letterboxed image and video agree with PIL's to 1e-6. An 8-bit packed transformer holds the clip at 0.999999113826966 against float32. The released stages are held to their loaders by shape
   (`testTheReleaseMatchesItsLoaders`: transformer 1303, umT5 242, image encoder 519, autoencoder 194
   tensors, none missing, mismatched, or unconsumed). Customization is ruled out as for the transformer.
+- Wan 2.2 Animate 2 LoRA fine-tuning (`NFKMLXWanAnimate.fineTune`, `NFKMLXWanAnimateTraining.swift`) — as
+  DiffSynth-Studio trains it (1e8ae1d, `lora/Wan2.2-Animate-2-14B.sh`; Wan-Video publishes no training
+  code). The trainer runs both passes in one forward (`forward_origin`): the reference pass over the
+  driving video's latents at timestep 1, then the generation pass over the noised stack of the reference
+  image's latent and the clip's latents, the whole stack in the loss. The port composes
+  `extractReference` into a fresh cache and `generate` over it. LoRA on the blocks' `self_attn.q/k/v`
+  (rank 32, alpha 32), DiffSynth's Wan sampler and Gaussian weight (`NFKMLXWanTrainingPreset.diffSynth`'s
+  objective), AdamW 1e-4, weight decay 0.01, warm-up 5. The adapters save under the release's original
+  names with PEFT's `.default` level and the scaling folded into the up weight, as DiffSynth's loader fuses
+  at 1; `NFKMLXWanLoRA` reads them back. `NFKMLXWanAnimateGenerator.trainingExample` builds an example with
+  the generator's own encoders, following `WanVideoUnit_Animate2VAEEmbedder`: the condition is the
+  reference image's all-ones mask and latent, then a zero-mask slot over the latents of a zero clip; the
+  driving latents carry an all-ones mask; the image features are the reference image's and the driving
+  video's first frame's. The reference prompt defaults to the one generation reads; DiffSynth's dataset
+  supplies its own (`animate2_prompt_ref`).
+  DiffSynth's attention is `torch.compile`d flex attention, which runs on no CPU here and has no CPU
+  backward, so the oracle evaluates it densely from DiffSynth's own mask and score functions
+  (`_diffsynth_dense_flex_attention`: `softmax(score_mod(q·kᵀ·scale))` over the admitted keys, zeros where
+  none is admitted). Measured (`run_reference.py wan_animate_lora_diffsynth`, wantrain-diffsynth env,
+  DiffSynth's own tiny `WanAnimate2Transformer` under its LoRA, `FlowMatchSFTLoss` over
+  `model_fn_wananimate`): prediction 1.0000000; loss 1.9610462 against 1.9610443; lowest of 12 adapter
+  gradients 0.99999994. A QLoRA run over the Animate test-dev release at 8 bits trains from examples the
+  generator builds.
 - `NFKMLXVJEPA2` (`@objc`) — V-JEPA 2 (`VJEPA2Model` and `VJEPA2ForVideoClassification`, Meta, MIT), a
   self-supervised video ViT that maps a clip to a per-token feature sequence for retrieval or as a video
   encoder for a vision-language model; the classification releases add an attentive pooler and a linear

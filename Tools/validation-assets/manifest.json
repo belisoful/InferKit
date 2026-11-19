@@ -6721,7 +6721,8 @@
       "rebuild": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wantrain-diffsynthvenv && ~/.inferkit-validation/wantrain-diffsynthvenv/bin/pip install torch==2.15.0 transformers==5.22.1 peft==0.21.2 accelerate==1.15.0 safetensors einops; git clone https://github.com/modelscope/DiffSynth-Studio $IK_DIFFSYNTH_SRC && git -C $IK_DIFFSYNTH_SRC checkout 1e8ae1d",
       "modes": [
         "wan_lora_diffsynth",
-        "wan_lora_diffsynth_experts"
+        "wan_lora_diffsynth_experts",
+        "wan_animate_lora_diffsynth"
       ]
     },
     "wantrain_musubi": {
@@ -7926,6 +7927,12 @@
       "record": "reference/wan-lora-diffsynth-experts.safetensors",
       "environment": "wantrain_diffsynth",
       "command": "wan_lora_diffsynth_experts (the index range each Wan 2.2 A14B LoRA script gives FlowMatchSFTLoss under range.<case>, and the low-noise I2V expert's objective over DiffSynth's own 12-channel WanModel under its LoRA with a condition y: index, timestep, sigma, weight, prediction, loss, adapter gradients)"
+    },
+    {
+      "key": "IK_PARITY_WAN_ANIMATE_LORA_DIFFSYNTH",
+      "record": "reference/wan-animate-lora-diffsynth.safetensors",
+      "environment": "wantrain_diffsynth",
+      "command": "wan_animate_lora_diffsynth (DiffSynth's FlowMatchSFTLoss over model_fn_wananimate's forward_origin on its own tiny WanAnimate2Transformer under its self_attn.q/k/v LoRA, flex attention evaluated densely: weights under the release's names, the example's tensors, the draw, noise, prediction, loss, and adapter gradients)"
     },
     {
       "key": "IK_PARITY_WAN_LORA_MUSUBI",

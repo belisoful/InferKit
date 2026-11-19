@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 64 |
-| `trainable`, no recipe yet | 43 |
+| `ships` | 65 |
+| `trainable`, no recipe yet | 42 |
 | `offline` | 40 |
 | `uncertain` | 0 |
 | `untrainable` | 18 |
@@ -136,7 +136,7 @@ Demucs, and HT Demucs ship.
 | `NFKMLXRIFE` | trainable | full | internal | The reference distills through the `block_tea` teacher the entry records as dropped at load. |
 | `NFKMLXRAFT` | trainable | full | internal | 5.3M parameters. The sequence loss needs ground-truth flow, and the correlation volume bounds the crop size. |
 | `NFKMLXVideoSR` | trainable | full | internal | BasicVSR's mmediting configuration supplies the loss and the reduced SPyNet rate. Memory scales with clip length. |
-| `NFKMLXWanAnimate` | trainable | LoRA | public | A LoRA trains adapters over frozen base weights, which may be packed: the transformer is 9.6 GB at 4 bits, and `NFKMLXQuantizedLoRALinear` carries the gradient through the packed weights, as the LTX-2 recipe does at 22B. The activation memory of a training step over one video segment is unmeasured. Neither Wan-Video nor the Animate 2 release publishes training code, so the recipe takes a community trainer as its reference. Released LoRAs load through `NFKMLXWanLoRA`. |
+| `NFKMLXWanAnimate` | ships | LoRA | public | DiffSynth-Studio's Animate 2 recipe: LoRA on the blocks' self-attention query, key, and value, both passes in one forward with the reference image's latent noised in the loss, its sampler and AdamW, over a float or packed base (QLoRA); objective and gradients held to DiffSynth's own model (`wan_animate_lora_diffsynth`, its flex attention evaluated densely). The adapters save in DiffSynth's layout and load through `NFKMLXWanLoRA`. The activation memory of a 14B training step is unmeasured on a device. |
 | `NFKMLXRIFEv4` | ships | full | public | The v4.15 training code Practical-RIFE links: VGG-19 perceptual minus 0.1 SSIM, the encoder-feature and L1 terms, a teacher blended from the blocks' own flows, AdamW. Every gradient at its float32 floor; the update within float32 rounding with Adam's first-step sign ties pinned. |
 | `NFKMLXVideoBackend` | untrainable | — | n/a | The AVFoundation decode and encode layer holds no parameters. |
 
@@ -366,6 +366,7 @@ the recipe detail.
 | `NFKMLXLTXVideoVAE` | untrainable | Lightricks/LTX-Video at 4b2d053 and LTX-Video-Trainer at e055182. |
 | `NFKMLXLTX2TransformerNet` | ships, LoRA | Lightricks/LTX-2 at e98f6d9, `packages/ltx-trainer` (`trainer.py`, `timestep_samplers.py`, `training_strategies/`, `configs/t2v_lora.yaml`) and `packages/ltx-core` (`model/transformer/`). |
 | `NFKMLXWanTransformerNet` | ships, LoRA | huggingface/finetrainers at 684c0db (`finetrainers/models/wan/`, `utils/diffusion.py`, `trainer/sft_trainer/`); modelscope/DiffSynth-Studio at 1e8ae1d (`diffsynth/diffusion/`, `models/wan_video_dit.py`, `utils/lora/`); kohya-ss/musubi-tuner at f8a1b03 (`training/trainer_base.py`, `networks/lora_wan.py`, `wan/modules/`). |
+| `NFKMLXWanAnimate` | ships, LoRA | modelscope/DiffSynth-Studio at 1e8ae1d (`examples/wanvideo/model_training/lora/Wan2.2-Animate-2-14B.sh`, `diffsynth/models/wan_animate_2_dit.py`, `pipelines/wan_video.py`, `diffusion/loss.py`). |
 | The LTX-2 autoencoders and the duration head | untrainable | Lightricks/LTX-2 at e98f6d9, the whole tree; diffusers `pipelines/ltx2/duration_head.py` at fbf49e7. |
 | `NFKMLXQwenImageVAE` and the Wan, DC-AE, and FLUX.2 latent autoencoders | untrainable | QwenLM/Qwen-Image at 6b5e1f5; Wan2.1 at 9737cba and Wan2.2 at 1ea34ff; efficientvit at de7d773 and DC-Gen at 5e03d60; black-forest-labs/flux2 at 50fe516. |
 
