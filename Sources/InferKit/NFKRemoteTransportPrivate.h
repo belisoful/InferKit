@@ -35,6 +35,10 @@ NSString * _Nullable NFKFinishReasonForProviderValue(id _Nullable value);
 	is. */
 NFKInferenceResult * _Nullable NFKResultWithFinishReason(NFKInferenceResult * _Nullable result, id _Nullable value);
 
+/*! The text up to the earliest of the stop sequences, which is what an endpoint returns when it applies
+	them itself. A backend applies them to the reply for a model whose route refuses them on the wire. */
+NSString *NFKRemoteTextBeforeStops(NSString *text, NSArray<NSString *> *stops);
+
 /*! The contract keys OpenAI's prompt-cache fields carry: NFKParameterConversationKey and the four
 	NFKParameterPromptCache keys. */
 NSArray<NSString *> *NFKRemotePromptCacheParameterKeys(void);

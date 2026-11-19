@@ -127,23 +127,6 @@ BOOL NFKAnthropicProviderTakesBearerToken(NFKRemoteProvider *provider)
 	return [provider.identifier isEqualToString:@"meta"];
 }
 
-/*! The text up to the earliest of the stop sequences, which is what a route returns when it applies
-	them itself. */
-static NSString *NFKAnthropicTextBeforeStops(NSString *text, NSArray<NSString *> *stops)
-{
-	NSUInteger end = text.length;
-	for (NSString *stop in stops) {
-		if (![stop isKindOfClass:NSString.class] || stop.length == 0) {
-			continue;
-		}
-		NSRange found = [text rangeOfString:stop];
-		if (found.location != NSNotFound && found.location < end) {
-			end = found.location;
-		}
-	}
-	return [text substringToIndex:end];
-}
-
 /*! What a streamed reply assembles into: content blocks by index, each text, thinking, or a tool
 	use, and the token counts the message events report. */
 @interface NFKAnthropicStreamState : NSObject
@@ -399,7 +382,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		if ([self applyStreamEvent:event type:type toState:state]) {
 			NSMutableDictionary<NSString *, id> *partial = [NSMutableDictionary dictionary];
 			NSString *text = [self textInState:state];
-			partial[NFKRemoteBackendTextKey] = clientStops != nil ? NFKAnthropicTextBeforeStops(text, clientStops) : text;
+			partial[NFKRemoteBackendTextKey] = clientStops != nil ? NFKRemoteTextBeforeStops(text, clientStops) : text;
 			NSString *reasoning = [self reasoningInState:state];
 			if (reasoning.length > 0) {
 				partial[NFKOutputReasoning] = reasoning;
@@ -657,7 +640,8 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 			   description:@"this model takes a named effort level, not a thinking budget in tokens" error:outError];
 		return nil;
 	}
-	NFKRemoteAttachments *attachments = [NFKRemoteAttachments attachmentsForRequest:request error:outError];
+	// Meta's route reads a whole clip, soundtrack included, as a video block; Anthropic's reads frames.
+	NFKRemoteAttachments *attachments = [NFKRemoteAttachments attachmentsForRequest:request keepsVideo:self.servesMuseModel error:outError];
 	if (attachments == nil) {
 		return nil;
 	}
@@ -1015,7 +999,8 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 }
 
 // The media goes before the text, as the API's own examples order the blocks: images and sampled
-// frames as base64 image blocks, documents as base64 PDF document blocks.
+// frames as base64 image blocks, documents as base64 PDF document blocks. On Meta's route a video
+// the service keeps is a video block that names its file.
 // A PDF goes as base64; a plain-text document goes as its text, which the Messages API reads and cites
 // by character range.
 - (NSDictionary *)documentBlockFor:(NSDictionary *)document citing:(BOOL)citing
@@ -1023,6 +1008,9 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	NFKRemoteFile *file = document[@"fileReference"];
 	if (file != nil && [file.mimeType hasPrefix:@"image/"]) {
 		return @{ @"type": @"image", @"source": @{ @"type": @"file", @"file_id": file.identifier } };
+	}
+	if (file != nil && [file.mimeType hasPrefix:@"video/"] && self.servesMuseModel) {
+		return @{ @"type": @"video", @"source": @{ @"type": @"file", @"file_id": file.identifier } };
 	}
 	NSMutableDictionary *block = [NSMutableDictionary dictionaryWithObjectsAndKeys:@"document", @"type", document[@"filename"], @"title", nil];
 	if (file != nil) {
@@ -1052,6 +1040,12 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 			[blocks addObject:@{ @"type": @"image",
 								 @"source": @{ @"type": @"base64", @"media_type": @"image/png",
 											   @"data": [png base64EncodedStringWithOptions:0] } }];
+		}
+		if (attachments.videoData != nil) {
+			NSString *format = [attachments.videoFormat isEqualToString:@"mov"] ? @"quicktime" : attachments.videoFormat ?: @"mp4";
+			[blocks addObject:@{ @"type": @"video",
+								 @"source": @{ @"type": @"base64", @"media_type": [@"video/" stringByAppendingString:format],
+											   @"data": [attachments.videoData base64EncodedStringWithOptions:0] } }];
 		}
 		for (NSDictionary *document in attachments.documents) {
 			[blocks addObject:[self documentBlockFor:document citing:citing]];
@@ -1255,7 +1249,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	if (pieces.count > 0) {
 		NSString *text = [pieces componentsJoinedByString:@""];
 		NSArray<NSString *> *clientStops = [self clientStopsForRequest:request];
-		NSString *kept = clientStops != nil ? NFKAnthropicTextBeforeStops(text, clientStops) : text;
+		NSString *kept = clientStops != nil ? NFKRemoteTextBeforeStops(text, clientStops) : text;
 		if (kept.length < text.length) {
 			finishReason = NFKFinishReasonStopSequence;
 		}

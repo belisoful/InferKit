@@ -377,6 +377,21 @@ NSString *NFKFinishReasonForProviderValue(id value)
 	return reasons[value];
 }
 
+NSString *NFKRemoteTextBeforeStops(NSString *text, NSArray<NSString *> *stops)
+{
+	NSUInteger end = text.length;
+	for (NSString *stop in stops) {
+		if (![stop isKindOfClass:NSString.class] || stop.length == 0) {
+			continue;
+		}
+		NSRange found = [text rangeOfString:stop];
+		if (found.location != NSNotFound && found.location < end) {
+			end = found.location;
+		}
+	}
+	return [text substringToIndex:end];
+}
+
 NFKInferenceResult *NFKResultWithFinishReason(NFKInferenceResult *result, id value)
 {
 	NSString *reason = NFKFinishReasonForProviderValue(value);

@@ -111,6 +111,10 @@ typedef NS_ENUM(NSInteger, NFKAnthropicPrefixMismatchBehavior) {
 				  NFKOutputFinishReason is then NFKFinishReasonStopSequence
 				- NFKParameterJSONSchema goes out as output_config.format, because the route refuses
 				  a named tool_choice
+				- NFKInputVideo goes whole as a video block, which the route reads with its
+				  soundtrack, unless the request names NFKParameterVideoFrameCount, which asks for
+				  sampled frames; an NFKRemoteFile whose type is video/… under NFKInputDocument is
+				  a video block that names the uploaded file
 				- NFKUsageReasoningTokens is the thinking token count the route reports
 				- the reasoning is redacted, so NFKOutputReasoning holds the summary when the route
 				  returns one, and the encrypted block is replayed with the assistant turn

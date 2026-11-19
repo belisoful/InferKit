@@ -235,6 +235,52 @@
 	XCTAssertEqualObjects(block[@"citations"], (@{ @"enabled": @YES }));
 }
 
+// Meta's Messages route reads a whole clip as a video block, a Meta extension; Anthropic's own route
+// has none, so a Claude model keeps the sampled frames.
+- (void)testAMuseModelOnMessagesTakesAWholeClipAsAVideoBlock
+{
+	NSError *error = nil;
+	NSURL *clip = [NFKTestClip writeClipWithColors:@[ @[ @1, @0, @0 ], @[ @0, @0, @1 ] ] error:&error];
+	XCTAssertNotNil(clip, @"%@", error);
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"what happens?",
+																			  NFKInputVideo: [NFKVideoAsset videoAssetWithFileURL:clip] }];
+	self.anthropic.modelName = @"muse-spark-1.3";
+	XCTAssertNotNil([self.anthropic runInferenceForRequest:request error:&error], @"%@", error);
+	NSArray *blocks = [self userPartsOf:self.anthropic.lastRequest];
+	XCTAssertEqual(blocks.count, 2);
+	NSDictionary *source = @{ @"type": @"base64", @"media_type": @"video/mp4",
+							  @"data": [[NSData dataWithContentsOfURL:clip] base64EncodedStringWithOptions:0] };
+	XCTAssertEqualObjects(blocks[0], (@{ @"type": @"video", @"source": source }));
+	XCTAssertEqualObjects(blocks[1], (@{ @"type": @"text", @"text": @"what happens?" }), @"the media goes before the text");
+
+	NFKInferenceRequest *sampled = [NFKInferenceRequest requestWithInputs:request.inputs parameters:@{ NFKParameterVideoFrameCount: @2 }];
+	XCTAssertNotNil([self.anthropic runInferenceForRequest:sampled error:NULL]);
+	NSArray *types = [[self userPartsOf:self.anthropic.lastRequest] valueForKey:@"type"];
+	XCTAssertEqualObjects(types, (@[ @"image", @"image", @"text" ]), @"a frame count asks for frames");
+
+	self.anthropic.modelName = @"claude-opus-5-5";
+	XCTAssertNotNil([self.anthropic runInferenceForRequest:request error:NULL]);
+	types = [[self userPartsOf:self.anthropic.lastRequest] valueForKey:@"type"];
+	XCTAssertFalse([types containsObject:@"video"]);
+	XCTAssertEqualObjects(types.firstObject, @"image");
+	[NSFileManager.defaultManager removeItemAtURL:clip error:NULL];
+}
+
+// A video the Files API keeps is named by its id in a video block on Meta's route.
+- (void)testAMuseModelOnMessagesNamesAnUploadedVideoByItsFile
+{
+	NFKRemoteFile *uploaded = [NFKRemoteFile fileWithIdentifier:@"file-clip" mimeType:@"video/mp4"];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"what happens?", NFKInputDocument: uploaded }];
+	self.anthropic.modelName = @"muse-spark-1.3";
+	XCTAssertNotNil([self.anthropic runInferenceForRequest:request error:NULL]);
+	NSDictionary *block = [self userPartsOf:self.anthropic.lastRequest][0];
+	XCTAssertEqualObjects(block, (@{ @"type": @"video", @"source": @{ @"type": @"file", @"file_id": @"file-clip" } }));
+
+	self.anthropic.modelName = @"claude-opus-5-5";
+	XCTAssertNotNil([self.anthropic runInferenceForRequest:request error:NULL]);
+	XCTAssertEqualObjects([self userPartsOf:self.anthropic.lastRequest][0][@"type"], @"document");
+}
+
 // OpenRouter and vLLM read a whole clip as video_url, llama.cpp as input_video; naming a frame
 // count asks for sampled frames instead.
 - (void)testAWholeClipRidesAsAVideoPartWhereTheDialectReadsOne

@@ -76,23 +76,6 @@ static BOOL NFKRemoteModelRefusesStopSequences(NSString * _Nullable model)
 	return [model hasPrefix:@"grok-4"] || [model hasPrefix:@"grok-3-mini"] || [model hasPrefix:@"muse-"];
 }
 
-/*! The text up to the earliest of the stop sequences, which is what the endpoint returns when it
-	applies them itself. */
-static NSString *NFKRemoteTextBeforeStops(NSString *text, NSArray<NSString *> *stops)
-{
-	NSUInteger end = text.length;
-	for (NSString *stop in stops) {
-		if (![stop isKindOfClass:NSString.class] || stop.length == 0) {
-			continue;
-		}
-		NSRange found = [text rangeOfString:stop];
-		if (found.location != NSNotFound && found.location < end) {
-			end = found.location;
-		}
-	}
-	return [text substringToIndex:end];
-}
-
 NSString * const NFKRemoteBackendPromptKey	= @"prompt";
 NSString * const NFKRemoteBackendMessagesKey	= @"messages";
 NSString * const NFKRemoteBackendTextKey		= @"text";
