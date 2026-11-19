@@ -811,6 +811,20 @@ arithmetic as before.
   2.0276527; lowest of 40 adapter gradients 0.99999985. Not yet covered: the Animate transformer
   (DiffSynth trains Animate 2 in one pass with the reference latent noised in the sequence), and a
   measured training step on released weights.
+  `NFKMLXWanTransformerNet.recomputesBlocksInBackward` (on by default in `fineTune`, as the trainers enable
+  `gradient_checkpointing`) runs each block as a custom function whose backward reruns it, so a step holds
+  one block's activations; the gradients equal the plain backward's within 1e-5 relative
+  (`testRecomputingBlocksInTheBackwardKeepsTheGradients`). `testA13BLoRAStepOnReleasedWeights` runs three
+  finetrainers steps on Wan 2.1 T2V 1.3B's released float32 transformer from a 9-frame 480 × 832 example
+  (4,680 tokens) the generator's stages build, umT5 at bfloat16 and each stage released before the next
+  loads, under `NFKMLXGPU.applyStandingLimits()`, and prints the footprint and memory after each stage and
+  step (an LMC leg). Measured on a 32 GB M1 Max: umT5 encode 12.6 GB footprint, example build 11.6 GB MLX
+  peak, network build 5.8 GB, each step about 38 s with a 25.1 GB MLX peak over 6.1 GB held. The step's
+  19 GB transient is one block's backward: making each recompute depend on its cotangents, as MLX's
+  `checkpoint` does, left the peak unchanged. `MLXFast.scaledDotProductAttention` has no fused backward, so
+  the backward holds whole `[heads, N, N]` float32 score matrices; at 17 × 480 × 832 (7,800 tokens) each is
+  2.9 GB and the first step pushed 12 GB to swap on a loaded machine. A 17-frame 480p step needs an
+  attention backward that recomputes per query block.
 - `NFKMLXQwenImageNet` / `NFKMLXQwenImage` (`@objc`) — the Qwen-Image 2.1 DiT
   (`QwenImage21Transformer2DModel`, Qwen), the denoising transformer of a 7.1B text-to-image model.
   Single-stream like Z-Image: one sequence carries the caption and the image latents. Two things

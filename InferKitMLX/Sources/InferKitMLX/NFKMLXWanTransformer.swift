@@ -244,6 +244,29 @@ final class NFKWanConditionEmbedder: Module {
     }
 }
 
+extension NFKMLXWanTransformerNet {
+    /// `body` over `block` as MLX's `checkpoint` builds it: the block's trainable arrays and its input are the
+    /// inputs of a custom function whose backward runs `body` again over the same inputs, so none of the
+    /// block's activations outlive its forward pass. The other inputs the block reads (the modulation, the
+    /// text, the rotary tables) depend on nothing trainable and enter as constants.
+    static func recomputed(_ block: NFKWanBlock, _ body: @escaping (MLXArray) -> MLXArray) -> (MLXArray) -> MLXArray {
+        let trainable = block.trainableParameters().flattened()
+        let keys = trainable.map(\.0)
+        let forward: ([MLXArray]) -> [MLXArray] = { arrays in
+            let held = block.trainableParameters()
+            block.update(parameters: ModuleParameters.unflattened(Array(zip(keys, arrays.prefix(keys.count)))))
+            let output = body(arrays[keys.count])
+            block.update(parameters: held)
+            return [output]
+        }
+        let checkpointed = NFKMLXCustomFunction.make {
+            Forward(forward)
+            VJP { primals, cotangents in vjp(forward, primals: primals, cotangents: cotangents).1 }
+        }
+        return { x in checkpointed(trainable.map(\.1) + [x])[0] }
+    }
+}
+
 /// The Wan transformer.
 public final class NFKMLXWanTransformerNet: Module {
     @ModuleInfo(key: "patch_embedding") var patchEmbedding: Conv3d
@@ -257,6 +280,14 @@ public final class NFKMLXWanTransformerNet: Module {
     let normOut: LayerNorm
     /// The blocks left in the release and read in their turn on every pass, where the load streams them.
     var layerStream: NFKMLXLayerStream?
+
+    /// Whether a block's activations are recomputed from its inputs in the backward pass rather than held
+    /// from the forward one (gradient checkpointing, the community trainers' `gradient_checkpointing`). A
+    /// training step then holds one block's activations at a time, at the cost of a second forward pass. The
+    /// forward's values are unchanged. Off by default.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var recomputesBlocksInBackward = false
 
     public init(_ config: NFKMLXWanConfiguration) {
         self.config = config
@@ -332,9 +363,12 @@ public final class NFKMLXWanTransformerNet: Module {
 
         for (index, block) in blocks.enumerated() {
             let input = hidden
-            guard let output = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
-                block(input, context: context, temb: blockMod, cos: cosT, sin: sinT,
+            let run = { (x: MLXArray) in
+                block(x, context: context, temb: blockMod, cos: cosT, sin: sinT,
                       firstFrame: firstFrame.map { ($0.proj, $0.mask) })
+            }
+            guard let output = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
+                recomputesBlocksInBackward && layerStream == nil ? Self.recomputed(block, run)(input) : run(input)
             }, keeping: { [$0] }) else {
                 continue
             }

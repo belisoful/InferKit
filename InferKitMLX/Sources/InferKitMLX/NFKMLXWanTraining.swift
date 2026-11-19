@@ -419,6 +419,8 @@ extension NFKMLXWanVideoGenerator {
     ///   - learningRateSchedule: nil uses the preset's warm-up with the reference optimizer.
     ///   - checkpoint: writes the network periodically.
     ///   - observer: receives each step and can end the run early.
+    ///   - recomputesBlocksInBackward: recomputes each block's activations in the backward pass (gradient
+    ///     checkpointing), as the trainers' recipes enable it; the gradients are those of the plain backward.
     ///
     /// The trainers run bfloat16 weights under autocast; this runs in the type the weights load at. A step is
     /// multi-second; call it off the render thread.
@@ -435,8 +437,12 @@ extension NFKMLXWanVideoGenerator {
         accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
-        observer: NFKMLXTrainer.Observer? = nil
+        observer: NFKMLXTrainer.Observer? = nil,
+        recomputesBlocksInBackward: Bool = true
     ) throws -> [Float] {
+        let recomputed = net.recomputesBlocksInBackward
+        net.recomputesBlocksInBackward = recomputesBlocksInBackward
+        defer { net.recomputesBlocksInBackward = recomputed }
         var key = MLXRandom.key(seed)
         var batch = [NFKMLXWanTrainingExample]()
         var draws = [NFKMLXWanTrainingDraw]()

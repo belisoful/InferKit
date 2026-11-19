@@ -118,6 +118,123 @@ final class NFKMLXWanTrainingTests: XCTestCase {
         }
     }
 
+    func testRecomputingBlocksInTheBackwardKeepsTheGradients() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(21)
+        let net = NFKMLXWanTransformerNet(.tiny)
+        try NFKMLXLoRA.apply(to: net, rank: 4, alpha: 4) { path, _ in NFKMLXWanLoRATargets.attention.contains(path) }
+        for (_, layer) in net.leafModules().flattened() {
+            if let adapter = layer as? NFKMLXLoRALinear {
+                adapter.update(parameters: ModuleParameters.unflattened(["lora_b": MLXRandom.normal(adapter.loraB.shape) * 0.1]))
+            }
+        }
+        net.freeze()
+        for (_, layer) in net.leafModules().flattened() where layer is NFKMLXLoRALinear {
+            layer.unfreeze(recursive: false, keys: ["lora_a", "lora_b"])
+        }
+        let example = tinyExamples(count: 1)[0]
+        let draw = NFKMLXWanTrainingDraw(sigma: 0.6, timestep: 600, weight: 1)
+        let noise = MLXRandom.normal(example.latent.shape, key: MLXRandom.key(4))
+        let objective = NFKMLXWanTrainingPreset.diffSynth.objective
+        func gradients(recomputing: Bool) -> [String: MLXArray] {
+            net.recomputesBlocksInBackward = recomputing
+            let lossAndGradient = valueAndGrad(model: net) { net, _ in
+                [objective.score(net, example: example, draw: draw, noise: noise, epsilon: nil)]
+            }
+            return Dictionary(uniqueKeysWithValues: lossAndGradient(net, []).1.flattened())
+        }
+        let plain = gradients(recomputing: false), recomputed = gradients(recomputing: true)
+        XCTAssertEqual(plain.count, 16 * 2)
+        var worst: Float = 0
+        for (key, value) in plain {
+            let other = try XCTUnwrap(recomputed[key])
+            worst = max(worst, abs(other - value).max().item(Float.self) / max(abs(value).max().item(Float.self), 1e-12))
+        }
+        XCTAssertLessThan(worst, 1e-5, "the recomputed backward is the plain one")
+    }
+
+    // Three LoRA steps of the finetrainers recipe (rank 32 on the attention projections) on Wan 2.1 T2V 1.3B's
+    // released transformer at its stored float32, from an example the generator's own stages build of a 9-frame
+    // 480 × 832 clip (4,680 tokens), with each block recomputed in the backward. The fused attention has no fused
+    // backward, so a step holds whole [heads, N, N] score matrices: 1.05 GB each here, 2.9 GB at 17 frames. Each stage is released before
+    // the next loads: umT5 once the prompt is encoded, the transformer and autoencoder once the clip's latents
+    // exist. Prints the process footprint and MLX's memory after each stage and step. Loads the release: run it
+    // under LMC.
+    func testA13BLoRAStepOnReleasedWeights() throws {
+        try requireMLXRuntime()
+        guard let path = NFKMLXValidationConfig.environment["IK_VAL_WAN21_T2V_1_3B"] else {
+            throw XCTSkip("set IK_VAL_WAN21_T2V_1_3B (Wan-AI/Wan2.1-T2V-1.3B-Diffusers)")
+        }
+        // Under MLX's default cache limit each float32 group umT5's load narrows to bfloat16 stays cached, and
+        // the footprint grows by up to its 22.7 GB stored size; the standing cap returns the groups as they free.
+        let (cacheLimit, memoryLimit) = (NFKMLXGPU.cacheLimit, NFKMLXGPU.memoryLimit)
+        NFKMLXGPU.applyStandingLimits()
+        addTeardownBlock {
+            NFKMLXGPU.setCacheLimit(cacheLimit)
+            NFKMLXGPU.setMemoryLimit(memoryLimit)
+        }
+        func gigabytes(_ bytes: Int) -> String { String(format: "%.2f", Double(bytes) / 1e9) }
+        func memory(_ stage: String, since start: Date) {
+            var info = rusage_info_v4()
+            _ = withUnsafeMutablePointer(to: &info) { pointer in
+                pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) }
+            }
+            print("MEMORY wan2.1-1.3b-lora \(stage): \(String(format: "%.1f", Date().timeIntervalSince(start))) s, footprint "
+                  + "\(gigabytes(Int(info.ri_phys_footprint))) GB, lifetime peak \(gigabytes(Int(info.ri_lifetime_max_phys_footprint))) GB, "
+                  + "MLX active \(gigabytes(NFKMLXGPU.activeMemory)) GB, peak \(gigabytes(NFKMLXGPU.peakMemory)) GB")
+            // A run stopped by a watchdog keeps only the lines already flushed from the test's piped output.
+            fflush(stdout)
+            NFKMLXGPU.resetPeakMemory()
+        }
+        let directory = URL(fileURLWithPath: path)
+        let clip = MLXRandom.uniform(low: 0, high: 1, [9, 480, 832, 3], key: MLXRandom.key(8))
+        let example: NFKMLXWanTrainingExample
+        do {
+            // An 18 GiB budget holds umT5 at bfloat16 (11.4 GB), the reference pipeline's precision, over its
+            // stored float32 (22.7 GB).
+            let generator = try NFKMLXWanVideoGenerator.generator(directoryURL: directory, residency: .staged,
+                                                                  transformerType: nil, budget: 18 << 30)
+            XCTAssertFalse(generator.encodesInFloat32)
+            NFKMLXGPU.resetPeakMemory()
+            var start = Date()
+            // The finetrainers preset keeps the padded encode, as `trainingExample(video:prompt:preset:)` reads it.
+            let text = try generator.usingText { stage -> MLXArray in
+                let features = stage.encoder(generator.prompt("a red fox walking through fresh snow").tokens)[0]
+                eval(features)
+                return features
+            }
+            XCTAssertFalse(generator.isHoldingTextEncoder, "umT5 is released once the prompt is encoded")
+            NFKMLXGPU.clearCache()
+            memory("umT5 encode", since: start)
+            start = Date()
+            let moments = try generator.usingPipeline { pipeline -> [MLXArray] in
+                let encoded = pipeline.normalizedMoments(clip * 2 - 1)
+                return [encoded.mean, encoded.logVariance]
+            }
+            XCTAssertFalse(generator.isHoldingPipeline, "the transformer and autoencoder are released once the latents exist")
+            NFKMLXGPU.clearCache()
+            memory("example build", since: start)
+            example = NFKMLXWanTrainingExample(latent: moments[0], logVariance: moments[1], text: text)
+        }
+        NFKMLXGPU.clearCache()
+        XCTAssertEqual(example.latent.shape, [16, 3, 60, 104])
+        var start = Date()
+        let net = try NFKMLXWanVideoGenerator.network(directoryURL: directory)
+        memory("build", since: start)
+        var step = 0
+        start = Date()
+        let losses = try NFKMLXWanVideoGenerator.fineTune(net, examples: { _ in [example] }, preset: .finetrainers,
+                                                          steps: 3, seed: 1) { _ in
+            step += 1
+            memory("step \(step)", since: start)
+            start = Date()
+            return true
+        }
+        print("MEMORY wan2.1-1.3b-lora steps: losses \(losses), trainable \(NFKMLXLoRA.trainableParameterCount(of: net)) parameters")
+        XCTAssertEqual(losses.count, 3)
+        XCTAssertTrue(losses.allSatisfy(\.isFinite))
+    }
+
     func testEachLayoutSavesWhatMergesBackToTheTrainedNetwork() throws {
         try requireMLXRuntime()
         let examples = tinyExamples(count: 1)
