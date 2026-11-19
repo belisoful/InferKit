@@ -22,9 +22,15 @@ final class NFKMLXSpeechEnhancerLiveStreamTests: XCTestCase {
 
     /// Every trainable parameter drawn uniformly from ±`scale`, so each recurrence and convolution history
     /// moves the output.
+    ///
+    /// @discussion The draws run in the parameters' sorted key order, so a seeded stream draws the same
+    /// network in every process. A nested dictionary's `mapValues` runs in Swift's hash order, which changes
+    /// from process to process.
     static func randomize(_ module: Module, scale: Float) {
-        let drawn = module.trainableParameters().mapValues { MLXRandom.uniform(low: -scale, high: scale, $0.shape) }
-        module.update(parameters: drawn)
+        let drawn = module.trainableParameters().flattened().map { key, value in
+            (key, MLXRandom.uniform(low: -scale, high: scale, value.shape))
+        }
+        module.update(parameters: ModuleParameters.unflattened(drawn))
         eval(module)
     }
 

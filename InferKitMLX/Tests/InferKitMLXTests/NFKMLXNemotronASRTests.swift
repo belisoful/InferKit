@@ -50,27 +50,32 @@ final class NFKMLXNemotronASRTests: XCTestCase {
     }
 
     /// The front end, the encoder, and the transducer, streamed in uneven units, against the clip forward
-    /// over the frames the stream completed, held to the clip's own CPU/GPU summation-order spread.
+    /// over the frames the stream completed, held to the clip's and the stream's own CPU/GPU
+    /// summation-order spread.
     func testAStreamAnswersAsTheClipForwardUnderTheChunkedMask() throws {
         try requireMLXRuntime()
         let net = tinyNet()
         let configuration = net.configuration
         let samples = NFKMLXSpeechEnhancerLiveStreamTests.signal(count: 16000 * 2, sampleRate: 16000)
         for lookahead in configuration.lookaheads {
-            let state = NFKNemotronASRStreamState(configuration, lookahead: lookahead)
-            var chunks: [MLXArray] = []
-            var encoded: [MLXArray] = []
-            var tokens: [NFKMLXNemotronASRNet.Token] = []
-            for unit in NFKMLXSpeechEnhancerLiveStreamTests.units(samples, lengths: [160, 1000, 7, 2400, 333, 4000]) {
-                state.append(unit, frontEnd: net.frontEnd)
-                while let chunk = state.takeChunk() {
-                    let frames = state.carry.streaming { net.encoder(chunk, lookahead: nil) }
-                    state.carry.evaluate([frames])
-                    chunks.append(chunk)
-                    encoded.append(frames)
-                    tokens += net.decode(encoded: frames, state: state.decoding)
+            let stream: () -> (chunks: [MLXArray], encoded: [MLXArray], tokens: [NFKMLXNemotronASRNet.Token]) = {
+                let state = NFKNemotronASRStreamState(configuration, lookahead: lookahead)
+                var chunks: [MLXArray] = []
+                var encoded: [MLXArray] = []
+                var tokens: [NFKMLXNemotronASRNet.Token] = []
+                for unit in NFKMLXSpeechEnhancerLiveStreamTests.units(samples, lengths: [160, 1000, 7, 2400, 333, 4000]) {
+                    state.append(unit, frontEnd: net.frontEnd)
+                    while let chunk = state.takeChunk() {
+                        let frames = state.carry.streaming { net.encoder(chunk, lookahead: nil) }
+                        state.carry.evaluate([frames])
+                        chunks.append(chunk)
+                        encoded.append(frames)
+                        tokens += net.decode(encoded: frames, state: state.decoding)
+                    }
                 }
+                return (chunks, encoded, tokens)
             }
+            let (chunks, encoded, tokens) = stream()
             let streamedFeatures = concatenated(chunks, axis: 1)
             let streamedFrames = concatenated(encoded, axis: 1)
             let count = streamedFeatures.dim(1)
@@ -86,10 +91,15 @@ final class NFKMLXNemotronASRTests: XCTestCase {
             }
             let (features, frames) = clip()
             let (otherFeatures, otherFrames) = Device.withDefaultDevice(.cpu) { clip() }
-            // The clip's own summation-order spread, the widest gap between orders of the same sums: the
-            // clip on the other device, and on each device the clip of every whole-chunk prefix and of the
-            // features with a chunk more, each over the frames it shares, which runs the same operations on
-            // other row counts. The chunked mask makes the shared frames the same sums in each.
+            // The summation-order spread, the widest gap between orders of the same sums: the clip on the
+            // other device, and on each device the clip of every whole-chunk prefix and of the features with
+            // a chunk more, each over the frames it shares, which runs the same operations on other row
+            // counts. The chunked mask makes the shared frames the same sums in each. The stream on the
+            // other device adds the orders of the stream's own shapes: at lookahead 0 each chunk is one
+            // frame, and a one-row product takes another kernel than any clip of more than one frame.
+            let (otherChunks, otherEncoded, _) = Device.withDefaultDevice(.cpu) { stream() }
+            let streamFeatureSpread = maxGap(streamedFeatures, concatenated(otherChunks, axis: 1))
+            let streamFrameSpread = maxGap(streamedFrames, concatenated(otherEncoded, axis: 1))
             var featureFloor = maxGap(features, otherFeatures)
             var frameFloor = maxGap(frames, otherFrames)
             let first = configuration.firstChunkFrames(lookahead: lookahead), later = configuration.chunkFrames(lookahead: lookahead)
@@ -114,10 +124,14 @@ final class NFKMLXNemotronASRTests: XCTestCase {
                     }
                 }
             }
+            let clipFrameFloor = frameFloor
+            featureFloor = max(featureFloor, streamFeatureSpread)
+            frameFloor = max(frameFloor, streamFrameSpread)
             let featureGap = maxGap(streamedFeatures, features), frameGap = maxGap(streamedFrames, frames)
             let clipTokens = net.decode(encoded: frames, state: NFKMLXNemotronASRDecodingState())
             print("VALIDATION nemotron-asr stream lookahead \(lookahead): features \(featureGap) (floor \(featureFloor)), "
-                  + "encoder \(frameGap) (floor \(frameFloor)), tokens \(tokens.count) vs clip \(clipTokens.count)")
+                  + "encoder \(frameGap) (floor \(frameFloor): the clip's \(clipFrameFloor), the stream's \(streamFrameSpread)), "
+                  + "tokens \(tokens.count) vs clip \(clipTokens.count)")
             XCTAssertLessThanOrEqual(featureGap, featureFloor, "lookahead \(lookahead): the stream's frames are the clip's")
             XCTAssertLessThanOrEqual(frameGap, frameFloor, "lookahead \(lookahead): the cached encoder answers as the masked clip")
             XCTAssertEqual(tokens, clipTokens, "lookahead \(lookahead): the carried transducer state decodes the clip's tokens")

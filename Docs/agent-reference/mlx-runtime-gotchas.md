@@ -400,6 +400,15 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   - The rule this leaves: a single-digit-step training run is noise on this runtime. Assert on
     something the noise cannot reach, such as parameters moving or a long run's fall on a pinned
     device. Never assert on the shape of a short loss curve.
+- **A seed fixes the weights only when the draws run in a fixed order (2026-11-18).** mlx-swift's
+  `NestedItem.mapValues` maps a dictionary through Swift's `Dictionary.mapValues`, whose order follows
+  the per-process hash seed, so `module.trainableParameters().mapValues { MLXRandom.uniform(…) }` hands
+  each draw of a seeded stream to a different parameter in every process. `flattened()` sorts the keys
+  and is stable. The shared test helper `NFKMLXSpeechEnhancerLiveStreamTests.randomize` drew through
+  `mapValues`: `NFKMLXNemotronASRTests` decoded 250, 240, or 230 tokens from the same seed across
+  processes, its stream-to-clip gap and floor moved with the network, and CC#123 went red on one draw.
+  The helper now draws over `flattened()` and writes back through `ModuleParameters.unflattened`.
+  Within one process the GPU forward is bitwise repeatable; the run-to-run spread was the network.
 
 - **A wrong backward pass on the GPU, fixed in mlx core 0.32.0 (2026-09-19, resolved 2026-09-20).**
   Measured on an M1 Max (macOS 26.6.2, Xcode 27, mlx-swift 0.31.6).

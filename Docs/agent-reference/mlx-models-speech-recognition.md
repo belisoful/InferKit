@@ -202,6 +202,13 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   - **The mask is integer arithmetic.** `MLXArray(Int32) / Int32` divides as floats, which made every
     chunk of more than one frame see the wrong keys (a 0.045 gap on random weights);
     `floorDivide` fixed it.
+  - **The tiny-net stream test measures the stream's own orders.** At lookahead 0 every chunk is one
+    encoder frame, so each linear layer runs MLX's one-row product, 1.5e-7 from the clip's matrix
+    product over the same rows (probe, 2026-11-18). At lookaheads 1 and 2 the chunk products match the
+    clip's bitwise. The clip's prefix variants reach the one-row order at frame 0 alone, so
+    `testAStreamAnswersAsTheClipForwardUnderTheChunkedMask` adds the stream on the CPU to its floor. Its
+    random network is drawn in sorted key order (see "A seed fixes the weights only when the draws run
+    in a fixed order" in `mlx-runtime-gotchas.md`).
   - **The release tokenizer disagrees with the head on the blank's id.** `tokenizer.json` adds `<pad>`
     at 1024 and `<blank>` at 1025, while `config.json`'s head is 1025 wide with the blank at 1024.
     Decoding drops special ids, so neither reaches the text.
