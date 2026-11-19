@@ -129,8 +129,7 @@ public final class NFKMLXYOLOGenerationNet: Module {
         var input = 3
         for (index, node) in rows.enumerated() {
             let sources = node.from.map { $0 == -1 ? index - 1 : $0 }
-            let inChannels = sources.count == 1 ? (sources[0] < 0 ? 3 : widths[sources[0]])
-                                                : sources.reduce(0) { $0 + widths[$1] }
+            let inChannels = NFKMLXYOLOGenerationNet.inputWidth(of: node.kind, sources: sources, widths: widths)
             let repeats = node.repeats > 1 ? max(Int((Float(node.repeats) * scale.depth).rounded()), 1)
                                            : node.repeats
             let (module, outChannels) = NFKMLXYOLOGenerationNet.build(
@@ -149,6 +148,19 @@ public final class NFKMLXYOLOGenerationNet: Module {
         // A module starts in training mode, which would normalize with each batch's statistics at
         // inference; the trainer switches training on for a run and restores this.
         train(false)
+    }
+
+    /// The channel count a row reads, as the reference's `parse_model` states it: the image's for the
+    /// first row, the sum of the sources' for a concatenation, and the last source's for `CBFuse`,
+    /// which adds a split of each earlier source into that last one.
+    static func inputWidth(of kind: NFKYOLONode.Kind, sources: [Int], widths: [Int]) -> Int {
+        if case .cbFuse = kind, let last = sources.last {
+            return widths[last]
+        }
+        if sources.count == 1 {
+            return sources[0] < 0 ? 3 : widths[sources[0]]
+        }
+        return sources.reduce(0) { $0 + widths[$1] }
     }
 
     private static func scaled(_ value: Int, _ scale: NFKYOLOScale) -> Int {
@@ -222,7 +234,6 @@ public final class NFKMLXYOLOGenerationNet: Module {
         case let .cbLinear(outs):
             return (NFKYOLOCBLinear(inChannels: inChannels, widths: outs), outs.reduce(0, +))
         case .cbFuse:
-            // The fused row carries the width of its last source, which the caller states.
             return (Module(), inChannels)
         case .detect:
             let head = NFKYOLOGenerationDetect(

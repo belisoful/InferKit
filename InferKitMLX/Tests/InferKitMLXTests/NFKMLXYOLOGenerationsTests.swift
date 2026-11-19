@@ -37,7 +37,8 @@ final class NFKMLXYOLOGenerationsTests: XCTestCase {
     }()
 
     // Every released checkpoint loads into the graph the port builds for it. The loader refuses a
-    // partial cover, so this pins each generation's channel counts, repeat counts and per-size flags
+    // partial cover and a tensor at any shape other than the built one, so this compares each
+    // generation's channel counts, repeat counts and per-size flags with the release's own tensors
     // before any numeric comparison runs.
     func testEveryReleaseLoadsItsCheckpoint() throws {
         try requireMLXRuntime()
@@ -47,12 +48,36 @@ final class NFKMLXYOLOGenerationsTests: XCTestCase {
                 print("SKIP \(NFKMLXYOLOGenerations.modelName(for: release)): no \(weightsKey)")
                 continue
             }
+            let name = NFKMLXYOLOGenerations.modelName(for: release)
             let net = NFKMLXYOLOGenerations.makeNet(release)
-            try NFKMLXYOLOGenerations.loadWeights(into: net, from: URL(fileURLWithPath: path))
-            print("VALIDATION structure \(NFKMLXYOLOGenerations.modelName(for: release)): loaded")
+            do {
+                try NFKMLXYOLOGenerations.loadWeights(into: net, from: URL(fileURLWithPath: path))
+                print("VALIDATION structure \(name): loaded")
+            } catch {
+                XCTFail("\(name): \(error)")
+            }
             checked += 1
         }
         XCTAssertGreaterThan(checked, 0, "at least one release was available to check")
+    }
+
+    // Every release runs a forward on its initial weights, the graph a weight-free build such as the
+    // registry's `weightsURL: nil` hands a caller. YOLOv9e's `CBFuse` rows once read the summed width
+    // of every source, which only this path shows: a loaded checkpoint replaced the miswired tensors.
+    func testEveryReleaseRunsAForwardOnInitialWeights() throws {
+        try requireMLXRuntime()
+        let side = 128
+        let anchors = [8, 16, 32].reduce(0) { $0 + (side / $1) * (side / $1) }
+        let plate = MLXRandom.uniform(low: 0, high: 1, [1, side, side, 3])
+        for (release, _, _) in Self.releases {
+            let name = NFKMLXYOLOGenerations.modelName(for: release)
+            let net = NFKMLXYOLOGenerations.makeNet(release)
+            let predictions = net.predictions(plate)
+            eval(predictions)
+            XCTAssertEqual(predictions.shape, [anchors, 4 + 80], "\(name): the pre-suppression shape")
+            XCTAssertFalse(isNaN(predictions).any().item(Bool.self), "\(name): finite predictions")
+            NFKMLXGPU.clearCache()
+        }
     }
 
     // Each release against ultralytics' own model on the released weights, over the full

@@ -153,7 +153,15 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   two classes clear the threshold, and taking the best class per anchor drops the second — which is
   exactly what the YOLOv10 consumer comparison caught. **YOLOv9e keeps its programmable-gradient branch
   at inference** (`CBLinear` splits a stage into per-level taps, `CBFuse` sums the matching tap back
-  into the main path), so a graph row holds a list of tensors rather than one. `NFKYOLOGraphs` states
+  into the main path), so a graph row holds a list of tensors rather than one. A `CBFuse` row reads
+  the width of its last source (`parse_model`'s `c2 = ch[f[-1]]`); a concatenation reads the sum of
+  its sources. The loader passes `verifyShapes`, because MLX adopts a checkpoint tensor at any shape:
+  a row built at the wrong width loads its release cleanly and fails only on initial weights. That is
+  how v9e's weight-free build once wired a 3712-channel `model.17` convolution, and v9m's head built
+  its row-16 `AConv` at 180 channels where `yolov9m.yaml` states 184, while both releases ran at
+  parity. `testEveryReleaseRunsAForwardOnInitialWeights` runs every release's
+  initial-weights graph, and `testEveryReleaseLoadsItsCheckpoint` compares every built tensor's shape
+  with its release's. `NFKYOLOGraphs` states
   which stages each YOLOv10 size runs as `C2fCIB` and which of those take the large-kernel branch,
   because the released configs differ stage by stage rather than by a rule. Reference parity against
   ultralytics' own model on every one of the twenty-six released checkpoints, over the full

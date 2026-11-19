@@ -373,7 +373,7 @@ extension NFKYOLOGraphs {
             poolOut = 256; poolMid = 128
         case .medium:
             stages = [(128, 128, 64), (240, 240, 120), (360, 360, 180), (480, 480, 240)]
-            downsamples = [240, 360, 480, 180, 240]
+            downsamples = [240, 360, 480, 184, 240]
             neck = [(360, 360, 180), (240, 240, 120), (360, 360, 180), (480, 480, 240)]
             poolOut = 480; poolMid = 240
         default:

@@ -85,7 +85,9 @@ public final class NFKMLXYOLOGenerations: NSObject {
     }
 
     /// Loads a released ultralytics checkpoint. The graph rows put every module at the reference's own
-    /// index, so only the detection head's positional Sequentials need translating.
+    /// index, so only the detection head's positional Sequentials need translating. Every tensor must
+    /// arrive at the shape the graph built, so a row built at the wrong width fails the load instead of
+    /// taking the checkpoint's shape and leaving the initial-weights graph broken.
     static func loadWeights(into net: NFKMLXYOLOGenerationNet, from url: URL, matchingShapesOnly: Bool = false) throws {
         let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let head = "model.\(net.nodes.count - 1)."
@@ -106,7 +108,7 @@ public final class NFKMLXYOLOGenerations: NSObject {
             try NFKMLXYOLO.requireCoverage(outsideClassBranches: kept, of: Array(shapes.keys), source: url)
             try NFKMLXWeights.apply(kept, to: net, strict: false)
         } else {
-            try NFKMLXWeights.apply(mapped, to: net)
+            try NFKMLXWeights.apply(mapped, to: net, verifyShapes: true)
         }
         net.train(false)                                        // BatchNorm running statistics
     }
