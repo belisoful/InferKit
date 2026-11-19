@@ -121,7 +121,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteFileStoreAPIStyle) {
 /*! The key, sent the way the service reads it. */
 @property (nonatomic, copy, nullable) NSString *apiKey;
 
-/*! The purpose an upload names when the call gives none (user_data on OpenAI and DeepSeek, assistants
+/*! The purpose an upload names when the call gives none (user_data on OpenAI, DeepSeek, and Meta, assistants
 	on xAI, ocr on Mistral, batch on Groq, Perplexity, and Alibaba Model Studio, fine-tune on Together).
 	backendForProvider sets it. */
 @property (nonatomic, copy, nullable) NSString *defaultPurpose;
@@ -136,7 +136,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteFileStoreAPIStyle) {
 @property (nonatomic, strong) NSURLSession *session;
 
 /*! A store for the provider's Files API: openai, anthropic, gemini, mistral, xai, deepseek, together,
-	openrouter, groq, perplexity, and modelstudio serve one; every other preset returns nil. */
+	openrouter, groq, perplexity, modelstudio, and meta serve one; every other preset returns nil. */
 + (nullable instancetype)fileStoreForProvider:(NFKRemoteProvider *)provider apiKey:(nullable NSString *)apiKey;
 
 /*! Uploads bytes under a name. purpose nil takes defaultPurpose; expiresAfter 0 keeps the service's

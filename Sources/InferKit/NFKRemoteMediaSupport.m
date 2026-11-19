@@ -194,6 +194,42 @@ NSURL * _Nullable NFKRemoteWriteMediaFile(NSData *data, NSString *prefix, NSStri
 	return fileURL;
 }
 
+NSArray<NSMutableDictionary<NSString *, id> *> *NFKGeminiContentBlocks(NFKRemoteAttachments *attachments)
+{
+	NSMutableArray<NSMutableDictionary<NSString *, id> *> *blocks = [NSMutableArray array];
+	for (NSData *png in attachments.imagePNGs) {
+		[blocks addObject:[@{ @"type": @"image", @"mime_type": @"image/png", @"data": [png base64EncodedStringWithOptions:0] } mutableCopy]];
+	}
+	if (attachments.audioData != nil) {
+		NSString *format = [attachments.audioFormat isEqualToString:@"mp3"] ? @"mpeg" : attachments.audioFormat ?: @"wav";
+		[blocks addObject:[@{ @"type": @"audio", @"mime_type": [@"audio/" stringByAppendingString:format],
+							  @"data": [attachments.audioData base64EncodedStringWithOptions:0] } mutableCopy]];
+	}
+	if (attachments.videoData != nil) {
+		NSString *format = [attachments.videoFormat isEqualToString:@"mov"] ? @"quicktime" : attachments.videoFormat ?: @"mp4";
+		[blocks addObject:[@{ @"type": @"video", @"mime_type": [@"video/" stringByAppendingString:format],
+							  @"data": [attachments.videoData base64EncodedStringWithOptions:0] } mutableCopy]];
+	}
+	for (NSDictionary *document in attachments.documents) {
+		NFKRemoteFile *file = document[@"fileReference"];
+		if (file != nil) {
+			NSString *mimeType = file.mimeType ?: @"application/pdf";
+			NSString *type = [mimeType hasPrefix:@"image/"] ? @"image" : [mimeType hasPrefix:@"audio/"] ? @"audio"
+						   : [mimeType hasPrefix:@"video/"] ? @"video" : @"document";
+			[blocks addObject:[@{ @"type": type, @"uri": file.uri.absoluteString ?: file.identifier, @"mime_type": mimeType } mutableCopy]];
+			continue;
+		}
+		if ([document[@"mediaType"] isEqual:@"text/plain"]) {
+			NSString *text = [[NSString alloc] initWithData:document[@"data"] encoding:NSUTF8StringEncoding] ?: @"";
+			[blocks addObject:[@{ @"type": @"text", @"text": [NSString stringWithFormat:@"%@:\n%@", document[@"filename"], text] } mutableCopy]];
+			continue;
+		}
+		[blocks addObject:[@{ @"type": @"document", @"mime_type": @"application/pdf",
+							  @"data": [document[@"data"] base64EncodedStringWithOptions:0] } mutableCopy]];
+	}
+	return blocks;
+}
+
 NSDictionary<NSString *, NSNumber *> * _Nullable NFKRemoteUsage(NSNumber * _Nullable inputTokens,
 																 NSNumber * _Nullable cachedTokens,
 																 NSNumber * _Nullable outputTokens,

@@ -125,7 +125,7 @@ static NSString * _Nullable NFKRemoteFileString(id value)
 {
 	NSDictionary<NSString *, NSString *> *purposes = @{ @"openai": @"user_data", @"deepseek": @"user_data", @"xai": @"assistants",
 														@"mistral": @"ocr", @"groq": @"batch", @"together": @"fine-tune",
-														@"perplexity": @"batch", @"modelstudio": @"batch" };
+														@"perplexity": @"batch", @"modelstudio": @"batch", @"meta": @"user_data" };
 	NSString *identifier = provider.identifier;
 	NFKRemoteFileStore *store = [[self alloc] init];
 	store.apiKey = apiKey;
@@ -135,8 +135,8 @@ static NSString * _Nullable NFKRemoteFileString(id value)
 	} else if ([identifier isEqualToString:@"gemini"]) {
 		store.endpointURL = [NSURL URLWithString:@"https://generativelanguage.googleapis.com"];
 		store.apiStyle = NFKRemoteFileStoreAPIStyleGemini;
-	} else if ([@[ @"openai", @"mistral", @"xai", @"deepseek", @"groq", @"together", @"openrouter", @"perplexity", @"modelstudio" ]
-				   containsObject:identifier]) {
+	} else if ([@[ @"openai", @"mistral", @"xai", @"deepseek", @"groq", @"together", @"openrouter", @"perplexity", @"modelstudio",
+				   @"meta" ] containsObject:identifier]) {
 		// DeepSeek's files live at the API root, beside its /v1 compatibility path.
 		store.endpointURL = [identifier isEqualToString:@"deepseek"]
 			? [provider.baseURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"files"]

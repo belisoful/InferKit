@@ -116,6 +116,20 @@
 	[super tearDown];
 }
 
+- (void)testALevelTheContractDoesNotNamePassesThroughAsWritten
+{
+	self.backend.modelName = @"gemini-4-neon";
+	[self.backend stage:@"{\"id\":\"v1_x\",\"status\":\"completed\",\"steps\":["
+	 "{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":\"Hi.\"}]}]}"];
+	[self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+																	  parameters:@{ NFKParameterReasoningEffort: @"xhigh" }]
+								   error:NULL];
+	NSDictionary *body = [self.backend bodyAt:0];
+	XCTAssertEqualObjects(body[@"model"], @"gemini-4-neon");
+	XCTAssertEqualObjects(body[@"generation_config"][@"thinking_level"], @"xhigh",
+						  @"Gemini 4 Hydrogen and Neon take xhigh, which the contract's three levels do not name");
+}
+
 - (void)testTextAndAnImageBecomeAUserStepAndTheReplyTextThoughtsAndUsageComeBack
 {
 	[self.backend stage:@"{\"id\":\"v1_a\",\"status\":\"completed\",\"steps\":["

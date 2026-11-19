@@ -65,6 +65,8 @@ Pure Apple frameworks, always available:
   ``NFKDecisionQuestion``s about a state, rather than text.
 - ``NFKOpenAIDecisionsBackend`` — OpenAI's Decisions API: the same questions and answers, with images
   beside the state.
+- ``NFKGeminiDecisionsBackend`` — Gemini's Decisions API: the same questions and answers, with images,
+  audio, video, and PDFs beside the state.
 - ``NFKRemoteReranker`` — query-and-documents relevance scores, the shape of the on-device reranker.
 - ``NFKRemoteResponsesBackend`` — the Responses API: service-run tools, reasoning summaries, background
   jobs, and continuation by response id.
@@ -257,6 +259,7 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKRemoteUsageReporter``
 - ``NFKTypeSafeBackend``
 - ``NFKOpenAIDecisionsBackend``
+- ``NFKGeminiDecisionsBackend``
 
 ### Media coding
 

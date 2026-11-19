@@ -4417,6 +4417,53 @@ because the service reads a string or user messages only. A question already in 
 (`{type, name, instructions, choices | levels}`) passes through. `safety_identifier` and any other body
 field go in as request parameters.
 
+### Typed decisions (`NFKGeminiDecisionsBackend`, Gemini's Decisions API)
+
+Gemini's Decisions API (`POST /v1beta/decisions`) answers the same three question types and takes the
+same request, so `NFKGeminiDecisionsBackend` reads the questions and returns the answers
+`NFKTypeSafeBackend` does. It is one more route beside the `gemini` preset's OpenAI layer. The model is
+required, and `gemini-decision-1` is the one the service accepts. The evidence can be text, images,
+audio, video, and PDFs together.
+
+```objc
+NFKGeminiDecisionsBackend *decider = [NFKGeminiDecisionsBackend backendForProvider:NFKRemoteProvider.googleGemini
+                                                                            apiKey:key modelName:@"gemini-decision-1"];
+NSDictionary<NSString *, NFKDecisionAnswer *> *answers =
+    [decider answersForState:@"Help! My payouts have been failing for 3 days."
+                   questions:@{ @"department": [NFKDecisionQuestion choiceQuestionWithInstructions:@"Which team should handle this?"
+                                                                                          options:@[ @"billing", @"technical", @"sales" ]],
+                                @"urgent":     [NFKDecisionQuestion noulQuestionWithInstructions:@"The customer needs an answer today."] }
+                       error:&error];
+answers[@"department"].choice;                          // "technical"
+answers[@"urgent"].probability;                         // 0.91
+answers[@"urgent"].confidence;                          // 0.91; this service reports one for a noul too
+
+// A photo and a voice memo as the shared evidence, each sent as a content block after the text.
+NFKInferenceRequest *inspect = [NFKInferenceRequest requestWithInputs:@{
+    NFKInputState: @"Inspect the returned parcel.",
+    NFKInputImage: (__bridge id)photo,
+    NFKInputAudio: [NFKAudioAsset audioAssetWithFileURL:recordingURL],
+    NFKInputQuestions: @{ @"damaged": [NFKDecisionQuestion noulQuestionWithInstructions:@"The parcel has visible damage."
+                                                                           trueMeaning:@"a crack, a dent, or a tear"
+                                                                          falseMeaning:nil] } }
+                                                           parameters:@{ @"resolution": @"low" }
+                                                       outputModality:NFKModalityText];
+NFKDecisionAnswer *damaged = [decider runInferenceForRequest:inspect error:&error].answers[@"damaged"];
+```
+
+```swift
+let decider = NFKGeminiDecisionsBackend(for: .googleGemini, apiKey: key, modelName: "gemini-decision-1")!
+let answers = try decider.answers(forState: "Help! My payouts have been failing for 3 days.", questions: questions)
+answers["urgent"]?.probability       // 0.91
+```
+
+A dictionary state is sent as its JSON text and `NFKInputMessages` as a "role: content" transcript. An
+array state is taken as the service's own content blocks and sent as is, and so is a question
+already in the service's shape (`{type, instructions, criteria}`). An `NFKRemoteFile` the Files API
+keeps rides by its URI. A `resolution` request parameter (`low`, `medium`, `high`, `ultra_high`) rides
+on each image and video block. The service blocks a whole request its safety filters refuse with
+HTTP 400, so no single question comes back refused.
+
 Midjourney has no official public API, so there is no preset for it. Codex is OpenAI's agent using
 the OpenAI API, so it is the `openai` preset. OpenCode's gateways are the `opencode` and `opencode-go`
 presets.
@@ -6741,6 +6788,32 @@ NSString *transcript = result.text;
 
 Request parameters fold in as multipart form fields, so a caller sets `language`, `prompt`,
 `response_format`, and `temperature` by name.
+
+Meta's Muse Voice Transcribe answers on the `meta` preset's own route (`POST /asr/transcribe`), which
+the provider factory selects. The service reads WAV only (mono 16-bit PCM at 16 or 24 kHz), names a
+language by its name, and returns a turn per speaker when the request diarizes:
+
+```objc
+NFKRemoteTranscriptionBackend *muse = [NFKRemoteTranscriptionBackend backendForProvider:NFKRemoteProvider.meta
+                                                                                 apiKey:apiKey
+                                                                              modelName:@"muse-voice-transcribe-1.0"];
+NFKInferenceRequest *meeting = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [NFKAudioAsset audioAssetWithFileURL:recordingURL] }
+                                                          parameters:@{ NFKParameterSpeakerDiarization: @YES,
+                                                                        NFKParameterSourceLanguage: @"English",
+                                                                        NFKParameterVocabulary: @[ @"InferKit" ] }
+                                                      outputModality:NFKModalityText];
+NFKInferenceResult *minutes = [muse runInferenceForRequest:meeting error:&error];
+for (NFKAudioSegment *turn in [minutes outputForKey:NFKOutputSegments]) {
+    NSLog(@"%@ %.1fs: %@", turn.speaker, turn.startSeconds, turn.label);     // "A 0.0s: Hello."
+}
+```
+
+```swift
+let muse = NFKRemoteTranscriptionBackend(for: .meta, apiKey: apiKey, modelName: "muse-voice-transcribe-1.0")!
+let minutes = try muse.runInference(for: NFKInferenceRequest(
+    inputs: [NFKInputAudio: NFKAudioAsset.audioAsset(withFileURL: recordingURL)],
+    parameters: [NFKParameterSpeakerDiarization: true]))
+```
 
 For **on-device** transcription, `NFKMLXWhisper` runs the Whisper encoder-decoder transformer in MLX
 (audio → log-mel → encoder → greedy decoder). Register it, then read audio under `NFKInputAudio`:

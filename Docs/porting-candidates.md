@@ -533,6 +533,13 @@ exact license on the specific checkpoint.
     autoencoder, and first/last-frame and reference adapters. `Pika-Labs/Pika-H3-Flex-Turbo-LoRA`
     holds 2-, 4-, and 8-step distillation adapters. The open release covers 480p and 768p; higher
     resolutions stay on Pika's API.
+  - `MiniMaxAI/MiniMax-H3-Image` (2026-11-03, 204.0 GB; checked 2026-11-18): MiniMax's own text to
+    image and editing release, the H3 transformer without the audio layers, in two layouts of the
+    same 66.3 GB weights beside a 66.7 GB text encoder and a 2.3 GB autoencoder.
+    `MiniMaxAI/MiniMax-H3-Image-PE` (2026-11-08, 17.9 GB) is its prompt expander, a quantized
+    `Qwen/Qwen3.8-27B`. Both are under the MiniMax H3 Image Community License, which keeps the
+    Excluded Territories and asks for written authorization above 1M USD of annual revenue or for
+    any hosted service.
 
 ## Vendor verdicts
 

@@ -86,6 +86,9 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 		backend = [self backendWithEndpointURL:[provider URLForPath:@"stt"]];
 		backend.apiStyle = NFKRemoteTranscriptionAPIStyleXAI;
 		backend.audioURLFieldName = @"url";
+	} else if ([identifier isEqualToString:@"meta"]) {
+		backend = [self backendWithEndpointURL:[provider URLForPath:@"asr/transcribe"]];
+		backend.apiStyle = NFKRemoteTranscriptionAPIStyleMeta;
 	}
 	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
 	if (pinned != nil) {
@@ -155,7 +158,7 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
 {
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
-	if (!self.streams || self.apiStyle == NFKRemoteTranscriptionAPIStyleXAI) {
+	if (!self.streams || !self.styleStreams) {
 		NFKJobDispatchGuarded(job, ^{
 			if (job.status == NFKInferenceJobStatusCancelled) {
 				return;
@@ -209,6 +212,12 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 	return job;
 }
 
+// Meta names each event on an SSE event line, which the line handler here does not read.
+- (BOOL)styleStreams
+{
+	return self.apiStyle == NFKRemoteTranscriptionAPIStyleOpenAI || self.apiStyle == NFKRemoteTranscriptionAPIStyleMistral;
+}
+
 #pragma mark Request
 
 - (nullable NSMutableURLRequest *)urlRequestForRequest:(NFKInferenceRequest *)request
@@ -240,7 +249,9 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:[self requestURL]];
 	urlRequest.HTTPMethod = @"POST";
 	urlRequest.timeoutInterval = self.timeout;
-	urlRequest.HTTPBody = [self multipartBodyForAudio:audio fields:[self fieldsForRequest:request streaming:streaming] boundary:boundary];
+	urlRequest.HTTPBody = self.apiStyle == NFKRemoteTranscriptionAPIStyleMeta
+		? [self metaMultipartBodyForAudio:audio settings:[self metaSettingsForRequest:request] boundary:boundary]
+		: [self multipartBodyForAudio:audio fields:[self fieldsForRequest:request streaming:streaming] boundary:boundary];
 	[urlRequest setValue:[NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary] forHTTPHeaderField:@"Content-Type"];
 	if (streaming) {
 		[urlRequest setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
@@ -327,6 +338,9 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 				add(@"keyterm", term);
 			}
 			break;
+		case NFKRemoteTranscriptionAPIStyleMeta:
+			// The settings travel in the JSON request part, built by metaSettingsForRequest:.
+			break;
 	}
 	if (streaming) {
 		add(@"stream", @"true");
@@ -338,6 +352,38 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 		}
 	}
 	return fields;
+}
+
+/*! The Meta style's request part: the model, the one encoding the service reads, and the contract
+	keys under the service's names. A parameter the contract does not name goes in as written, so a
+	caller's own mode replaces the one derived here. */
+- (NSDictionary<NSString *, id> *)metaSettingsForRequest:(NFKInferenceRequest *)request
+{
+	NSDictionary *parameters = request.parameters;
+	NSMutableDictionary<NSString *, id> *settings = [NSMutableDictionary dictionary];
+	settings[@"model"] = self.modelName.length > 0 ? self.modelName : nil;
+	settings[@"audioEncoding"] = @"WAV";
+	if ([parameters[NFKParameterSpeakerDiarization] boolValue]) {
+		settings[@"mode"] = @"DIARIZATION";
+	} else if (self.emitsTimestamps) {
+		settings[@"mode"] = @"ENDPOINTING";
+	}
+	id language = parameters[NFKParameterSourceLanguage];
+	if ([language isKindOfClass:NSString.class]) {
+		settings[@"languageBias"] = @[ language ];
+	} else if ([language isKindOfClass:NSArray.class]) {
+		settings[@"languageBias"] = language;
+	}
+	if ([parameters[NFKParameterVocabulary] isKindOfClass:NSArray.class]) {
+		settings[@"keywords"] = parameters[NFKParameterVocabulary];
+	}
+	NSSet<NSString *> *mapped = NFKTranscriptionMappedParameters();
+	for (NSString *key in parameters) {
+		if (![mapped containsObject:key]) {
+			settings[key] = parameters[key];
+		}
+	}
+	return settings;
 }
 
 #pragma mark Audio and body
@@ -403,6 +449,27 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 	return body;
 }
 
+// The settings travel as one JSON part named request, ahead of the audio part.
+- (NSData *)metaMultipartBodyForAudio:(NFKTranscriptionAudio *)audio
+							 settings:(NSDictionary<NSString *, id> *)settings
+							 boundary:(NSString *)boundary
+{
+	NSMutableData *body = [NSMutableData data];
+	NSData *dashBoundary = [[NSString stringWithFormat:@"--%@\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding];
+	NSData *json = [NSJSONSerialization isValidJSONObject:settings]
+		? [NSJSONSerialization dataWithJSONObject:settings options:NSJSONWritingSortedKeys error:NULL] : nil;
+	[body appendData:dashBoundary];
+	[body appendData:[@"Content-Disposition: form-data; name=\"request\"\r\nContent-Type: application/json\r\n\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:json ?: [@"{}" dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:[@"\r\n" dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:dashBoundary];
+	NSString *fileHeader = [NSString stringWithFormat:@"Content-Disposition: form-data; name=\"audio\"; filename=\"%@\"\r\nContent-Type: audio/wav\r\n\r\n", audio.filename];
+	[body appendData:[fileHeader dataUsingEncoding:NSUTF8StringEncoding]];
+	[body appendData:audio.data];
+	[body appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+	return body;
+}
+
 #pragma mark Response
 
 - (nullable NFKInferenceResult *)resultFromResponseData:(NSData *)data error:(NSError * _Nullable *)outError
@@ -422,6 +489,9 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 
 - (NFKInferenceResult *)resultFromBody:(NSDictionary *)body
 {
+	if (self.apiStyle == NFKRemoteTranscriptionAPIStyleMeta) {
+		return [self resultFromMetaBody:body];
+	}
 	NSMutableDictionary<NSString *, id> *outputs = [NSMutableDictionary dictionary];
 	if ([body[@"text"] isKindOfClass:NSString.class]) {
 		outputs[NFKOutputText] = body[@"text"];
@@ -436,6 +506,34 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 		segments = [self turnsFromWords:words];
 	}
 	if (segments != nil) {
+		outputs[NFKOutputSegments] = segments;
+	}
+	return [NFKInferenceResult resultWithOutputs:outputs];
+}
+
+/*! Meta's reply: the transcript, and a turn per stretch of speech timed in milliseconds, with its
+	speaker when the request diarized. The push-to-talk mode returns no turns. */
+- (NFKInferenceResult *)resultFromMetaBody:(NSDictionary *)body
+{
+	NSMutableDictionary<NSString *, id> *outputs = [NSMutableDictionary dictionary];
+	if ([body[@"transcript"] isKindOfClass:NSString.class]) {
+		outputs[NFKOutputText] = body[@"transcript"];
+	}
+	outputs[NFKOutputStructured] = body;
+	NSArray *turns = [body[@"turns"] isKindOfClass:NSArray.class] ? body[@"turns"] : @[];
+	NSMutableArray<NFKAudioSegment *> *segments = [NSMutableArray array];
+	for (NSDictionary *turn in turns) {
+		if (![turn isKindOfClass:NSDictionary.class] ||
+			![turn[@"startMs"] isKindOfClass:NSNumber.class] || ![turn[@"endMs"] isKindOfClass:NSNumber.class]) {
+			continue;
+		}
+		[segments addObject:[NFKAudioSegment segmentWithStartSeconds:[turn[@"startMs"] doubleValue] / 1000.0
+														  endSeconds:[turn[@"endMs"] doubleValue] / 1000.0
+															   label:[turn[@"transcript"] isKindOfClass:NSString.class] ? turn[@"transcript"] : nil
+														  confidence:1.0
+															 speaker:[turn[@"speaker"] isKindOfClass:NSString.class] ? turn[@"speaker"] : nil]];
+	}
+	if (segments.count > 0) {
 		outputs[NFKOutputSegments] = segments;
 	}
 	return [NFKInferenceResult resultWithOutputs:outputs];

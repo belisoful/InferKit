@@ -25,12 +25,17 @@ NS_ASSUME_NONNULL_BEGIN
 				and transcription.* SSE events when streamed.
 	@constant   NFKRemoteTranscriptionAPIStyleXAI xAI's POST /v1/stt: multipart with the file last,
 				diarize and keyterm fields, and a reply of words[] with speakers.
+	@constant   NFKRemoteTranscriptionAPIStyleMeta Meta's POST /v1/asr/transcribe: multipart with a
+				JSON request part (model, audioEncoding, mode, keywords, languageBias) and an audio
+				part, and a reply of a transcript with turns[] timed in milliseconds. The service
+				reads WAV only: mono 16-bit PCM at 16 or 24 kHz.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ENUM(NSInteger, NFKRemoteTranscriptionAPIStyle) {
 	NFKRemoteTranscriptionAPIStyleOpenAI = 0,
 	NFKRemoteTranscriptionAPIStyleMistral,
 	NFKRemoteTranscriptionAPIStyleXAI,
+	NFKRemoteTranscriptionAPIStyleMeta,
 };
 
 /*!
@@ -49,7 +54,16 @@ typedef NS_ENUM(NSInteger, NFKRemoteTranscriptionAPIStyle) {
 				- NFKParameterWordTimestamps → word timing; the words come back under NFKOutputWords
 				- NFKParameterVocabulary → the service's keyword, key-term, or context-bias list
 
-				Every other parameter goes out as a form field under its own name. The transcript
+				The Meta style maps them onto its JSON request part:
+
+				- NFKParameterSourceLanguage → languageBias, a language name or an array of them
+				- NFKParameterSpeakerDiarization → mode DIARIZATION; emitsTimestamps alone → mode
+				  ENDPOINTING, which is what makes the service return turns
+				- NFKParameterVocabulary → keywords
+				- NFKInputPrompt and NFKParameterWordTimestamps have no field and are not sent
+
+				Every other parameter goes out as a form field under its own name, or as a field of
+				the Meta style's request part. The transcript
 				comes back under NFKOutputText and the parsed reply under NFKOutputStructured.
 				emitsTimestamps adds the segments under NFKOutputSegments as NFKAudioSegments, which
 				is what the on-device Whisper backend emits, so the two are interchangeable.
@@ -88,7 +102,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteTranscriptionAPIStyle) {
 @property (nonatomic, assign) BOOL translates;
 
 /*! Asks for the service's event stream when the request is submitted as a job, so the transcript
-	grows on the job's partialResult as it arrives. The OpenAI and Mistral styles. Off by default,
+	grows on the job's partialResult as it arrives. The OpenAI and Mistral styles; the xAI and Meta
+	styles run the blocking call. Off by default,
 	because some models refuse it. Introduced in InferKit 0.4.0. */
 @property (nonatomic, assign) BOOL streams;
 
@@ -105,7 +120,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteTranscriptionAPIStyle) {
 	@abstract   A backend pointed at the provider's speech-to-text endpoint in its style, or nil for a
 				provider that serves none.
 	@discussion openai, groq, together, openrouter, vllm, and inferkit take the OpenAI style; mistral its own;
-				xai its /v1/stt. anthropic, gemini (its OpenAI layer has no audio path), deepseek,
+				xai its /v1/stt; meta its /v1/asr/transcribe. anthropic, gemini (its OpenAI layer has no audio path), deepseek,
 				typesafe, ollama, lmstudio, and llamacpp return nil. Introduced in InferKit 0.3.0.
 */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider

@@ -450,6 +450,19 @@
 	backend.modelName = @"whisper-1";
 	XCTAssertEqualObjects(backend.backendIdentifier, @"remote-transcription");
 	XCTAssertTrue(backend.isReady);                         // an endpoint is set
+
+	// Meta's Muse Voice Transcribe answers on the meta preset's own route, which the factory selects.
+	NFKRemoteTranscriptionBackend *muse = [NFKRemoteTranscriptionBackend backendForProvider:NFKRemoteProvider.meta
+																					 apiKey:@"key"
+																				  modelName:@"muse-voice-transcribe-1.0"];
+	XCTAssertEqualObjects(muse.endpointURL.absoluteString, @"https://api.meta.ai/v1/asr/transcribe");
+	XCTAssertEqual(muse.apiStyle, NFKRemoteTranscriptionAPIStyleMeta);
+	NFKInferenceRequest *meeting = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [NFKAudioAsset audioAssetWithFileURL:[NSURL fileURLWithPath:@"/tmp/meeting.wav"]] }
+															   parameters:@{ NFKParameterSpeakerDiarization: @YES,
+																			 NFKParameterSourceLanguage: @"English",
+																			 NFKParameterVocabulary: @[ @"InferKit" ] }
+														   outputModality:NFKModalityText];
+	XCTAssertNotNil([meeting inputForKey:NFKInputAudio]);
 }
 
 - (void)testExampleCoreMLImageBackendContract
@@ -1251,6 +1264,43 @@
 	XCTAssertEqual(damaged.type, NFKDecisionTypeNoul);
 	XCTAssertEqualWithAccuracy(damaged.probability, 0.92, 1e-9);
 	XCTAssertFalse(damaged.isRefused);
+}
+
+- (void)testExampleGeminiDecisions
+{
+	// Gemini's Decisions API takes the same questions and returns the same answers. It is one more
+	// route beside the gemini preset's OpenAI layer; gemini-decision-1 is the model it serves.
+	NFKGeminiDecisionsBackend *decider = [NFKGeminiDecisionsBackend backendForProvider:NFKRemoteProvider.googleGemini
+																				apiKey:@"key" modelName:@"gemini-decision-1"];
+	XCTAssertEqualObjects(decider.endpointURL.absoluteString, @"https://generativelanguage.googleapis.com/v1beta/decisions");
+	XCTAssertTrue(decider.isReady);
+
+	// A photo and a voice memo ride beside the text as content blocks; the resolution rides on the
+	// image block.
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(NULL, 2, 2, 8, 8, colorSpace, kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+	CGColorSpaceRelease(colorSpace);
+	CGImageRef photo = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+	NSURL *memoURL = [NSURL fileURLWithPath:@"/tmp/memo.wav"];
+	NFKInferenceRequest *inspect = [NFKInferenceRequest requestWithInputs:@{
+		NFKInputState: @"Inspect the returned parcel.",
+		NFKInputImage: (__bridge id)photo,
+		NFKInputAudio: [NFKAudioAsset audioAssetWithFileURL:memoURL],
+		NFKInputQuestions: @{ @"damaged": [NFKDecisionQuestion noulQuestionWithInstructions:@"The parcel has visible damage."
+																			   trueMeaning:@"a crack, a dent, or a tear"
+																			  falseMeaning:nil] } }
+															   parameters:@{ @"resolution": @"low" }
+														   outputModality:NFKModalityText];
+	XCTAssertTrue([decider.supportedInputKeys containsObject:NFKInputAudio]);
+	XCTAssertNotNil([inspect inputForKey:NFKInputAudio]);
+	CGImageRelease(photo);
+
+	// What comes back (needs network): a noul carries its probability and, from this service, a
+	// confidence.
+	NFKDecisionAnswer *damaged = [NFKDecisionAnswer answerWithDictionary:@{ @"type": @"noul", @"noul": @0.92, @"confidence": @0.92 }];
+	XCTAssertEqualWithAccuracy(damaged.probability, 0.92, 1e-9);
+	XCTAssertEqualWithAccuracy(damaged.confidence, 0.92, 1e-9);
 }
 
 - (void)testExampleAsyncGenerationBackendContract

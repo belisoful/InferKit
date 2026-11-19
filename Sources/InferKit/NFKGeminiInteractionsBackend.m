@@ -474,44 +474,13 @@ static double NFKInteractionsSeconds(id offset)
 // transcripts, or audio from the video as it needs them.
 - (NSArray<NSDictionary *> *)mediaBlocksFor:(NFKRemoteAttachments *)attachments processing:(nullable id)processing
 {
-	NSMutableArray<NSDictionary *> *blocks = [NSMutableArray array];
-	for (NSData *png in attachments.imagePNGs) {
-		[blocks addObject:@{ @"type": @"image", @"mime_type": @"image/png", @"data": [png base64EncodedStringWithOptions:0] }];
-	}
-	if (attachments.audioData != nil) {
-		NSString *format = [attachments.audioFormat isEqualToString:@"mp3"] ? @"mpeg" : attachments.audioFormat ?: @"wav";
-		[blocks addObject:@{ @"type": @"audio", @"mime_type": [@"audio/" stringByAppendingString:format],
-							 @"data": [attachments.audioData base64EncodedStringWithOptions:0] }];
-	}
-	if (attachments.videoData != nil) {
-		NSString *format = [attachments.videoFormat isEqualToString:@"mov"] ? @"quicktime" : attachments.videoFormat ?: @"mp4";
-		NSMutableDictionary *video = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": @"video",
-																					   @"mime_type": [@"video/" stringByAppendingString:format],
-																					   @"data": [attachments.videoData base64EncodedStringWithOptions:0] }];
-		video[@"processing"] = [processing isKindOfClass:NSString.class] ? processing : nil;
-		[blocks addObject:video];
-	}
-	for (NSDictionary *document in attachments.documents) {
-		NFKRemoteFile *file = document[@"fileReference"];
-		if (file != nil) {
-			NSString *mimeType = file.mimeType ?: @"application/pdf";
-			NSString *type = [mimeType hasPrefix:@"image/"] ? @"image" : [mimeType hasPrefix:@"audio/"] ? @"audio"
-						   : [mimeType hasPrefix:@"video/"] ? @"video" : @"document";
-			NSMutableDictionary *block = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": type, @"uri": file.uri.absoluteString ?: file.identifier,
-																						   @"mime_type": mimeType }];
-			if ([type isEqualToString:@"video"] && [processing isKindOfClass:NSString.class]) {
+	NSArray<NSMutableDictionary<NSString *, id> *> *blocks = NFKGeminiContentBlocks(attachments);
+	if ([processing isKindOfClass:NSString.class]) {
+		for (NSMutableDictionary<NSString *, id> *block in blocks) {
+			if ([block[@"type"] isEqual:@"video"]) {
 				block[@"processing"] = processing;
 			}
-			[blocks addObject:block];
-			continue;
 		}
-		if ([document[@"mediaType"] isEqual:@"text/plain"]) {
-			NSString *text = [[NSString alloc] initWithData:document[@"data"] encoding:NSUTF8StringEncoding] ?: @"";
-			[blocks addObject:@{ @"type": @"text", @"text": [NSString stringWithFormat:@"%@:\n%@", document[@"filename"], text] }];
-			continue;
-		}
-		[blocks addObject:@{ @"type": @"document", @"mime_type": @"application/pdf",
-							 @"data": [document[@"data"] base64EncodedStringWithOptions:0] }];
 	}
 	return blocks;
 }

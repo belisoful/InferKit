@@ -103,7 +103,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteResponsesDialect) {
 	@method     backendForProvider:apiKey:modelName:
 	@abstract   A backend pointed at the provider's responses endpoint, or nil for a provider that
 				serves none.
-	@discussion openai, xai, groq, deepseek, openrouter, opencode, opencode-go, lmstudio, ollama,
+	@discussion openai, xai, groq, deepseek, openrouter, opencode, opencode-go, meta, lmstudio, ollama,
 				vllm, and llamacpp serve one; anthropic, gemini, mistral, together, and typesafe return
 				nil. OpenCode answers this route only for the models it routes to Responses (see
 				NFKRemoteProvider's modelAPIStyles). perplexity answers with its Agent API at /agent in

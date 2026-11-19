@@ -58,6 +58,13 @@ NS_ASSUME_NONNULL_BEGIN
 NSURL * _Nullable NFKRemoteWriteMediaFile(NSData *data, NSString *prefix, NSString *extension,
 										  NSURL * _Nullable directory, NSError * _Nullable * _Nullable outError);
 
+/*! The request's media as Gemini content blocks, {type, mime_type, data} or {type, mime_type, uri}
+	for a file the service keeps: the shape the Interactions and Decisions APIs read. Images come
+	first, then the audio clip, a video kept whole, and the documents. A plain-text document becomes a
+	text block under its filename. Each block is mutable, so a backend adds the fields its API puts on
+	a block. Introduced in InferKit 0.4.0. */
+NSArray<NSMutableDictionary<NSString *, id> *> *NFKGeminiContentBlocks(NFKRemoteAttachments *attachments);
+
 /*! The NFKOutputUsage dictionary for the token counts a provider reported, or nil when it reported
 	none. A count the provider leaves out is left out here, so a caller reads a key that is present
 	rather than trusting a zero. Introduced in InferKit 0.4.0. */

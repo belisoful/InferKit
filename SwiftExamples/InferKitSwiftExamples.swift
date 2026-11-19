@@ -270,6 +270,11 @@ final class InferKitSwiftExamples: XCTestCase {
         backend.modelName = "whisper-1"
         XCTAssertEqual(backend.backendIdentifier, "remote-transcription")
         XCTAssertTrue(backend.isReady)
+
+        // Meta's Muse Voice Transcribe answers on the `meta` preset's own route.
+        let muse = NFKRemoteTranscriptionBackend(for: .meta, apiKey: "key", modelName: "muse-voice-transcribe-1.0")
+        XCTAssertEqual(muse?.endpointURL?.absoluteString, "https://api.meta.ai/v1/asr/transcribe")
+        XCTAssertEqual(muse?.apiStyle, .meta)
     }
 
     func testExampleCoreMLImageBackendContract() {
@@ -1250,6 +1255,17 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(urgent?.type, .noul)
         let declined = NFKDecisionAnswer.refusal(for: .choice, raw: ["type": "refusal", "name": "department"])
         XCTAssertTrue(declined.isRefused)
+    }
+
+    // Gemini's Decisions API from Swift: the same optional factory, on the gemini preset.
+    func testGeminiDecisions() throws {
+        let decider = NFKGeminiDecisionsBackend(for: .googleGemini, apiKey: "key", modelName: "gemini-decision-1")
+        XCTAssertEqual(decider?.endpointURL?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/decisions")
+
+        // What comes back (needs network): `try decider.answers(forState: state, questions: questions)`.
+        let urgent = NFKDecisionAnswer(dictionary: ["type": "noul", "noul": 0.91, "confidence": 0.91])
+        XCTAssertEqual(urgent?.probability ?? 0, 0.91, accuracy: 1e-9)
+        XCTAssertEqual(urgent?.confidence ?? 0, 0.91, accuracy: 1e-9)
     }
 
     // MARK: Apple's own engines

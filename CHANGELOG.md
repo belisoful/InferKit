@@ -11,6 +11,34 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKit (core)
 
+#### Typed decisions from Gemini's Decisions API
+
+- `NFKGeminiDecisionsBackend` calls Gemini's Decisions API (`POST /v1beta/decisions`, beside the
+  `gemini` preset's OpenAI layer). It reads the request `NFKTypeSafeBackend` and
+  `NFKOpenAIDecisionsBackend` read and returns the same `NFKDecisionAnswer`s. Images, audio, a video,
+  PDFs, and Files API references ride beside the state as content blocks, and a `resolution` request
+  parameter rides on each image and video block. `backendForProvider:apiKey:modelName:` builds it for
+  the `gemini` preset; the model is required, and `gemini-decision-1` is the one the service accepts.
+- A reply that names a block reason comes back with every question refused.
+
+#### Meta's Model API and Muse Voice Transcribe
+
+- `NFKRemoteProvider.meta` (`meta`, `https://api.meta.ai/v1`) reaches Meta's Muse models (Muse Wonder,
+  Muse Spark, Muse Ember) through chat completions. `NFKRemoteResponsesBackend` reaches its Responses
+  API and `NFKRemoteFileStore` its Files API.
+- `NFKRemoteBackend` applies a request's stop sequences to the reply for a `muse-` model, because the
+  chat route answers HTTP 400 to a `stop` field.
+- `NFKRemoteTranscriptionAPIStyleMeta` speaks Meta's speech-to-text route (`POST /asr/transcribe`),
+  which serves `muse-voice-transcribe-1.0`: a JSON request part beside the audio part, and a reply of
+  turns that come back under `NFKOutputSegments`, each with its speaker when the request diarizes.
+
+#### Claude Fable 5.2, Claude Mythos 5.2, and Gemini 4
+
+- `NFKAnthropicBackend` asks Claude Fable 5.2 and Claude Mythos 5.2 for a JSON schema through
+  `output_config.format`, because both refuse a forced `tool_choice` with HTTP 400, as the 5.1 models do.
+- `NFKGeminiInteractionsBackend` and `NFKGeminiGenerateContentBackend` pass the `xhigh` thinking level
+  to Gemini 4 Hydrogen and Gemini 4 Neon as written.
+
 #### The server's chat route counts each turn's media
 
 - Flattening a chat message's content parts, the server records how many images and audio clips the message

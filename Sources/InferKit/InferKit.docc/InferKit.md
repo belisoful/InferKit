@@ -114,6 +114,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKAccountBalance``
 - ``NFKTypeSafeBackend``
 - ``NFKOpenAIDecisionsBackend``
+- ``NFKGeminiDecisionsBackend``
 
 ### Tools
 

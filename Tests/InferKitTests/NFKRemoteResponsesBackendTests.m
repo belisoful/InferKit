@@ -93,6 +93,8 @@
 	XCTAssertEqualObjects([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.xAI apiKey:@"k" modelName:@"m"].endpointURL.absoluteString,
 						  @"https://api.x.ai/v1/responses");
 	XCTAssertNotNil([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.deepSeek apiKey:@"k" modelName:@"m"]);
+	XCTAssertEqualObjects([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.meta apiKey:@"k" modelName:@"muse-spark-1.3"].endpointURL.absoluteString,
+						  @"https://api.meta.ai/v1/responses");
 	XCTAssertNil([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.anthropic apiKey:@"k" modelName:@"m"]);
 	XCTAssertNil([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.mistral apiKey:@"k" modelName:@"m"]);
 	XCTAssertEqual([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.openAI apiKey:@"k" modelName:@"m"].dialect,

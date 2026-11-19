@@ -150,6 +150,18 @@
 	XCTAssertEqualObjects(self.backend.requests.firstObject.URL.path, @"/v1beta/models/gemini-3.8-flash:generateContent");
 }
 
+- (void)testALevelTheContractDoesNotNamePassesThroughInUpperCase
+{
+	self.backend.modelName = @"gemini-4-hydrogen";
+	[self.backend stage:@"{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hi.\"}]},\"finishReason\":\"STOP\"}]}"];
+	[self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+																	  parameters:@{ NFKParameterReasoningEffort: @"xhigh" }]
+								   error:NULL];
+	XCTAssertEqualObjects(self.backend.requests.firstObject.URL.path, @"/v1beta/models/gemini-4-hydrogen:generateContent");
+	XCTAssertEqualObjects([self.backend bodyAt:0][@"generationConfig"][@"thinkingConfig"][@"thinkingLevel"], @"XHIGH",
+						  @"Gemini 4 Hydrogen and Neon take xhigh, which the contract's three levels do not name");
+}
+
 - (void)testTheContractParametersReachGenerationConfig
 {
 	NSDictionary *schema = @{ @"type": @"object", @"properties": @{ @"city": @{ @"type": @"string" } } };

@@ -358,7 +358,8 @@ static NSString * const NFKPinTestHost = @"Studio.local";
 
 - (void)testTheTranscriptionFactoryHonorsThePin
 {
-	for (NFKRemoteProvider *preset in @[ NFKRemoteProvider.inferKit, NFKRemoteProvider.openAI, NFKRemoteProvider.mistral, NFKRemoteProvider.xAI ]) {
+	for (NFKRemoteProvider *preset in @[ NFKRemoteProvider.inferKit, NFKRemoteProvider.openAI, NFKRemoteProvider.mistral, NFKRemoteProvider.xAI,
+										  NFKRemoteProvider.meta ]) {
 		[self assertClientSessionFor:preset honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
 			return [NFKRemoteTranscriptionBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
 		}];
@@ -415,6 +416,13 @@ static NSString * const NFKPinTestHost = @"Studio.local";
 {
 	[self assertClientSessionFor:NFKRemoteProvider.openAI honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
 		return [NFKOpenAIDecisionsBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheGeminiDecisionsFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.googleGemini honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKGeminiDecisionsBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
 	}];
 }
 

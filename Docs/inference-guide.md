@@ -182,6 +182,7 @@ companion packages add engines the core cannot host, without raising the core's 
 | `NFKAnthropicBackend` | core | Anthropic's Messages API | Its own backend, because the protocol differs; the same request shape. |
 | `NFKTypeSafeBackend` | core | TypeSafe AI's System One API (Jev) | Typed decisions rather than text: `NFKInputState` + `NFKInputQuestions` in, `NFKDecisionAnswer`s under `NFKOutputAnswers` out. |
 | `NFKOpenAIDecisionsBackend` | core | OpenAI's Decisions API | The request `NFKTypeSafeBackend` reads, answered by `gpt-6-luna`; images ride beside the state, and a declined question comes back with `refused` set. |
+| `NFKGeminiDecisionsBackend` | core | Gemini's Decisions API | The request `NFKTypeSafeBackend` reads, answered by `gemini-decision-1`; images, audio, video, and PDFs ride beside the state as content blocks. |
 | `NFKRemoteTranscriptionBackend` | core | An OpenAI-compatible audio→text (Whisper) endpoint | `NFKInputAudio` in, `NFKOutputText` out. |
 | `NFKRemoteEmbeddingBackend` | core | An OpenAI-compatible embeddings endpoint | `NFKInputPrompt` in, `NFKOutputEmbedding` out; batches through `embeddingsForTexts:error:`. |
 | `NFKRemoteSpeechBackend` | core | An OpenAI-compatible text→speech endpoint | `NFKInputPrompt` in, an `NFKAudioAsset` (WAV by default) under `NFKOutputAudio`. A voice is required. |
@@ -649,7 +650,9 @@ name the provider does not know, so it is the cheap check before a request carri
 
 - **OpenAI-compatible**, served by `NFKRemoteBackend`: `openai`, `xai`, `gemini`, `groq`, `mistral`,
   `deepseek`, `together`, `openrouter`, `modelstudio` (Alibaba Model Studio, Singapore; another region
-  is the preset re-pointed with `providerWithBaseURL:`, since a key is bound to its region), and the
+  is the preset re-pointed with `providerWithBaseURL:`, since a key is bound to its region), `meta`
+  (Meta's Model API, which serves the Muse models; its chat route refuses stop sequences, so the
+  backend applies them to the reply), and the
   local servers `ollama`, `lmstudio`, `llamacpp`,
   `vllm`. A local server needs no key, and llama.cpp needs no model name either, since it answers for
   whatever it has loaded.
@@ -665,6 +668,9 @@ name the provider does not know, so it is the cheap check before a request carri
   release, and `modelsWithAPIKey:error:` lists the rest. OpenAI's Decisions API answers the same
   request on the `openai` preset, through `NFKOpenAIDecisionsBackend`, which
   `[NFKOpenAIDecisionsBackend backendForProvider:NFKRemoteProvider.openAI apiKey:key modelName:@"gpt-6-luna"]`
+  builds. Gemini's Decisions API answers it beside the `gemini` preset, through
+  `NFKGeminiDecisionsBackend`, which
+  `[NFKGeminiDecisionsBackend backendForProvider:NFKRemoteProvider.googleGemini apiKey:key modelName:@"gemini-decision-1"]`
   builds.
 - **`perplexity`**: one key reaches four APIs.
   - A model named `provider/model` (`openai/gpt-5.5`) goes to the Agent API (`/v1/agent`) through
@@ -795,9 +801,10 @@ more services complete the surface: `NFKRemoteVideoBackend` (job-style video gen
 `NFKAsyncGenerationBackend`, the on-device LTX pipeline's counterpart, speaking Gemini Veo, xAI, Together,
 OpenRouter, and OpenAI's videos API, which OpenAI removes on 2026-09-24), `NFKRemoteReranker` (Together,
 OpenRouter, llama.cpp, vLLM; the on-device reranker's shape), and `NFKRemoteModerationBackend` (OpenAI, Mistral).
-`NFKTypeSafeBackend` and `NFKOpenAIDecisionsBackend` are the remote backends that do not generate:
-Jev and OpenAI's Decisions API answer typed questions about a state, with the probabilities behind
-each answer, at the latency and price of a classifier.
+`NFKTypeSafeBackend`, `NFKOpenAIDecisionsBackend`, and `NFKGeminiDecisionsBackend` are the remote
+backends that do not generate: Jev, OpenAI's Decisions API, and Gemini's Decisions API answer typed
+questions about a state, with the probabilities behind each answer, at the latency and price of a
+classifier.
 
 ## Serving a model to other machines
 

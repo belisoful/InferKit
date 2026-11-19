@@ -62,7 +62,8 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 |---|---|---|
 | text + image + audio + video + PDF → text, tools, structured output | Interactions / OpenAI-layer chat | covered (`NFKGeminiInteractionsBackend`) |
 | text + image + audio + video + PDF → text, tools, thinking, structured output, grounding | `/v1beta/models/{id}:generateContent` | covered (`NFKGeminiGenerateContentBackend`) |
-| long decode to 1M output tokens (`gemini-4-argon`) | Interactions background hops; generateContent `continuationToken` | covered (both backends, 2026-10-13) |
+| long decode to 1M output tokens (`gemini-4-argon`, `-carbon`, `-hydrogen`, `-neon`) | Interactions background hops; generateContent `continuationToken` | covered (both backends, 2026-10-13) |
+| text + image + audio + video + PDF → typed decisions (noul, choice, score) | `/v1beta/decisions` (`gemini-decision-1`, Beta, 2026-11-11) | covered (`NFKGeminiDecisionsBackend`, 2026-11-18) |
 | text → cited report (Deep Research agents) | Interactions `agent` + `agent_config {type: deep-research}` | covered (`agentName`, 2026-10-13) |
 | text + image → code and files in a hosted sandbox (Antigravity agent; e.g. a CAD script and its STL) | Interactions `agent` + `environment`; `/v1beta/environments` files | covered (`agentName`, `NFKGeminiEnvironmentStore`, 2026-10-13) |
 | agentic video understanding | Interactions `processing: agentic` on a video block | covered |
@@ -71,6 +72,8 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 | text + images → image (generate and edit, Nano Banana) | Interactions `response_format: image` | covered |
 | text → speech (30 voices, two speakers) | Interactions `response_format: audio` | covered (Interactions) |
 | voice library: list, get, design, replicate, delete | `/v1beta/voices` (2026-09-22) | covered (`NFKGeminiVoiceLibrary`) |
+| voice remixing | `POST /v1beta/voices` with `gemini-3.8-flash-tts` (2026-11-04) | not surveyed |
+| voice editing of a transcribed clip | `source_text` on `gemini-3.5-transcribe` and `-transcribe-live` (2026-11-17) | not surveyed |
 | audio → text with diarization and word times | Interactions `transcription_config` (`gemini-3.5-transcribe`) | covered (Interactions) |
 | text (+ images) → music | Interactions (`lyria-3.5`, `lyria-3-*`) | covered |
 | text + image + video + audio → video, video editing | Interactions (`gemini-omni-1.2-flash`; 1.1 routes to it from 2026-12-03) | covered (Interactions, background); Google names Omni the default video model over Veo |
@@ -210,6 +213,25 @@ Model Studio").
 | text → embedding | `/compatible-mode/v1/embeddings` | gap (exists by probe) |
 | audio → text, realtime speech, image, video | native routes | gap; not yet surveyed |
 | batches of chat or embedding requests | `/compatible-mode/v1/files` + `/batches` (window 24h–336h) | covered (`NFKRemoteBatch`, OpenAI style, 2026-10-23) |
+
+### Meta (`meta`)
+
+Meta's Model API at `https://api.meta.ai/v1`, added 2026-11-18 with Muse Ember's release. Detail in
+`remote-providers.md` ("Meta's Model API"). No live call has been made (no key).
+
+| Mode | Endpoint | Status |
+|---|---|---|
+| text + image + audio + video + PDF → text, tools, structured output | `/chat/completions` | covered (`NFKRemoteBackend`; stop sequences applied to the reply) |
+| text + image + audio + video + file → text, tools, reasoning summaries, web search | `/responses` | covered (`NFKRemoteResponsesBackend`); a tool conversation's `phase` replay is unverified |
+| files | `/files` | covered (`NFKRemoteFileStore`, purpose `user_data`) |
+| model list | `/models` | covered (ids only) |
+| audio → text with turns and diarization (`muse-voice-transcribe-1.0`) | `POST /asr/transcribe` (multipart, JSON request part, WAV only) | covered (`NFKRemoteTranscriptionAPIStyleMeta`); the SSE transcript is a gap |
+| realtime audio → text | `wss /v1/asr/realtime` (handshake frame carries the key) | gap |
+| text (+ images) → image (`muse-image-1.0`) | `/images/generations`, `/images/edits` | gap |
+| token count | `/responses/input_tokens`, `/messages/count_tokens` | gap |
+| Anthropic-format chat | `/messages` | gap (the same models answer on the two routes above) |
+| image or video → boxes and masks (`sam-3.1`) | `/responses` | gap (the reply is text) |
+| batches, video | `/batches`, `/videos` | registered by probe, undocumented |
 
 ### Perplexity (`perplexity`)
 

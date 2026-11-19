@@ -265,7 +265,7 @@ not thinking: Opus 4.7 onward, Sonnet 5, Fable, and Opus 5 / 5.5 return 400 on `
 `top_k`. Outside the 4.6 families the request adds `display: summarized`, since the default display
 from 4.7 on is `omitted` (an empty `thinking` string, now skipped when joining the reasoning).
 Thinking counts toward `max_tokens`, so an effort raises the limit by the same budget table (deep for a
-pass-through level). `NFKAnthropicUnforcedToolFamilies()` (Opus 5.5, Sonnet 5.5, Fable 5.1, Mythos 5.1) returns 400 on a forced
+pass-through level). `NFKAnthropicUnforcedToolFamilies()` (Opus 5.5, Sonnet 5.5, Fable 5.1 and 5.2, Mythos 5.1 and 5.2) returns 400 on a forced
 `tool_choice`, so there the schema goes out as `output_config.format` and the reply's JSON text is
 parsed into `NFKOutputStructured`. Every model also refuses a forced tool beside
 `thinking: {type: enabled}`, so a budget-family request that carries both a schema and an effort takes
@@ -274,7 +274,27 @@ which the backend never sends. Its effort default is `medium`, one level below O
 (2026-09-28) joined the unforced list from its release notes ("Forced tool use returns 400"). Haiku
 5.5 (2026-10-07) did not: its notes list sampling, `budget_tokens`, prefill, and `computer_20250124`
 as 400s and say nothing about `tool_choice`. Neither 5.5 model takes sampling, which the
-current-model default already covers. **OpenAI
+current-model default already covers. Fable 5.2 and Mythos 5.2 (`claude-fable-5-2`,
+`claude-mythos-5-2`, 2026-11-09) joined the unforced list from the tool-use page's forced-tool table
+("`any` and `tool` return a 400 error", the token-counting endpoint included). Read 2026-11-18 from
+the release notes, the 5.2 migration guide, and the thinking and prefix-check pages:
+- Both have a 1M context and 128K output, and always think adaptively: `thinking: {type: disabled}`
+  and a budget return 400. The effort levels are `low` to `max`, and the API default is `high`.
+- A non-default `temperature`, `top_p`, or `top_k` returns 400 whether or not the model thinks.
+  `top_p` defaults to 0.99, so 1 is refused. From API version `2026-10-21` any value returns 400 on
+  every model. `NFKAnthropicAPIVersion` is `2023-06-01`, and the current-model default sends none.
+- The prefix check applies to every account. An assistant turn that carries thinking blocks goes
+  back as the API returned it. A request whose `system`, `tools`, or an earlier message changed
+  after a thinking block was produced returns 400 (`Invalid signature in thinking block`), and a
+  retry of the same body fails again. The fix is to drop the named block and every thinking block
+  after it. The backend replays an assistant turn's blocks with their signatures, so a caller that
+  edits the system prompt or the tools in the middle of a tool conversation meets this error on a
+  5.2 model. The backend does not strip the blocks and retry.
+- Fast mode is `speed: "fast"` with no beta header, a body field the backend passes by name.
+  `computer_toolset_20260801` replaces `computer_20251124`, which returns 400 outside Bedrock.
+- Fable 5.1 drops 5.2's thinking blocks without an error, and 5.2 reads Opus 5.5's.
+
+**OpenAI
 reasoning families (2026-09-22):** `NFKRemoteBackend` spells the limit `max_completion_tokens` when
 `modelName` has the prefix `gpt-5`, `gpt-6`, `o1`, `o3`, or `o4`, because those refuse `max_tokens` on
 Chat Completions. The match is a prefix, so a router's `openai/gpt-…` keeps `max_tokens`. GPT-5.6 Sol
@@ -288,19 +308,26 @@ pass through. OpenAI's latest-model guide says to remove `temperature`, `top_p`,
 **Model audit (2026-09-22).** The providers' official model pages were checked against the request
 shapes:
 - **Anthropic:** there is no Claude Opus 5.1. The Opus line runs `claude-opus-5` → `claude-opus-5-5`
-  (released 2026-09-22); "5.1" is Fable 5.1 and Mythos 5.1. The deprecations table and the thinking
+  (released 2026-09-22); "5.1" is Fable 5.1 and Mythos 5.1, and "5.2" is Fable 5.2 and Mythos 5.2
+  (released 2026-11-09). The deprecations table and the thinking
   troubleshooting page are the sources for the family tables above. `claude-mythos-preview` is
   deprecated but served, accepts a budget, and does not refuse a forced tool.
 - **OpenAI:** `gpt-6-astra` / `-sol` / `-luna`, `gpt-5.6-sol` / `-terra` / `-luna`, `gpt-5.5`, and
   `gpt-5.4` (+ mini / nano) serve Chat Completions; the `-pro` models and `gpt-5.3-codex` are
   Responses-only. `gpt-6-astra` has no `none` effort. `max` exists only on the GPT-6 and GPT-5.6 families.
   None of the model pages says whether `max_tokens` is refused; `max_completion_tokens` is the
-  documented field.
+  documented field. `gpt-6-cyber` (model page read 2026-11-18, no release date on it) serves Chat
+  Completions and Responses and no Batch or Realtime, with a 1,050,000-token context, 128,000 output
+  tokens, text and image input, and access limited to organizations approved for Daybreak Red. The
+  `gpt-6` prefix rules cover it.
 - **xAI:** "presencePenalty, frequencyPenalty, and stop cannot be used with reasoning models"
   (grok-4.5 / 4.6 / 4.7, the 4.20 reasoning models). `NFKRemoteModelRefusesStopSequences` covers
   `grok-4…` and `grok-3-mini…` except names containing `non-reasoning`; the backend drops `stop` and cuts
   the finished text at the earliest stop (the streamed partials run past it). Chat Completions is
-  xAI's legacy endpoint.
+  xAI's legacy endpoint. On the realtime socket `grok-voice-latest` points to `grok-voice-3.0` and
+  `grok-voice-2.0` is deprecated (voice agent guide read 2026-11-18). The socket also takes
+  `audio/pcmu` and `audio/pcma` at 8 kHz, `audio/opus` at 24 kHz, and a `binary` transport;
+  `NFKRealtimeSession` configures `audio/pcm` and sends base64 JSON events.
 - **Mistral:** a reasoning reply (`reasoning_effort` set on `mistral-medium-3-5` / `mistral-small-4`)
   returns `message.content` as chunks, `{type: thinking, thinking: [{type: text, text}]}` then
   `{type: text, text}`, blocking and streamed; `appendContentChunks:toText:reasoning:` reads both into
@@ -312,6 +339,36 @@ shapes:
   deprecated 2026-07-21 with no stated rejection, so the backend still sends them; Argon ignores them.
   The OpenAI page maps Argon's `reasoning_effort` minimal→low and documents no long decode on this
   layer.
+- **Gemini 4 Carbon, Hydrogen, and Neon (read 2026-11-18):** `gemini-4-carbon` (GA 2026-11-10, paid
+  tier only), `gemini-4-hydrogen` (GA 2026-11-12), and `gemini-4-neon` (GA 2026-11-18, paid tier
+  only) join Argon. Each takes text, image, audio, video, and PDF input and writes text, on
+  generateContent, Interactions, the OpenAI layer, and Batch. None is served on Live. The request
+  rules, from each model's page and "what's new" page:
+  - The context is 1,048,576 tokens shared by input, thinking, and output. A request writes 65,536
+    tokens, or up to 1,048,576 through long decode, which works as it does for Argon on both native
+    APIs and is absent from the OpenAI layer.
+  - Thinking cannot be turned off, and `minimal` is an error on the native APIs. Carbon takes `low`,
+    `medium` (its default), and `high`. Hydrogen and Neon take `low`, `medium`, `high` (their
+    default), and `xhigh`. Both native backends pass a level the contract does not name as written,
+    so `xhigh` reaches the service; the OpenAI layer accepts `xhigh` for Hydrogen and Neon only.
+  - Carbon ignores `temperature`, `top_p`, and `top_k`. Hydrogen and Neon ignore an in-range value
+    and answer 400 to an out-of-range one. The backends send what the request carries.
+  - Explicit caching is not supported on Carbon; implicit caching is.
+- **Gemini changes since the 2026-10-13 audit (changelog read 2026-11-18):**
+  - 2026-10-26: new paid-tier projects store generateContent requests by default; `store: false`
+    opts out, and it passes by name.
+  - 2026-11-02: `gemini-2.5-pro` and `gemini-2.5-flash` are deprecated and route to
+    `gemini-3.8-flash` and `gemini-3.5-flash-lite` from 2026-12-01. `gemini-2.5-flash-lite` stays.
+  - 2026-11-04: voice remixing on `POST /v1beta/voices` with `gemini-3.8-flash-tts`. Not surveyed
+    against `NFKGeminiVoiceLibrary`.
+  - 2026-11-05: `gemini-omni-1.2-flash` is GA. Function results accept audio, video, and document
+    parts on both native APIs. Not built.
+  - 2026-11-06: `gemini-embedding-2-preview` routes to `gemini-embedding-2`.
+  - 2026-11-11: the Decisions API ("Gemini's Decisions API" below).
+  - 2026-11-17: `gemini-3.5-transcribe` and `gemini-3.5-transcribe-live` take `source_text` for
+    voice editing. Not surveyed.
+  - 2026-12-18: `gemini-3.1-flash-tts-preview`, `gemini-2.5-flash-preview-tts`, and
+    `gemini-2.5-pro-preview-tts` shut down.
 - **DeepSeek:** `deepseek-flash` (V4.1-Flash) and `deepseek-v4-pro`; effort `none|low|high|max`
   (`medium` is not listed), and thinking mode ignores `temperature`. Only `json_object` is documented,
   so a `json_schema` response format may be refused (unverified).
@@ -510,10 +567,11 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
     signed, so a signature that arrives on an empty trailing text part lands on the text it closes.
   - Refusals: `promptFeedback.blockReason`, and a finish reason of SAFETY, RECITATION, BLOCKLIST,
     PROHIBITED_CONTENT, SPII, or an image-safety reason with no text, call, or image.
-  - Long decode (`gemini-4-argon`, 2026-10-13, `ai.google.dev/gemini-api/docs/generate-content/
+  - Long decode (the Gemini 4 models; `gemini-4-argon` 2026-10-13, `ai.google.dev/gemini-api/docs/generate-content/
     long-decode`): a hop ends with `finishReason: CONTINUATION` and a top-level `continuationToken`;
     the next hop resends the same `contents` and `generationConfig` with `continuationToken` at the top
-    level. Non-streaming REST hops cap at 32K tokens, streaming hops at 64K. `MAX_TOKENS` also carries a
+    level. On Argon and Carbon a non-streaming REST hop caps at 32K tokens and a streaming hop at
+    64K; on Hydrogen and Neon every hop caps at 64K. `MAX_TOKENS` also carries a
     token, which the backend does not follow: the caller's `maxOutputTokens` stands. Both paths join
     the hops through the stream state's part merge. A `CONTINUATION` without a token, a token seen
     on an earlier hop, or a 65th hop fails with `kNFKError_InferenceBackendFailure`, so a cut reply
@@ -580,7 +638,7 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
       `function_result` step with `previous_interaction_id` and `environment`.
     - `thought` steps carry `{signature, summary: [blocks]}` in the reference and `content` in the Omni
       guide; both are read.
-    - Long decode (`gemini-4-argon`): `max_output_tokens` above 65536 needs `background: true` (400
+    - Long decode (the Gemini 4 models): `max_output_tokens` above 65536 needs `background: true` (400
       otherwise) and `store: true`; each 64K hop adds a `model_output` step; `queued` means waiting for
       off-peak capacity. The backend switches to background above 65536 on its own.
     - Background polling: the blocking call and the job share one loop. `backgroundTimeout` (3600 s
@@ -971,6 +1029,57 @@ during the preview (eesel AI, 2026-10-01/02). That body reaches the caller throu
 `NFKRemoteTransport`'s error. The answer shape is asserted live only by
 `-[NFKOpenAIDecisionsBackendTests testALiveEndpointAnswersATypedDecision]`, gated on
 `INFERKIT_OPENAI_API_KEY`.
+
+**Gemini's Decisions API (`NFKGeminiDecisionsBackend`).** Released 2026-11-11 with Gemini Decision 1
+and marked Beta in its reference. `POST https://generativelanguage.googleapis.com/v1beta/decisions`
+with an `x-goog-api-key` header takes `{model, input, questions}` and answers `{answers, usage}`.
+The facts come from the guide (`aistudio.google.com/docs/decisions-api`), the reference
+(`/api-reference/decisions/create-decision`), and the model page, read 2026-11-18. It is System
+One's shape with these differences:
+
+- `input` is a string, one content block, or an array of them, in the Interactions block format:
+  `text`, `image`, `audio`, `video`, and `document`, each media block with `data` or `uri` and a
+  `mime_type`. A `uri` is a Files API URI or a public or signed HTTPS URL up to 15 MB. Image and
+  video blocks take an optional `resolution` (`low`, `medium`, `high`, `ultra_high`, the last for
+  images only). An empty input is refused.
+- `questions` is a map of 1 to 1,000 questions, keyed by `[A-Za-z0-9_-]+` up to 64 characters.
+  Instructions are text only. A `noul`'s criteria are optional and named `true_description` and
+  `false_description`. A `choice`'s criteria map 2 to 255 option ids to a description string, the
+  empty string for none; whether null is accepted is not stated. A `score`'s criteria are 2 to 255
+  non-empty strings, lowest first.
+- Every answer carries `confidence`, a `noul` included (`max(noul, 1 - noul)`), and a `noul` falls
+  between 0.01 and 0.99. `choice` and `score` answers are System One's, with `probabilities` and
+  `legend` as maps.
+- `usage` is `total_input_tokens`, `input_tokens_by_modality`, `total_output_tokens` (always 0),
+  and `total_tokens`. The reference's type also lists `total_cached_tokens` and
+  `total_thought_tokens`, which the backend reads when present.
+- Only `gemini-decision-1` is accepted: 262,144 input tokens, $0.10 per million with output free,
+  and a free tier. Batch, caching, Flex, Priority, and Vertex AI are not served.
+- A limit or key-rule violation answers 400 with a message naming the rule.
+
+The guide and the reference disagree on a safety block, and no live call has settled it. The guide
+answers HTTP 400 with `error {code, message}`, the code one of `safety`, `prohibited_content`,
+`blocklist`, `image_safety`, or `content_blocked`. The reference answers 200 with
+`prompt_feedback.block_reason` and empty `answers`. The backend handles both: the 400 reaches the
+caller as the transport's error, and a block reason turns every question into a refused answer of
+its own type with the feedback as its `raw`.
+
+The backend maps the request onto the engine-neutral vocabulary:
+
+- `NFKDecisionQuestion`s go under their identifiers with the criteria respelled as above. A
+  dictionary question passes through.
+- The state is a string, a dictionary sent as sorted-key JSON text, or an array taken as content
+  blocks. `NFKInputMessages` become a `role: content` transcript.
+- Images, audio, a whole video, PDFs, and `NFKRemoteFile` references follow the text as blocks,
+  built by `NFKGeminiContentBlocks`, which the Interactions backend shares. A `resolution` request
+  parameter rides on each image and video block.
+- The Decisions API is a route beside the `gemini` preset's OpenAI layer, so it has no
+  `NFKRemoteAPIStyle` value. `+backendForProvider:apiKey:modelName:` answers for `gemini` only.
+
+OpenRouter lists the model as `google/gemini-decision-1`; how it serves a decision request is not
+surveyed. The answer shape is asserted live only by
+`-[NFKGeminiDecisionsBackendTests testALiveEndpointAnswersATypedDecision]`, gated on
+`INFERKIT_GEMINI_API_KEY`.
 
 **Perplexity (the `perplexity` preset, 2026-10-23).** One key reaches Perplexity's Agent, Decisions,
 Search, and Embeddings APIs at `https://api.perplexity.ai`. The preset's style is
@@ -1389,6 +1498,76 @@ the presets use the documented `/inference/` bases.
   `/models` lists and models.dev, and update `openCodeZen` / `openCodeGo` in `NFKRemoteProvider.m`
   with the date. A caller reaches a newer model before a release through
   `providerWithAPIStyle:forModelName:`.
+
+**Meta's Model API (the `meta` preset, 2026-11-18).** Meta serves the Muse models at
+`https://api.meta.ai/v1` with a Bearer key (`LLM_{id}_{secret}`). The facts come from the docs at
+`dev.meta.ai/docs/` read 2026-11-18 (every page has a Markdown twin at `<page>.md`, indexed by
+`dev.meta.ai/llms.txt`) and from unauthenticated probes. No request has been made with a key, so
+every reply shape is the documented one.
+
+*Models.* `muse-wonder-1.0` (preview), `muse-spark-1.3`, `-1.2`, `-1.1`, the `-contributor` variants
+of 1.3 and 1.2, and `muse-ember-1.0` (released the week of 2026-11-09) take text, image, video,
+audio, and PDF input and write text, with a 1,048,576-token context, on Responses, chat completions,
+and Messages. Ember's output limit is 524,288 tokens; the others' is not stated. `muse-image-1.0`
+writes images, `muse-voice-transcribe-1.0` transcribes, and `sam-3.1` answers on Responses only.
+`GET /v1/models` lists `{id, object, created, owned_by}` newest first, which the catalog reads.
+
+*What the preset reaches.*
+- Chat completions (`NFKRemoteBackend`, the preset's style). The route answers 400 to `stop`, so
+  `NFKRemoteModelRefusesStopSequences` covers the `muse-` prefix and the backend applies the stops
+  to the reply. `max_completion_tokens` is the documented limit and `max_tokens` a deprecated alias,
+  so the backend's `max_tokens` is accepted. Also 400: `n` above 1, `logit_bias`, `logprobs: true`,
+  `modalities`, a `tool_choice` other than `auto`, and `reasoning_effort: none`. The reasoning text
+  (`reasoning_content`) is redacted to empty for an external key; only the token count is reported.
+  Content parts are OpenAI's (`image_url`, `input_audio`, `file`) plus `video_url {url, fps}`.
+- Responses (`NFKRemoteResponsesBackend`, `POST /v1/responses`). OpenAI's request and reply, with
+  these differences: `tool_choice` is `auto` only, `truncation: auto` answers 400, `reasoning.effort`
+  takes `minimal` to `max` and refuses `none`, the stream adds a `keepalive` event, and assistant
+  text replayed before a `function_call` must carry `phase: "commentary"`. The backend replays an
+  assistant turn's own output items, so the phase goes back when the service wrote it; a tool
+  conversation is unverified live. `store` defaults to true on this route.
+- Files (`NFKRemoteFileStore`, OpenAI style, `/v1/files`). The purpose is `user_data` or `batch`;
+  any other answers 400, so the default is `user_data`. A file is at most 1 GiB.
+- Speech to text (`NFKRemoteTranscriptionAPIStyleMeta`, `POST /v1/asr/transcribe`). The body is
+  multipart with two parts: `request`, a JSON object, and `audio`. The request part carries `model`
+  and `audioEncoding` (both required; `WAV` is the only encoding: RIFF/WAVE mono 16-bit PCM at 16 or
+  24 kHz), and optionally `mode` (`PUSH_TO_TALK` by default, `ENDPOINTING`, `DIARIZATION`),
+  `keywords`, `languageBias` (language names such as `English`), `partialMode`, and
+  `emitAudioProgress`. The reply is `{sessionId, transcript, audioDurationMs, turns}`, each turn
+  `{turnId, startMs, endMs, transcript, speaker}`, with `turns` empty in push-to-talk and `speaker`
+  present only when diarizing. The style maps the contract keys onto the request part, sends any
+  other parameter as a field of it, and reads the turns into `NFKOutputSegments`. Limits: 10
+  minutes and 32 MB a request. The backend sends the audio as it is given, so a clip in another
+  container answers 400.
+
+*Not built.*
+- The streamed transcript. `Accept: text/event-stream` returns `ServerMessage` events (`transcript`,
+  `speechStart`, `speechEnd`, `speechComplete`, `speaker`, `audioProgress`, `error`), each named on
+  an SSE `event:` line that the backend's line handler does not read, so `streams` runs the
+  blocking call for this style.
+- Realtime speech to text, `wss://api.meta.ai/v1/asr/realtime`. The socket reads no header: the
+  first text frame is `{authorization: {accessToken: "Bearer <key>"}, audioEncoding: PCM_24KHZ |
+  PCM_16KHZ, model, mode, …}`, the server answers `{sessionId}`, audio goes as binary 16-bit
+  little-endian mono PCM frames paced near real time, and `{type: endStream}` closes it. The server
+  frames are the `ServerMessage` set. `NFKRealtimeSession` has no style for it.
+- Images: `POST /v1/images/generations` (`muse-image-1.0`; `response_format` `b64_json` by default,
+  `output_format` `webp` by default, unknown fields answer 400) and `/v1/images/edits` (JSON with
+  `images[]`, or multipart). `NFKRemoteImageBackend` returns nil for the preset.
+- Token counts: `POST /v1/responses/input_tokens` and `/v1/messages/count_tokens`.
+- The Messages route, `POST /v1/messages`, an adapter over Responses. Bearer is the documented
+  header and whether `x-api-key` alone authenticates is unconfirmed, so `NFKAnthropicBackend` is
+  not pointed at it. `thinking: {type: disabled}`, `stop_sequences`, and `top_k` answer 400 there.
+- `sam-3.1`'s boxes and masks, which come back as text on Responses.
+
+*Errors and probes.* The body is `{error: {message, type, param, code}}`; the transcription route
+adds `sessionId` beside it. 429, 500, and 503 are retried, 503 with `Retry-After: 60`; a
+non-streaming request can end in 504. The gateway authenticates before it routes, so an
+unauthenticated POST to a nonsense path under `/v1` answers 401 like a real one, and the house
+probe rule does not apply. A real route answers with an `x-request-id` header and a nonsense path
+without one. By that signal `/v1/batches` and `/v1/videos` are registered and undocumented, and
+`/v1/embeddings`, `/v1/audio/transcriptions`, `/v1/audio/speech`, and `/v1/moderations` are not
+registered. The docs contradict themselves in three places: the chat token limit's name, the
+default of a function tool's `strict`, and whether a Responses reasoning summary is returned.
 
 **Alibaba Model Studio (`modelstudio`, 2026-10-21).** Alibaba's DashScope service, added for the
 Qwen-Audio TTS models. Read from the official docs pages of 2026-10-21 (`alibabacloud.com/help/en/model-studio/`:

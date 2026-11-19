@@ -111,6 +111,9 @@
 	XCTAssertEqualObjects([NFKRemoteFileStore fileStoreForProvider:NFKRemoteProvider.mistral apiKey:@"k"].defaultPurpose, @"ocr");
 	XCTAssertEqual([NFKRemoteFileStore fileStoreForProvider:NFKRemoteProvider.anthropic apiKey:@"k"].apiStyle, NFKRemoteFileStoreAPIStyleAnthropic);
 	XCTAssertNil([NFKRemoteFileStore fileStoreForProvider:NFKRemoteProvider.ollama apiKey:nil]);
+	NFKRemoteFileStore *meta = [NFKRemoteFileStore fileStoreForProvider:NFKRemoteProvider.meta apiKey:@"k"];
+	XCTAssertEqualObjects(meta.endpointURL.absoluteString, @"https://api.meta.ai/v1/files");
+	XCTAssertEqualObjects(meta.defaultPurpose, @"user_data", @"Meta's Files API takes user_data and batch only");
 }
 
 - (void)testAnOpenAIUploadSendsItsPurposeAndExpiryBeforeTheFileAndReadsTheRecord

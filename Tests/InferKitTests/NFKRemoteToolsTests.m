@@ -341,6 +341,31 @@
 						  @"Haiku 5.5's release notes list no change to tool_choice, so it keeps the forced tool");
 }
 
+- (void)testAnthropicAsksClaudeFableAndMythosForASchemaThroughTheResponseFormat
+{
+	NSDictionary *schema = @{ @"type": @"object", @"properties": @{ @"answer": @{ @"type": @"integer" } } };
+	NSDictionary *format = @{ @"type": @"json_schema", @"schema": schema };
+	for (NSString *model in @[ @"claude-fable-5-1", @"claude-mythos-5-1", @"claude-fable-5-2", @"claude-mythos-5-2",
+							   @"global.anthropic.claude-fable-5-2" ]) {
+		self.anthropic.modelName = model;
+		self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"text\",\"text\":\"{\\\"answer\\\":42}\"}]}";
+		NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"the answer?" parameters:@{ NFKParameterJSONSchema: schema,
+																												   NFKParameterTemperature: @0.4 }]
+																	  error:NULL];
+		NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+		XCTAssertNil(body[@"tool_choice"], @"%@ refuses a forced tool", model);
+		XCTAssertNil(body[@"tools"], @"%@", model);
+		XCTAssertEqualObjects(body[@"output_config"][@"format"], format, @"%@", model);
+		XCTAssertNil(body[@"temperature"], @"%@ refuses a sampling value", model);
+		XCTAssertEqualObjects(result.structured, (@{ @"answer": @42 }), @"%@", model);
+	}
+
+	self.anthropic.modelName = @"claude-fable-5";
+	[self.anthropic runInferenceForRequest:[self prompt:@"the answer?" parameters:@{ NFKParameterJSONSchema: schema }] error:NULL];
+	XCTAssertEqualObjects([self bodyOf:self.anthropic.lastRequest][@"tool_choice"], (@{ @"type": @"tool", @"name": @"structured_output" }),
+						  @"Fable 5 predates the restriction, and its name is no prefix match for 5.1 or 5.2");
+}
+
 - (void)testAnthropicAsksForASchemaBesideAThinkingBudgetThroughTheResponseFormat
 {
 	self.anthropic.modelName = @"claude-sonnet-4-5";

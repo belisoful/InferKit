@@ -66,14 +66,14 @@ static NSArray<NSString *> *NFKRemoteReasoningRefusedSamplingFields(void)
 	return @[ @"temperature", @"top_p", @"logprobs", @"top_logprobs" ];
 }
 
-/*! Whether xAI serves the model as a reasoning model, which refuses stop sequences: Grok 4 onward
-	and Grok 3 mini, except the variants named non-reasoning. */
+/*! Whether the model's chat route refuses stop sequences: xAI's reasoning models (Grok 4 onward and
+	Grok 3 mini, except the variants named non-reasoning) and Meta's Muse models. */
 static BOOL NFKRemoteModelRefusesStopSequences(NSString * _Nullable model)
 {
 	if ([model containsString:@"non-reasoning"]) {
 		return NO;
 	}
-	return [model hasPrefix:@"grok-4"] || [model hasPrefix:@"grok-3-mini"];
+	return [model hasPrefix:@"grok-4"] || [model hasPrefix:@"grok-3-mini"] || [model hasPrefix:@"muse-"];
 }
 
 /*! The text up to the earliest of the stop sequences, which is what the endpoint returns when it

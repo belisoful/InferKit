@@ -158,10 +158,74 @@
 	XCTAssertEqual([NFKRemoteTranscriptionBackend backendForProvider:NFKRemoteProvider.mistral apiKey:@"k" modelName:@"m"].apiStyle,
 				   NFKRemoteTranscriptionAPIStyleMistral);
 	XCTAssertEqualObjects([NFKRemoteTranscriptionBackend backendForProvider:NFKRemoteProvider.groq apiKey:@"k" modelName:@"m"].audioURLFieldName, @"url");
+	NFKRemoteTranscriptionBackend *meta = [NFKRemoteTranscriptionBackend backendForProvider:NFKRemoteProvider.meta apiKey:@"k" modelName:@"m"];
+	XCTAssertEqualObjects(meta.endpointURL.absoluteString, @"https://api.meta.ai/v1/asr/transcribe");
+	XCTAssertEqual(meta.apiStyle, NFKRemoteTranscriptionAPIStyleMeta);
 	for (NFKRemoteProvider *provider in @[ NFKRemoteProvider.googleGemini, NFKRemoteProvider.deepSeek, NFKRemoteProvider.anthropic,
 											NFKRemoteProvider.ollama, NFKRemoteProvider.llamaCpp ]) {
 		XCTAssertNil([NFKRemoteTranscriptionBackend backendForProvider:provider apiKey:@"k" modelName:@"m"], @"%@", provider.identifier);
 	}
+}
+
+// Meta's /v1/asr/transcribe takes its settings as one JSON part and answers with turns in milliseconds.
+- (void)testMetaSendsAJSONRequestPartAndReadsTheTurns
+{
+	StubTranscriptionBackend *meta = [self stubFor:NFKRemoteProvider.meta model:@"muse-voice-transcribe-1.0"];
+	meta.stagedData = [(@"{\"sessionId\":\"s1\",\"transcript\":\"Hello. Hi there.\",\"audioDurationMs\":2000,\"turns\":["
+						 "{\"turnId\":\"t1\",\"startMs\":0,\"endMs\":800,\"transcript\":\"Hello.\",\"speaker\":\"A\"},"
+						 "{\"turnId\":\"t2\",\"startMs\":1000,\"endMs\":1900,\"transcript\":\"Hi there.\",\"speaker\":\"B\"}]}")
+					   dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [@"RIFF" dataUsingEncoding:NSUTF8StringEncoding],
+																			 NFKInputPrompt: @"a prompt the service has no field for" }
+															   parameters:@{ NFKParameterSpeakerDiarization: @YES,
+																			 NFKParameterVocabulary: @[ @"InferKit" ],
+																			 NFKParameterSourceLanguage: @"English",
+																			 @"partialMode": @"DELTA" }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [meta runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	XCTAssertEqualObjects(meta.lastRequest.allHTTPHeaderFields[@"Authorization"], @"Bearer k");
+	NSString *form = [self formOf:meta.lastRequest];
+	NSString *settings = @"{\"audioEncoding\":\"WAV\",\"keywords\":[\"InferKit\"],\"languageBias\":[\"English\"],"
+		"\"mode\":\"DIARIZATION\",\"model\":\"muse-voice-transcribe-1.0\",\"partialMode\":\"DELTA\"}";
+	NSString *requestPart = [@"name=\"request\"\r\nContent-Type: application/json\r\n\r\n" stringByAppendingString:settings];
+	XCTAssertTrue([form containsString:requestPart], @"%@", form);
+	XCTAssertTrue([form containsString:@"name=\"audio\"; filename=\"audio.wav\"\r\nContent-Type: audio/wav\r\n\r\nRIFF"]);
+	XCTAssertFalse([form containsString:@"name=\"file\""]);
+	XCTAssertFalse([form containsString:@"a prompt"]);
+	XCTAssertGreaterThan([form rangeOfString:@"name=\"audio\""].location, [form rangeOfString:@"name=\"request\""].location);
+
+	XCTAssertEqualObjects(result.text, @"Hello. Hi there.");
+	NSArray<NFKAudioSegment *> *turns = [result outputForKey:NFKOutputSegments];
+	XCTAssertEqual(turns.count, 2);
+	XCTAssertEqualObjects(turns[1].label, @"Hi there.");
+	XCTAssertEqualObjects(turns[1].speaker, @"B");
+	XCTAssertEqualWithAccuracy(turns[1].startSeconds, 1.0, 1e-9);
+	XCTAssertEqualWithAccuracy(turns[1].endSeconds, 1.9, 1e-9);
+	XCTAssertEqualObjects(result.structured[@"sessionId"], @"s1");
+}
+
+- (void)testMetaAsksForTurnsWhenTimestampsAreWantedAndRunsAStreamedJobAsTheBlockingCall
+{
+	StubTranscriptionBackend *meta = [self stubFor:NFKRemoteProvider.meta model:@"muse-voice-transcribe-1.0"];
+	meta.stagedData = [@"{\"sessionId\":\"s2\",\"transcript\":\"Hello.\",\"turns\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [@"RIFF" dataUsingEncoding:NSUTF8StringEncoding] }];
+	XCTAssertNotNil([meta runInferenceForRequest:request error:NULL]);
+	XCTAssertFalse([[self formOf:meta.lastRequest] containsString:@"\"mode\""], @"the service's default is push to talk");
+
+	meta.emitsTimestamps = YES;
+	meta.streams = YES;
+	NFKInferenceJob *job = [meta submitInferenceJobForRequest:request];
+	XCTestExpectation *finished = [self expectationWithDescription:@"the job finishes"];
+	job.completionHandler = ^(NFKInferenceJob *done) {
+		XCTAssertEqualObjects(done.result.text, @"Hello.");
+		XCTAssertNil([done.result outputForKey:NFKOutputSegments], @"no turns came back");
+		[finished fulfill];
+	};
+	[self waitForExpectations:@[ finished ] timeout:5.0];
+	NSString *form = [self formOf:meta.lastRequest];
+	XCTAssertTrue([form containsString:@"\"mode\":\"ENDPOINTING\""]);
+	XCTAssertNil(meta.lastRequest.allHTTPHeaderFields[@"Accept"], @"the Meta style does not ask for the event stream");
 }
 
 // xAI's /v1/stt times words with speakers; the backend groups them into turns for the segments.

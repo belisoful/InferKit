@@ -193,6 +193,18 @@
 	XCTAssertEqualObjects([self.backend decodedRequestBody][@"stop"], (@[ @"END", @"never" ]));
 }
 
+// Meta's chat route answers 400 to a stop field on every Muse model.
+- (void)testAMuseModelHasItsStopSequencesAppliedToTheReply
+{
+	self.backend.stagedData = [@"{\"choices\":[{\"message\":{\"content\":\"one\\nEND\\ntwo\"}}]}" dataUsingEncoding:NSUTF8StringEncoding];
+	self.backend.modelName = @"muse-ember-1.0";
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+															   parameters:@{ NFKParameterStopSequences: @[ @"END" ] }];
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:request error:NULL];
+	XCTAssertNil([self.backend decodedRequestBody][@"stop"]);
+	XCTAssertEqualObjects(result.text, @"one\n");
+}
+
 // Mistral answers a reasoning request with typed chunks: the thinking chunk holds text chunks of its own.
 - (void)testMistralContentChunksBecomeTheTextAndTheReasoning
 {
