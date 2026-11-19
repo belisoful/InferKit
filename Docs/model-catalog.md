@@ -416,8 +416,9 @@ descriptor's [memory model](#memory-model) names the options that change those f
 [constraints](#constraints) run the estimate over every combination to say which choices fit a
 machine. Every figure is in bytes.
 
-Activation memory depends on the request, such as an image's size, and no descriptor states it. The
-budget's reserve covers it.
+Activation memory depends on the request, such as an image's size. A variant's `loadOverheadBytes`
+states the peak of its load or of a [reference request](#the-reference-request) at the default options,
+whichever is larger. The budget's reserve covers a request larger than the reference.
 
 ### Memory facts
 
@@ -430,8 +431,38 @@ budget's reserve covers it.
 | `boundedKeyValueBytes` | integer | no | The cache of the layers whose cache stops growing, such as sliding-window layers, at 16 bits per element. |
 | `maximumContextLength` | integer | no | The longest context the model reads. The context length when no option sets it. |
 | `vocabularySize` | integer | no | The tokens in the vocabulary, which a draft model shares with the model it drafts for. |
-| `loadOverheadBytes` | integer | no | The bytes a load holds beyond the resident figure for a moment. 0 where it is not measured. |
+| `loadOverheadBytes` | integer | no | The bytes a load, or a [reference request](#the-reference-request) at the default options, holds beyond the resident figure at its peak. 0 where it is not measured. |
 | `basis` | string | no | `"measured"` (the tensor bytes at the precisions the loader holds them in, the default) or `"stored-dtype"` (the stored bytes, because the loader's precision is not known). |
+
+### The reference request
+
+`loadOverheadBytes` is measured per variant in a fresh process, from MLX's own peak memory. The variant
+loads at its default load options, and the measurement records:
+
+- the load's transient: the load's peak above the bytes the model holds once memory settles
+- the request's peak: one reference request's peak above that same settled level, less what the facts
+  already count in the resident figure and the request allocates (the key-value cache at the prompt's
+  positions, an expert cache, and weights a staged, paged, or streamed residency brings in)
+
+The overhead is the larger of the two, rounded up to a whole MiB. The reference request takes the
+descriptor's required inputs and its default request options:
+
+| Input or task | Reference |
+|---|---|
+| A generator (image, video, music, audio) | The default size, frames, and duration; one denoising step plus the decode, since the peak repeats every step |
+| A decoder | A 4096-token prompt, or the context length less 64 where that is shorter, and one generated token |
+| A text encoder | A 480-token prompt; a reranker ranks 8 such documents |
+| A translator | A 200-word prompt, within the 512 positions of the smallest encoders |
+| An image | 1024×1024; a model of a fixed size resizes it as it does any input |
+| Audio | 30 s |
+| Video | 1280×720 at 24 frames per second, the default frame count, else 16 frames |
+| A speech synthesizer | About 30 s of speech |
+
+A variant without its own measurement takes its family's largest measured figure. A decoder's figure
+scales by its hidden size, else its vocabulary. A variant whose reference request outgrows the
+measurement's memory cap, or asks Metal for a buffer past its limit, states no figure and lends none to
+its family: its default request does not fit the Macs the catalog plans for, and it needs a tiled or
+shorter default instead. `NFKMLXCatalogLoadOverheads.swift` names each figure's basis.
 
 ### Stage
 

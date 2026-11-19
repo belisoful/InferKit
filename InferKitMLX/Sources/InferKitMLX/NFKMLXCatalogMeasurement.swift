@@ -97,8 +97,41 @@ struct NFKMLXMeasuredGeometry {
     var layerTypes: [String] = []
 }
 
+/// The bytes a variant's load, or its reference request at default options, holds beyond its resident
+/// figure: the larger of the two peaks `NFKMLXLoadOverheadTests` measures, less what the memory facts
+/// already count, rounded up to a whole MiB. `Tools/catalog/overhead.py` generates the table.
+struct NFKMLXLoadOverhead {
+
+    enum Basis {
+        /// The variant's own measurement.
+        case measured
+        /// Its family's measured figure, scaled by a decoder's hidden size or vocabulary.
+        case family
+    }
+
+    enum Weights {
+        /// The stored release, so the load transient is measured.
+        case stored
+        /// The network on initial values, which measures the request alone.
+        case initial
+    }
+
+    let bytes: Int
+    let basis: Basis
+    var loadBytes: Int? = nil
+    var requestBytes: Int? = nil
+    var weights: Weights? = nil
+    /// The measured variant, as `model/variant`, a family figure comes from.
+    var source: String? = nil
+}
+
 /// The measurements `Tools/catalog/measure.py` generated, looked up by file and by variant.
 enum NFKMLXCatalogMeasurements {
+
+    /// A variant's load overhead, 0 where neither it nor its family is measured.
+    static func loadOverheadBytes(model: String, variant: String) -> Int {
+        loadOverheads["\(model)/\(variant)"]?.bytes ?? 0
+    }
 
     private static func fileKey(_ location: String, _ revision: String?, _ path: String) -> String {
         "\(location)|\(revision ?? "")|\(path)"
@@ -529,7 +562,9 @@ struct NFKMLXVariantFacts {
             stages: stages, keyValueByteCountPerToken: keyValue.map { NSNumber(value: $0.perToken) },
             boundedKeyValueByteCount: keyValue.flatMap { $0.bounded > 0 ? NSNumber(value: $0.bounded) : nil },
             maximumContextLength: keyValue != nil ? geometry?.maximumPositions.map(NSNumber.init(value:)) : nil,
-            vocabularySize: geometry?.vocabularySize.map(NSNumber.init(value:)), loadOverheadByteCount: 0,
+            vocabularySize: geometry?.vocabularySize.map(NSNumber.init(value:)),
+            loadOverheadByteCount: NFKMLXCatalogMeasurements.loadOverheadBytes(model: measurement.model,
+                                                                              variant: measurement.variant),
             basis: estimatesStoredBytes ? NFKModelMemoryBasisStoredDType : NFKModelMemoryBasisMeasured, extensions: nil)
         stagePrecisions = precisions
     }

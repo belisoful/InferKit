@@ -2,58 +2,58 @@
   "kind" : "inferkit.catalog-memory-tiers",
   "variants" : {
     "adain/default" : {
-      "8" : "resident 14023458 fits",
-      "16" : "resident 14023458 fits",
-      "24" : "resident 14023458 fits",
-      "32" : "resident 14023458 fits"
+      "8" : "resident 4358273826 refused",
+      "16" : "resident 4358273826 fits",
+      "24" : "resident 4358273826 fits",
+      "32" : "resident 4358273826 fits"
     },
     "allin1/harmonix-fold0" : {
-      "8" : "resident 1400571 fits",
-      "16" : "resident 1400571 fits",
-      "24" : "resident 1400571 fits",
-      "32" : "resident 1400571 fits"
+      "8" : "resident 862281467 fits",
+      "16" : "resident 862281467 fits",
+      "24" : "resident 862281467 fits",
+      "32" : "resident 862281467 fits"
     },
     "apollo/apollo" : {
-      "8" : "resident 66541845 fits",
-      "16" : "resident 66541845 fits",
-      "24" : "resident 66541845 fits",
-      "32" : "resident 66541845 fits"
+      "8" : "resident 6095853845 refused",
+      "16" : "resident 6095853845 refused",
+      "24" : "resident 6095853845 fits",
+      "32" : "resident 6095853845 fits"
     },
     "audio-tagger-panns/cnn14-mAP0.431" : {
-      "8" : "resident 327428481 fits",
-      "16" : "resident 327428481 fits",
-      "24" : "resident 327428481 fits",
-      "32" : "resident 327428481 fits"
+      "8" : "resident 886319489 fits",
+      "16" : "resident 886319489 fits",
+      "24" : "resident 886319489 fits",
+      "32" : "resident 886319489 fits"
     },
     "basic-pitch/icassp-2022" : {
-      "8" : "resident 230444 fits",
-      "16" : "resident 230444 fits",
-      "24" : "resident 230444 fits",
-      "32" : "resident 230444 fits"
+      "8" : "resident 555975724 fits",
+      "16" : "resident 555975724 fits",
+      "24" : "resident 555975724 fits",
+      "32" : "resident 555975724 fits"
     },
     "bigvgan-v2-24khz/24khz-100band-256x" : {
-      "8" : "resident 450088331 fits",
-      "16" : "resident 450088331 fits",
-      "24" : "resident 450088331 fits",
-      "32" : "resident 450088331 fits"
+      "8" : "resident 9644002699 refused",
+      "16" : "resident 9644002699 refused",
+      "24" : "resident 9644002699 fits",
+      "32" : "resident 9644002699 fits"
     },
     "birefnet/default" : {
-      "8" : "resident 884791968 fits",
-      "16" : "resident 884791968 fits",
-      "24" : "resident 884791968 fits",
-      "32" : "resident 884791968 fits"
+      "8" : "resident 5683075744 refused",
+      "16" : "resident 5683075744 refused",
+      "24" : "resident 5683075744 fits",
+      "32" : "resident 5683075744 fits"
     },
     "bisenet-v2/default" : {
-      "8" : "resident 21086917 fits",
-      "16" : "resident 21086917 fits",
-      "24" : "resident 21086917 fits",
-      "32" : "resident 21086917 fits"
+      "8" : "resident 997311173 fits",
+      "16" : "resident 997311173 fits",
+      "24" : "resident 997311173 fits",
+      "32" : "resident 997311173 fits"
     },
     "bisenet/default" : {
-      "8" : "resident 53839165 fits",
-      "16" : "resident 53839165 fits",
-      "24" : "resident 53839165 fits",
-      "32" : "resident 53839165 fits"
+      "8" : "resident 1332053309 fits",
+      "16" : "resident 1332053309 fits",
+      "24" : "resident 1332053309 fits",
+      "32" : "resident 1332053309 fits"
     },
     "canary-1b-v2/1b-v2" : {
       "8" : "resident 6358958080 refused",
@@ -62,16 +62,16 @@
       "32" : "resident 6358958080 fits"
     },
     "chatterbox/english" : {
-      "8" : "resident 3191483124 refused",
-      "16" : "resident 3191483124 fits",
-      "24" : "resident 3191483124 fits",
-      "32" : "resident 3191483124 fits"
+      "8" : "resident 5290732276 refused",
+      "16" : "resident 5290732276 fits",
+      "24" : "resident 5290732276 fits",
+      "32" : "resident 5290732276 fits"
     },
     "chronos-bolt-base/chronos-bolt-base" : {
-      "8" : "resident 821171712 fits",
-      "16" : "resident 821171712 fits",
-      "24" : "resident 821171712 fits",
-      "32" : "resident 821171712 fits"
+      "8" : "resident 918689280 fits",
+      "16" : "resident 918689280 fits",
+      "24" : "resident 918689280 fits",
+      "32" : "resident 918689280 fits"
     },
     "clip-vit-b-16/default" : {
       "8" : "resident 350837078 fits",
@@ -110,10 +110,10 @@
       "32" : "resident 376637898 fits"
     },
     "codeformer/default" : {
-      "8" : "resident 376637898 fits",
-      "16" : "resident 376637898 fits",
-      "24" : "resident 376637898 fits",
-      "32" : "resident 376637898 fits"
+      "8" : "resident 3931310538 refused",
+      "16" : "resident 3931310538 fits",
+      "24" : "resident 3931310538 fits",
+      "32" : "resident 3931310538 fits"
     },
     "codestral-mamba/mamba-codestral-7b-v0.1" : {
       "8" : "streamed 2291120128 fits",
@@ -122,118 +122,118 @@
       "32" : "resident 14570807296 fits"
     },
     "colorizer-eccv16/default" : {
-      "8" : "resident 128976165 fits",
-      "16" : "resident 128976165 fits",
-      "24" : "resident 128976165 fits",
-      "32" : "resident 128976165 fits"
+      "8" : "resident 599786789 fits",
+      "16" : "resident 599786789 fits",
+      "24" : "resident 599786789 fits",
+      "32" : "resident 599786789 fits"
     },
     "colorizer-siggraph17/default" : {
-      "8" : "resident 136787426 fits",
-      "16" : "resident 136787426 fits",
-      "24" : "resident 136787426 fits",
-      "32" : "resident 136787426 fits"
+      "8" : "resident 6360085986 refused",
+      "16" : "resident 6360085986 refused",
+      "24" : "resident 6360085986 fits",
+      "32" : "resident 6360085986 fits"
     },
     "conv-tasnet/libri2mix-sepclean-16k" : {
-      "8" : "resident 20394640 fits",
-      "16" : "resident 20394640 fits",
-      "24" : "resident 20394640 fits",
-      "32" : "resident 20394640 fits"
+      "8" : "resident 10017518224 refused",
+      "16" : "resident 10017518224 refused",
+      "24" : "resident 10017518224 fits",
+      "32" : "resident 10017518224 fits"
     },
     "cosmos-tokenizer-ci8x8/default" : {
-      "8" : "resident 153952128 fits",
-      "16" : "resident 153952128 fits",
-      "24" : "resident 153952128 fits",
-      "32" : "resident 153952128 fits"
+      "8" : "resident 5320286080 refused",
+      "16" : "resident 5320286080 fits",
+      "24" : "resident 5320286080 fits",
+      "32" : "resident 5320286080 fits"
     },
     "cosmos-tokenizer-ci16x16/default" : {
-      "8" : "resident 163398552 fits",
-      "16" : "resident 163398552 fits",
-      "24" : "resident 163398552 fits",
-      "32" : "resident 163398552 fits"
+      "8" : "resident 4149035928 refused",
+      "16" : "resident 4149035928 fits",
+      "24" : "resident 4149035928 fits",
+      "32" : "resident 4149035928 fits"
     },
     "cosmos-tokenizer-cv4x8x8/default" : {
-      "8" : "resident 147121671 fits",
-      "16" : "resident 147121671 fits",
-      "24" : "resident 147121671 fits",
-      "32" : "resident 147121671 fits"
+      "8" : "resident 4651804167 refused",
+      "16" : "resident 4651804167 fits",
+      "24" : "resident 4651804167 fits",
+      "32" : "resident 4651804167 fits"
     },
     "cosmos-tokenizer-cv8x8x8/default" : {
-      "8" : "resident 212242291 fits",
-      "16" : "resident 212242291 fits",
-      "24" : "resident 212242291 fits",
-      "32" : "resident 212242291 fits"
+      "8" : "resident 4716924787 refused",
+      "16" : "resident 4716924787 fits",
+      "24" : "resident 4716924787 fits",
+      "32" : "resident 4716924787 fits"
     },
     "cosmos-tokenizer-cv8x16x16/default" : {
-      "8" : "resident 222748091 fits",
-      "16" : "resident 222748091 fits",
-      "24" : "resident 222748091 fits",
-      "32" : "resident 222748091 fits"
+      "8" : "resident 4727430587 refused",
+      "16" : "resident 4727430587 fits",
+      "24" : "resident 4727430587 fits",
+      "32" : "resident 4727430587 fits"
     },
     "cosmos-tokenizer-di8x8/default" : {
-      "8" : "resident 159153372 fits",
-      "16" : "resident 159153372 fits",
-      "24" : "resident 159153372 fits",
-      "32" : "resident 159153372 fits"
+      "8" : "resident 5325487324 refused",
+      "16" : "resident 5325487324 fits",
+      "24" : "resident 5325487324 fits",
+      "32" : "resident 5325487324 fits"
     },
     "cosmos-tokenizer-di16x16/default" : {
-      "8" : "resident 168587262 fits",
-      "16" : "resident 168587262 fits",
-      "24" : "resident 168587262 fits",
-      "32" : "resident 168587262 fits"
+      "8" : "resident 4154224638 refused",
+      "16" : "resident 4154224638 fits",
+      "24" : "resident 4154224638 fits",
+      "32" : "resident 4154224638 fits"
     },
     "cosmos-tokenizer-dv4x8x8/default" : {
-      "8" : "resident 211093069 fits",
-      "16" : "resident 211093069 fits",
-      "24" : "resident 211093069 fits",
-      "32" : "resident 211093069 fits"
+      "8" : "resident 4715775565 refused",
+      "16" : "resident 4715775565 fits",
+      "24" : "resident 4715775565 fits",
+      "32" : "resident 4715775565 fits"
     },
     "cosmos-tokenizer-dv8x8x8/default" : {
-      "8" : "resident 213071541 fits",
-      "16" : "resident 213071541 fits",
-      "24" : "resident 213071541 fits",
-      "32" : "resident 213071541 fits"
+      "8" : "resident 4717754037 refused",
+      "16" : "resident 4717754037 fits",
+      "24" : "resident 4717754037 fits",
+      "32" : "resident 4717754037 fits"
     },
     "cosmos-tokenizer-dv8x16x16/default" : {
-      "8" : "resident 223570501 fits",
-      "16" : "resident 223570501 fits",
-      "24" : "resident 223570501 fits",
-      "32" : "resident 223570501 fits"
+      "8" : "resident 4728252997 refused",
+      "16" : "resident 4728252997 fits",
+      "24" : "resident 4728252997 fits",
+      "32" : "resident 4728252997 fits"
     },
     "dac/44khz-8kbps" : {
-      "8" : "resident 306717287 fits",
-      "16" : "resident 306717287 fits",
-      "24" : "resident 306717287 fits",
-      "32" : "resident 306717287 fits"
+      "8" : "resident 3355976295 refused",
+      "16" : "resident 3355976295 fits",
+      "24" : "resident 3355976295 fits",
+      "32" : "resident 3355976295 fits"
     },
     "ddcolor-artistic/default" : {
-      "8" : "resident 911950059 fits",
-      "16" : "resident 911950059 fits",
-      "24" : "resident 911950059 fits",
-      "32" : "resident 911950059 fits"
+      "8" : "resident 2772123883 refused",
+      "16" : "resident 2772123883 fits",
+      "24" : "resident 2772123883 fits",
+      "32" : "resident 2772123883 fits"
     },
     "ddcolor-paper/default" : {
-      "8" : "resident 911950059 fits",
-      "16" : "resident 911950059 fits",
-      "24" : "resident 911950059 fits",
-      "32" : "resident 911950059 fits"
+      "8" : "resident 2772123883 refused",
+      "16" : "resident 2772123883 fits",
+      "24" : "resident 2772123883 fits",
+      "32" : "resident 2772123883 fits"
     },
     "ddcolor/default" : {
-      "8" : "resident 911950059 fits",
-      "16" : "resident 911950059 fits",
-      "24" : "resident 911950059 fits",
-      "32" : "resident 911950059 fits"
+      "8" : "resident 2772123883 refused",
+      "16" : "resident 2772123883 fits",
+      "24" : "resident 2772123883 fits",
+      "32" : "resident 2772123883 fits"
     },
     "deepfilternet3/deepfilternet3" : {
-      "8" : "resident 7986207 fits",
-      "16" : "resident 7986207 fits",
-      "24" : "resident 7986207 fits",
-      "32" : "resident 7986207 fits"
+      "8" : "resident 432659487 fits",
+      "16" : "resident 432659487 fits",
+      "24" : "resident 432659487 fits",
+      "32" : "resident 432659487 fits"
     },
     "deeplabv3/default" : {
-      "8" : "resident 168312152 fits",
-      "16" : "resident 168312152 fits",
-      "24" : "resident 168312152 fits",
-      "32" : "resident 168312152 fits"
+      "8" : "resident 1816673624 fits",
+      "16" : "resident 1816673624 fits",
+      "24" : "resident 1816673624 fits",
+      "32" : "resident 1816673624 fits"
     },
     "deepseek-v4-flash-0731/deepseek-v4-flash-0731" : {
       "8" : "paged 15669697148 refused",
@@ -254,76 +254,76 @@
       "32" : "paged 418219355572 refused"
     },
     "demucs/demucs-e07c671f" : {
-      "8" : "resident 1062738817 fits",
-      "16" : "resident 1062738817 fits",
-      "24" : "resident 1062738817 fits",
-      "32" : "resident 1062738817 fits"
+      "8" : "resident 2807569281 refused",
+      "16" : "resident 2807569281 fits",
+      "24" : "resident 2807569281 fits",
+      "32" : "resident 2807569281 fits"
     },
     "denoiser/dns48" : {
-      "8" : "resident 75478395 fits",
-      "16" : "resident 75478395 fits",
-      "24" : "resident 75478395 fits",
-      "32" : "resident 75478395 fits"
+      "8" : "resident 1923069307 fits",
+      "16" : "resident 1923069307 fits",
+      "24" : "resident 1923069307 fits",
+      "32" : "resident 1923069307 fits"
     },
     "depth-anything-3-base-estimator/default" : {
-      "8" : "resident 541466396 fits",
-      "16" : "resident 541466396 fits",
-      "24" : "resident 541466396 fits",
-      "32" : "resident 541466396 fits"
+      "8" : "resident 2512789276 refused",
+      "16" : "resident 2512789276 fits",
+      "24" : "resident 2512789276 fits",
+      "32" : "resident 2512789276 fits"
     },
     "depth-anything-3-base/default" : {
-      "8" : "resident 541466396 fits",
-      "16" : "resident 541466396 fits",
-      "24" : "resident 541466396 fits",
-      "32" : "resident 541466396 fits"
+      "8" : "resident 2490769180 refused",
+      "16" : "resident 2490769180 fits",
+      "24" : "resident 2490769180 fits",
+      "32" : "resident 2490769180 fits"
     },
     "depth-anything-3-large-estimator/default" : {
-      "8" : "resident 1643767068 fits",
-      "16" : "resident 1643767068 fits",
-      "24" : "resident 1643767068 fits",
-      "32" : "resident 1643767068 fits"
+      "8" : "resident 4459193628 refused",
+      "16" : "resident 4459193628 fits",
+      "24" : "resident 4459193628 fits",
+      "32" : "resident 4459193628 fits"
     },
     "depth-anything-3-large/default" : {
-      "8" : "resident 1643767068 fits",
-      "16" : "resident 1643767068 fits",
-      "24" : "resident 1643767068 fits",
-      "32" : "resident 1643767068 fits"
+      "8" : "resident 3728336156 refused",
+      "16" : "resident 3728336156 fits",
+      "24" : "resident 3728336156 fits",
+      "32" : "resident 3728336156 fits"
     },
     "depth-anything-3-small-estimator/default" : {
-      "8" : "resident 137197852 fits",
-      "16" : "resident 137197852 fits",
-      "24" : "resident 137197852 fits",
-      "32" : "resident 137197852 fits"
+      "8" : "resident 1374517532 fits",
+      "16" : "resident 1374517532 fits",
+      "24" : "resident 1374517532 fits",
+      "32" : "resident 1374517532 fits"
     },
     "depth-anything-3-small/default" : {
-      "8" : "resident 137197852 fits",
-      "16" : "resident 137197852 fits",
-      "24" : "resident 137197852 fits",
-      "32" : "resident 137197852 fits"
+      "8" : "resident 1362983196 fits",
+      "16" : "resident 1362983196 fits",
+      "24" : "resident 1362983196 fits",
+      "32" : "resident 1362983196 fits"
     },
     "depth-anything-v2-base/default" : {
-      "8" : "resident 389961218 fits",
-      "16" : "resident 389961218 fits",
-      "24" : "resident 389961218 fits",
-      "32" : "resident 389961218 fits"
+      "8" : "resident 2335069698 fits",
+      "16" : "resident 2335069698 fits",
+      "24" : "resident 2335069698 fits",
+      "32" : "resident 2335069698 fits"
     },
     "depth-anything-v2-large/default" : {
-      "8" : "resident 1341395338 fits",
-      "16" : "resident 1341395338 fits",
-      "24" : "resident 1341395338 fits",
-      "32" : "resident 1341395338 fits"
+      "8" : "resident 3322155402 refused",
+      "16" : "resident 3322155402 fits",
+      "24" : "resident 3322155402 fits",
+      "32" : "resident 3322155402 fits"
     },
     "depth-anything-v2-small/default" : {
-      "8" : "resident 99218434 fits",
-      "16" : "resident 99218434 fits",
-      "24" : "resident 99218434 fits",
-      "32" : "resident 99218434 fits"
+      "8" : "resident 1574564866 fits",
+      "16" : "resident 1574564866 fits",
+      "24" : "resident 1574564866 fits",
+      "32" : "resident 1574564866 fits"
     },
     "embeddinggemma-300m/embeddinggemma-300m" : {
-      "8" : "resident 1230326784 fits",
-      "16" : "resident 1230326784 fits",
-      "24" : "resident 1230326784 fits",
-      "32" : "resident 1230326784 fits"
+      "8" : "resident 3804580864 refused",
+      "16" : "resident 3804580864 fits",
+      "24" : "resident 3804580864 fits",
+      "32" : "resident 3804580864 fits"
     },
     "fastspeech2-voice/ljspeech" : {
       "8" : "resident 336971193 fits",
@@ -332,28 +332,28 @@
       "32" : "resident 336971193 fits"
     },
     "florence-2-base-ft/default" : {
-      "8" : "resident 926270820 fits",
-      "16" : "resident 926270820 fits",
-      "24" : "resident 926270820 fits",
-      "32" : "resident 926270820 fits"
+      "8" : "resident 1389741412 fits",
+      "16" : "resident 1389741412 fits",
+      "24" : "resident 1389741412 fits",
+      "32" : "resident 1389741412 fits"
     },
     "florence-2-base/default" : {
-      "8" : "resident 926270820 fits",
-      "16" : "resident 926270820 fits",
-      "24" : "resident 926270820 fits",
-      "32" : "resident 926270820 fits"
+      "8" : "resident 1389741412 fits",
+      "16" : "resident 1389741412 fits",
+      "24" : "resident 1389741412 fits",
+      "32" : "resident 1389741412 fits"
     },
     "florence-2-large-ft/default" : {
-      "8" : "resident 3081720164 refused",
-      "16" : "resident 3081720164 fits",
-      "24" : "resident 3081720164 fits",
-      "32" : "resident 3081720164 fits"
+      "8" : "resident 4624175460 refused",
+      "16" : "resident 4624175460 fits",
+      "24" : "resident 4624175460 fits",
+      "32" : "resident 4624175460 fits"
     },
     "florence-2-large/default" : {
-      "8" : "resident 3106885988 refused",
-      "16" : "resident 3106885988 fits",
-      "24" : "resident 3106885988 fits",
-      "32" : "resident 3106885988 fits"
+      "8" : "resident 4661924196 refused",
+      "16" : "resident 4661924196 fits",
+      "24" : "resident 4661924196 fits",
+      "32" : "resident 4661924196 fits"
     },
     "flux.1-controlnet/default" : {
       "8" : "staged 30574534158 refused",
@@ -404,46 +404,46 @@
       "32" : "staged 18325255246 fits"
     },
     "frcrn/se-16k" : {
-      "8" : "resident 161053751 fits",
-      "16" : "resident 161053751 fits",
-      "24" : "resident 161053751 fits",
-      "32" : "resident 161053751 fits"
+      "8" : "resident 2795076663 refused",
+      "16" : "resident 2795076663 fits",
+      "24" : "resident 2795076663 fits",
+      "32" : "resident 2795076663 fits"
     },
     "gemma-3-1b-it/gemma-3-1b-it" : {
-      "8" : "resident 1999771904 fits",
-      "16" : "resident 1999771904 fits",
-      "24" : "resident 1999771904 fits",
-      "32" : "resident 1999771904 fits"
+      "8" : "resident 4574025984 refused",
+      "16" : "resident 4574025984 fits",
+      "24" : "resident 4574025984 fits",
+      "32" : "resident 4574025984 fits"
     },
     "gemma-3-4b-it/gemma-3-4b-it" : {
-      "8" : "streamed 2559673056 refused",
-      "16" : "streamed 5391150816 fits",
-      "24" : "resident 8600158944 fits",
-      "32" : "resident 8600158944 fits"
+      "8" : "streamed 5133927136 refused",
+      "16" : "streamed 7965404896 refused",
+      "24" : "resident 11174413024 refused",
+      "32" : "resident 11174413024 fits"
     },
     "gemma-3-12b-it/gemma-3-12b-it" : {
-      "8" : "streamed 3752942816 refused",
-      "16" : "streamed 5097836768 fits",
-      "24" : "streamed 10029114592 fits",
-      "32" : "streamed 18098478304 fits"
+      "8" : "streamed 6327196896 refused",
+      "16" : "streamed 7672090848 refused",
+      "24" : "streamed 12603368672 refused",
+      "32" : "streamed 20672732384 refused"
     },
     "gemma-3-27b-it/gemma-3-27b-it" : {
-      "8" : "streamed 5316986080 refused",
-      "16" : "streamed 5316986080 fits",
-      "24" : "streamed 10271768800 fits",
-      "32" : "streamed 17703942880 fits"
+      "8" : "streamed 7891240160 refused",
+      "16" : "streamed 7891240160 refused",
+      "24" : "streamed 12846022880 refused",
+      "32" : "streamed 20278196960 refused"
     },
     "gemma-3-270m-it/gemma-3-270m-it" : {
-      "8" : "resident 536196352 fits",
-      "16" : "resident 536196352 fits",
-      "24" : "resident 536196352 fits",
-      "32" : "resident 536196352 fits"
+      "8" : "resident 3110450432 refused",
+      "16" : "resident 3110450432 fits",
+      "24" : "resident 3110450432 fits",
+      "32" : "resident 3110450432 fits"
     },
     "gemma-3n-e2b-it/gemma-3n-e2b-it" : {
-      "8" : "resident 10878876544 refused",
-      "16" : "resident 10878876544 refused",
-      "24" : "resident 10878876544 refused",
-      "32" : "resident 10878876544 fits"
+      "8" : "resident 20287748992 refused",
+      "16" : "resident 20287748992 refused",
+      "24" : "resident 20287748992 refused",
+      "32" : "resident 20287748992 refused"
     },
     "gemma-3n-e4b-it/gemma-3n-e4b-it" : {
       "8" : "resident 15699956384 refused",
@@ -494,40 +494,40 @@
       "32" : "resident 31984629672 refused"
     },
     "gpt-oss-20b/gpt-oss-20b" : {
-      "8" : "paged 3796974720 refused",
-      "16" : "paged 4618633313 fits",
-      "24" : "paged 7052448115 fits",
-      "32" : "resident 13962591360 fits"
+      "8" : "paged 8681241728 refused",
+      "16" : "paged 9502900321 refused",
+      "24" : "paged 11936715123 refused",
+      "32" : "resident 18846858368 refused"
     },
     "granite-4.0-h-tiny/granite-4.0-h-tiny" : {
-      "8" : "paged 2116146888 fits",
-      "16" : "paged 3619385441 fits",
-      "24" : "paged 6053200243 fits",
-      "32" : "resident 13878074496 fits"
+      "8" : "paged 17738880712 refused",
+      "16" : "paged 19242119265 refused",
+      "24" : "paged 21675934067 refused",
+      "32" : "resident 29500808320 refused"
     },
     "granite-4.0-h/granite-4.0-h-1b" : {
-      "8" : "resident 2923076736 refused",
-      "16" : "resident 2923076736 fits",
-      "24" : "resident 2923076736 fits",
-      "32" : "resident 2923076736 fits"
+      "8" : "resident 18545810560 refused",
+      "16" : "resident 18545810560 refused",
+      "24" : "resident 18545810560 refused",
+      "32" : "resident 18545810560 refused"
     },
     "granite-speech-3.3-2b/3.3-2b" : {
-      "8" : "resident 6086728320 refused",
-      "16" : "resident 6086728320 refused",
-      "24" : "resident 6086728320 fits",
-      "32" : "resident 6086728320 fits"
+      "8" : "resident 7821073024 refused",
+      "16" : "resident 7821073024 refused",
+      "24" : "resident 7821073024 fits",
+      "32" : "resident 7821073024 fits"
     },
     "gtcrn/dns3" : {
-      "8" : "resident 579819 fits",
-      "16" : "resident 579819 fits",
-      "24" : "resident 579819 fits",
-      "32" : "resident 579819 fits"
+      "8" : "resident 334026987 fits",
+      "16" : "resident 334026987 fits",
+      "24" : "resident 334026987 fits",
+      "32" : "resident 334026987 fits"
     },
     "gte-reranker-modernbert-base/gte-reranker-modernbert-base" : {
-      "8" : "resident 598422532 fits",
-      "16" : "resident 598422532 fits",
-      "24" : "resident 598422532 fits",
-      "32" : "resident 598422532 fits"
+      "8" : "resident 1663775748 fits",
+      "16" : "resident 1663775748 fits",
+      "24" : "resident 1663775748 fits",
+      "32" : "resident 1663775748 fits"
     },
     "hat-l-x4/default" : {
       "8" : "resident 165774123 fits",
@@ -536,178 +536,178 @@
       "32" : "resident 165774123 fits"
     },
     "hft-transformer/maestro-v3" : {
-      "8" : "resident 20540269 fits",
-      "16" : "resident 20540269 fits",
-      "24" : "resident 20540269 fits",
-      "32" : "resident 20540269 fits"
+      "8" : "resident 1863936877 fits",
+      "16" : "resident 1863936877 fits",
+      "24" : "resident 1863936877 fits",
+      "32" : "resident 1863936877 fits"
     },
     "htdemucs-6s/htdemucs_6s" : {
-      "8" : "resident 54996327 fits",
-      "16" : "resident 54996327 fits",
-      "24" : "resident 54996327 fits",
-      "32" : "resident 54996327 fits"
+      "8" : "resident 10647711079 refused",
+      "16" : "resident 10647711079 refused",
+      "24" : "resident 10647711079 refused",
+      "32" : "resident 10647711079 fits"
     },
     "htdemucs/htdemucs" : {
-      "8" : "resident 84141911 fits",
-      "16" : "resident 84141911 fits",
-      "24" : "resident 84141911 fits",
-      "32" : "resident 84141911 fits"
+      "8" : "resident 4755547991 refused",
+      "16" : "resident 4755547991 fits",
+      "24" : "resident 4755547991 fits",
+      "32" : "resident 4755547991 fits"
     },
     "hubert-base-ls960/hubert-base-ls960" : {
-      "8" : "resident 377569754 fits",
-      "16" : "resident 377569754 fits",
-      "24" : "resident 377569754 fits",
-      "32" : "resident 377569754 fits"
+      "8" : "resident 2319532506 fits",
+      "16" : "resident 2319532506 fits",
+      "24" : "resident 2319532506 fits",
+      "32" : "resident 2319532506 fits"
     },
     "hubert-large-ll60k/hubert-large-ll60k" : {
-      "8" : "resident 1261920069 fits",
-      "16" : "resident 1261920069 fits",
-      "24" : "resident 1261920069 fits",
-      "32" : "resident 1261920069 fits"
+      "8" : "resident 3213320005 refused",
+      "16" : "resident 3213320005 fits",
+      "24" : "resident 3213320005 fits",
+      "32" : "resident 3213320005 fits"
     },
     "hubert-large-ls960-ft/hubert-large-ls960-ft" : {
-      "8" : "resident 1262057559 fits",
-      "16" : "resident 1262057559 fits",
-      "24" : "resident 1262057559 fits",
-      "32" : "resident 1262057559 fits"
+      "8" : "resident 3213457495 refused",
+      "16" : "resident 3213457495 fits",
+      "24" : "resident 3213457495 fits",
+      "32" : "resident 3213457495 fits"
     },
     "hubert-xlarge-ll60k/hubert-xlarge-ll60k" : {
-      "8" : "resident 3850305733 refused",
-      "16" : "resident 3850305733 fits",
-      "24" : "resident 3850305733 fits",
-      "32" : "resident 3850305733 fits"
+      "8" : "resident 5645467845 refused",
+      "16" : "resident 5645467845 refused",
+      "24" : "resident 5645467845 fits",
+      "32" : "resident 5645467845 fits"
     },
     "hubert-xlarge-ls960-ft/hubert-xlarge-ls960-ft" : {
-      "8" : "resident 3850153600 refused",
-      "16" : "resident 3850153600 fits",
-      "24" : "resident 3850153600 fits",
-      "32" : "resident 3850153600 fits"
+      "8" : "resident 5645315712 refused",
+      "16" : "resident 5645315712 refused",
+      "24" : "resident 5645315712 fits",
+      "32" : "resident 5645315712 fits"
     },
     "hunyuan-mt-chimera/hunyuan-mt-chimera-7b" : {
-      "8" : "streamed 2973803520 refused",
-      "16" : "streamed 5154926080 fits",
-      "24" : "streamed 9953395712 fits",
-      "32" : "resident 16060538880 fits"
+      "8" : "streamed 3577783296 refused",
+      "16" : "streamed 5758905856 refused",
+      "24" : "streamed 10557375488 refused",
+      "32" : "resident 16664518656 fits"
     },
     "hunyuan-mt/hunyuan-mt-7b" : {
-      "8" : "streamed 2973803520 refused",
-      "16" : "streamed 5154926080 fits",
-      "24" : "streamed 9953395712 fits",
-      "32" : "resident 16060538880 fits"
+      "8" : "streamed 3564151808 refused",
+      "16" : "streamed 5745274368 refused",
+      "24" : "streamed 10543744000 refused",
+      "32" : "resident 16650887168 fits"
     },
     "hy-mt1.5/hy-mt1.5-1.8b" : {
-      "8" : "streamed 2340432896 fits",
-      "16" : "resident 4077031424 fits",
-      "24" : "resident 4077031424 fits",
-      "32" : "resident 4077031424 fits"
+      "8" : "streamed 2929732608 refused",
+      "16" : "resident 4666331136 fits",
+      "24" : "resident 4666331136 fits",
+      "32" : "resident 4666331136 fits"
     },
     "hy-mt1.5/hy-mt1.5-7b" : {
-      "8" : "streamed 2972345344 refused",
-      "16" : "streamed 5153467904 fits",
-      "24" : "streamed 9951937536 fits",
-      "32" : "resident 16059080704 fits"
+      "8" : "streamed 3562693632 refused",
+      "16" : "streamed 5743816192 refused",
+      "24" : "streamed 10542285824 refused",
+      "32" : "resident 16649428992 fits"
     },
     "hy-mt2-30b-a3b/hy-mt2-30b-a3b" : {
-      "8" : "paged 3355364864 refused",
-      "16" : "paged 4397828385 fits",
-      "24" : "paged 6831643187 fits",
-      "32" : "paged 10920198784 fits"
+      "8" : "paged 3959344640 refused",
+      "16" : "paged 5001808161 fits",
+      "24" : "paged 7435622963 fits",
+      "32" : "paged 11524178560 fits"
     },
     "hy-mt2/hy-mt2-1.8b" : {
-      "8" : "streamed 2340432896 fits",
-      "16" : "resident 4077031424 fits",
-      "24" : "resident 4077031424 fits",
-      "32" : "resident 4077031424 fits"
+      "8" : "streamed 2944412672 refused",
+      "16" : "resident 4681011200 fits",
+      "24" : "resident 4681011200 fits",
+      "32" : "resident 4681011200 fits"
     },
     "hy-mt2/hy-mt2-7b" : {
-      "8" : "streamed 2972345344 refused",
-      "16" : "streamed 5153467904 fits",
-      "24" : "streamed 9951937536 fits",
-      "32" : "resident 16059080704 fits"
+      "8" : "streamed 3522847744 refused",
+      "16" : "streamed 5703970304 refused",
+      "24" : "streamed 10502439936 refused",
+      "32" : "resident 16609583104 fits"
     },
     "hyper-sd15-1step-lora/default" : {
-      "8" : "resident 4533951852 refused",
-      "16" : "resident 4533951852 fits",
-      "24" : "resident 4533951852 fits",
-      "32" : "resident 4533951852 fits"
+      "8" : "resident 8913853804 refused",
+      "16" : "resident 8913853804 refused",
+      "24" : "resident 8913853804 fits",
+      "32" : "resident 8913853804 fits"
     },
     "hyper-sd15-4steps-lora/default" : {
-      "8" : "resident 4533951852 refused",
-      "16" : "resident 4533951852 fits",
-      "24" : "resident 4533951852 fits",
-      "32" : "resident 4533951852 fits"
+      "8" : "resident 8999837036 refused",
+      "16" : "resident 8999837036 refused",
+      "24" : "resident 8999837036 fits",
+      "32" : "resident 8999837036 fits"
     },
     "hyper-sd15-8steps-cfg-lora/default" : {
-      "8" : "resident 4533951852 refused",
-      "16" : "resident 4533951852 fits",
-      "24" : "resident 4533951852 fits",
-      "32" : "resident 4533951852 fits"
+      "8" : "resident 8913853804 refused",
+      "16" : "resident 8913853804 refused",
+      "24" : "resident 8913853804 fits",
+      "32" : "resident 8913853804 fits"
     },
     "hyper-sdxl-1step-lora/default" : {
-      "8" : "resident 7891992052 refused",
-      "16" : "resident 7891992052 refused",
-      "24" : "resident 7891992052 fits",
-      "32" : "resident 7891992052 fits"
+      "8" : "resident 19366559220 refused",
+      "16" : "resident 19366559220 refused",
+      "24" : "resident 19366559220 refused",
+      "32" : "resident 19366559220 refused"
     },
     "hyper-sdxl-4steps-lora/default" : {
-      "8" : "resident 7891992052 refused",
-      "16" : "resident 7891992052 refused",
-      "24" : "resident 7891992052 fits",
-      "32" : "resident 7891992052 fits"
+      "8" : "resident 19366559220 refused",
+      "16" : "resident 19366559220 refused",
+      "24" : "resident 19366559220 refused",
+      "32" : "resident 19366559220 refused"
     },
     "hyper-sdxl-8steps-cfg-lora/default" : {
-      "8" : "resident 7891992052 refused",
-      "16" : "resident 7891992052 refused",
-      "24" : "resident 7891992052 fits",
-      "32" : "resident 7891992052 fits"
+      "8" : "resident 19366559220 refused",
+      "16" : "resident 19366559220 refused",
+      "24" : "resident 19366559220 refused",
+      "32" : "resident 19366559220 refused"
     },
     "isnet/default" : {
-      "8" : "resident 176579397 fits",
-      "16" : "resident 176579397 fits",
-      "24" : "resident 176579397 fits",
-      "32" : "resident 176579397 fits"
+      "8" : "resident 1445356357 fits",
+      "16" : "resident 1445356357 fits",
+      "24" : "resident 1445356357 fits",
+      "32" : "resident 1445356357 fits"
     },
     "kokoro-82m/v1.0" : {
-      "8" : "resident 327212226 fits",
-      "16" : "resident 327212226 fits",
-      "24" : "resident 327212226 fits",
-      "32" : "resident 327212226 fits"
+      "8" : "resident 3138444482 refused",
+      "16" : "resident 3138444482 fits",
+      "24" : "resident 3138444482 fits",
+      "32" : "resident 3138444482 fits"
     },
     "lama-inpaint/default" : {
-      "8" : "resident 410046389 fits",
-      "16" : "resident 410046389 fits",
-      "24" : "resident 410046389 fits",
-      "32" : "resident 410046389 fits"
+      "8" : "resident 3398487989 refused",
+      "16" : "resident 3398487989 fits",
+      "24" : "resident 3398487989 fits",
+      "32" : "resident 3398487989 fits"
     },
     "laya-multilingual/multilingual" : {
-      "8" : "resident 1287635992 fits",
-      "16" : "resident 1287635992 fits",
-      "24" : "resident 1287635992 fits",
-      "32" : "resident 1287635992 fits"
+      "8" : "resident 2275394584 fits",
+      "16" : "resident 2275394584 fits",
+      "24" : "resident 2275394584 fits",
+      "32" : "resident 2275394584 fits"
     },
     "laya-typed-decisions/typed-decisions" : {
-      "8" : "resident 1685175320 fits",
-      "16" : "resident 1685175320 fits",
-      "24" : "resident 1685175320 fits",
-      "32" : "resident 1685175320 fits"
+      "8" : "resident 2672933912 refused",
+      "16" : "resident 2672933912 fits",
+      "24" : "resident 2672933912 fits",
+      "32" : "resident 2672933912 fits"
     },
     "laya/laya" : {
-      "8" : "resident 1685175320 fits",
-      "16" : "resident 1685175320 fits",
-      "24" : "resident 1685175320 fits",
-      "32" : "resident 1685175320 fits"
+      "8" : "resident 2672933912 refused",
+      "16" : "resident 2672933912 fits",
+      "24" : "resident 2672933912 fits",
+      "32" : "resident 2672933912 fits"
     },
     "lcm-dreamshaper-v7/default" : {
-      "8" : "resident 4265268908 refused",
-      "16" : "resident 4265268908 fits",
-      "24" : "resident 4265268908 fits",
-      "32" : "resident 4265268908 fits"
+      "8" : "resident 8731154092 refused",
+      "16" : "resident 8731154092 refused",
+      "24" : "resident 8731154092 fits",
+      "32" : "resident 8731154092 fits"
     },
     "lcm-lora-sdv1-5/default" : {
-      "8" : "resident 4399446848 refused",
-      "16" : "resident 4399446848 fits",
-      "24" : "resident 4399446848 fits",
-      "32" : "resident 4399446848 fits"
+      "8" : "resident 8865332032 refused",
+      "16" : "resident 8865332032 refused",
+      "24" : "resident 8865332032 fits",
+      "32" : "resident 8865332032 fits"
     },
     "ltx-2.3/default" : {
       "8" : "streamed 6035879596 refused",
@@ -734,52 +734,52 @@
       "32" : "staged 19049242624 refused"
     },
     "m2m100-1.2b/m2m100_1.2b" : {
-      "8" : "resident 4958230644 refused",
-      "16" : "resident 4958230644 fits",
-      "24" : "resident 4958230644 fits",
-      "32" : "resident 4958230644 fits"
+      "8" : "resident 6533191796 refused",
+      "16" : "resident 6533191796 refused",
+      "24" : "resident 6533191796 fits",
+      "32" : "resident 6533191796 fits"
     },
     "m2m100/m2m100_418m" : {
-      "8" : "resident 1935796948 fits",
-      "16" : "resident 1935796948 fits",
-      "24" : "resident 1935796948 fits",
-      "32" : "resident 1935796948 fits"
+      "8" : "resident 3510758100 refused",
+      "16" : "resident 3510758100 fits",
+      "24" : "resident 3510758100 fits",
+      "32" : "resident 3510758100 fits"
     },
     "madlad400-3b-mt/madlad400-3b-mt" : {
-      "8" : "streamed 2383748372 fits",
-      "16" : "streamed 5375410533 fits",
-      "24" : "resident 5880748032 fits",
-      "32" : "resident 5880748032 fits"
+      "8" : "streamed 3712294164 refused",
+      "16" : "streamed 6703956325 refused",
+      "24" : "resident 7209293824 fits",
+      "32" : "resident 7209293824 fits"
     },
     "madlad400-7b-mt/madlad400-7b-mt" : {
-      "8" : "streamed 2936087552 refused",
-      "16" : "streamed 5372823464 fits",
-      "24" : "streamed 10175486263 fits",
-      "32" : "resident 16593659904 fits"
+      "8" : "streamed 5168505856 refused",
+      "16" : "streamed 7605241768 refused",
+      "24" : "streamed 12407904567 refused",
+      "32" : "resident 18826078208 refused"
     },
     "marigold-depth/default" : {
-      "8" : "resident 5159856404 refused",
-      "16" : "resident 5159856404 fits",
-      "24" : "resident 5159856404 fits",
-      "32" : "resident 5159856404 fits"
+      "8" : "resident 16815827220 refused",
+      "16" : "resident 16815827220 refused",
+      "24" : "resident 16815827220 refused",
+      "32" : "resident 16815827220 fits"
     },
     "metricgan-plus/voicebank" : {
-      "8" : "resident 7586021 fits",
-      "16" : "resident 7586021 fits",
-      "24" : "resident 7586021 fits",
-      "32" : "resident 7586021 fits"
+      "8" : "resident 60014821 fits",
+      "16" : "resident 60014821 fits",
+      "24" : "resident 60014821 fits",
+      "32" : "resident 60014821 fits"
     },
     "mimi/mimi" : {
-      "8" : "resident 384605572 fits",
-      "16" : "resident 384605572 fits",
-      "24" : "resident 384605572 fits",
-      "32" : "resident 384605572 fits"
+      "8" : "resident 2876022148 refused",
+      "16" : "resident 2876022148 fits",
+      "24" : "resident 2876022148 fits",
+      "32" : "resident 2876022148 fits"
     },
     "minimax-music3/music3" : {
-      "8" : "staged 18461001728 refused",
-      "16" : "staged 18461001728 refused",
-      "24" : "staged 18461001728 refused",
-      "32" : "staged 18461001728 fits"
+      "8" : "staged 18810177536 refused",
+      "16" : "staged 18810177536 refused",
+      "24" : "staged 18810177536 refused",
+      "32" : "staged 18810177536 refused"
     },
     "mistral-small-24b-instruct-2501/mistral-small-24b-instruct-2501" : {
       "8" : "streamed 5578475520 refused",
@@ -794,16 +794,16 @@
       "32" : "paged 11116587904 fits"
     },
     "mossformer2-se/se-48k" : {
-      "8" : "resident 221552019 fits",
-      "16" : "resident 221552019 fits",
-      "24" : "resident 221552019 fits",
-      "32" : "resident 221552019 fits"
+      "8" : "resident 454335891 fits",
+      "16" : "resident 454335891 fits",
+      "24" : "resident 454335891 fits",
+      "32" : "resident 454335891 fits"
     },
     "mossformer2-sr/sr-48k" : {
-      "8" : "resident 220712702 fits",
-      "16" : "resident 220712702 fits",
-      "24" : "resident 220712702 fits",
-      "32" : "resident 220712702 fits"
+      "8" : "resident 14537969406 refused",
+      "16" : "resident 14537969406 refused",
+      "24" : "resident 14537969406 refused",
+      "32" : "resident 14537969406 fits"
     },
     "mpsenet/dns" : {
       "8" : "resident 9138054 fits",
@@ -812,52 +812,52 @@
       "32" : "resident 9138054 fits"
     },
     "muscriptor-large/large" : {
-      "8" : "resident 5465642136 refused",
-      "16" : "resident 5465642136 refused",
-      "24" : "resident 5465642136 fits",
-      "32" : "resident 5465642136 fits"
+      "8" : "resident 7384536216 refused",
+      "16" : "resident 7384536216 refused",
+      "24" : "resident 7384536216 fits",
+      "32" : "resident 7384536216 fits"
     },
     "muscriptor-small/small" : {
-      "8" : "resident 411888600 fits",
-      "16" : "resident 411888600 fits",
-      "24" : "resident 411888600 fits",
-      "32" : "resident 411888600 fits"
+      "8" : "resident 885844952 fits",
+      "16" : "resident 885844952 fits",
+      "24" : "resident 885844952 fits",
+      "32" : "resident 885844952 fits"
     },
     "muscriptor/medium" : {
-      "8" : "resident 1228122112 fits",
-      "16" : "resident 1228122112 fits",
-      "24" : "resident 1228122112 fits",
-      "32" : "resident 1228122112 fits"
+      "8" : "resident 2252580864 fits",
+      "16" : "resident 2252580864 fits",
+      "24" : "resident 2252580864 fits",
+      "32" : "resident 2252580864 fits"
     },
     "nafnet-gopro-width64/default" : {
-      "8" : "resident 271778961 fits",
-      "16" : "resident 271778961 fits",
-      "24" : "resident 271778961 fits",
-      "32" : "resident 271778961 fits"
+      "8" : "resident 3238200465 refused",
+      "16" : "resident 3238200465 fits",
+      "24" : "resident 3238200465 fits",
+      "32" : "resident 3238200465 fits"
     },
     "nafnet-gopro/default" : {
-      "8" : "resident 68671121 fits",
-      "16" : "resident 68671121 fits",
-      "24" : "resident 68671121 fits",
-      "32" : "resident 68671121 fits"
+      "8" : "resident 2364003985 fits",
+      "16" : "resident 2364003985 fits",
+      "24" : "resident 2364003985 fits",
+      "32" : "resident 2364003985 fits"
     },
     "nafnet-reds/default" : {
-      "8" : "resident 271756689 fits",
-      "16" : "resident 271756689 fits",
-      "24" : "resident 271756689 fits",
-      "32" : "resident 271756689 fits"
+      "8" : "resident 3238178193 refused",
+      "16" : "resident 3238178193 fits",
+      "24" : "resident 3238178193 fits",
+      "32" : "resident 3238178193 fits"
     },
     "nafnet-sidd-width64/default" : {
-      "8" : "resident 464154961 fits",
-      "16" : "resident 464154961 fits",
-      "24" : "resident 464154961 fits",
-      "32" : "resident 464154961 fits"
+      "8" : "resident 3430576465 refused",
+      "16" : "resident 3430576465 fits",
+      "24" : "resident 3430576465 fits",
+      "32" : "resident 3430576465 fits"
     },
     "nafnet/default" : {
-      "8" : "resident 116861841 fits",
-      "16" : "resident 116861841 fits",
-      "24" : "resident 116861841 fits",
-      "32" : "resident 116861841 fits"
+      "8" : "resident 2437360529 refused",
+      "16" : "resident 2437360529 fits",
+      "24" : "resident 2437360529 fits",
+      "32" : "resident 2437360529 fits"
     },
     "nemotron-3-nano-4b/nvidia-nemotron-3-nano-4b-bf16" : {
       "8" : "streamed 2426137412 fits",
@@ -866,10 +866,10 @@
       "32" : "resident 7947113664 fits"
     },
     "nemotron-asr-streaming/en-0.6b" : {
-      "8" : "resident 2472339460 refused",
-      "16" : "resident 2472339460 fits",
-      "24" : "resident 2472339460 fits",
-      "32" : "resident 2472339460 fits"
+      "8" : "resident 3538741252 refused",
+      "16" : "resident 3538741252 fits",
+      "24" : "resident 3538741252 fits",
+      "32" : "resident 3538741252 fits"
     },
     "nemotron-nano-2/nvidia-nemotron-nano-9b-v2" : {
       "8" : "streamed 2938621696 refused",
@@ -878,112 +878,112 @@
       "32" : "resident 17776454656 fits"
     },
     "nllb-200-1.3b/nllb-200-1.3b" : {
-      "8" : "resident 5482882236 refused",
-      "16" : "resident 5482882236 refused",
-      "24" : "resident 5482882236 fits",
-      "32" : "resident 5482882236 fits"
+      "8" : "resident 8631755964 refused",
+      "16" : "resident 8631755964 refused",
+      "24" : "resident 8631755964 fits",
+      "32" : "resident 8631755964 fits"
     },
     "nllb-200-3.3b/nllb-200-3.3b" : {
-      "8" : "resident 17577465405 refused",
-      "16" : "resident 17577465405 refused",
-      "24" : "resident 17577465405 refused",
-      "32" : "resident 17577465405 fits"
+      "8" : "resident 23874164285 refused",
+      "16" : "resident 23874164285 refused",
+      "24" : "resident 23874164285 refused",
+      "32" : "resident 23874164285 refused"
     },
     "nllb-200-distilled-1.3b/nllb-200-distilled-1.3b" : {
-      "8" : "resident 5482882236 refused",
-      "16" : "resident 5482882236 refused",
-      "24" : "resident 5482882236 fits",
-      "32" : "resident 5482882236 fits"
+      "8" : "resident 8631755964 refused",
+      "16" : "resident 8631755964 refused",
+      "24" : "resident 8631755964 fits",
+      "32" : "resident 8631755964 fits"
     },
     "nllb-200/nllb-200-distilled-600m" : {
-      "8" : "resident 2460457927 refused",
-      "16" : "resident 2460457927 fits",
-      "24" : "resident 2460457927 fits",
-      "32" : "resident 2460457927 fits"
+      "8" : "resident 5609331655 refused",
+      "16" : "resident 5609331655 refused",
+      "24" : "resident 5609331655 fits",
+      "32" : "resident 5609331655 fits"
     },
     "nuwave2/official" : {
-      "8" : "resident 20887965 fits",
-      "16" : "resident 20887965 fits",
-      "24" : "resident 20887965 fits",
-      "32" : "resident 20887965 fits"
+      "8" : "resident 16859969949 refused",
+      "16" : "resident 16859969949 refused",
+      "24" : "resident 16859969949 refused",
+      "32" : "resident 16859969949 fits"
     },
     "open-jev-2b/open-jev-2b" : {
-      "8" : "streamed 2396316231 fits",
-      "16" : "resident 4558181837 fits",
-      "24" : "resident 4558181837 fits",
-      "32" : "resident 4558181837 fits"
+      "8" : "streamed 4428456519 refused",
+      "16" : "resident 6590322125 refused",
+      "24" : "resident 6590322125 fits",
+      "32" : "resident 6590322125 fits"
     },
     "open-jev-9b/open-jev-9b" : {
-      "8" : "streamed 6364325485 refused",
-      "16" : "streamed 6364325485 refused",
-      "24" : "streamed 10263238355 fits",
-      "32" : "streamed 18474723009 fits"
+      "8" : "streamed 6791095917 refused",
+      "16" : "streamed 6791095917 refused",
+      "24" : "streamed 10690008787 refused",
+      "32" : "streamed 18901493441 refused"
     },
     "open-jev-27b-v1.1/open-jev-27b-v1.1" : {
-      "8" : "streamed 8451443757 refused",
-      "16" : "streamed 8451443757 refused",
-      "24" : "streamed 9984536493 fits",
-      "32" : "streamed 18353993006 fits"
+      "8" : "streamed 10483584045 refused",
+      "16" : "streamed 10483584045 refused",
+      "24" : "streamed 12016676781 refused",
+      "32" : "streamed 20386133294 refused"
     },
     "open-jev-deberta-v3-large/open-jev-deberta-v3-large" : {
-      "8" : "resident 1748639748 fits",
-      "16" : "resident 1748639748 fits",
-      "24" : "resident 1748639748 fits",
-      "32" : "resident 1748639748 fits"
+      "8" : "resident 3010076676 refused",
+      "16" : "resident 3010076676 fits",
+      "24" : "resident 3010076676 fits",
+      "32" : "resident 3010076676 fits"
     },
     "opus-mt/opus-mt-ar-en" : {
-      "8" : "resident 307640325 fits",
-      "16" : "resident 307640325 fits",
-      "24" : "resident 307640325 fits",
-      "32" : "resident 307640325 fits"
+      "8" : "resident 582367237 fits",
+      "16" : "resident 582367237 fits",
+      "24" : "resident 582367237 fits",
+      "32" : "resident 582367237 fits"
     },
     "opus-mt/opus-mt-en-de" : {
-      "8" : "resident 297928209 fits",
-      "16" : "resident 297928209 fits",
-      "24" : "resident 297928209 fits",
-      "32" : "resident 297928209 fits"
+      "8" : "resident 572655121 fits",
+      "16" : "resident 572655121 fits",
+      "24" : "resident 572655121 fits",
+      "32" : "resident 572655121 fits"
     },
     "opus-mt/opus-mt-en-zh" : {
-      "8" : "resident 312087009 fits",
-      "16" : "resident 312087009 fits",
-      "24" : "resident 312087009 fits",
-      "32" : "resident 312087009 fits"
+      "8" : "resident 586813921 fits",
+      "16" : "resident 586813921 fits",
+      "24" : "resident 586813921 fits",
+      "32" : "resident 586813921 fits"
     },
     "opus-mt/opus-mt-hi-en" : {
-      "8" : "resident 304137561 fits",
-      "16" : "resident 304137561 fits",
-      "24" : "resident 304137561 fits",
-      "32" : "resident 304137561 fits"
+      "8" : "resident 578864473 fits",
+      "16" : "resident 578864473 fits",
+      "24" : "resident 578864473 fits",
+      "32" : "resident 578864473 fits"
     },
     "opus-mt/opus-mt-ja-en" : {
-      "8" : "resident 303294189 fits",
-      "16" : "resident 303294189 fits",
-      "24" : "resident 303294189 fits",
-      "32" : "resident 303294189 fits"
+      "8" : "resident 578021101 fits",
+      "16" : "resident 578021101 fits",
+      "24" : "resident 578021101 fits",
+      "32" : "resident 578021101 fits"
     },
     "opus-mt/opus-mt-ko-en" : {
-      "8" : "resident 312087009 fits",
-      "16" : "resident 312087009 fits",
-      "24" : "resident 312087009 fits",
-      "32" : "resident 312087009 fits"
+      "8" : "resident 586813921 fits",
+      "16" : "resident 586813921 fits",
+      "24" : "resident 586813921 fits",
+      "32" : "resident 586813921 fits"
     },
     "opus-mt/opus-mt-th-en" : {
-      "8" : "resident 306558921 fits",
-      "16" : "resident 306558921 fits",
-      "24" : "resident 306558921 fits",
-      "32" : "resident 306558921 fits"
+      "8" : "resident 581285833 fits",
+      "16" : "resident 581285833 fits",
+      "24" : "resident 581285833 fits",
+      "32" : "resident 581285833 fits"
     },
     "opus-mt/opus-mt-vi-en" : {
-      "8" : "resident 288977385 fits",
-      "16" : "resident 288977385 fits",
-      "24" : "resident 288977385 fits",
-      "32" : "resident 288977385 fits"
+      "8" : "resident 563704297 fits",
+      "16" : "resident 563704297 fits",
+      "24" : "resident 563704297 fits",
+      "32" : "resident 563704297 fits"
     },
     "opus-mt/opus-mt-zh-en" : {
-      "8" : "resident 312087009 fits",
-      "16" : "resident 312087009 fits",
-      "24" : "resident 312087009 fits",
-      "32" : "resident 312087009 fits"
+      "8" : "resident 586813921 fits",
+      "16" : "resident 586813921 fits",
+      "24" : "resident 586813921 fits",
+      "32" : "resident 586813921 fits"
     },
     "parakeet-tdt/0.6b-v2" : {
       "8" : "resident 2472222720 refused",
@@ -998,10 +998,10 @@
       "32" : "resident 2509332480 fits"
     },
     "phi-4-multimodal/phi-4-multimodal-instruct" : {
-      "8" : "resident 11148920768 refused",
-      "16" : "resident 11148920768 refused",
-      "24" : "resident 11148920768 refused",
-      "32" : "resident 11148920768 fits"
+      "8" : "resident 15391459264 refused",
+      "16" : "resident 15391459264 refused",
+      "24" : "resident 15391459264 refused",
+      "32" : "resident 15391459264 fits"
     },
     "pixtral-12b/pixtral-12b" : {
       "8" : "streamed 9289678848 refused",
@@ -1010,22 +1010,22 @@
       "32" : "streamed 18014158848 fits"
     },
     "pose-simplebaseline/default" : {
-      "8" : "resident 143443289 fits",
-      "16" : "resident 143443289 fits",
-      "24" : "resident 143443289 fits",
-      "32" : "resident 143443289 fits"
+      "8" : "resident 229426521 fits",
+      "16" : "resident 229426521 fits",
+      "24" : "resident 229426521 fits",
+      "32" : "resident 229426521 fits"
     },
     "pplx-decider-flash-v1.2/pplx-decider-flash-v1.2" : {
-      "8" : "resident 9079836672 refused",
-      "16" : "resident 9079836672 refused",
-      "24" : "resident 9079836672 fits",
-      "32" : "resident 9079836672 fits"
+      "8" : "resident 11344760832 refused",
+      "16" : "resident 11344760832 refused",
+      "24" : "resident 11344760832 refused",
+      "32" : "resident 11344760832 fits"
     },
     "pplx-decider-v1.2/pplx-decider-v1.2" : {
-      "8" : "resident 52173271520 refused",
-      "16" : "resident 52173271520 refused",
-      "24" : "resident 52173271520 refused",
-      "32" : "resident 52173271520 refused"
+      "8" : "resident 54438195680 refused",
+      "16" : "resident 54438195680 refused",
+      "24" : "resident 54438195680 refused",
+      "32" : "resident 54438195680 refused"
     },
     "qwen-image-2.1/default" : {
       "8" : "staged 17534247392 refused",
@@ -1040,28 +1040,28 @@
       "32" : "paged 11503870848 fits"
     },
     "qwen3-0.6b/qwen3-0.6b" : {
-      "8" : "resident 1973026816 fits",
-      "16" : "resident 1973026816 fits",
-      "24" : "resident 1973026816 fits",
-      "32" : "resident 1973026816 fits"
+      "8" : "resident 4271505408 refused",
+      "16" : "resident 4271505408 fits",
+      "24" : "resident 4271505408 fits",
+      "32" : "resident 4271505408 fits"
     },
     "qwen3-1.7b/qwen3-1.7b" : {
-      "8" : "streamed 2419129856 fits",
-      "16" : "resident 4533241856 fits",
-      "24" : "resident 4533241856 fits",
-      "32" : "resident 4533241856 fits"
+      "8" : "streamed 5212536320 refused",
+      "16" : "resident 7326648320 refused",
+      "24" : "resident 7326648320 fits",
+      "32" : "resident 7326648320 fits"
     },
     "qwen3-4b/qwen3-4b" : {
-      "8" : "streamed 2391205376 fits",
-      "16" : "streamed 5419129856 fits",
-      "24" : "resident 8648915968 fits",
-      "32" : "resident 8648915968 fits"
+      "8" : "streamed 5882963456 refused",
+      "16" : "streamed 8910887936 refused",
+      "24" : "resident 12140674048 refused",
+      "32" : "resident 12140674048 fits"
     },
     "qwen3-14b/qwen3-14b" : {
-      "8" : "streamed 5103995904 refused",
-      "16" : "streamed 5103995904 fits",
-      "24" : "streamed 9728363008 fits",
-      "32" : "streamed 18316473344 fits"
+      "8" : "streamed 12087512064 refused",
+      "16" : "streamed 12087512064 refused",
+      "24" : "streamed 16711879168 refused",
+      "32" : "streamed 25299989504 refused"
     },
     "qwen3-30b-a3b/qwen3-30b-a3b" : {
       "8" : "paged 3484839936 refused",
@@ -1070,76 +1070,76 @@
       "32" : "paged 10984936320 fits"
     },
     "qwen3-32b/qwen3-32b" : {
-      "8" : "streamed 6135794688 refused",
-      "16" : "streamed 6135794688 refused",
-      "24" : "streamed 10036581376 fits",
-      "32" : "streamed 17838154752 fits"
+      "8" : "streamed 13119310848 refused",
+      "16" : "streamed 13119310848 refused",
+      "24" : "streamed 17020097536 refused",
+      "32" : "streamed 24821670912 refused"
     },
     "qwen3-embedding-0.6b/qwen3-embedding-0.6b" : {
-      "8" : "resident 2383106048 fits",
-      "16" : "resident 2383106048 fits",
-      "24" : "resident 2383106048 fits",
-      "32" : "resident 2383106048 fits"
+      "8" : "resident 3475722240 refused",
+      "16" : "resident 3475722240 fits",
+      "24" : "resident 3475722240 fits",
+      "32" : "resident 3475722240 fits"
     },
     "qwen3-vl-2b/qwen3-vl-2b-instruct" : {
-      "8" : "streamed 2342296064 fits",
-      "16" : "streamed 5288624128 fits",
-      "24" : "resident 8510128128 fits",
-      "32" : "resident 8510128128 fits"
+      "8" : "streamed 6090610688 refused",
+      "16" : "streamed 8104050688 refused",
+      "24" : "resident 7070490624 fits",
+      "32" : "resident 11325554688 fits"
     },
     "qwen3-vl-8b/qwen3-vl-8b-instruct" : {
-      "8" : "streamed 8827780032 refused",
-      "16" : "streamed 5185675744 fits",
-      "24" : "streamed 9599565760 fits",
-      "32" : "streamed 18089208768 fits"
+      "8" : "streamed 11643206592 refused",
+      "16" : "streamed 11643206592 refused",
+      "24" : "streamed 12414992320 refused",
+      "32" : "streamed 20904635328 refused"
     },
     "qwen3-vl-30b-a3b/qwen3-vl-30b-a3b-instruct" : {
-      "8" : "paged 8318899136 refused",
-      "16" : "paged 8318899136 refused",
-      "24" : "paged 9313410323 fits",
-      "32" : "paged 13401965920 fits"
+      "8" : "paged 11134325696 refused",
+      "16" : "paged 11134325696 refused",
+      "24" : "paged 12128836883 refused",
+      "32" : "paged 16217392480 fits"
     },
     "qwen3-vl-32b/qwen3-vl-32b-instruct" : {
-      "8" : "streamed 12505172928 refused",
-      "16" : "streamed 12505172928 refused",
-      "24" : "streamed 10153373152 fits",
-      "32" : "streamed 18356352960 fits"
+      "8" : "streamed 15320599488 refused",
+      "16" : "streamed 15320599488 refused",
+      "24" : "streamed 15320599488 refused",
+      "32" : "streamed 21171779520 refused"
     },
     "qwen3-vl-embedding-2b/qwen3-vl-embedding-2b" : {
-      "8" : "resident 8510128128 refused",
-      "16" : "resident 8510128128 refused",
-      "24" : "resident 8510128128 fits",
-      "32" : "resident 8510128128 fits"
+      "8" : "resident 9220014080 refused",
+      "16" : "resident 9220014080 refused",
+      "24" : "resident 9220014080 fits",
+      "32" : "resident 9220014080 fits"
     },
     "qwen3-vl-reranker-2b/qwen3-vl-reranker-2b" : {
-      "8" : "resident 8510128128 refused",
-      "16" : "resident 8510128128 refused",
-      "24" : "resident 8510128128 fits",
-      "32" : "resident 8510128128 fits"
+      "8" : "resident 11325554688 refused",
+      "16" : "resident 11325554688 refused",
+      "24" : "resident 11325554688 refused",
+      "32" : "resident 11325554688 fits"
     },
     "qwen3.5-2b/qwen3.5-2b" : {
-      "8" : "streamed 2322462080 fits",
-      "16" : "resident 4598476480 fits",
-      "24" : "resident 4598476480 fits",
-      "32" : "resident 4598476480 fits"
+      "8" : "streamed 4034786688 refused",
+      "16" : "resident 6310801088 refused",
+      "24" : "resident 6310801088 fits",
+      "32" : "resident 6310801088 fits"
     },
     "qwen3.5-9b/qwen3.5-9b" : {
-      "8" : "streamed 6474932064 refused",
-      "16" : "streamed 6474932064 refused",
-      "24" : "streamed 9941661532 fits",
-      "32" : "streamed 18153146185 fits"
+      "8" : "streamed 8535383904 refused",
+      "16" : "streamed 8535383904 refused",
+      "24" : "streamed 12002113372 refused",
+      "32" : "streamed 20213598025 refused"
     },
     "qwen3.5/qwen3.5-4b" : {
-      "8" : "streamed 2765544832 refused",
-      "16" : "streamed 5223764057 fits",
-      "24" : "resident 9453955584 fits",
-      "32" : "resident 9453955584 fits"
+      "8" : "streamed 4054244736 refused",
+      "16" : "streamed 6512463961 refused",
+      "24" : "resident 10742655488 refused",
+      "32" : "resident 10742655488 fits"
     },
     "qwen3.8-27b/qwen3.8-27b" : {
-      "8" : "streamed 8657991008 refused",
-      "16" : "streamed 8657991008 refused",
-      "24" : "streamed 10191083744 fits",
-      "32" : "streamed 17799680574 fits"
+      "8" : "streamed 11234342240 refused",
+      "16" : "streamed 11234342240 refused",
+      "24" : "streamed 12767434976 refused",
+      "32" : "streamed 20376031806 refused"
     },
     "qwen4-exp/qwen3.8-flash-next" : {
       "8" : "paged 113374887928 refused",
@@ -1148,40 +1148,40 @@
       "32" : "paged 113374887928 refused"
     },
     "raft/default" : {
-      "8" : "resident 81977417 fits",
-      "16" : "resident 81977417 fits",
-      "24" : "resident 81977417 fits",
-      "32" : "resident 81977417 fits"
+      "8" : "resident 3168985161 refused",
+      "16" : "resident 3168985161 fits",
+      "24" : "resident 3168985161 fits",
+      "32" : "resident 3168985161 fits"
     },
     "real-esrgan-anime-video-x4v3/default" : {
-      "8" : "resident 2504012 fits",
-      "16" : "resident 2504012 fits",
-      "24" : "resident 2504012 fits",
-      "32" : "resident 2504012 fits"
+      "8" : "resident 2230728012 fits",
+      "16" : "resident 2230728012 fits",
+      "24" : "resident 2230728012 fits",
+      "32" : "resident 2230728012 fits"
     },
     "real-esrgan-general-x4v3/default" : {
-      "8" : "resident 4885111 fits",
-      "16" : "resident 4885111 fits",
-      "24" : "resident 4885111 fits",
-      "32" : "resident 4885111 fits"
+      "8" : "resident 2233109111 fits",
+      "16" : "resident 2233109111 fits",
+      "24" : "resident 2233109111 fits",
+      "32" : "resident 2233109111 fits"
     },
     "real-esrgan-x2/default" : {
-      "8" : "resident 67061725 fits",
-      "16" : "resident 67061725 fits",
-      "24" : "resident 67061725 fits",
-      "32" : "resident 67061725 fits"
+      "8" : "resident 5068769245 refused",
+      "16" : "resident 5068769245 fits",
+      "24" : "resident 5068769245 fits",
+      "32" : "resident 5068769245 fits"
     },
     "real-esrgan-x4-anime/default" : {
-      "8" : "resident 17938799 fits",
-      "16" : "resident 17938799 fits",
-      "24" : "resident 17938799 fits",
-      "32" : "resident 17938799 fits"
+      "8" : "resident 15600826735 refused",
+      "16" : "resident 15600826735 refused",
+      "24" : "resident 15600826735 refused",
+      "32" : "resident 15600826735 fits"
     },
     "real-esrgan-x4/default" : {
-      "8" : "resident 67040989 fits",
-      "16" : "resident 67040989 fits",
-      "24" : "resident 67040989 fits",
-      "32" : "resident 67040989 fits"
+      "8" : "resident 15649928925 refused",
+      "16" : "resident 15649928925 refused",
+      "24" : "resident 15649928925 refused",
+      "32" : "resident 15649928925 fits"
     },
     "real-hat-gan-x4/default" : {
       "8" : "resident 170277017 fits",
@@ -1196,328 +1196,328 @@
       "32" : "resident 713176232 fits"
     },
     "retinaface-mobile025/default" : {
-      "8" : "resident 1789735 fits",
-      "16" : "resident 1789735 fits",
-      "24" : "resident 1789735 fits",
-      "32" : "resident 1789735 fits"
+      "8" : "resident 180047655 fits",
+      "16" : "resident 180047655 fits",
+      "24" : "resident 180047655 fits",
+      "32" : "resident 180047655 fits"
     },
     "rf-detr-large/default" : {
-      "8" : "resident 135732872 fits",
-      "16" : "resident 135732872 fits",
-      "24" : "resident 135732872 fits",
-      "32" : "resident 135732872 fits"
+      "8" : "resident 883367560 fits",
+      "16" : "resident 883367560 fits",
+      "24" : "resident 883367560 fits",
+      "32" : "resident 883367560 fits"
     },
     "rf-detr-medium/default" : {
-      "8" : "resident 134749832 fits",
-      "16" : "resident 134749832 fits",
-      "24" : "resident 134749832 fits",
-      "32" : "resident 134749832 fits"
+      "8" : "resident 696786568 fits",
+      "16" : "resident 696786568 fits",
+      "24" : "resident 696786568 fits",
+      "32" : "resident 696786568 fits"
     },
     "rf-detr-nano/default" : {
-      "8" : "resident 121869192 fits",
-      "16" : "resident 121869192 fits",
-      "24" : "resident 121869192 fits",
-      "32" : "resident 121869192 fits"
+      "8" : "resident 397644680 fits",
+      "16" : "resident 397644680 fits",
+      "24" : "resident 397644680 fits",
+      "32" : "resident 397644680 fits"
     },
     "rf-detr-seg-large/default" : {
-      "8" : "resident 144847884 fits",
-      "16" : "resident 144847884 fits",
-      "24" : "resident 144847884 fits",
-      "32" : "resident 144847884 fits"
+      "8" : "resident 813839372 fits",
+      "16" : "resident 813839372 fits",
+      "24" : "resident 813839372 fits",
+      "32" : "resident 813839372 fits"
     },
     "rf-detr-seg-medium/default" : {
-      "8" : "resident 142777036 fits",
-      "16" : "resident 142777036 fits",
-      "24" : "resident 142777036 fits",
-      "32" : "resident 142777036 fits"
+      "8" : "resident 686987980 fits",
+      "16" : "resident 686987980 fits",
+      "24" : "resident 686987980 fits",
+      "32" : "resident 686987980 fits"
     },
     "rf-detr-seg-preview/default" : {
-      "8" : "resident 136614220 fits",
-      "16" : "resident 136614220 fits",
-      "24" : "resident 136614220 fits",
-      "32" : "resident 136614220 fits"
+      "8" : "resident 680825164 fits",
+      "16" : "resident 680825164 fits",
+      "24" : "resident 680825164 fits",
+      "32" : "resident 680825164 fits"
     },
     "rf-detr-seg-small/default" : {
-      "8" : "resident 134844428 fits",
-      "16" : "resident 134844428 fits",
-      "24" : "resident 134844428 fits",
-      "32" : "resident 134844428 fits"
+      "8" : "resident 563712012 fits",
+      "16" : "resident 563712012 fits",
+      "24" : "resident 563712012 fits",
+      "32" : "resident 563712012 fits"
     },
     "rf-detr-seg-xlarge/default" : {
-      "8" : "resident 152454540 fits",
-      "16" : "resident 152454540 fits",
-      "24" : "resident 152454540 fits",
-      "32" : "resident 152454540 fits"
+      "8" : "resident 1147553164 fits",
+      "16" : "resident 1147553164 fits",
+      "24" : "resident 1147553164 fits",
+      "32" : "resident 1147553164 fits"
     },
     "rf-detr-seg-xxlarge/default" : {
-      "8" : "resident 154592652 fits",
-      "16" : "resident 154592652 fits",
-      "24" : "resident 154592652 fits",
-      "32" : "resident 154592652 fits"
+      "8" : "resident 1705436556 fits",
+      "16" : "resident 1705436556 fits",
+      "24" : "resident 1705436556 fits",
+      "32" : "resident 1705436556 fits"
     },
     "rf-detr-seg/default" : {
-      "8" : "resident 134309900 fits",
-      "16" : "resident 134309900 fits",
-      "24" : "resident 134309900 fits",
-      "32" : "resident 134309900 fits"
+      "8" : "resident 416376844 fits",
+      "16" : "resident 416376844 fits",
+      "24" : "resident 416376844 fits",
+      "32" : "resident 416376844 fits"
     },
     "rf-detr-small/default" : {
-      "8" : "resident 128444680 fits",
-      "16" : "resident 128444680 fits",
-      "24" : "resident 128444680 fits",
-      "32" : "resident 128444680 fits"
+      "8" : "resident 582478088 fits",
+      "16" : "resident 582478088 fits",
+      "24" : "resident 582478088 fits",
+      "32" : "resident 582478088 fits"
     },
     "rf-detr/default" : {
-      "8" : "resident 128698120 fits",
-      "16" : "resident 128698120 fits",
-      "24" : "resident 128698120 fits",
-      "32" : "resident 128698120 fits"
+      "8" : "resident 724289288 fits",
+      "16" : "resident 724289288 fits",
+      "24" : "resident 724289288 fits",
+      "32" : "resident 724289288 fits"
     },
     "rife-clip/default" : {
-      "8" : "resident 12186817 fits",
-      "16" : "resident 12186817 fits",
-      "24" : "resident 12186817 fits",
-      "32" : "resident 12186817 fits"
+      "8" : "resident 2788816065 refused",
+      "16" : "resident 2788816065 fits",
+      "24" : "resident 2788816065 fits",
+      "32" : "resident 2788816065 fits"
     },
     "rife/default" : {
-      "8" : "resident 12186817 fits",
-      "16" : "resident 12186817 fits",
-      "24" : "resident 12186817 fits",
-      "32" : "resident 12186817 fits"
+      "8" : "resident 1467610305 fits",
+      "16" : "resident 1467610305 fits",
+      "24" : "resident 1467610305 fits",
+      "32" : "resident 1467610305 fits"
     },
     "robust-video-matting-clip/default" : {
-      "8" : "resident 15217721 fits",
-      "16" : "resident 15217721 fits",
-      "24" : "resident 15217721 fits",
-      "32" : "resident 15217721 fits"
+      "8" : "resident 912798777 fits",
+      "16" : "resident 912798777 fits",
+      "24" : "resident 912798777 fits",
+      "32" : "resident 912798777 fits"
     },
     "robust-video-matting-resnet50-clip/default" : {
-      "8" : "resident 107905875 fits",
-      "16" : "resident 107905875 fits",
-      "24" : "resident 107905875 fits",
-      "32" : "resident 107905875 fits"
+      "8" : "resident 1158579027 fits",
+      "16" : "resident 1158579027 fits",
+      "24" : "resident 1158579027 fits",
+      "32" : "resident 1158579027 fits"
     },
     "robust-video-matting-resnet50/default" : {
-      "8" : "resident 107905875 fits",
-      "16" : "resident 107905875 fits",
-      "24" : "resident 107905875 fits",
-      "32" : "resident 107905875 fits"
+      "8" : "resident 2130608979 fits",
+      "16" : "resident 2130608979 fits",
+      "24" : "resident 2130608979 fits",
+      "32" : "resident 2130608979 fits"
     },
     "robust-video-matting/default" : {
-      "8" : "resident 15217721 fits",
-      "16" : "resident 15217721 fits",
-      "24" : "resident 15217721 fits",
-      "32" : "resident 15217721 fits"
+      "8" : "resident 1692939321 fits",
+      "16" : "resident 1692939321 fits",
+      "24" : "resident 1692939321 fits",
+      "32" : "resident 1692939321 fits"
     },
     "rtdetr-r18vd/default" : {
-      "8" : "resident 80839088 fits",
-      "16" : "resident 80839088 fits",
-      "24" : "resident 80839088 fits",
-      "32" : "resident 80839088 fits"
+      "8" : "resident 508658096 fits",
+      "16" : "resident 508658096 fits",
+      "24" : "resident 508658096 fits",
+      "32" : "resident 508658096 fits"
     },
     "rtdetr-r34vd/default" : {
-      "8" : "resident 125897600 fits",
-      "16" : "resident 125897600 fits",
-      "24" : "resident 125897600 fits",
-      "32" : "resident 125897600 fits"
+      "8" : "resident 626068352 fits",
+      "16" : "resident 626068352 fits",
+      "24" : "resident 626068352 fits",
+      "32" : "resident 626068352 fits"
     },
     "rtdetr-r101vd/default" : {
-      "8" : "resident 307195136 fits",
-      "16" : "resident 307195136 fits",
-      "24" : "resident 307195136 fits",
-      "32" : "resident 307195136 fits"
+      "8" : "resident 917466368 fits",
+      "16" : "resident 917466368 fits",
+      "24" : "resident 917466368 fits",
+      "32" : "resident 917466368 fits"
     },
     "rtdetr-v2-r18vd/default" : {
-      "8" : "resident 80839232 fits",
-      "16" : "resident 80839232 fits",
-      "24" : "resident 80839232 fits",
-      "32" : "resident 80839232 fits"
+      "8" : "resident 508658240 fits",
+      "16" : "resident 508658240 fits",
+      "24" : "resident 508658240 fits",
+      "32" : "resident 508658240 fits"
     },
     "rtdetr-v2-r34vd/default" : {
-      "8" : "resident 125897792 fits",
-      "16" : "resident 125897792 fits",
-      "24" : "resident 125897792 fits",
-      "32" : "resident 125897792 fits"
+      "8" : "resident 626068544 fits",
+      "16" : "resident 626068544 fits",
+      "24" : "resident 626068544 fits",
+      "32" : "resident 626068544 fits"
     },
     "rtdetr-v2-r50vd/default" : {
-      "8" : "resident 172078112 fits",
-      "16" : "resident 172078112 fits",
-      "24" : "resident 172078112 fits",
-      "32" : "resident 172078112 fits"
+      "8" : "resident 742503456 fits",
+      "16" : "resident 742503456 fits",
+      "24" : "resident 742503456 fits",
+      "32" : "resident 742503456 fits"
     },
     "rtdetr-v2-r101vd/default" : {
-      "8" : "resident 307195424 fits",
-      "16" : "resident 307195424 fits",
-      "24" : "resident 307195424 fits",
-      "32" : "resident 307195424 fits"
+      "8" : "resident 917466656 fits",
+      "16" : "resident 917466656 fits",
+      "24" : "resident 917466656 fits",
+      "32" : "resident 917466656 fits"
     },
     "rtdetr/default" : {
-      "8" : "resident 172077824 fits",
-      "16" : "resident 172077824 fits",
-      "24" : "resident 172077824 fits",
-      "32" : "resident 172077824 fits"
+      "8" : "resident 742503168 fits",
+      "16" : "resident 742503168 fits",
+      "24" : "resident 742503168 fits",
+      "32" : "resident 742503168 fits"
     },
     "sa2va-1b/default" : {
-      "8" : "resident 2327331428 fits",
-      "16" : "resident 2327331428 fits",
-      "24" : "resident 2327331428 fits",
-      "32" : "resident 2327331428 fits"
+      "8" : "resident 10511467108 refused",
+      "16" : "resident 10511467108 refused",
+      "24" : "resident 10511467108 refused",
+      "32" : "resident 10511467108 fits"
     },
     "sa2va-4b/default" : {
-      "8" : "resident 7883619428 refused",
-      "16" : "resident 7883619428 refused",
-      "24" : "resident 7883619428 fits",
-      "32" : "resident 7883619428 fits"
+      "8" : "resident 14805269604 refused",
+      "16" : "resident 14805269604 refused",
+      "24" : "resident 14805269604 refused",
+      "32" : "resident 14805269604 fits"
     },
     "sa2va-internvl3-2b/default" : {
-      "8" : "resident 4632314980 refused",
-      "16" : "resident 4632314980 fits",
-      "24" : "resident 4632314980 fits",
-      "32" : "resident 4632314980 fits"
+      "8" : "resident 10003121252 refused",
+      "16" : "resident 10003121252 refused",
+      "24" : "resident 10003121252 fits",
+      "32" : "resident 10003121252 fits"
     },
     "sa2va-llava-1.5-7b/default" : {
-      "8" : "resident 14610441316 refused",
-      "16" : "resident 14610441316 refused",
-      "24" : "resident 14610441316 refused",
-      "32" : "resident 14610441316 fits"
+      "8" : "resident 22794576996 refused",
+      "16" : "resident 22794576996 refused",
+      "24" : "resident 22794576996 refused",
+      "32" : "resident 22794576996 refused"
     },
     "sa2va-qwen2.5-vl-3b/default" : {
-      "8" : "resident 8587699300 refused",
-      "16" : "resident 8587699300 refused",
-      "24" : "resident 8587699300 fits",
-      "32" : "resident 8587699300 fits"
+      "8" : "resident 13412197476 refused",
+      "16" : "resident 13412197476 refused",
+      "24" : "resident 13412197476 refused",
+      "32" : "resident 13412197476 fits"
     },
     "sa2va-qwen3-vl-2b/default" : {
-      "8" : "resident 5333550180 refused",
-      "16" : "resident 5333550180 fits",
-      "24" : "resident 5333550180 fits",
-      "32" : "resident 5333550180 fits"
+      "8" : "resident 9871787108 refused",
+      "16" : "resident 9871787108 refused",
+      "24" : "resident 9871787108 fits",
+      "32" : "resident 9871787108 fits"
     },
     "sa2va-qwen3-vl-4b-sam3/default" : {
-      "8" : "resident 10612455684 refused",
-      "16" : "resident 10612455684 refused",
-      "24" : "resident 10612455684 refused",
-      "32" : "resident 10612455684 fits"
+      "8" : "resident 18787154180 refused",
+      "16" : "resident 18787154180 refused",
+      "24" : "resident 18787154180 refused",
+      "32" : "resident 18787154180 refused"
     },
     "sa2va-qwen3-vl-4b/default" : {
-      "8" : "resident 10114145380 refused",
-      "16" : "resident 10114145380 refused",
-      "24" : "resident 10114145380 fits",
-      "32" : "resident 10114145380 fits"
+      "8" : "resident 18288843876 refused",
+      "16" : "resident 18288843876 refused",
+      "24" : "resident 18288843876 refused",
+      "32" : "resident 18288843876 fits"
     },
     "sam-vit-b/default" : {
-      "8" : "resident 375042383 fits",
-      "16" : "resident 375042383 fits",
-      "24" : "resident 375042383 fits",
-      "32" : "resident 375042383 fits"
+      "8" : "resident 3280646479 refused",
+      "16" : "resident 3280646479 fits",
+      "24" : "resident 3280646479 fits",
+      "32" : "resident 3280646479 fits"
     },
     "sam-vit-h/default" : {
-      "8" : "resident 2564550879 refused",
-      "16" : "resident 2564550879 fits",
-      "24" : "resident 2564550879 fits",
-      "32" : "resident 2564550879 fits"
+      "8" : "resident 5181796575 refused",
+      "16" : "resident 5181796575 fits",
+      "24" : "resident 5181796575 fits",
+      "32" : "resident 5181796575 fits"
     },
     "sam-vit-l/default" : {
-      "8" : "resident 1249524607 fits",
-      "16" : "resident 1249524607 fits",
-      "24" : "resident 1249524607 fits",
-      "32" : "resident 1249524607 fits"
+      "8" : "resident 3982113663 refused",
+      "16" : "resident 3982113663 fits",
+      "24" : "resident 3982113663 fits",
+      "32" : "resident 3982113663 fits"
     },
     "sam2-hiera-base-plus-video/default" : {
-      "8" : "resident 323493298 fits",
-      "16" : "resident 323493298 fits",
-      "24" : "resident 323493298 fits",
-      "32" : "resident 323493298 fits"
+      "8" : "resident 3059228082 refused",
+      "16" : "resident 3059228082 fits",
+      "24" : "resident 3059228082 fits",
+      "32" : "resident 3059228082 fits"
     },
     "sam2-hiera-base-plus/default" : {
-      "8" : "resident 323493298 fits",
-      "16" : "resident 323493298 fits",
-      "24" : "resident 323493298 fits",
-      "32" : "resident 323493298 fits"
+      "8" : "resident 2996313522 refused",
+      "16" : "resident 2996313522 fits",
+      "24" : "resident 2996313522 fits",
+      "32" : "resident 2996313522 fits"
     },
     "sam2-hiera-large-video/default" : {
-      "8" : "resident 897952466 fits",
-      "16" : "resident 897952466 fits",
-      "24" : "resident 897952466 fits",
-      "32" : "resident 897952466 fits"
+      "8" : "resident 3432360658 refused",
+      "16" : "resident 3432360658 fits",
+      "24" : "resident 3432360658 fits",
+      "32" : "resident 3432360658 fits"
     },
     "sam2-hiera-large/default" : {
-      "8" : "resident 897952466 fits",
-      "16" : "resident 897952466 fits",
-      "24" : "resident 897952466 fits",
-      "32" : "resident 897952466 fits"
+      "8" : "resident 3369446098 refused",
+      "16" : "resident 3369446098 fits",
+      "24" : "resident 3369446098 fits",
+      "32" : "resident 3369446098 fits"
     },
     "sam2-hiera-small-video/default" : {
-      "8" : "resident 184309650 fits",
-      "16" : "resident 184309650 fits",
-      "24" : "resident 184309650 fits",
-      "32" : "resident 184309650 fits"
+      "8" : "resident 2587645842 refused",
+      "16" : "resident 2587645842 fits",
+      "24" : "resident 2587645842 fits",
+      "32" : "resident 2587645842 fits"
     },
     "sam2-hiera-small/default" : {
-      "8" : "resident 184309650 fits",
-      "16" : "resident 184309650 fits",
-      "24" : "resident 184309650 fits",
-      "32" : "resident 184309650 fits"
+      "8" : "resident 2279364498 fits",
+      "16" : "resident 2279364498 fits",
+      "24" : "resident 2279364498 fits",
+      "32" : "resident 2279364498 fits"
     },
     "sam2-hiera-tiny-video/default" : {
-      "8" : "resident 155906050 fits",
-      "16" : "resident 155906050 fits",
-      "24" : "resident 155906050 fits",
-      "32" : "resident 155906050 fits"
+      "8" : "resident 2559242242 refused",
+      "16" : "resident 2559242242 fits",
+      "24" : "resident 2559242242 fits",
+      "32" : "resident 2559242242 fits"
     },
     "sam2-hiera-tiny/default" : {
-      "8" : "resident 155906050 fits",
-      "16" : "resident 155906050 fits",
-      "24" : "resident 155906050 fits",
-      "32" : "resident 155906050 fits"
+      "8" : "resident 2101014530 fits",
+      "16" : "resident 2101014530 fits",
+      "24" : "resident 2101014530 fits",
+      "32" : "resident 2101014530 fits"
     },
     "sam2-video/default" : {
-      "8" : "resident 156008466 fits",
-      "16" : "resident 156008466 fits",
-      "24" : "resident 156008466 fits",
-      "32" : "resident 156008466 fits"
+      "8" : "resident 2559344658 refused",
+      "16" : "resident 2559344658 fits",
+      "24" : "resident 2559344658 fits",
+      "32" : "resident 2559344658 fits"
     },
     "sam2.1-hiera-base-plus-video/default" : {
-      "8" : "resident 323606802 fits",
-      "16" : "resident 323606802 fits",
-      "24" : "resident 323606802 fits",
-      "32" : "resident 323606802 fits"
+      "8" : "resident 3059341586 refused",
+      "16" : "resident 3059341586 fits",
+      "24" : "resident 3059341586 fits",
+      "32" : "resident 3059341586 fits"
     },
     "sam2.1-hiera-base-plus/default" : {
-      "8" : "resident 323606802 fits",
-      "16" : "resident 323606802 fits",
-      "24" : "resident 323606802 fits",
-      "32" : "resident 323606802 fits"
+      "8" : "resident 2996427026 refused",
+      "16" : "resident 2996427026 fits",
+      "24" : "resident 2996427026 fits",
+      "32" : "resident 2996427026 fits"
     },
     "sam2.1-hiera-large-video/default" : {
-      "8" : "resident 898083611 fits",
-      "16" : "resident 898083611 fits",
-      "24" : "resident 898083611 fits",
-      "32" : "resident 898083611 fits"
+      "8" : "resident 3432491803 refused",
+      "16" : "resident 3432491803 fits",
+      "24" : "resident 3432491803 fits",
+      "32" : "resident 3432491803 fits"
     },
     "sam2.1-hiera-large/default" : {
-      "8" : "resident 898083611 fits",
-      "16" : "resident 898083611 fits",
-      "24" : "resident 898083611 fits",
-      "32" : "resident 898083611 fits"
+      "8" : "resident 3369577243 refused",
+      "16" : "resident 3369577243 fits",
+      "24" : "resident 3369577243 fits",
+      "32" : "resident 3369577243 fits"
     },
     "sam2.1-hiera-small-video/default" : {
-      "8" : "resident 184416285 fits",
-      "16" : "resident 184416285 fits",
-      "24" : "resident 184416285 fits",
-      "32" : "resident 184416285 fits"
+      "8" : "resident 2587752477 refused",
+      "16" : "resident 2587752477 fits",
+      "24" : "resident 2587752477 fits",
+      "32" : "resident 2587752477 fits"
     },
     "sam2.1-hiera-small/default" : {
-      "8" : "resident 184416285 fits",
-      "16" : "resident 184416285 fits",
-      "24" : "resident 184416285 fits",
-      "32" : "resident 184416285 fits"
+      "8" : "resident 2279471133 fits",
+      "16" : "resident 2279471133 fits",
+      "24" : "resident 2279471133 fits",
+      "32" : "resident 2279471133 fits"
     },
     "sam2/default" : {
-      "8" : "resident 156008466 fits",
-      "16" : "resident 156008466 fits",
-      "24" : "resident 156008466 fits",
-      "32" : "resident 156008466 fits"
+      "8" : "resident 2101116946 fits",
+      "16" : "resident 2101116946 fits",
+      "24" : "resident 2101116946 fits",
+      "32" : "resident 2101116946 fits"
     },
     "sam3.1/default" : {
       "8" : "resident 3502755717 refused",
@@ -1586,34 +1586,34 @@
       "32" : "resident 18072468492 fits"
     },
     "sdxl-lightning-4step-lora/default" : {
-      "8" : "resident 7498487756 refused",
-      "16" : "resident 7498487756 refused",
-      "24" : "resident 7498487756 fits",
-      "32" : "resident 7498487756 fits"
+      "8" : "resident 18973054924 refused",
+      "16" : "resident 18973054924 refused",
+      "24" : "resident 18973054924 refused",
+      "32" : "resident 18973054924 refused"
     },
     "sdxl-turbo/default" : {
-      "8" : "resident 13875351468 refused",
-      "16" : "resident 13875351468 refused",
-      "24" : "resident 13875351468 refused",
-      "32" : "resident 13875351468 fits"
+      "8" : "resident 18309779372 refused",
+      "16" : "resident 18309779372 refused",
+      "24" : "resident 18309779372 refused",
+      "32" : "resident 18309779372 fits"
     },
     "seed-x/seed-x-instruct-7b" : {
-      "8" : "streamed 2378047488 fits",
-      "16" : "streamed 5431615488 fits",
-      "24" : "streamed 10230079488 fits",
-      "32" : "resident 15028543488 fits"
+      "8" : "streamed 2968395776 refused",
+      "16" : "streamed 6021963776 refused",
+      "24" : "streamed 10820427776 refused",
+      "32" : "resident 15618891776 fits"
     },
     "seed-x/seed-x-ppo-7b" : {
-      "8" : "streamed 2378047488 fits",
-      "16" : "streamed 5431615488 fits",
-      "24" : "streamed 10230079488 fits",
-      "32" : "resident 15028543488 fits"
+      "8" : "streamed 2968395776 refused",
+      "16" : "streamed 6021963776 refused",
+      "24" : "streamed 10820427776 refused",
+      "32" : "resident 15618891776 fits"
     },
     "segformer-b0/default" : {
-      "8" : "resident 15092257 fits",
-      "16" : "resident 15092257 fits",
-      "24" : "resident 15092257 fits",
-      "32" : "resident 15092257 fits"
+      "8" : "resident 2276870689 fits",
+      "16" : "resident 2276870689 fits",
+      "24" : "resident 2276870689 fits",
+      "32" : "resident 2276870689 fits"
     },
     "sgmse/voicebank" : {
       "8" : "resident 1312806643 fits",
@@ -1622,172 +1622,172 @@
       "32" : "resident 1312806643 fits"
     },
     "siglip2-base-patch16-224/default" : {
-      "8" : "resident 1500751880 fits",
-      "16" : "resident 1500751880 fits",
-      "24" : "resident 1500751880 fits",
-      "32" : "resident 1500751880 fits"
+      "8" : "resident 1744021512 fits",
+      "16" : "resident 1744021512 fits",
+      "24" : "resident 1744021512 fits",
+      "32" : "resident 1744021512 fits"
     },
     "siglip2-base-patch16-256/default" : {
-      "8" : "resident 1500936200 fits",
-      "16" : "resident 1500936200 fits",
-      "24" : "resident 1500936200 fits",
-      "32" : "resident 1500936200 fits"
+      "8" : "resident 1812363272 fits",
+      "16" : "resident 1812363272 fits",
+      "24" : "resident 1812363272 fits",
+      "32" : "resident 1812363272 fits"
     },
     "siglip2-base-patch16-384/default" : {
-      "8" : "resident 1501919240 fits",
-      "16" : "resident 1501919240 fits",
-      "24" : "resident 1501919240 fits",
-      "32" : "resident 1501919240 fits"
+      "8" : "resident 2181396488 fits",
+      "16" : "resident 2181396488 fits",
+      "24" : "resident 2181396488 fits",
+      "32" : "resident 2181396488 fits"
     },
     "siglip2-base-patch16-512/default" : {
-      "8" : "resident 1503295496 fits",
-      "16" : "resident 1503295496 fits",
-      "24" : "resident 1503295496 fits",
-      "32" : "resident 1503295496 fits"
+      "8" : "resident 2306504712 fits",
+      "16" : "resident 2306504712 fits",
+      "24" : "resident 2306504712 fits",
+      "32" : "resident 2306504712 fits"
     },
     "siglip2-base-patch32-256/default" : {
-      "8" : "resident 1507424264 fits",
-      "16" : "resident 1507424264 fits",
-      "24" : "resident 1507424264 fits",
-      "32" : "resident 1507424264 fits"
+      "8" : "resident 1607038984 fits",
+      "16" : "resident 1607038984 fits",
+      "24" : "resident 1607038984 fits",
+      "32" : "resident 1607038984 fits"
     },
     "siglip2-giant-opt-patch16-256/default" : {
-      "8" : "resident 7485575624 refused",
-      "16" : "resident 7485575624 refused",
-      "24" : "resident 7485575624 fits",
-      "32" : "resident 7485575624 fits"
+      "8" : "resident 8894861768 refused",
+      "16" : "resident 8894861768 refused",
+      "24" : "resident 8894861768 fits",
+      "32" : "resident 8894861768 fits"
     },
     "siglip2-giant-opt-patch16-384/default" : {
-      "8" : "resident 7487541704 refused",
-      "16" : "resident 7487541704 refused",
-      "24" : "resident 7487541704 fits",
-      "32" : "resident 7487541704 fits"
+      "8" : "resident 8896827848 refused",
+      "16" : "resident 8896827848 refused",
+      "24" : "resident 8896827848 fits",
+      "32" : "resident 8896827848 fits"
     },
     "siglip2-large-patch16-256/default" : {
-      "8" : "resident 3526107144 refused",
-      "16" : "resident 3526107144 fits",
-      "24" : "resident 3526107144 fits",
-      "32" : "resident 3526107144 fits"
+      "8" : "resident 4242284552 refused",
+      "16" : "resident 4242284552 fits",
+      "24" : "resident 4242284552 fits",
+      "32" : "resident 4242284552 fits"
     },
     "siglip2-large-patch16-384/default" : {
-      "8" : "resident 3527417864 refused",
-      "16" : "resident 3527417864 fits",
-      "24" : "resident 3527417864 fits",
-      "32" : "resident 3527417864 fits"
+      "8" : "resident 4591722504 refused",
+      "16" : "resident 4591722504 fits",
+      "24" : "resident 4591722504 fits",
+      "32" : "resident 4591722504 fits"
     },
     "siglip2-large-patch16-512/default" : {
-      "8" : "resident 3529252872 refused",
-      "16" : "resident 3529252872 fits",
-      "24" : "resident 3529252872 fits",
-      "32" : "resident 3529252872 fits"
+      "8" : "resident 4938539016 refused",
+      "16" : "resident 4938539016 fits",
+      "24" : "resident 4938539016 fits",
+      "32" : "resident 4938539016 fits"
     },
     "siglip2-so400m-patch14-224/default" : {
-      "8" : "resident 4541854408 refused",
-      "16" : "resident 4541854408 fits",
-      "24" : "resident 4541854408 fits",
-      "32" : "resident 4541854408 fits"
+      "8" : "resident 5326189256 refused",
+      "16" : "resident 5326189256 fits",
+      "24" : "resident 5326189256 fits",
+      "32" : "resident 5326189256 fits"
     },
     "siglip2-so400m-patch14-384/default" : {
-      "8" : "resident 4544033992 refused",
-      "16" : "resident 4544033992 fits",
-      "24" : "resident 4544033992 fits",
-      "32" : "resident 4544033992 fits"
+      "8" : "resident 5755139272 refused",
+      "16" : "resident 5755139272 refused",
+      "24" : "resident 5755139272 fits",
+      "32" : "resident 5755139272 fits"
     },
     "siglip2-so400m-patch16-256/default" : {
-      "8" : "resident 4542683848 refused",
-      "16" : "resident 4542683848 fits",
-      "24" : "resident 4542683848 fits",
-      "32" : "resident 4542683848 fits"
+      "8" : "resident 5327018696 refused",
+      "16" : "resident 5327018696 fits",
+      "24" : "resident 5327018696 fits",
+      "32" : "resident 5327018696 fits"
     },
     "siglip2-so400m-patch16-384/default" : {
-      "8" : "resident 4544158408 refused",
-      "16" : "resident 4544158408 fits",
-      "24" : "resident 4544158408 fits",
-      "32" : "resident 4544158408 fits"
+      "8" : "resident 5674523336 refused",
+      "16" : "resident 5674523336 refused",
+      "24" : "resident 5674523336 fits",
+      "32" : "resident 5674523336 fits"
     },
     "siglip2-so400m-patch16-512/default" : {
-      "8" : "resident 4546222792 refused",
-      "16" : "resident 4546222792 fits",
-      "24" : "resident 4546222792 fits",
-      "32" : "resident 4546222792 fits"
+      "8" : "resident 5914614472 refused",
+      "16" : "resident 5914614472 refused",
+      "24" : "resident 5914614472 fits",
+      "32" : "resident 5914614472 fits"
     },
     "silero-vad/v6" : {
-      "8" : "resident 2272526 fits",
-      "16" : "resident 2272526 fits",
-      "24" : "resident 2272526 fits",
-      "32" : "resident 2272526 fits"
+      "8" : "resident 27438350 fits",
+      "16" : "resident 27438350 fits",
+      "24" : "resident 27438350 fits",
+      "32" : "resident 27438350 fits"
     },
     "small100/small100" : {
-      "8" : "resident 1330941952 fits",
-      "16" : "resident 1330941952 fits",
-      "24" : "resident 1330941952 fits",
-      "32" : "resident 1330941952 fits"
+      "8" : "resident 2099548160 fits",
+      "16" : "resident 2099548160 fits",
+      "24" : "resident 2099548160 fits",
+      "32" : "resident 2099548160 fits"
     },
     "smollm2-135m-instruct-gguf/smollm2-135m-instruct-gguf" : {
-      "8" : "resident 105454144 fits",
-      "16" : "resident 105454144 fits",
-      "24" : "resident 105454144 fits",
-      "32" : "resident 105454144 fits"
+      "8" : "resident 2132351552 fits",
+      "16" : "resident 2132351552 fits",
+      "24" : "resident 2132351552 fits",
+      "32" : "resident 2132351552 fits"
     },
     "smolvlm2-2.2b/smolvlm2-2.2b-instruct" : {
-      "8" : "resident 8987139520 refused",
-      "16" : "resident 8987139520 refused",
-      "24" : "resident 8987139520 fits",
-      "32" : "resident 8987139520 fits"
+      "8" : "resident 12825976256 refused",
+      "16" : "resident 12825976256 refused",
+      "24" : "resident 12825976256 refused",
+      "32" : "resident 12825976256 fits"
     },
     "smolvlm2-256m/smolvlm2-256m-video-instruct" : {
-      "8" : "resident 1025939712 fits",
-      "16" : "resident 1025939712 fits",
-      "24" : "resident 1025939712 fits",
-      "32" : "resident 1025939712 fits"
+      "8" : "resident 3261503744 refused",
+      "16" : "resident 3261503744 fits",
+      "24" : "resident 3261503744 fits",
+      "32" : "resident 3261503744 fits"
     },
     "smolvlm2-500m/smolvlm2-500m-video-instruct" : {
-      "8" : "resident 2029929216 fits",
-      "16" : "resident 2029929216 fits",
-      "24" : "resident 2029929216 fits",
-      "32" : "resident 2029929216 fits"
+      "8" : "resident 4212015872 refused",
+      "16" : "resident 4212015872 fits",
+      "24" : "resident 4212015872 fits",
+      "32" : "resident 4212015872 fits"
     },
     "snac-32khz/snac_32khz" : {
-      "8" : "resident 218308802 fits",
-      "16" : "resident 218308802 fits",
-      "24" : "resident 218308802 fits",
-      "32" : "resident 218308802 fits"
+      "8" : "resident 2459115714 refused",
+      "16" : "resident 2459115714 fits",
+      "24" : "resident 2459115714 fits",
+      "32" : "resident 2459115714 fits"
     },
     "snac-44khz/snac_44khz" : {
-      "8" : "resident 218308802 fits",
-      "16" : "resident 218308802 fits",
-      "24" : "resident 218308802 fits",
-      "32" : "resident 218308802 fits"
+      "8" : "resident 3282247874 refused",
+      "16" : "resident 3282247874 fits",
+      "24" : "resident 3282247874 fits",
+      "32" : "resident 3282247874 fits"
     },
     "snac/snac_24khz" : {
-      "8" : "resident 79488254 fits",
-      "16" : "resident 79488254 fits",
-      "24" : "resident 79488254 fits",
-      "32" : "resident 79488254 fits"
+      "8" : "resident 1758258430 fits",
+      "16" : "resident 1758258430 fits",
+      "24" : "resident 1758258430 fits",
+      "32" : "resident 1758258430 fits"
     },
     "stable-audio-open-1.0/1.0" : {
-      "8" : "staged 4852206600 refused",
-      "16" : "resident 5292306952 fits",
-      "24" : "resident 5292306952 fits",
-      "32" : "resident 5292306952 fits"
+      "8" : "staged 11296754696 refused",
+      "16" : "resident 11736855048 refused",
+      "24" : "resident 11736855048 refused",
+      "32" : "resident 11736855048 fits"
     },
     "stable-diffusion-v1-5/default" : {
-      "8" : "resident 4264941844 refused",
-      "16" : "resident 4264941844 fits",
-      "24" : "resident 4264941844 fits",
-      "32" : "resident 4264941844 fits"
+      "8" : "resident 8730827028 refused",
+      "16" : "resident 8730827028 refused",
+      "24" : "resident 8730827028 fits",
+      "32" : "resident 8730827028 fits"
     },
     "stable-diffusion-xl-base-1.0/default" : {
-      "8" : "resident 7104983460 refused",
-      "16" : "resident 7104983460 refused",
-      "24" : "resident 7104983460 fits",
-      "32" : "resident 7104983460 fits"
+      "8" : "resident 18579550628 refused",
+      "16" : "resident 18579550628 refused",
+      "24" : "resident 18579550628 refused",
+      "32" : "resident 18579550628 refused"
     },
     "stable-fast-3d/default" : {
-      "8" : "resident 4039518538 refused",
-      "16" : "resident 4039518538 fits",
-      "24" : "resident 4039518538 fits",
-      "32" : "resident 4039518538 fits"
+      "8" : "resident 9952438602 refused",
+      "16" : "resident 9952438602 refused",
+      "24" : "resident 9952438602 fits",
+      "32" : "resident 9952438602 fits"
     },
     "swinir-classical-x2/default" : {
       "8" : "resident 59019939 fits",
@@ -1814,22 +1814,22 @@
       "32" : "resident 60202999 fits"
     },
     "swinir-lightweight-x2/default" : {
-      "8" : "resident 17147989 fits",
-      "16" : "resident 17147989 fits",
-      "24" : "resident 17147989 fits",
-      "32" : "resident 17147989 fits"
+      "8" : "resident 9392466005 refused",
+      "16" : "resident 9392466005 refused",
+      "24" : "resident 9392466005 fits",
+      "32" : "resident 9392466005 fits"
     },
     "swinir-lightweight-x3/default" : {
-      "8" : "resident 17180437 fits",
-      "16" : "resident 17180437 fits",
-      "24" : "resident 17180437 fits",
-      "32" : "resident 17180437 fits"
+      "8" : "resident 9392498453 refused",
+      "16" : "resident 9392498453 refused",
+      "24" : "resident 9392498453 fits",
+      "32" : "resident 9392498453 fits"
     },
     "swinir-lightweight-x4/default" : {
-      "8" : "resident 17225941 fits",
-      "16" : "resident 17225941 fits",
-      "24" : "resident 17225941 fits",
-      "32" : "resident 17225941 fits"
+      "8" : "resident 9392543957 refused",
+      "16" : "resident 9392543957 refused",
+      "24" : "resident 9392543957 fits",
+      "32" : "resident 9392543957 fits"
     },
     "swinir-real-x4-l/default" : {
       "8" : "resident 142473939 fits",
@@ -1844,52 +1844,52 @@
       "32" : "resident 67129861 fits"
     },
     "table-transformer-detection/default" : {
-      "8" : "resident 115274548 fits",
-      "16" : "resident 115274548 fits",
-      "24" : "resident 115274548 fits",
-      "32" : "resident 115274548 fits"
+      "8" : "resident 658436916 fits",
+      "16" : "resident 658436916 fits",
+      "24" : "resident 658436916 fits",
+      "32" : "resident 658436916 fits"
     },
     "table-transformer-structure-recognition-v1.1-all/default" : {
-      "8" : "resident 115391276 fits",
-      "16" : "resident 115391276 fits",
-      "24" : "resident 115391276 fits",
-      "32" : "resident 115391276 fits"
+      "8" : "resident 687913772 fits",
+      "16" : "resident 687913772 fits",
+      "24" : "resident 687913772 fits",
+      "32" : "resident 687913772 fits"
     },
     "table-transformer-structure-recognition-v1.1-fin/default" : {
-      "8" : "resident 115391276 fits",
-      "16" : "resident 115391276 fits",
-      "24" : "resident 115391276 fits",
-      "32" : "resident 115391276 fits"
+      "8" : "resident 687913772 fits",
+      "16" : "resident 687913772 fits",
+      "24" : "resident 687913772 fits",
+      "32" : "resident 687913772 fits"
     },
     "table-transformer-structure-recognition-v1.1-pub/default" : {
-      "8" : "resident 115391276 fits",
-      "16" : "resident 115391276 fits",
-      "24" : "resident 115391276 fits",
-      "32" : "resident 115391276 fits"
+      "8" : "resident 687913772 fits",
+      "16" : "resident 687913772 fits",
+      "24" : "resident 687913772 fits",
+      "32" : "resident 687913772 fits"
     },
     "table-transformer-structure-recognition/default" : {
-      "8" : "resident 115391300 fits",
-      "16" : "resident 115391300 fits",
-      "24" : "resident 115391300 fits",
-      "32" : "resident 115391300 fits"
+      "8" : "resident 687913796 fits",
+      "16" : "resident 687913796 fits",
+      "24" : "resident 687913796 fits",
+      "32" : "resident 687913796 fits"
     },
     "taesd/default" : {
-      "8" : "resident 9780252 fits",
-      "16" : "resident 9780252 fits",
-      "24" : "resident 9780252 fits",
-      "32" : "resident 9780252 fits"
+      "8" : "resident 2271558684 fits",
+      "16" : "resident 2271558684 fits",
+      "24" : "resident 2271558684 fits",
+      "32" : "resident 2271558684 fits"
     },
     "timesfm-2.5-200m/timesfm-2.5-200m-pytorch" : {
-      "8" : "resident 925157120 fits",
-      "16" : "resident 925157120 fits",
-      "24" : "resident 925157120 fits",
-      "32" : "resident 925157120 fits"
+      "8" : "resident 941934336 fits",
+      "16" : "resident 941934336 fits",
+      "24" : "resident 941934336 fits",
+      "32" : "resident 941934336 fits"
     },
     "translategemma/translategemma-4b-it" : {
-      "8" : "streamed 2559673056 refused",
-      "16" : "streamed 5391150816 fits",
-      "24" : "resident 8600158944 fits",
-      "32" : "resident 8600158944 fits"
+      "8" : "streamed 3384902368 refused",
+      "16" : "streamed 6216380128 refused",
+      "24" : "resident 9425388256 fits",
+      "32" : "resident 9425388256 fits"
     },
     "translategemma/translategemma-12b-it" : {
       "8" : "streamed 3752942816 refused",
@@ -1898,10 +1898,10 @@
       "32" : "streamed 18098478304 fits"
     },
     "translategemma/translategemma-27b-it" : {
-      "8" : "streamed 5316986080 refused",
-      "16" : "streamed 5316986080 fits",
-      "24" : "streamed 10271768800 fits",
-      "32" : "streamed 17703942880 fits"
+      "8" : "streamed 7891240160 refused",
+      "16" : "streamed 7891240160 refused",
+      "24" : "streamed 12846022880 refused",
+      "32" : "streamed 20278196960 refused"
     },
     "trellis-image-large/default" : {
       "8" : "staged 6858156913 refused",
@@ -1928,88 +1928,88 @@
       "32" : "resident 10926728524 fits"
     },
     "triposr/default" : {
-      "8" : "resident 1677246742 fits",
-      "16" : "resident 1677246742 fits",
-      "24" : "resident 1677246742 fits",
-      "32" : "resident 1677246742 fits"
+      "8" : "resident 4149788950 refused",
+      "16" : "resident 4149788950 fits",
+      "24" : "resident 4149788950 fits",
+      "32" : "resident 4149788950 fits"
     },
     "trocr-base-handwritten/default" : {
-      "8" : "resident 1333324800 fits",
-      "16" : "resident 1333324800 fits",
-      "24" : "resident 1333324800 fits",
-      "32" : "resident 1333324800 fits"
+      "8" : "resident 1955130368 fits",
+      "16" : "resident 1955130368 fits",
+      "24" : "resident 1955130368 fits",
+      "32" : "resident 1955130368 fits"
     },
     "trocr-base-printed/default" : {
-      "8" : "resident 1333324800 fits",
-      "16" : "resident 1333324800 fits",
-      "24" : "resident 1333324800 fits",
-      "32" : "resident 1333324800 fits"
+      "8" : "resident 1955130368 fits",
+      "16" : "resident 1955130368 fits",
+      "24" : "resident 1955130368 fits",
+      "32" : "resident 1955130368 fits"
     },
     "trocr-base-stage1/default" : {
-      "8" : "resident 1537096708 fits",
-      "16" : "resident 1537096708 fits",
-      "24" : "resident 1537096708 fits",
-      "32" : "resident 1537096708 fits"
+      "8" : "resident 2158902276 fits",
+      "16" : "resident 2158902276 fits",
+      "24" : "resident 2158902276 fits",
+      "32" : "resident 2158902276 fits"
     },
     "trocr-base-str/default" : {
-      "8" : "resident 1335844033 fits",
-      "16" : "resident 1335844033 fits",
-      "24" : "resident 1335844033 fits",
-      "32" : "resident 1335844033 fits"
+      "8" : "resident 1957649601 fits",
+      "16" : "resident 1957649601 fits",
+      "24" : "resident 1957649601 fits",
+      "32" : "resident 1957649601 fits"
     },
     "trocr-large-handwritten/default" : {
-      "8" : "resident 2228955405 fits",
-      "16" : "resident 2228955405 fits",
-      "24" : "resident 2228955405 fits",
-      "32" : "resident 2228955405 fits"
+      "8" : "resident 3159042317 refused",
+      "16" : "resident 3159042317 fits",
+      "24" : "resident 3159042317 fits",
+      "32" : "resident 3159042317 fits"
     },
     "trocr-large-printed/default" : {
-      "8" : "resident 2432479236 fits",
-      "16" : "resident 2432479236 fits",
-      "24" : "resident 2432479236 fits",
-      "32" : "resident 2432479236 fits"
+      "8" : "resident 3362566148 refused",
+      "16" : "resident 3362566148 fits",
+      "24" : "resident 3362566148 fits",
+      "32" : "resident 3362566148 fits"
     },
     "trocr-large-stage1/default" : {
-      "8" : "resident 2432479236 fits",
-      "16" : "resident 2432479236 fits",
-      "24" : "resident 2432479236 fits",
-      "32" : "resident 2432479236 fits"
+      "8" : "resident 3362566148 refused",
+      "16" : "resident 3362566148 fits",
+      "24" : "resident 3362566148 fits",
+      "32" : "resident 3362566148 fits"
     },
     "trocr-large-str/default" : {
-      "8" : "resident 2233113673 fits",
-      "16" : "resident 2233113673 fits",
-      "24" : "resident 2233113673 fits",
-      "32" : "resident 2233113673 fits"
+      "8" : "resident 3163200585 refused",
+      "16" : "resident 3163200585 fits",
+      "24" : "resident 3163200585 fits",
+      "32" : "resident 3163200585 fits"
     },
     "trocr-small-handwritten/default" : {
-      "8" : "resident 245933041 fits",
-      "16" : "resident 245933041 fits",
-      "24" : "resident 245933041 fits",
-      "32" : "resident 245933041 fits"
+      "8" : "resident 452502513 fits",
+      "16" : "resident 452502513 fits",
+      "24" : "resident 452502513 fits",
+      "32" : "resident 452502513 fits"
     },
     "trocr-small-printed/default" : {
-      "8" : "resident 245795328 fits",
-      "16" : "resident 245795328 fits",
-      "24" : "resident 245795328 fits",
-      "32" : "resident 245795328 fits"
+      "8" : "resident 452364800 fits",
+      "16" : "resident 452364800 fits",
+      "24" : "resident 452364800 fits",
+      "32" : "resident 452364800 fits"
     },
     "trocr-small-stage1/default" : {
-      "8" : "resident 245933041 fits",
-      "16" : "resident 245933041 fits",
-      "24" : "resident 245933041 fits",
-      "32" : "resident 245933041 fits"
+      "8" : "resident 452502513 fits",
+      "16" : "resident 452502513 fits",
+      "24" : "resident 452502513 fits",
+      "32" : "resident 452502513 fits"
     },
     "u2net/default" : {
-      "8" : "resident 176290937 fits",
-      "16" : "resident 176290937 fits",
-      "24" : "resident 176290937 fits",
-      "32" : "resident 176290937 fits"
+      "8" : "resident 2991717497 refused",
+      "16" : "resident 2991717497 fits",
+      "24" : "resident 2991717497 fits",
+      "32" : "resident 2991717497 fits"
     },
     "vad-marblenet/v2.0" : {
-      "8" : "resident 501760 fits",
-      "16" : "resident 501760 fits",
-      "24" : "resident 501760 fits",
-      "32" : "resident 501760 fits"
+      "8" : "resident 53979136 fits",
+      "16" : "resident 53979136 fits",
+      "24" : "resident 53979136 fits",
+      "32" : "resident 53979136 fits"
     },
     "video-super-resolution-clip/default" : {
       "8" : "resident 25229171 fits",
@@ -2024,82 +2024,82 @@
       "32" : "resident 25229171 fits"
     },
     "vitpose-base-simple/default" : {
-      "8" : "resident 343649348 fits",
-      "16" : "resident 343649348 fits",
-      "24" : "resident 343649348 fits",
-      "32" : "resident 343649348 fits"
+      "8" : "resident 626764868 fits",
+      "16" : "resident 626764868 fits",
+      "24" : "resident 626764868 fits",
+      "32" : "resident 626764868 fits"
     },
     "vitpose-base/default" : {
-      "8" : "resident 359982164 fits",
-      "16" : "resident 359982164 fits",
-      "24" : "resident 359982164 fits",
-      "32" : "resident 359982164 fits"
+      "8" : "resident 604300372 fits",
+      "16" : "resident 604300372 fits",
+      "24" : "resident 604300372 fits",
+      "32" : "resident 604300372 fits"
     },
     "vjepa2-vitg-fpc32-384-diving48/default" : {
-      "8" : "resident 4511487680 refused",
-      "16" : "resident 4511487680 fits",
-      "24" : "resident 4511487680 fits",
-      "32" : "resident 4511487680 fits"
+      "8" : "resident 5329376960 refused",
+      "16" : "resident 5329376960 fits",
+      "24" : "resident 5329376960 fits",
+      "32" : "resident 5329376960 fits"
     },
     "vjepa2-vitg-fpc64-256/default" : {
-      "8" : "resident 4138221056 refused",
-      "16" : "resident 4138221056 fits",
-      "24" : "resident 4138221056 fits",
-      "32" : "resident 4138221056 fits"
+      "8" : "resident 4623711744 refused",
+      "16" : "resident 4623711744 fits",
+      "24" : "resident 4623711744 fits",
+      "32" : "resident 4623711744 fits"
     },
     "vjepa2-vitg-fpc64-384-ssv2/default" : {
-      "8" : "resident 4512197816 refused",
-      "16" : "resident 4512197816 fits",
-      "24" : "resident 4512197816 fits",
-      "32" : "resident 4512197816 fits"
+      "8" : "resident 5330087096 refused",
+      "16" : "resident 5330087096 fits",
+      "24" : "resident 5330087096 fits",
+      "32" : "resident 5330087096 fits"
     },
     "vjepa2-vitg-fpc64-384/default" : {
-      "8" : "resident 4138221056 refused",
-      "16" : "resident 4138221056 fits",
-      "24" : "resident 4138221056 fits",
-      "32" : "resident 4138221056 fits"
+      "8" : "resident 4956110336 refused",
+      "16" : "resident 4956110336 fits",
+      "24" : "resident 4956110336 fits",
+      "32" : "resident 4956110336 fits"
     },
     "vjepa2-vith-fpc64-256/default" : {
-      "8" : "resident 2615723520 refused",
-      "16" : "resident 2615723520 fits",
-      "24" : "resident 2615723520 fits",
-      "32" : "resident 2615723520 fits"
+      "8" : "resident 3049833984 refused",
+      "16" : "resident 3049833984 fits",
+      "24" : "resident 3049833984 fits",
+      "32" : "resident 3049833984 fits"
     },
     "vjepa2-vitl-fpc16-256-ssv2/default" : {
-      "8" : "resident 1501943992 fits",
-      "16" : "resident 1501943992 fits",
-      "24" : "resident 1501943992 fits",
-      "32" : "resident 1501943992 fits"
+      "8" : "resident 1850071224 fits",
+      "16" : "resident 1850071224 fits",
+      "24" : "resident 1850071224 fits",
+      "32" : "resident 1850071224 fits"
     },
     "vjepa2-vitl-fpc32-256-diving48/default" : {
-      "8" : "resident 1501427392 fits",
-      "16" : "resident 1501427392 fits",
-      "24" : "resident 1501427392 fits",
-      "32" : "resident 1501427392 fits"
+      "8" : "resident 1850603200 fits",
+      "16" : "resident 1850603200 fits",
+      "24" : "resident 1850603200 fits",
+      "32" : "resident 1850603200 fits"
     },
     "vjepa2-vitl-fpc64-256/default" : {
-      "8" : "resident 1303885312 fits",
-      "16" : "resident 1303885312 fits",
-      "24" : "resident 1303885312 fits",
-      "32" : "resident 1303885312 fits"
+      "8" : "resident 1653061120 fits",
+      "16" : "resident 1653061120 fits",
+      "24" : "resident 1653061120 fits",
+      "32" : "resident 1653061120 fits"
     },
     "voicerestore/voicerestore" : {
-      "8" : "resident 1654533801 fits",
-      "16" : "resident 1654533801 fits",
-      "24" : "resident 1654533801 fits",
-      "32" : "resident 1654533801 fits"
+      "8" : "resident 10849496745 refused",
+      "16" : "resident 10849496745 refused",
+      "24" : "resident 10849496745 refused",
+      "32" : "resident 10849496745 fits"
     },
     "voxtral-mini-3b/2507" : {
-      "8" : "resident 9356382208 refused",
-      "16" : "resident 9356382208 refused",
-      "24" : "resident 9356382208 fits",
-      "32" : "resident 9356382208 fits"
+      "8" : "resident 12206411776 refused",
+      "16" : "resident 12206411776 refused",
+      "24" : "resident 12206411776 refused",
+      "32" : "resident 12206411776 fits"
     },
     "w2v-bert-2.0/2.0" : {
-      "8" : "resident 2321972480 fits",
-      "16" : "resident 2321972480 fits",
-      "24" : "resident 2321972480 fits",
-      "32" : "resident 2321972480 fits"
+      "8" : "resident 3637935360 refused",
+      "16" : "resident 3637935360 fits",
+      "24" : "resident 3637935360 fits",
+      "32" : "resident 3637935360 fits"
     },
     "wan/default" : {
       "8" : "staged 11361820672 refused",
@@ -2144,316 +2144,316 @@
       "32" : "staged 22817905520 refused"
     },
     "wav2vec2-base-960h/wav2vec2-base-960h" : {
-      "8" : "resident 377582208 fits",
-      "16" : "resident 377582208 fits",
-      "24" : "resident 377582208 fits",
-      "32" : "resident 377582208 fits"
+      "8" : "resident 2319544960 fits",
+      "16" : "resident 2319544960 fits",
+      "24" : "resident 2319544960 fits",
+      "32" : "resident 2319544960 fits"
     },
     "wav2vec2-base/wav2vec2-base" : {
-      "8" : "resident 380267417 fits",
-      "16" : "resident 380267417 fits",
-      "24" : "resident 380267417 fits",
-      "32" : "resident 380267417 fits"
+      "8" : "resident 2322230169 fits",
+      "16" : "resident 2322230169 fits",
+      "24" : "resident 2322230169 fits",
+      "32" : "resident 2322230169 fits"
     },
     "wav2vec2-large-960h-lv60-self/wav2vec2-large-960h-lv60-self" : {
-      "8" : "resident 1262055246 fits",
-      "16" : "resident 1262055246 fits",
-      "24" : "resident 1262055246 fits",
-      "32" : "resident 1262055246 fits"
+      "8" : "resident 3213455182 refused",
+      "16" : "resident 3213455182 fits",
+      "24" : "resident 3213455182 fits",
+      "32" : "resident 3213455182 fits"
     },
     "wav2vec2-large-960h/wav2vec2-large-960h" : {
-      "8" : "resident 1262009187 fits",
-      "16" : "resident 1262009187 fits",
-      "24" : "resident 1262009187 fits",
-      "32" : "resident 1262009187 fits"
+      "8" : "resident 3145251683 refused",
+      "16" : "resident 3145251683 fits",
+      "24" : "resident 3145251683 fits",
+      "32" : "resident 3145251683 fits"
     },
     "wav2vec2-large-lv60/wav2vec2-large-lv60" : {
-      "8" : "resident 1269737156 fits",
-      "16" : "resident 1269737156 fits",
-      "24" : "resident 1269737156 fits",
-      "32" : "resident 1269737156 fits"
+      "8" : "resident 3221137092 refused",
+      "16" : "resident 3221137092 fits",
+      "24" : "resident 3221137092 fits",
+      "32" : "resident 3221137092 fits"
     },
     "wav2vec2-large-xlsr-53/wav2vec2-large-xlsr-53" : {
-      "8" : "resident 1269737156 fits",
-      "16" : "resident 1269737156 fits",
-      "24" : "resident 1269737156 fits",
-      "32" : "resident 1269737156 fits"
+      "8" : "resident 3221137092 refused",
+      "16" : "resident 3221137092 fits",
+      "24" : "resident 3221137092 fits",
+      "32" : "resident 3221137092 fits"
     },
     "wav2vec2-xls-r-1b/wav2vec2-xls-r-1b" : {
-      "8" : "resident 3862391172 refused",
-      "16" : "resident 3862391172 fits",
-      "24" : "resident 3862391172 fits",
-      "32" : "resident 3862391172 fits"
+      "8" : "resident 5657553284 refused",
+      "16" : "resident 5657553284 refused",
+      "24" : "resident 5657553284 fits",
+      "32" : "resident 5657553284 fits"
     },
     "wav2vec2-xls-r-2b/wav2vec2-xls-r-2b" : {
-      "8" : "resident 8652066332 refused",
-      "16" : "resident 8652066332 refused",
-      "24" : "resident 8652066332 fits",
-      "32" : "resident 8652066332 fits"
+      "8" : "resident 11289234972 refused",
+      "16" : "resident 11289234972 refused",
+      "24" : "resident 11289234972 refused",
+      "32" : "resident 11289234972 fits"
     },
     "wav2vec2-xls-r-300m/wav2vec2-xls-r-300m" : {
-      "8" : "resident 1269737156 fits",
-      "16" : "resident 1269737156 fits",
-      "24" : "resident 1269737156 fits",
-      "32" : "resident 1269737156 fits"
+      "8" : "resident 3221137092 refused",
+      "16" : "resident 3221137092 fits",
+      "24" : "resident 3221137092 fits",
+      "32" : "resident 3221137092 fits"
     },
     "whisper-base/base" : {
-      "8" : "resident 145262807 fits",
-      "16" : "resident 145262807 fits",
-      "24" : "resident 145262807 fits",
-      "32" : "resident 145262807 fits"
+      "8" : "resident 1127778519 fits",
+      "16" : "resident 1127778519 fits",
+      "24" : "resident 1127778519 fits",
+      "32" : "resident 1127778519 fits"
     },
     "whisper-large-v1/large-v1" : {
-      "8" : "resident 3086999982 refused",
-      "16" : "resident 3086999982 fits",
-      "24" : "resident 3086999982 fits",
-      "32" : "resident 3086999982 fits"
+      "8" : "resident 5098168750 refused",
+      "16" : "resident 5098168750 fits",
+      "24" : "resident 5098168750 fits",
+      "32" : "resident 5098168750 fits"
     },
     "whisper-large-v2/large-v2" : {
-      "8" : "resident 3086999982 refused",
-      "16" : "resident 3086999982 fits",
-      "24" : "resident 3086999982 fits",
-      "32" : "resident 3086999982 fits"
+      "8" : "resident 5098168750 refused",
+      "16" : "resident 5098168750 fits",
+      "24" : "resident 5098168750 fits",
+      "32" : "resident 5098168750 fits"
     },
     "whisper-large-v3-turbo/large-v3-turbo" : {
-      "8" : "resident 1617941637 fits",
-      "16" : "resident 1617941637 fits",
-      "24" : "resident 1617941637 fits",
-      "32" : "resident 1617941637 fits"
+      "8" : "resident 3631207557 refused",
+      "16" : "resident 3631207557 fits",
+      "24" : "resident 3631207557 fits",
+      "32" : "resident 3631207557 fits"
     },
     "whisper-large-v3/large-v3" : {
-      "8" : "resident 3087371615 refused",
-      "16" : "resident 3087371615 fits",
-      "24" : "resident 3087371615 fits",
-      "32" : "resident 3087371615 fits"
+      "8" : "resident 5100637535 refused",
+      "16" : "resident 5100637535 fits",
+      "24" : "resident 5100637535 fits",
+      "32" : "resident 5100637535 fits"
     },
     "whisper-medium/medium" : {
-      "8" : "resident 1528008539 fits",
-      "16" : "resident 1528008539 fits",
-      "24" : "resident 1528008539 fits",
-      "32" : "resident 1528008539 fits"
+      "8" : "resident 3149107035 refused",
+      "16" : "resident 3149107035 fits",
+      "24" : "resident 3149107035 fits",
+      "32" : "resident 3149107035 fits"
     },
     "whisper-small/small" : {
-      "8" : "resident 483617219 fits",
-      "16" : "resident 483617219 fits",
-      "24" : "resident 483617219 fits",
-      "32" : "resident 483617219 fits"
+      "8" : "resident 2316528067 fits",
+      "16" : "resident 2316528067 fits",
+      "24" : "resident 2316528067 fits",
+      "32" : "resident 2316528067 fits"
     },
     "whisper-tiny/tiny" : {
-      "8" : "resident 75572083 fits",
-      "16" : "resident 75572083 fits",
-      "24" : "resident 75572083 fits",
-      "32" : "resident 75572083 fits"
+      "8" : "resident 604054387 fits",
+      "16" : "resident 604054387 fits",
+      "24" : "resident 604054387 fits",
+      "32" : "resident 604054387 fits"
     },
     "yolo/default" : {
-      "8" : "resident 6549796 fits",
-      "16" : "resident 6549796 fits",
-      "24" : "resident 6549796 fits",
-      "32" : "resident 6549796 fits"
+      "8" : "resident 155447588 fits",
+      "16" : "resident 155447588 fits",
+      "24" : "resident 155447588 fits",
+      "32" : "resident 155447588 fits"
     },
     "yolo11l/default" : {
-      "8" : "resident 51387343 fits",
-      "16" : "resident 51387343 fits",
-      "24" : "resident 51387343 fits",
-      "32" : "resident 51387343 fits"
+      "8" : "resident 407903183 fits",
+      "16" : "resident 407903183 fits",
+      "24" : "resident 407903183 fits",
+      "32" : "resident 407903183 fits"
     },
     "yolo11m/default" : {
-      "8" : "resident 40684120 fits",
-      "16" : "resident 40684120 fits",
-      "24" : "resident 40684120 fits",
-      "32" : "resident 40684120 fits"
+      "8" : "resident 378325592 fits",
+      "16" : "resident 378325592 fits",
+      "24" : "resident 378325592 fits",
+      "32" : "resident 378325592 fits"
     },
     "yolo11n/default" : {
-      "8" : "resident 5613764 fits",
-      "16" : "resident 5613764 fits",
-      "24" : "resident 5613764 fits",
-      "32" : "resident 5613764 fits"
+      "8" : "resident 151365828 fits",
+      "16" : "resident 151365828 fits",
+      "24" : "resident 151365828 fits",
+      "32" : "resident 151365828 fits"
     },
     "yolo11s/default" : {
-      "8" : "resident 19313732 fits",
-      "16" : "resident 19313732 fits",
-      "24" : "resident 19313732 fits",
-      "32" : "resident 19313732 fits"
+      "8" : "resident 253146180 fits",
+      "16" : "resident 253146180 fits",
+      "24" : "resident 253146180 fits",
+      "32" : "resident 253146180 fits"
     },
     "yolo11x/default" : {
-      "8" : "resident 114636239 fits",
-      "16" : "resident 114636239 fits",
-      "24" : "resident 114636239 fits",
-      "32" : "resident 114636239 fits"
+      "8" : "resident 623195599 fits",
+      "16" : "resident 623195599 fits",
+      "24" : "resident 623195599 fits",
+      "32" : "resident 623195599 fits"
     },
     "yolo12l/default" : {
-      "8" : "resident 53699086 fits",
-      "16" : "resident 53699086 fits",
-      "24" : "resident 53699086 fits",
-      "32" : "resident 53699086 fits"
+      "8" : "resident 569598478 fits",
+      "16" : "resident 569598478 fits",
+      "24" : "resident 569598478 fits",
+      "32" : "resident 569598478 fits"
     },
     "yolo12m/default" : {
-      "8" : "resident 40904955 fits",
-      "16" : "resident 40904955 fits",
-      "24" : "resident 40904955 fits",
-      "32" : "resident 40904955 fits"
+      "8" : "resident 501229819 fits",
+      "16" : "resident 501229819 fits",
+      "24" : "resident 501229819 fits",
+      "32" : "resident 501229819 fits"
     },
     "yolo12n/default" : {
-      "8" : "resident 5595063 fits",
-      "16" : "resident 5595063 fits",
-      "24" : "resident 5595063 fits",
-      "32" : "resident 5595063 fits"
+      "8" : "resident 170221495 fits",
+      "16" : "resident 170221495 fits",
+      "24" : "resident 170221495 fits",
+      "32" : "resident 170221495 fits"
     },
     "yolo12s/default" : {
-      "8" : "resident 19006455 fits",
-      "16" : "resident 19006455 fits",
-      "24" : "resident 19006455 fits",
-      "32" : "resident 19006455 fits"
+      "8" : "resident 290587639 fits",
+      "16" : "resident 290587639 fits",
+      "24" : "resident 290587639 fits",
+      "32" : "resident 290587639 fits"
     },
     "yolo12x/default" : {
-      "8" : "resident 119322638 fits",
-      "16" : "resident 119322638 fits",
-      "24" : "resident 119322638 fits",
-      "32" : "resident 119322638 fits"
+      "8" : "resident 883734542 fits",
+      "16" : "resident 883734542 fits",
+      "24" : "resident 883734542 fits",
+      "32" : "resident 883734542 fits"
     },
     "yolo26l/default" : {
-      "8" : "resident 53211173 fits",
-      "16" : "resident 53211173 fits",
-      "24" : "resident 53211173 fits",
-      "32" : "resident 53211173 fits"
+      "8" : "resident 409727013 fits",
+      "16" : "resident 409727013 fits",
+      "24" : "resident 409727013 fits",
+      "32" : "resident 409727013 fits"
     },
     "yolo26m/default" : {
-      "8" : "resident 44255705 fits",
-      "16" : "resident 44255705 fits",
-      "24" : "resident 44255705 fits",
-      "32" : "resident 44255705 fits"
+      "8" : "resident 381897177 fits",
+      "16" : "resident 381897177 fits",
+      "24" : "resident 381897177 fits",
+      "32" : "resident 381897177 fits"
     },
     "yolo26n/default" : {
-      "8" : "resident 5544453 fits",
-      "16" : "resident 5544453 fits",
-      "24" : "resident 5544453 fits",
-      "32" : "resident 5544453 fits"
+      "8" : "resident 149199365 fits",
+      "16" : "resident 149199365 fits",
+      "24" : "resident 149199365 fits",
+      "32" : "resident 149199365 fits"
     },
     "yolo26s/default" : {
-      "8" : "resident 20422725 fits",
-      "16" : "resident 20422725 fits",
-      "24" : "resident 20422725 fits",
-      "32" : "resident 20422725 fits"
+      "8" : "resident 252158021 fits",
+      "16" : "resident 252158021 fits",
+      "24" : "resident 252158021 fits",
+      "32" : "resident 252158021 fits"
     },
     "yolo26x/default" : {
-      "8" : "resident 118667365 fits",
-      "16" : "resident 118667365 fits",
-      "24" : "resident 118667365 fits",
-      "32" : "resident 118667365 fits"
+      "8" : "resident 627226725 fits",
+      "16" : "resident 627226725 fits",
+      "24" : "resident 627226725 fits",
+      "32" : "resident 627226725 fits"
     },
     "yolov8l/default" : {
-      "8" : "resident 87792836 fits",
-      "16" : "resident 87792836 fits",
-      "24" : "resident 87792836 fits",
-      "32" : "resident 87792836 fits"
+      "8" : "resident 698064068 fits",
+      "16" : "resident 698064068 fits",
+      "24" : "resident 698064068 fits",
+      "32" : "resident 698064068 fits"
     },
     "yolov8m/default" : {
-      "8" : "resident 52136884 fits",
-      "16" : "resident 52136884 fits",
-      "24" : "resident 52136884 fits",
-      "32" : "resident 52136884 fits"
+      "8" : "resident 393972660 fits",
+      "16" : "resident 393972660 fits",
+      "24" : "resident 393972660 fits",
+      "32" : "resident 393972660 fits"
     },
     "yolov8s/default" : {
-      "8" : "resident 22588772 fits",
-      "16" : "resident 22588772 fits",
-      "24" : "resident 22588772 fits",
-      "32" : "resident 22588772 fits"
+      "8" : "resident 299412836 fits",
+      "16" : "resident 299412836 fits",
+      "24" : "resident 299412836 fits",
+      "32" : "resident 299412836 fits"
     },
     "yolov8x/default" : {
-      "8" : "resident 136890692 fits",
-      "16" : "resident 136890692 fits",
-      "24" : "resident 136890692 fits",
-      "32" : "resident 136890692 fits"
+      "8" : "resident 910739780 fits",
+      "16" : "resident 910739780 fits",
+      "24" : "resident 910739780 fits",
+      "32" : "resident 910739780 fits"
     },
     "yolov9c/default" : {
-      "8" : "resident 51794840 fits",
-      "16" : "resident 51794840 fits",
-      "24" : "resident 51794840 fits",
-      "32" : "resident 51794840 fits"
+      "8" : "resident 559305624 fits",
+      "16" : "resident 559305624 fits",
+      "24" : "resident 559305624 fits",
+      "32" : "resident 559305624 fits"
     },
     "yolov9e/default" : {
-      "8" : "resident 117521038 fits",
-      "16" : "resident 117521038 fits",
-      "24" : "resident 117521038 fits",
-      "32" : "resident 117521038 fits"
+      "8" : "resident 900807310 fits",
+      "16" : "resident 900807310 fits",
+      "24" : "resident 900807310 fits",
+      "32" : "resident 900807310 fits"
     },
     "yolov9m/default" : {
-      "8" : "resident 40993492 fits",
-      "16" : "resident 40993492 fits",
-      "24" : "resident 40993492 fits",
-      "32" : "resident 40993492 fits"
+      "8" : "resident 375489236 fits",
+      "16" : "resident 375489236 fits",
+      "24" : "resident 375489236 fits",
+      "32" : "resident 375489236 fits"
     },
     "yolov9s/default" : {
-      "8" : "resident 15389259 fits",
-      "16" : "resident 15389259 fits",
-      "24" : "resident 15389259 fits",
-      "32" : "resident 15389259 fits"
+      "8" : "resident 195744331 fits",
+      "16" : "resident 195744331 fits",
+      "24" : "resident 195744331 fits",
+      "32" : "resident 195744331 fits"
     },
     "yolov9t/default" : {
-      "8" : "resident 4969803 fits",
-      "16" : "resident 4969803 fits",
-      "24" : "resident 4969803 fits",
-      "32" : "resident 4969803 fits"
+      "8" : "resident 122410315 fits",
+      "16" : "resident 122410315 fits",
+      "24" : "resident 122410315 fits",
+      "32" : "resident 122410315 fits"
     },
     "yolov10b/default" : {
-      "8" : "resident 41679663 fits",
-      "16" : "resident 41679663 fits",
-      "24" : "resident 41679663 fits",
-      "32" : "resident 41679663 fits"
+      "8" : "resident 548141871 fits",
+      "16" : "resident 548141871 fits",
+      "24" : "resident 548141871 fits",
+      "32" : "resident 548141871 fits"
     },
     "yolov10l/default" : {
-      "8" : "resident 52425230 fits",
-      "16" : "resident 52425230 fits",
-      "24" : "resident 52425230 fits",
-      "32" : "resident 52425230 fits"
+      "8" : "resident 657453582 fits",
+      "16" : "resident 657453582 fits",
+      "24" : "resident 657453582 fits",
+      "32" : "resident 657453582 fits"
     },
     "yolov10m/default" : {
-      "8" : "resident 33643667 fits",
-      "16" : "resident 33643667 fits",
-      "24" : "resident 33643667 fits",
-      "32" : "resident 33643667 fits"
+      "8" : "resident 326196371 fits",
+      "16" : "resident 326196371 fits",
+      "24" : "resident 326196371 fits",
+      "32" : "resident 326196371 fits"
     },
     "yolov10n/default" : {
-      "8" : "resident 5860383 fits",
-      "16" : "resident 5860383 fits",
-      "24" : "resident 5860383 fits",
-      "32" : "resident 5860383 fits"
+      "8" : "resident 154758175 fits",
+      "16" : "resident 154758175 fits",
+      "24" : "resident 154758175 fits",
+      "32" : "resident 154758175 fits"
     },
     "yolov10s/default" : {
-      "8" : "resident 16623111 fits",
-      "16" : "resident 16623111 fits",
-      "24" : "resident 16623111 fits",
-      "32" : "resident 16623111 fits"
+      "8" : "resident 260941319 fits",
+      "16" : "resident 260941319 fits",
+      "24" : "resident 260941319 fits",
+      "32" : "resident 260941319 fits"
     },
     "yolov10x/default" : {
-      "8" : "resident 64395854 fits",
-      "16" : "resident 64395854 fits",
-      "24" : "resident 64395854 fits",
-      "32" : "resident 64395854 fits"
+      "8" : "resident 847682126 fits",
+      "16" : "resident 847682126 fits",
+      "24" : "resident 847682126 fits",
+      "32" : "resident 847682126 fits"
     },
     "z-image-base/default" : {
-      "8" : "staged 12477456838 refused",
-      "16" : "staged 12477456838 refused",
-      "24" : "staged 12477456838 refused",
-      "32" : "staged 12477456838 fits"
+      "8" : "staged 20371136966 refused",
+      "16" : "staged 20371136966 refused",
+      "24" : "staged 20371136966 refused",
+      "32" : "staged 20371136966 refused"
     },
     "z-image/default" : {
-      "8" : "staged 12477456838 refused",
-      "16" : "staged 12477456838 refused",
-      "24" : "staged 12477456838 refused",
-      "32" : "staged 12477456838 fits"
+      "8" : "staged 20371136966 refused",
+      "16" : "staged 20371136966 refused",
+      "24" : "staged 20371136966 refused",
+      "32" : "staged 20371136966 refused"
     },
     "zero-dce-plus/default" : {
-      "8" : "resident 52395 fits",
-      "16" : "resident 52395 fits",
-      "24" : "resident 52395 fits",
-      "32" : "resident 52395 fits"
+      "8" : "resident 201378987 fits",
+      "16" : "resident 201378987 fits",
+      "24" : "resident 201378987 fits",
+      "32" : "resident 201378987 fits"
     },
     "zero-dce/default" : {
-      "8" : "resident 320017 fits",
-      "16" : "resident 320017 fits",
-      "24" : "resident 320017 fits",
-      "32" : "resident 320017 fits"
+      "8" : "resident 1825890833 fits",
+      "16" : "resident 1825890833 fits",
+      "24" : "resident 1825890833 fits",
+      "32" : "resident 1825890833 fits"
     }
   },
   "workingSetBytes" : {

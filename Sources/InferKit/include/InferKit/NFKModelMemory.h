@@ -250,10 +250,10 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 	@discussion keyValueByteCountPerToken is the key-value cache one position adds across the layers
 				whose cache grows, at 16 bits per element. boundedKeyValueByteCount is the cache of the
 				layers whose cache stops growing, such as sliding-window layers, at 16 bits per element.
-				loadOverheadByteCount is what a load holds beyond the resident figure for a moment, 0
-				where it is not measured. basis is NFKModelMemoryBasisMeasured or
-				NFKModelMemoryBasisStoredDType. Activation memory, which depends on the request, is not
-				stated: the budget's reserve covers it. Introduced in InferKit 0.4.0.
+				loadOverheadByteCount is what a load, or a request at the default options, holds beyond
+				the resident figure at its peak, 0 where it is not measured. A request at other sizes holds
+				other activations, which the budget's reserve covers. basis is NFKModelMemoryBasisMeasured
+				or NFKModelMemoryBasisStoredDType. Introduced in InferKit 0.4.0.
 */
 @interface NFKModelMemoryFacts : NSObject <NSCopying>
 

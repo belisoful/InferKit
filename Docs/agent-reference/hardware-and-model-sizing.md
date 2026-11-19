@@ -98,6 +98,46 @@ memory at 8, 16, and 24 GB, which is assumed, and the 26.8 GB an M1 Max with 32 
 planner, and `swift run inferkit-catalog tiers --output ../Docs/model-memory-tiers.json` from `InferKitMLX/`
 regenerates it. A diff in the file is the list of entries whose fit changed.
 
+## Load overhead
+
+`loadOverheadBytes` in each variant's memory facts is measured: the larger of the load's transient and a
+reference request's peak at the default options, as `Docs/model-catalog.md` ("The reference request")
+states. `NFKMLXLoadOverheadTests` measures one variant per process from MLX's own peak, and
+`Tools/catalog/overhead.py` plans the runs, drives them, and writes `NFKMLXCatalogLoadOverheads.swift`.
+
+- A stored release from the validation store measures the load and the request. The plan matches a
+  variant's source repository against `Tools/validation-assets/manifest.json`; `--locations` names the
+  releases the manifest does not.
+- A variant without a stored release builds on initial values through the registry, which measures the
+  request alone. Such a network creates its parameters on first use, so its request runs twice and the
+  second run is the one measured.
+- A guard thread ends a run when MLX's active memory passes the cap (18 GiB by default), polling every
+  20 ms. One allocation can carry a run several GiB past the cap. MLX's memory limit makes the scheduler
+  wait and fails no allocation, so it cannot bound the peak.
+- Records live outside `/private/tmp`, which macOS clears of files untouched for a few days.
+
+Measured 2026-11-11 on an M1 Max with 32 GB: 309 variants measured (123 from stored releases, 186 on
+initial values) and 35 that take their family's figure. The median overhead is 1.5 GiB. The largest:
+NU-Wave 2 15.6 GiB (30 s), Granite 4.0-H 1B 14.5 GiB (a 4096-token prefill), Real-ESRGAN ×4 14.5 GiB
+(1024², ×4), MossFormer2 SR 13.3 GiB, Marigold 10.8 GiB, SDXL and its LoRAs 10.6 GiB, HT Demucs 6s 9.8 GiB.
+
+With the figures, the variants refused at their defaults went from 145 / 80 / 41 / 13 to
+248 / 138 / 88 / 40 of 409 at 8 / 16 / 24 / 32 GB.
+
+Twenty variants take no figure because their reference request exceeds a Mac. Their defaults need tiling
+or a shorter input:
+- past the cap on initial values: SwinIR (classical ×2/×3/×4/×8, real-world ×4 M/L, ×4), HAT ×4 and HAT-L ×4,
+  Real-HAT-GAN, video super-resolution and its clip backend, SD inpaint, the SD ×4 upscaler, SGMSE,
+  STORM (28.7 GB at 30 s), and Resemble Enhance stage 2
+- one Metal buffer past the device's 20.1 GB limit: CMGAN (37 GB) and MP-SENet (283 GB) at 30 s, and
+  Nemotron Nano 2 (21 GB) at a 4096-token prefill
+
+Ten stored releases passed the cap with their weights resident and wait for a run at a higher cap: Codestral
+Mamba, SD3, SD3 medium, SD 3.5 large, Qwen-Image 2.1, Wan 2.1 1.3B, Gemma 3n E4B, TranslateGemma 12B,
+Nemotron 3 Nano 4B, and FLUX.2 klein 4B. The releases over 24 GiB at their catalog figures, and the
+families the store holds only as layer cuts or partial directories (DeepSeek V4, LTX-2, Mixtral, Qwen2-MoE,
+Qwen3-MoE, Qwen4-Exp, Sana, Wan 2.2 Animate), are not measured yet.
+
 ## Neural accelerators, and how to measure them
 
 Apple silicon carries matrix units ("NAX" in MLX) from the M5 on. `NFKHardwareProfile` reports
