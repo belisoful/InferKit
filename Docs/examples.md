@@ -4662,7 +4662,7 @@ let tables   = try NFKMLXTableTransformer.backend(directoryURL: tatrDir)       /
 let sa2va    = try NFKMLXSa2VA.backend(directoryURL: sa2vaDir)                 // "sa2va-4b"; image + referring prompt → NFKOutputText and a mask under NFKOutputMask
 
 // Embeddings, video, promptable segmentation
-let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          // result.embedding : [NSNumber]; .vitB16 / .vitL14 / .vitL14At336 too
+let clip    = try NFKMLXCLIP.backend(weightsURL: nil)                          // result.embedding : [NSNumber] for NFKInputImage or NFKInputPrompt; backend(variant:directoryURL:) reads a release's checkpoint and tokenizer; .vitB16 / .vitL14 / .vitL14At336 too
 let siglip2 = try NFKMLXSigLIP2.backend(weightsURL: nil)                       // SigLIP 2: result.embedding (NFKMLXSigLIP2.textEmbedding for text); every release under NFKMLXSigLIP2Variant
 let taesd   = try NFKMLXTAESD.backend(weightsURL: nil)                         // tiny AE: image → latent → image (NFKMLXTAESD.encode/decode for previews)
 let videoSR = try NFKMLXVideoSR.backend(weightsURL: nil)                       // "video-super-resolution"

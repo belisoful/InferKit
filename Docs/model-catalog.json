@@ -2030,15 +2030,23 @@
       "family" : "clip",
       "id" : "clip-vit-b-16",
       "inputModalities" : [
-        "image"
+        "image",
+        "text"
       ],
       "inputs" : [
         {
           "help" : "The image to embed.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
+        },
+        {
+          "help" : "Text to embed into the image's space, read when the request carries no image.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Text",
+          "valueType" : "text"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -2046,6 +2054,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/CLIP/blob/main/LICENSE"
       },
@@ -2057,7 +2066,7 @@
       ],
       "outputs" : [
         {
-          "help" : "The normalized image embedding in CLIP's joint image-text space.",
+          "help" : "The normalized embedding of the image, or of the text, in CLIP's joint image-text space.",
           "key" : "embedding",
           "required" : true,
           "title" : "Embedding",
@@ -2077,18 +2086,18 @@
         "resident"
       ],
       "standIn" : false,
-      "summary" : "An image encoder whose embeddings compare images with each other and with text.",
+      "summary" : "An image and text encoder whose embeddings compare images with each other and with text.",
       "tasks" : [
         "image-embedding"
       ],
       "variants" : [
         {
           "displayName" : "CLIP ViT-B/16",
-          "downloadBytes" : 350837078,
+          "downloadBytes" : 352322840,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
@@ -2098,26 +2107,40 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 49408
           },
           "minimumMemoryBytes" : 825499008,
           "peakBytes" : 350837078,
           "registryName" : "clip-vit-b-16",
           "residentBytes" : 350837078,
-          "residentEstimate" : "stored-dtype",
           "source" : {
             "files" : [
+              {
+                "bytes" : 961143,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
               {
                 "bytes" : 350837078,
                 "optional" : false,
                 "path" : "ViT-B-16.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
-            "requiresConversion" : true,
-            "url" : "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt"
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/clip-vit-base-patch16",
+            "requiresConversion" : false,
+            "revision" : "57c216476eefef5ab752ec549e440a49ae4ae5f3"
           }
         }
       ]
@@ -2128,15 +2151,23 @@
       "family" : "clip",
       "id" : "clip-vit-b-32",
       "inputModalities" : [
-        "image"
+        "image",
+        "text"
       ],
       "inputs" : [
         {
           "help" : "The image to embed.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
+        },
+        {
+          "help" : "Text to embed into the image's space, read when the request carries no image.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Text",
+          "valueType" : "text"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -2144,6 +2175,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/CLIP/blob/main/LICENSE"
       },
@@ -2155,7 +2187,7 @@
       ],
       "outputs" : [
         {
-          "help" : "The normalized image embedding in CLIP's joint image-text space.",
+          "help" : "The normalized embedding of the image, or of the text, in CLIP's joint image-text space.",
           "key" : "embedding",
           "required" : true,
           "title" : "Embedding",
@@ -2175,18 +2207,18 @@
         "resident"
       ],
       "standIn" : false,
-      "summary" : "An image encoder whose embeddings compare images with each other and with text.",
+      "summary" : "An image and text encoder whose embeddings compare images with each other and with text.",
       "tasks" : [
         "image-embedding"
       ],
       "variants" : [
         {
           "displayName" : "CLIP ViT-B/32",
-          "downloadBytes" : 353976522,
+          "downloadBytes" : 355363507,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
@@ -2196,26 +2228,40 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 49408
           },
           "minimumMemoryBytes" : 832885935,
           "peakBytes" : 353976522,
           "registryName" : "clip-vit-b-32",
           "residentBytes" : 353976522,
-          "residentEstimate" : "stored-dtype",
           "source" : {
             "files" : [
+              {
+                "bytes" : 862328,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524657,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
               {
                 "bytes" : 353976522,
                 "optional" : false,
                 "path" : "ViT-B-32.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
-            "requiresConversion" : true,
-            "url" : "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt"
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/clip-vit-base-patch32",
+            "requiresConversion" : false,
+            "revision" : "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268"
           }
         }
       ]
@@ -2226,15 +2272,23 @@
       "family" : "clip",
       "id" : "clip-vit-l-14",
       "inputModalities" : [
-        "image"
+        "image",
+        "text"
       ],
       "inputs" : [
         {
           "help" : "The image to embed.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
+        },
+        {
+          "help" : "Text to embed into the image's space, read when the request carries no image.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Text",
+          "valueType" : "text"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -2242,6 +2296,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/CLIP/blob/main/LICENSE"
       },
@@ -2253,7 +2308,7 @@
       ],
       "outputs" : [
         {
-          "help" : "The normalized image embedding in CLIP's joint image-text space.",
+          "help" : "The normalized embedding of the image, or of the text, in CLIP's joint image-text space.",
           "key" : "embedding",
           "required" : true,
           "title" : "Embedding",
@@ -2273,18 +2328,18 @@
         "resident"
       ],
       "standIn" : false,
-      "summary" : "An image encoder whose embeddings compare images with each other and with text.",
+      "summary" : "An image and text encoder whose embeddings compare images with each other and with text.",
       "tasks" : [
         "image-embedding"
       ],
       "variants" : [
         {
           "displayName" : "CLIP ViT-L/14",
-          "downloadBytes" : 932768134,
+          "downloadBytes" : 934253896,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
@@ -2294,26 +2349,40 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 49408
           },
           "minimumMemoryBytes" : 2194748551,
           "peakBytes" : 932768134,
           "registryName" : "clip-vit-l-14",
           "residentBytes" : 932768134,
-          "residentEstimate" : "stored-dtype",
           "source" : {
             "files" : [
+              {
+                "bytes" : 961143,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
               {
                 "bytes" : 932768134,
                 "optional" : false,
                 "path" : "ViT-L-14.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
-            "requiresConversion" : true,
-            "url" : "https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt"
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/clip-vit-large-patch14",
+            "requiresConversion" : false,
+            "revision" : "32bd64288804d66eefd0ccbe215aa642df71cc41"
           }
         }
       ]
@@ -2324,15 +2393,23 @@
       "family" : "clip",
       "id" : "clip-vit-l-14-336",
       "inputModalities" : [
-        "image"
+        "image",
+        "text"
       ],
       "inputs" : [
         {
           "help" : "The image to embed.",
           "key" : "image",
-          "required" : true,
+          "required" : false,
           "title" : "Image",
           "valueType" : "image"
+        },
+        {
+          "help" : "Text to embed into the image's space, read when the request carries no image.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Text",
+          "valueType" : "text"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -2340,6 +2417,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/CLIP/blob/main/LICENSE"
       },
@@ -2351,7 +2429,7 @@
       ],
       "outputs" : [
         {
-          "help" : "The normalized image embedding in CLIP's joint image-text space.",
+          "help" : "The normalized embedding of the image, or of the text, in CLIP's joint image-text space.",
           "key" : "embedding",
           "required" : true,
           "title" : "Embedding",
@@ -2371,18 +2449,18 @@
         "resident"
       ],
       "standIn" : false,
-      "summary" : "An image encoder whose embeddings compare images with each other and with text.",
+      "summary" : "An image and text encoder whose embeddings compare images with each other and with text.",
       "tasks" : [
         "image-embedding"
       ],
       "variants" : [
         {
           "displayName" : "CLIP ViT-L/14@336px",
-          "downloadBytes" : 934088680,
+          "downloadBytes" : 935475665,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
@@ -2392,26 +2470,40 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 49408
           },
           "minimumMemoryBytes" : 2197855718,
           "peakBytes" : 934088680,
           "registryName" : "clip-vit-l-14-336",
           "residentBytes" : 934088680,
-          "residentEstimate" : "stored-dtype",
           "source" : {
             "files" : [
+              {
+                "bytes" : 862328,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524657,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
               {
                 "bytes" : 934088680,
                 "optional" : false,
                 "path" : "ViT-L-14-336px.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/clip/models/3035c92b350959924f9f00213499208652fc7ea050643e8b385c2dac08641f02/ViT-L-14-336px.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
-            "requiresConversion" : true,
-            "url" : "https://openaipublic.azureedge.net/clip/models/3035c92b350959924f9f00213499208652fc7ea050643e8b385c2dac08641f02/ViT-L-14-336px.pt"
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/clip-vit-large-patch14-336",
+            "requiresConversion" : false,
+            "revision" : "ce19dc912ca5cd21c8a653c79e251e808ccabcd1"
           }
         }
       ]

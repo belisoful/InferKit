@@ -260,6 +260,25 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
         }
     }
 
+    func testEachCLIPReleaseReadsItsTokenizerFromItsRepositoryAndItsCheckpointFromOpenAI() throws {
+        for variant in NFKMLXCatalogImage.clipReleases {
+            let release = NFKMLXCLIP.release(for: variant)
+            let name = NFKMLXCLIP.specs(for: variant).name
+            let descriptor = try XCTUnwrap(entry(name)).descriptor()
+            let source = try XCTUnwrap(descriptor.defaultVariant?.source)
+            XCTAssertEqual(source.kind, NFKModelSourceKindHuggingFace, name)
+            XCTAssertEqual(source.repository, release.repository, name)
+            XCTAssertEqual(source.revision?.count, 40, "\(name) pins a commit")
+            XCTAssertEqual(source.layout, NFKModelSourceLayoutDirectory, name)
+            XCTAssertFalse(source.requiresConversion, "\(name): the native reader loads OpenAI's TorchScript archive")
+            XCTAssertEqual(source.files.map(\.path), NFKMLXCLIP.tokenizerFiles + [release.checkpointName], name)
+            XCTAssertEqual(source.files.last?.url, release.download, name)
+            XCTAssertEqual(source.files.last?.role, NFKModelFileRoleWeights, name)
+            XCTAssertEqual(descriptor.inputs.map(\.key), [NFKInputImage, NFKInputPrompt], name)
+            XCTAssertFalse(descriptor.inputs.contains(where: \.isRequired), "\(name) embeds either input alone")
+        }
+    }
+
     func testSourcesTheLoaderCannotReadAsServedSayWhy() throws {
         let sam31 = try XCTUnwrap(try XCTUnwrap(entry(NFKMLXCatalogImage.sam31Name)).descriptor().defaultVariant?.source)
         XCTAssertTrue(sam31.requiresConversion)

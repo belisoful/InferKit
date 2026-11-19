@@ -363,7 +363,7 @@ let backend = try NFKMLXTableTransformer.backend(directoryURL: dir)
 
 | Model | Entry class | Network | Configuration for the released weights | Registered name / factory | Base backend |
 | --- | --- | --- | --- | --- | --- |
-| CLIP (ViT) | ``NFKMLXCLIP`` | ``NFKMLXCLIPNet`` | ``NFKMLXCLIPVariant`` `.vitB32` / `.vitB16` / `.vitL14` / `.vitL14At336` | `clip-vit-b-32` · `-b-16` · `-l-14` · `-l-14-336` | ``NFKMLXCLIPBackend`` |
+| CLIP (ViT) | ``NFKMLXCLIP`` | ``NFKMLXCLIPNet`` | ``NFKMLXCLIPVariant`` `.vitB32` / `.vitB16` / `.vitL14` / `.vitL14At336` | `clip-vit-b-32` · `-b-16` · `-l-14` · `-l-14-336`; `backend(variant:directoryURL:)` | ``NFKMLXCLIPBackend`` |
 | CLIP probe | ``NFKMLXCLIPProbe`` | linear head over frozen CLIP | trained on device (`trainProbe`) | `clip-probe`; `probeBackend(variant:weightsURL:probeURL:labels:)` | ``NFKMLXCLIPProbeBackend`` |
 | SigLIP 2 | ``NFKMLXSigLIP2`` | `NFKMLXSigLIP2Net` (`NFKSigLIP2VisionNet`, `NFKSigLIP2TextNet`) | ``NFKMLXSigLIP2Variant`` (every fixed-resolution release: base / large / so400m / giant-opt at their patch sizes and resolutions) | `siglip2-base-patch16-224` and each release's own name | ``NFKMLXSigLIP2Backend`` |
 | Qwen3-Embedding-0.6B | ``NFKMLXQwen3Embedding`` | ``NFKMLXLanguageNet`` | ``NFKMLXLanguageConfiguration`` read from `config.json`; ``NFKMLXTextEmbedderConfiguration`` (`.lastToken`, appended `<\|endoftext\|>`, Matryoshka `dimensions`) | `backend(directoryURL:)` | ``NFKMLXTextEmbeddingBackend``; per request: `NFKParameterEmbeddingDimensions` (32–1024) |
@@ -389,8 +389,9 @@ let backend = try NFKMLXTableTransformer.backend(directoryURL: dir)
 | Gemma 4 vision / audio / fusion | ``NFKMLXGemma4ConditionalGeneration`` | ``NFKMLXGemma4VisionNet``, ``NFKMLXGemma4AudioNet``, ``NFKMLXGemma4MultimodalEmbedder``, ``NFKMLXGemmaNet`` | ``NFKMLXGemma4VisionConfiguration`` / ``NFKMLXGemma4AudioConfiguration`` read from the release (`useClippedLinears` on) | `gemma4-multimodal`; `NFKMLXGemmaLanguage.gemmaMultimodalBackend(directoryURL:)` | ``NFKMLXGenerationBackend`` (``NFKMLXGemma4ImageProcessor``, ``NFKMLXGemma4AudioFeatureExtractor``) |
 
 ```swift
-// CLIP ViT-B/32
+// CLIP ViT-B/32 (images; a release directory with its tokenizer embeds prompts too)
 let backend = try NFKMLXCLIP.backend(weightsURL: url)
+let backend = try NFKMLXCLIP.backend(variant: .vitB32, directoryURL: dir)
 // CLIP probe (a saved probe over CLIP; registered as clip-probe)
 let backend = try NFKMLXCLIP.probeBackend(variant: .vitB32, weightsURL: url, probeURL: probeURL, labels: nil)
 // training: let net = try NFKMLXCLIP.network(weightsURL: url), then trainProbe and NFKMLXWeights.save;
@@ -490,6 +491,7 @@ let chain = NFKMLXGemma4ConditionalGeneration(decoder: decoder, visionTower: vis
 ```objc
 // CLIP ViT-B/32
 [NFKMLXCLIP backendWithWeightsURL:url error:&error]
+[NFKMLXCLIP backendWithVariant:NFKMLXCLIPVariantVitB32 directoryURL:dir error:&error]
 // CLIP probe
 [NFKMLXCLIP probeBackendWithVariant:NFKMLXCLIPVariantVitB32 weightsURL:url probeURL:probeURL labels:nil error:&error]
 // SigLIP 2

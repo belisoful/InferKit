@@ -281,6 +281,9 @@ final class MLXModelGalleryExamples: XCTestCase {
         let result = try clip.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(32)]))
         let embedding = try XCTUnwrap(result.embedding, "an L2-normalized image embedding")
         XCTAssertEqual(embedding.count, 512, "ViT-B/32 embedding width")
+        // A prompt embeds into the same space; backend(variant:directoryURL:) reads a release's tokenizer.
+        let text = try clip.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "a photo of a cat"]))
+        XCTAssertEqual(text.embedding?.count, 512, "the text embedding shares the image's width")
 
         // The other vision-transformer releases fit their own variants: ViT-B/16, ViT-L/14, and
         // ViT-L/14@336px, the last two embedding at 768.

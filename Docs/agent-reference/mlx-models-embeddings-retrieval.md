@@ -10,12 +10,24 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   Reference parity on both towers against transformers' `CLIPModel` (image cosine 0.9999965,
   **text cosine 0.9999999999988** — the text record carries the reference's own token ids, since the
   port embeds ids rather than text).
-  `NFKMLXCLIPBackend` reads `NFKInputImage` → embedding under the new core key `NFKOutputEmbedding`; a
-  text prompt encodes when a tokenizer is supplied (byte-level-BPE vocab is a load-time artifact — a
-  caller can pass token ids through `encodeText`). The factories and the registry build without one, so
-  their backends declare `NFKInputImage` alone and the catalog entries list the image as the one required
-  input; `NFKMLXCLIPTests.testEachRegisteredReleaseEmbedsEveryInputItsCatalogEntryLists` holds the two
-  together on initial weights. `+register` under `clip-vit-b-32`, and the other
+  `NFKMLXCLIPBackend` reads `NFKInputImage` → embedding under the new core key `NFKOutputEmbedding`, and
+  `NFKInputPrompt` → the text embedding in the same space when it holds a tokenizer (an image wins when a
+  request carries both). The tokenizer is the release's Hugging Face `vocab.json` and `merges.txt` read
+  through `NFKMLXSDPromptTokenizer` (the core's CLIP BPE: the start marker, the prompt, the end marker,
+  padded with it to 77). `backendWithVariant:directoryURL:` reads a directory holding a checkpoint and
+  the tokenizer; `backendWithVariant:weightsURL:tokenizerDirectoryURL:` takes the two apart; a checkpoint
+  file alone embeds images. Initial weights (a nil URL) read a prompt one token per UTF-8 byte
+  (`NFKMLXCLIP.byteTokens`), so a weight-free build runs and measures the text tower. The catalog source
+  follows Whisper's: each release's `openai/clip-vit-*` repository at a pinned commit for the tokenizer,
+  with OpenAI's `.pt` as a URL file the native TorchScript reader loads (no conversion), and the registry
+  finds that `.pt` by its release name beside the snapshot or in the cache that holds it
+  (`NFKMLXDownload.cachedURLFile`). By name because `openai/clip-vit-large-patch14`'s snapshot also
+  holds TRELLIS's transformers `model.safetensors`. The four repositories' `vocab.json` and `merges.txt`
+  differ in size (formatting); the prompt test reads FLUX.1's CLIP-L tokenizer
+  (`IK_VAL_CLIP_TOKENIZER`). `NFKMLXCLIPTests.testEachRegisteredReleaseEmbedsEveryInputItsCatalogEntryLists`
+  runs every listed input through each registered size on initial weights, and
+  `testCLIPRegisteredBackendEmbedsTheReferencePrompt` holds a registry build from a release directory to
+  the reference's prompt tokens and its text embedding. `+register` under `clip-vit-b-32`, and the other
   released towers under `clip-vit-b-16` / `-l-14` / `-l-14-336` (`NFKMLXCLIPVariant`: `.vitB16`,
   `.vitL14` — vision 1024 wide, 24 blocks, 16 heads, embedding 768, text 768 / 12 / 12 — and
   `.vitL14At336`); B/16 and L/14 load their released checkpoints strictly and return unit embeddings,

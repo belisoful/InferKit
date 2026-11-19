@@ -1390,23 +1390,8 @@ public final class NFKMLXWhisper: NSObject {
         guard let download else {
             throw NFKMLXError.weightsMismatch("no Whisper checkpoint in \(directory.path)")
         }
-        // The cache keeps a repository's snapshot at <cache>/<org>/<name>/<revision>.
-        var roots = [URL]()
-        if let repository {
-            var root = directory.deletingLastPathComponent()
-            for _ in repository.split(separator: "/") { root = root.deletingLastPathComponent() }
-            roots.append(root)
-        }
-        roots.append(NFKHFHub.defaultCacheDirectoryURL())
-        let source = NFKModelSource(kind: NFKModelSourceKindURL, repository: nil, revision: nil, url: download,
-                                    layout: NFKModelSourceLayoutFile,
-                                    files: [NFKModelFile(path: download.lastPathComponent, role: NFKModelFileRoleWeights)],
-                                    requiresConversion: false, extensions: nil)
-        for root in roots {
-            let status = NFKHFHub(cacheDirectoryURL: root).downloadStatus(source: source)
-            if status.presence == .complete, let local = status.localURL {
-                return local
-            }
+        if let local = NFKMLXDownload.cachedURLFile(download, besideSnapshot: directory, repository: repository) {
+            return local
         }
         throw NFKMLXError.weightsMismatch("the Whisper checkpoint \(download.lastPathComponent) is not downloaded")
     }

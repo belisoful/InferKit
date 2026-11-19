@@ -6449,6 +6449,47 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(similarity, 0.99, "the text tower matches the reference implementation")
     }
 
+    // The registered model built as the catalog lays its release out (OpenAI's TorchScript checkpoint under
+    // its release name, beside the tokenizer files) tokenizes the record's prompt to the reference's ids and
+    // embeds it as the text tower does from those ids.
+    func testCLIPRegisteredBackendEmbedsTheReferencePrompt() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_CLIP_TEXT"] else { throw XCTSkip("set IK_PARITY_CLIP_TEXT") }
+        guard let tokenizerPath = config["IK_VAL_CLIP_TOKENIZER"] else { throw XCTSkip("set IK_VAL_CLIP_TOKENIZER") }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let referenceTokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceOutput = try XCTUnwrap(arrays["output"]).asArray(Float.self).map(Double.init)
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("clip-release-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let checkpoint = try weights("IK_RAW_CLIP")
+        try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent(NFKMLXCLIP.release(for: .vitB32).checkpointName),
+                                                   withDestinationURL: checkpoint)
+        for name in NFKMLXCLIP.tokenizerFiles {
+            try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent(name),
+                                                       withDestinationURL: URL(fileURLWithPath: tokenizerPath).appendingPathComponent(name))
+        }
+
+        let prompt = "a photograph of a dog running on grass"
+        XCTAssertEqual(try NFKMLXCLIP.tokenizer(in: directory).tokens(for: prompt, contextLength: 77), referenceTokens,
+                       "the tokenizer reads the prompt as the reference's CLIPTokenizer does")
+        NFKMLXCLIP.register()
+        let backend = try NFKMLXModelRegistry.backend(named: NFKMLXCLIP.modelName, weightsURL: directory)
+        XCTAssertEqual(backend.supportedInputKeys, [NFKInputImage, NFKInputPrompt])
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: prompt]))
+        let ours = try XCTUnwrap(result.embedding).map(\.doubleValue)
+
+        let net = NFKMLXCLIPNet(.base)
+        try NFKMLXCLIP.loadWeights(into: net, from: checkpoint)
+        let fromIds = net.encodeText(referenceTokens)
+        eval(fromIds)
+        XCTAssertEqual(ours, fromIds.asArray(Float.self).map(Double.init), "the backend embeds the ids the text tower embeds")
+        let similarity = cosine(ours, referenceOutput)
+        print("VALIDATION PARITY clip-prompt: cosine \(similarity)")
+        XCTAssertGreaterThan(similarity, 0.999999, "the prompt's embedding matches the reference's")
+    }
+
     // MARK: BiSeNet
 
     // Segmentation logits against CoinCheung's own BiSeNetV1 on the released Cityscapes weights.

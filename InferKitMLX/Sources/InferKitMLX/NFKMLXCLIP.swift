@@ -365,9 +365,9 @@ private final class NFKCLIPHolder: @unchecked Sendable {
 }
 
 /// A CLIP embedding backend. An image under `NFKInputImage` encodes to an embedding under
-/// `NFKOutputEmbedding`. A text prompt encodes when a `tokenizer` is supplied (text → token ids); the
-/// byte-level-BPE vocabulary is a load-time artifact, so a caller that tokenizes elsewhere passes the
-/// ids through `encodeText`.
+/// `NFKOutputEmbedding`. A prompt under `NFKInputPrompt` encodes into the same space when the backend
+/// holds a tokenizer: a release directory's `vocab.json` and `merges.txt`, or the byte stand-in a build
+/// on initial weights reads. A request that carries both embeds the image.
 @objc(NFKMLXCLIPBackend)
 public final class NFKMLXCLIPBackend: NSObject, NFKInferenceBackend {
 
@@ -479,10 +479,11 @@ public final class NFKMLXCLIP: NSObject {
         }
     }
 
-    /// Builds a CLIP image-embedding backend directly from optional local weights — no registry
-    /// required. A nil `weightsURL` builds random weights (`isReady` is true). The text path needs a
-    /// tokenizer, so this factory serves image embedding; a Swift caller adds a tokenizer through
-    /// `NFKMLXCLIPBackend`. Run inference off the render thread.
+    /// Builds a CLIP ViT-B/32 backend directly from optional local weights — no registry required.
+    /// A checkpoint file builds an image embedder; ``backend(variant:directoryURL:)`` and
+    /// ``backend(variant:weightsURL:tokenizerDirectoryURL:)`` add the tokenizer that embeds a prompt. A nil
+    /// `weightsURL` builds initial weights, which embed an image, and a prompt read one token per UTF-8
+    /// byte. Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
         try backend(variant: .vitB32, weightsURL: weightsURL)
@@ -493,12 +494,142 @@ public final class NFKMLXCLIP: NSObject {
     /// - Since: InferKit 0.3.1
     @objc(backendWithVariant:weightsURL:error:)
     public static func backend(variant: NFKMLXCLIPVariant, weightsURL: URL?) throws -> any NFKInferenceBackend {
+        try build(variant: variant, weightsURL: weightsURL, tokenizer: nil)
+    }
+
+    /// Builds a released size from local weights and the tokenizer files in `tokenizerDirectoryURL`
+    /// (`vocab.json` and `merges.txt`, as each `openai/clip-vit-*` Hugging Face repository serves them),
+    /// so the backend embeds a prompt under `NFKInputPrompt` into the space it embeds an image in. A nil
+    /// `weightsURL` builds initial weights.
+    ///
+    /// - Since: InferKit 0.4.0
+    @objc(backendWithVariant:weightsURL:tokenizerDirectoryURL:error:)
+    public static func backend(variant: NFKMLXCLIPVariant, weightsURL: URL?,
+                               tokenizerDirectoryURL: URL) throws -> any NFKInferenceBackend {
+        try build(variant: variant, weightsURL: weightsURL, tokenizer: tokenizer(in: tokenizerDirectoryURL))
+    }
+
+    /// Builds a released size from a release directory: its checkpoint (OpenAI's `.pt`, or a
+    /// `.safetensors` conversion of it) and its tokenizer (`vocab.json` and `merges.txt`). The backend
+    /// embeds an image and a prompt.
+    ///
+    /// - Since: InferKit 0.4.0
+    @objc(backendWithVariant:directoryURL:error:)
+    public static func backend(variant: NFKMLXCLIPVariant, directoryURL: URL) throws -> any NFKInferenceBackend {
+        guard let weights = checkpoint(in: directoryURL) else {
+            throw NFKMLXError.weightsMismatch("no CLIP checkpoint in \(directoryURL.path)")
+        }
+        return try build(variant: variant, weightsURL: weights, tokenizer: tokenizer(in: directoryURL))
+    }
+
+    /// Builds a released size as the registry does from what `location` holds.
+    ///
+    /// - A directory reads its tokenizer, and OpenAI's checkpoint by its release name: in the directory,
+    ///   else where the model cache holding the directory keeps the download, else where the default cache
+    ///   keeps it. The catalog's source is the release's Hugging Face repository with the checkpoint as a
+    ///   URL file, so the build finds both. The name matters because the repository's snapshot can also
+    ///   hold the transformers `model.safetensors` another model downloads, whose names this net does not
+    ///   read.
+    /// - A file is the checkpoint, without a tokenizer.
+    /// - nil builds initial weights.
+    static func catalogBackend(variant: NFKMLXCLIPVariant, location: URL?) throws -> any NFKInferenceBackend {
+        guard let location else {
+            return try build(variant: variant, weightsURL: nil, tokenizer: nil)
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: location.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return try build(variant: variant, weightsURL: location, tokenizer: nil)
+        }
+        let published = release(for: variant)
+        let named = location.appendingPathComponent(published.checkpointName)
+        let local = FileManager.default.fileExists(atPath: named.path) ? named : nil
+        guard let weights = local ?? NFKMLXDownload.cachedURLFile(published.download, besideSnapshot: location,
+                                                                  repository: published.repository) else {
+            throw NFKMLXError.weightsMismatch("the CLIP checkpoint \(published.checkpointName) is not downloaded")
+        }
+        return try build(variant: variant, weightsURL: weights, tokenizer: tokenizer(in: location))
+    }
+
+    /// The backend of a released size over `weightsURL`, or initial weights when nil. A tokenizer embeds
+    /// prompts; without one, initial weights read a prompt through ``byteTokens(_:configuration:)`` and a
+    /// checkpoint embeds images alone.
+    static func build(variant: NFKMLXCLIPVariant, weightsURL: URL?,
+                      tokenizer: NFKMLXSDPromptTokenizer?) throws -> NFKMLXCLIPBackend {
         let spec = specs(for: variant)
         let net = NFKMLXCLIPNet(spec.configuration)
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
-        return NFKMLXCLIPBackend(net: net, identifier: spec.name)
+        let configuration = spec.configuration
+        let contextLength = configuration.contextLength
+        var tokens: (@Sendable (String) -> [Int])?
+        if let tokenizer {
+            tokens = { tokenizer.tokens(for: $0, contextLength: contextLength) }
+        } else if weightsURL == nil {
+            tokens = { NFKMLXCLIP.byteTokens($0, configuration: configuration) }
+        }
+        return NFKMLXCLIPBackend(net: net, identifier: spec.name, tokenizer: tokens)
+    }
+
+    /// The tokenizer files a release directory holds beside its checkpoint.
+    static let tokenizerFiles = ["vocab.json", "merges.txt"]
+
+    /// The CLIP tokenizer `directory`'s `vocab.json` and `merges.txt` spell.
+    static func tokenizer(in directory: URL) throws -> NFKMLXSDPromptTokenizer {
+        for name in tokenizerFiles where !FileManager.default.fileExists(atPath: directory.appendingPathComponent(name).path) {
+            throw NFKMLXError.weightsMismatch("no CLIP tokenizer \(name) in \(directory.path)")
+        }
+        return try NFKMLXSDPromptTokenizer(directoryURL: directory)
+    }
+
+    /// The checkpoint a release directory holds: a `.pt` or a `.safetensors` file, the first by name.
+    static func checkpoint(in directory: URL) -> URL? {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return names.sorted().first { $0.hasSuffix(".pt") || $0.hasSuffix(".safetensors") }
+            .map { directory.appendingPathComponent($0) }
+    }
+
+    /// The token ids a build on initial weights reads a prompt as: the vocabulary's second-to-last id as
+    /// the start marker, each UTF-8 byte as its own id below it, then the last id as the end marker,
+    /// padded with it to the context length. Initial weights hold no trained vocabulary, so the mapping
+    /// only has to run the text tower as a release's tokenizer does.
+    static func byteTokens(_ prompt: String, configuration: NFKMLXCLIPConfiguration) -> [Int] {
+        let end = configuration.vocabularySize - 1
+        let start = end - 1
+        let body = prompt.utf8.prefix(configuration.contextLength - 2).map { Int($0) % start }
+        let ids = [start] + body + [end]
+        return ids + Array(repeating: end, count: configuration.contextLength - ids.count)
+    }
+
+    /// A released checkpoint: OpenAI's download, and the Hugging Face repository and commit whose
+    /// tokenizer files read its prompts.
+    struct Release {
+        let displayName: String
+        let download: URL
+        let repository: String
+        let revision: String
+        var checkpointName: String { download.lastPathComponent }
+    }
+
+    /// The release a size builds.
+    static func release(for variant: NFKMLXCLIPVariant) -> Release {
+        func make(_ displayName: String, _ address: String, _ repository: String, _ revision: String) -> Release {
+            Release(displayName: displayName, download: URL(string: address)!, repository: repository, revision: revision)
+        }
+        switch variant {
+        case .vitB32:
+            return make("CLIP ViT-B/32", "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt",
+                        "openai/clip-vit-base-patch32", "3d74acf9a28c67741b2f4f2ea7635f0aaf6f0268")
+        case .vitB16:
+            return make("CLIP ViT-B/16", "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt",
+                        "openai/clip-vit-base-patch16", "57c216476eefef5ab752ec549e440a49ae4ae5f3")
+        case .vitL14:
+            return make("CLIP ViT-L/14", "https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt",
+                        "openai/clip-vit-large-patch14", "32bd64288804d66eefd0ccbe215aa642df71cc41")
+        case .vitL14At336:
+            return make("CLIP ViT-L/14@336px", "https://openaipublic.azureedge.net/clip/models/3035c92b350959924f9f00213499208652fc7ea050643e8b385c2dac08641f02/ViT-L-14-336px.pt",
+                        "openai/clip-vit-large-patch14-336", "ce19dc912ca5cd21c8a653c79e251e808ccabcd1")
+        }
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds the backend — no registry required.
@@ -546,11 +677,13 @@ public final class NFKMLXCLIP: NSObject {
     }
 
     /// Registers every vision-transformer size (`clip-vit-b-32`, `clip-vit-b-16`, `clip-vit-l-14`,
-    /// `clip-vit-l-14-336`) with `NFKMLXModelRegistry`.
+    /// `clip-vit-l-14-336`) with `NFKMLXModelRegistry`. The registry URL is a release directory (the
+    /// catalog's download, which embeds images and prompts), a checkpoint file (images), or nil (initial
+    /// weights).
     @objc public static func register() {
         for variant in [NFKMLXCLIPVariant.vitB32, .vitB16, .vitL14, .vitL14At336] {
-            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
-                try backend(variant: variant, weightsURL: weightsURL)
+            NFKMLXModelRegistry.register(name: specs(for: variant).name) { location in
+                try catalogBackend(variant: variant, location: location)
             }
         }
     }

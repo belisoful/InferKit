@@ -150,6 +150,30 @@ public final class NFKMLXHub: NSObject {
 /// per-model `backendWithRepo:…` / `backendWithVariant:repo:…` factories so the download logic lives in
 /// one place.
 enum NFKMLXDownload {
+    /// The local copy of `download`, a URL file of a release whose Hugging Face snapshot is `directory`:
+    /// where the model cache holding the snapshot keeps it, else where the default cache keeps it, else nil.
+    static func cachedURLFile(_ download: URL, besideSnapshot directory: URL, repository: String?) -> URL? {
+        // The cache keeps a repository's snapshot at <cache>/<org>/<name>/<revision>.
+        var roots = [URL]()
+        if let repository {
+            var root = directory.deletingLastPathComponent()
+            for _ in repository.split(separator: "/") { root = root.deletingLastPathComponent() }
+            roots.append(root)
+        }
+        roots.append(NFKHFHub.defaultCacheDirectoryURL())
+        let source = NFKModelSource(kind: NFKModelSourceKindURL, repository: nil, revision: nil, url: download,
+                                    layout: NFKModelSourceLayoutFile,
+                                    files: [NFKModelFile(path: download.lastPathComponent, role: NFKModelFileRoleWeights)],
+                                    requiresConversion: false, extensions: nil)
+        for root in roots {
+            let status = NFKHFHub(cacheDirectoryURL: root).downloadStatus(source: source)
+            if status.presence == .complete, let local = status.localURL {
+                return local
+            }
+        }
+        return nil
+    }
+
     /// Downloads `weightsPath` from the Hugging Face `repo` (caching under `cacheDirectoryURL`, or the
     /// default cache when nil) and returns the local file URL. Blocking on the network; call off the
     /// render thread. A load after an unload reads the cache only (`NFKHFHub.fetchFile(repo:revision:path:)`).

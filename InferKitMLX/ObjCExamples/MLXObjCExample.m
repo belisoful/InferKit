@@ -1969,7 +1969,7 @@
 		NSStringFromClass([NFKMLXSD3ControlNetGenerator class]): @[ @"backendWithDirectoryURL:controlNetDirectoryURL:residency:error:", @"backendWithRepo:controlNetRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
 		NSStringFromClass([NFKMLXFastSpeech2 class]): @[ @"voiceBackendWithDirectoryURL:phonemizer:error:", @"voiceBackendWithDirectoryURL:g2pWeightsURL:error:", @"voiceBackendWithRepo:revision:cacheDirectoryURL:phonemizer:completionHandler:", @"ttsBackendWithPhonemizer:acousticURL:vocoderURL:symbols:error:" ],
 		NSStringFromClass([NFKMLXNeuralG2P class]): @[ @"g2pWithWeightsURL:phonemeSymbols:error:" ],
-		NSStringFromClass([NFKMLXCLIP class]): @[ @"probeBackendWithVariant:weightsURL:probeURL:labels:error:", @"probeBackendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:probeURL:labels:completionHandler:", @"registerProbe" ],
+		NSStringFromClass([NFKMLXCLIP class]): @[ @"backendWithVariant:directoryURL:error:", @"backendWithVariant:weightsURL:tokenizerDirectoryURL:error:", @"probeBackendWithVariant:weightsURL:probeURL:labels:error:", @"probeBackendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:probeURL:labels:completionHandler:", @"registerProbe" ],
 		NSStringFromClass([NFKMLXGemmaLanguage class]): @[ @"gemmaMultimodalBackendWithDirectoryURL:residency:error:", @"gemmaMultimodalBackendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:", @"registerMultimodal" ],
 	};
 	for (NSString *className in factories) {

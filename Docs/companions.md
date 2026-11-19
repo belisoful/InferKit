@@ -485,8 +485,9 @@ models.
   image is `NFKInputControl`, and `NFKParameterStrength` blends the two. At reference parity against
   naoto0804's `pytorch-AdaIN`.
 - **`NFKMLXCLIP`** — real image+text embeddings (CLIP ViT-B/32, B/16, L/14, L/14@336; `NFKMLXCLIPVariant`): a ViT image tower and a text
-  transformer projected into a shared space. `NFKMLXCLIPBackend` returns an embedding under
-  `NFKOutputEmbedding` for semantic search, tagging, and diffusion guidance. MetaCLIP is the same
+  transformer projected into a shared space. `NFKMLXCLIPBackend` embeds an image under `NFKInputImage`, or
+  a prompt under `NFKInputPrompt` read through the release's tokenizer, under `NFKOutputEmbedding` for
+  semantic search, zero-shot tagging, and diffusion guidance. MetaCLIP is the same
   architecture on a re-curated training set, and its released towers load through the same variants at
   reference parity.
 - **`NFKMLXRVM`** — real video matting (Robust Video Matting, both released encoders — MobileNetV3 and ResNet-50): an encoder, LR-ASPP, and a **recurrent

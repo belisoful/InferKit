@@ -318,7 +318,6 @@ enum NFKMLXCatalogImage {
     static let ultralytics = NFKModelLicense.license("AGPL-3.0-only", name: "GNU Affero General Public License v3.0",
                                                      url: "https://github.com/ultralytics/ultralytics/blob/main/LICENSE",
                                                      note: "Software that serves the weights over a network publishes its source under the AGPL; Ultralytics sells a separate enterprise license.")
-    static let openAICLIP = NFKModelLicense.mit(url: "https://github.com/openai/CLIP/blob/main/LICENSE")
     static let stabilityCommunity = NFKModelLicense.license(nil, name: "Stability AI Community License",
                                                             url: "https://stability.ai/community-license-agreement",
                                                             restrictsCommercialUse: true,
@@ -1393,26 +1392,27 @@ enum NFKMLXCatalogImage {
     /// The CLIP releases, in the order `NFKMLXCLIP.register()` registers them.
     static let clipReleases: [NFKMLXCLIPVariant] = [.vitB32, .vitB16, .vitL14, .vitL14At336]
 
+    /// Each release's source is its Hugging Face repository, which serves the tokenizer, with OpenAI's
+    /// checkpoint as a URL file the native reader loads as published.
     static var clipEntries: [NFKMLXCatalogEntry] {
         clipReleases.map { variant in
-            let release: (displayName: String, address: String)
-            switch variant {
-            case .vitB32:
-                release = ("CLIP ViT-B/32", "https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt")
-            case .vitB16:
-                release = ("CLIP ViT-B/16", "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt")
-            case .vitL14:
-                release = ("CLIP ViT-L/14", "https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt")
-            case .vitL14At336:
-                release = ("CLIP ViT-L/14@336px", "https://openaipublic.azureedge.net/clip/models/3035c92b350959924f9f00213499208652fc7ea050643e8b385c2dac08641f02/ViT-L-14-336px.pt")
-            }
+            let release = NFKMLXCLIP.release(for: variant)
+            let checkpoint = NFKModelFile(path: release.checkpointName, byteCount: nil, sha256: nil,
+                                          role: NFKModelFileRoleWeights, optional: false, repository: nil,
+                                          revision: nil, url: release.download, extensions: nil)
             return model(NFKMLXCLIP.specs(for: variant).name, release.displayName, family: "clip",
-                         summary: "An image encoder whose embeddings compare images with each other and with text.",
+                         summary: "An image and text encoder whose embeddings compare images with each other and with text.",
                          tasks: [NFKModelTaskImageEmbedding],
-                         inputs: [imageInput("The image to embed.")],
+                         inputs: [.input(NFKInputImage, title: "Image", help: "The image to embed."),
+                                  .input(NFKInputPrompt, title: "Text",
+                                         help: "Text to embed into the image's space, read when the request carries no image.")],
                          outputs: [.output(NFKOutputEmbedding, required: true, title: "Embedding",
-                                           help: "The normalized image embedding in CLIP's joint image-text space.")],
-                         license: openAICLIP, source: download(release.address, requiresConversion: true))
+                                           help: "The normalized embedding of the image, or of the text, in CLIP's joint image-text space.")],
+                         license: .mit(url: "https://github.com/openai/CLIP/blob/main/LICENSE",
+                                       note: "The tokenizer files come from the release's Hugging Face repository, under the same license."),
+                         source: .hub(release.repository, revision: release.revision,
+                                      files: NFKMLXCLIP.tokenizerFiles.map { NFKModelFile(path: $0, role: NFKModelFileRoleTokenizer) }
+                                          + [checkpoint]))
         }
     }
 
