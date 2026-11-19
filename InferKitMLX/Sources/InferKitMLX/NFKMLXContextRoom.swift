@@ -46,7 +46,8 @@ enum NFKMLXContextRoom {
         return room
     }
 
-    private static func exceeded(_ promptTokens: Int, limit: Int, _ reason: String) -> NSError {
+    /// A `kNFKError_InferenceContextExceeded` error described by `reason`, with both counts in its user info.
+    static func exceeded(_ promptTokens: Int, limit: Int, _ reason: String) -> NSError {
         NSError(domain: NFKInferenceErrorDomain, code: NFKInferenceError.error_InferenceContextExceeded.rawValue,
                 userInfo: [NSLocalizedDescriptionKey: reason, NFKErrorPromptTokenCountKey: promptTokens,
                            NFKErrorContextLimitKey: limit])

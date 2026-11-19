@@ -647,12 +647,22 @@ extension NFKMLXCatalogLanguage {
 
     /// The options ``NFKMLXTranslationBackend`` reads. `beams` is the release's own beam count, where it
     /// states one.
-    fileprivate static func translationOptions(beams: Int? = nil) -> [NFKModelOption] {
-        [
+    /// The translation request options. `targets` lists the BCP-47 tags the variants translate into, each
+    /// with the variant identifiers that do, as the target option's choices; a choice names its variants
+    /// under its `variants` extension. The option stays free text, since a tag with a region also resolves.
+    fileprivate static func translationOptions(beams: Int? = nil, targets: [(tag: String, variants: [String])] = [])
+        -> [NFKModelOption] {
+        let targetHelp = targets.isEmpty
+            ? "The BCP-47 language to translate into. Every request names it."
+            : "The BCP-47 language to translate into. Every request names it. Each choice names the variants that translate into it."
+        return [
             .option(NFKParameterSourceLanguage, kind: NFKModelOptionKindText, title: "Source language",
                     help: "The BCP-47 language of the text. Without it the language is detected."),
-            .option(NFKParameterTargetLanguage, kind: NFKModelOptionKindText, title: "Target language",
-                    help: "The BCP-47 language to translate into. Every request names it."),
+            NFKModelOption(key: NFKParameterTargetLanguage, kind: NFKModelOptionKindText, title: "Target language",
+                           help: targetHelp, defaultValue: nil, minimum: nil, maximum: nil, step: nil,
+                           choices: targets.map { NFKModelOptionChoice(value: $0.tag, title: $0.tag,
+                                                                       extensions: ["variants": $0.variants]) },
+                           stage: NFKModelOptionStageRequest, group: nil, extensions: nil),
             .option(NFKParameterMaxTokens, kind: NFKModelOptionKindInteger, title: "Maximum tokens",
                     help: "The most tokens one translated paragraph runs to.", minimum: 1, step: 1),
             .option(NFKMLXTranslationParameterKey.beamCount, kind: NFKModelOptionKindInteger, title: "Beams",
@@ -1244,6 +1254,25 @@ extension NFKMLXCatalogLanguage {
     /// The pairs whose model cards state CC BY 4.0. The other listed pairs state Apache 2.0.
     private static let opusMTCreativeCommonsPairs: Set<String> = ["en-de", "zh-en"]
 
+    /// The `>>xxx<<` target markers of the listed group releases, as their `vocab.json` holds them.
+    private static let opusMTGroupMarkers = [
+        "en-zh": ["cmn", "cmn_Hans", "cmn_Hant", "nan", "wuu", "yue", "yue_Hans", "yue_Hant"],
+    ]
+
+    /// Each BCP-47 tag a listed pair translates into, with the variants that translate into it: a group
+    /// release's markers, and the target of a per-pair release.
+    private static var opusMTTargets: [(tag: String, variants: [String])] {
+        var variantsByTag = [String: [String]]()
+        for pair in opusMTPairs {
+            let codes = opusMTGroupMarkers[pair] ?? [String(pair.split(separator: "-").last ?? "")]
+            let variant = variantIdentifier("Helsinki-NLP/opus-mt-\(pair)")
+            for tag in Set(codes.map(NFKMLXMarianTranslator.languageTag(forCode:))) {
+                variantsByTag[tag, default: []].append(variant)
+            }
+        }
+        return variantsByTag.keys.sorted().map { (tag: $0, variants: variantsByTag[$0]!) }
+    }
+
     fileprivate static var opusMTEntry: NFKMLXCatalogEntry {
         let name = NFKMLXMarian.modelName
         let files = releaseFiles(required: NFKMLXMarian.requiredFiles, optional: NFKMLXMarian.optionalFiles,
@@ -1252,7 +1281,8 @@ extension NFKMLXCatalogLanguage {
             identifier: name, displayName: "OPUS-MT", family: "marian",
             summary: "Helsinki-NLP's OPUS-MT, a Marian translator per language pair.",
             registryName: name, tasks: [NFKModelTaskTranslation],
-            inputs: translationInputs, outputs: translationOutputs, parameters: translationOptions(beams: 4),
+            inputs: translationInputs, outputs: translationOutputs,
+            parameters: translationOptions(beams: 4, targets: opusMTTargets),
             variants: opusMTPairs.map { pair in
                 let repository = "Helsinki-NLP/opus-mt-\(pair)"
                 return .variant(variantIdentifier(repository), displayName: "OPUS-MT \(pair)", isDefault: pair == "en-de",

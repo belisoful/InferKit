@@ -47,14 +47,40 @@ public final class NFKMLXMarianTranslator: NFKMLXTranslator {
     /// Whether the release names one target language (no `>>xxx<<` markers).
     public var isPerPair: Bool { targetCodes.isEmpty }
 
-    public var fixedSourceLanguage: String? { Self.isLanguageTag(sourceLanguage) ? sourceLanguage : nil }
-    public var fixedTargetLanguage: String? { isPerPair && Self.isLanguageTag(targetLanguage) ? targetLanguage : nil }
+    /// The release's source language as a BCP-47 tag (`vie` → `vi`), or nil for a source group.
+    public var fixedSourceLanguage: String? {
+        Self.isLanguageTag(sourceLanguage) ? Self.languageTag(forCode: sourceLanguage) : nil
+    }
+
+    /// The release's target language as a BCP-47 tag (`eng` → `en`), or nil for a target group.
+    public var fixedTargetLanguage: String? {
+        isPerPair && Self.isLanguageTag(targetLanguage) ? Self.languageTag(forCode: targetLanguage) : nil
+    }
+
+    /// The BCP-47 tags the release translates into: its target language, or one tag per `>>xxx<<` marker of
+    /// a group release (`cmn_Hant` → `zh-Hant`), sorted.
+    public var targetLanguages: [String] {
+        if isPerPair { return fixedTargetLanguage.map { [$0] } ?? [] }
+        return Set(targetCodes.keys.map(Self.languageTag(forCode:))).sorted()
+    }
 
     public func supports(language: String) -> Bool {
         let primary = NFKMLXTranslationBackend.primary(language)
-        if primary == NFKMLXTranslationBackend.primary(sourceLanguage) { return true }
-        if isPerPair { return primary == NFKMLXTranslationBackend.primary(targetLanguage) }
+        if let source = fixedSourceLanguage, primary == NFKMLXTranslationBackend.primary(source) { return true }
+        if isPerPair { return fixedTargetLanguage.map { primary == NFKMLXTranslationBackend.primary($0) } ?? false }
         return targetCode(for: language) != nil
+    }
+
+    /// The BCP-47 tag for an OPUS language code or `>>xxx<<` marker: an ISO 639-3 code becomes its ISO 639-1
+    /// code, an individual language its macrolanguage (`cmn` → `zh`), and a script suffix a script subtag
+    /// (`yue_Hant` → `yue-Hant`). A code with no shorter form stays as written.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func languageTag(forCode code: String) -> String {
+        let parts = code.split(separator: "_", maxSplits: 1).map(String.init)
+        guard let language = parts.first else { return code }
+        let primary = NFKMLXLanguageCodes.iso639_1[language] ?? NFKMLXLanguageCodes.macrolanguage[language] ?? language
+        return parts.count > 1 ? "\(primary)-\(parts[1])" : primary
     }
 
     /// The `>>xxx<<` marker id for a BCP-47 tag, or nil when the group has no such target.
@@ -93,9 +119,25 @@ public final class NFKMLXMarianTranslator: NFKMLXTranslator {
         return ids
     }
 
+    /// Translates one segment.
+    ///
+    /// - Throws: a `kNFKError_InferenceContextExceeded` error when the segment's source ids outnumber the
+    ///   network's positions (512 in every OPUS-MT release), with both counts under `NFKErrorPromptTokenCountKey`
+    ///   and `NFKErrorContextLimitKey`. `MarianMTModel` reads no further, and its tokenizer does not truncate.
+    ///   The decode runs to at most that many tokens.
     public func translate(_ text: String, from source: String?, to target: String,
                           decoding: NFKMLXSeq2SeqDecoding) throws -> String {
-        let generated = NFKMLXSeq2SeqDecoder.generate(net, source: sourceIds(for: text, target: target), decoding: decoding)
+        let ids = sourceIds(for: text, target: target)
+        let positions = net.configuration.maxPositions
+        guard ids.count <= positions else {
+            throw NFKMLXContextRoom.exceeded(
+                ids.count, limit: positions,
+                "\(identifier) reads \(positions) source tokens, and this paragraph holds \(ids.count). Translate it in "
+                + "shorter paragraphs, or sentence by sentence under \(NFKMLXTranslationParameterKey.splitsSentences).")
+        }
+        var decoding = decoding
+        decoding.maxTokens = min(decoding.maxTokens, positions)
+        let generated = NFKMLXSeq2SeqDecoder.generate(net, source: ids, decoding: decoding)
         return targetTokenizer.decode(ids: generated)
     }
 

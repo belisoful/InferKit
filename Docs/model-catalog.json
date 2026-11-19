@@ -36282,7 +36282,85 @@
           "title" : "Source language"
         },
         {
-          "help" : "The BCP-47 language to translate into. Every request names it.",
+          "choices" : [
+            {
+              "title" : "de",
+              "value" : "de",
+              "variants" : [
+                "opus-mt-en-de"
+              ]
+            },
+            {
+              "title" : "en",
+              "value" : "en",
+              "variants" : [
+                "opus-mt-ja-en",
+                "opus-mt-zh-en",
+                "opus-mt-ar-en",
+                "opus-mt-vi-en",
+                "opus-mt-th-en",
+                "opus-mt-hi-en",
+                "opus-mt-ko-en"
+              ]
+            },
+            {
+              "title" : "nan",
+              "value" : "nan",
+              "variants" : [
+                "opus-mt-en-zh"
+              ]
+            },
+            {
+              "title" : "wuu",
+              "value" : "wuu",
+              "variants" : [
+                "opus-mt-en-zh"
+              ]
+            },
+            {
+              "title" : "yue",
+              "value" : "yue",
+              "variants" : [
+                "opus-mt-en-zh"
+              ]
+            },
+            {
+              "title" : "yue-Hans",
+              "value" : "yue-Hans",
+              "variants" : [
+                "opus-mt-en-zh"
+              ]
+            },
+            {
+              "title" : "yue-Hant",
+              "value" : "yue-Hant",
+              "variants" : [
+                "opus-mt-en-zh"
+              ]
+            },
+            {
+              "title" : "zh",
+              "value" : "zh",
+              "variants" : [
+                "opus-mt-en-zh"
+              ]
+            },
+            {
+              "title" : "zh-Hans",
+              "value" : "zh-Hans",
+              "variants" : [
+                "opus-mt-en-zh"
+              ]
+            },
+            {
+              "title" : "zh-Hant",
+              "value" : "zh-Hant",
+              "variants" : [
+                "opus-mt-en-zh"
+              ]
+            }
+          ],
+          "help" : "The BCP-47 language to translate into. Every request names it. Each choice names the variants that translate into it.",
           "key" : "targetLanguage",
           "kind" : "text",
           "stage" : "request",

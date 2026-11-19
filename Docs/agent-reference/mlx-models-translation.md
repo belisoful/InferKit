@@ -16,7 +16,17 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   `kNFKError_InferenceMissingInput`. `NFKParameterSourceLanguage` is optional: a per-pair Marian release
   knows its source, MADLAD needs none, and M2M-100 detects it with `NLLanguageRecognizer` when absent.
 - A target the model does not produce, or a source a per-pair model does not read, fails with
-  `kNFKError_InferenceUnsupported` naming the model's pair.
+  `kNFKError_InferenceUnsupported` naming the model's pair. A refused target also names the translator's
+  `targetLanguages` where it lists them: OPUS-MT lists its target, or one BCP-47 tag per `>>xxx<<`
+  marker of a group release ("opus-mt-eng-zho does not translate into fr; it translates into nan, wuu,
+  yue, yue-Hans, yue-Hant, zh, zh-Hans, zh-Hant"). Other translators list none.
+- A paragraph longer than OPUS-MT's 512 positions fails with `kNFKError_InferenceContextExceeded`, its
+  source ids under `NFKErrorPromptTokenCountKey` and the 512 under `NFKErrorContextLimitKey`. The
+  reference refuses the same input: `MarianTokenizer` does not truncate unless asked
+  (the translation pipeline passes `TruncationStrategy.DO_NOT_TRUNCATE`), and `MarianMTModel`'s sinusoid table raises an
+  `IndexError` past its last row. The caller shortens the paragraphs or sets `splitsSentences`. The
+  decode stops at 512 tokens whatever `NFKParameterMaxTokens` asks. M2M-100 and NLLB refuse nothing for
+  length: their reference grows its sinusoid table, and so does the port (see `NFKMLXSeq2SeqNet`).
 - The decode is tuned per request through `NFKMLXTranslationParameterKey`: `beamCount`
   (`NFKMLXParameterBeamCount`), `lengthPenalty`, and `splitsSentences`. The defaults are each release's
   own generation config (Marian 4 beams with `renormalize_logits`, M2M-100 5 beams with early stopping,
@@ -57,6 +67,14 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   row zero, or a learned table read at `+2`. Module keys are the transformers keys with `model.`
   stripped; the loader drops the tied `embed_tokens` and `lm_head` copies and a stored sinusoid table.
   The sinusoid table is held behind a plain class so the parameter walk does not count it as a weight.
+  A fairseq table grows past `maxPositions` to the rows a pass reads, at least doubling, as transformers
+  rebuilds `M2M100SinusoidalPositionalEmbedding`'s and `TrOCRSinusoidalPositionalEmbedding`'s weights; a
+  row depends on its position alone, so the grown table keeps the rows it had. M2M-100, SMaLL-100, NLLB,
+  and TrOCR's sinusoidal releases therefore read a source or a decode past 1024 positions, as the
+  reference does, untrained as those positions are. Before 2026-11-18 such a source failed the encoder's
+  broadcast and trapped. Marian's table stays at its 512 rows, since `MarianSinusoidalPositionalEmbedding`
+  is a fixed `nn.Embedding`; the Marian translator refuses a longer source (see the contract). A learned
+  table (BART, mBART, Florence-2) has no rows past `maxPositions + 2` in the reference either.
   `encode(embeddings:)` takes already-scaled embeddings for a multimodal consumer (Florence-2 enters
   here). A decoder-only configuration (`encoderLayers` 0; `model_type` `trocr`) builds no encoder and
   reads an outside memory through `decode(_:memory:cache:)`; `crossAttentionWidth` sizes the
@@ -99,7 +117,17 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   the translator maps a BCP-47 tag to ISO 639-3 (with a script suffix when the group has one). Loads from
   a release directory (`backendWithDirectoryURL:`), by repo (`backendWithRepo:revision:cacheDirectoryURL:`),
   or by pair (`backendWithSourceLanguage:targetLanguage:cacheDirectoryURL:` → `Helsinki-NLP/opus-mt-<s>-<t>`),
-  each with an asynchronous peer; registered as `opus-mt`. At reference parity on
+  each with an asynchronous peer; registered as `opus-mt`. A release's `tokenizer_config.json` names its
+  pair in ISO 639-1 or ISO 639-3 (`en`/`de`, `vie`/`eng`); `fixedSourceLanguage` and `fixedTargetLanguage`
+  report BCP-47 (`languageTag(forCode:)`: `eng` → `en`, `cmn_Hant` → `zh-Hant`), so a request naming `en`
+  reaches the `-eng` releases. The identifier keeps the configuration's codes (`opus-mt-vie-eng`). The
+  catalog's `targetLanguage` option lists each pair's target, and en-zh's eight markers as tags, each
+  choice naming its variants under its `variants` extension; the option stays free text, since `zh-TW`
+  also resolves. A source past the 512 positions is refused before the encoder (see the contract). The
+  load-overhead measurement of 2026-11-11 found the crash this replaces: its 480-word English prompt
+  segments past 512 pieces under the zh, hi, ko, ar, ja, th, and vi source models, and the encoder's
+  failed broadcast left an array whose `dim(1)` trapped (`Index out of range`, signal 5) inside the error
+  scope. The en-de source model reads the same prompt as 481 ids, which fits. At reference parity on
   `Helsinki-NLP/opus-mt-en-de` (`pytorch_model.bin` through the native reader): every tokenization of
   the five probe sentences id-exact (NFKC, whitespace, `ﬁ` and `½` included), encoder cosine 0.99999994,
   teacher-forced logit cosine 0.99999994 with argmax 14/14, greedy and 4-beam outputs token-exact

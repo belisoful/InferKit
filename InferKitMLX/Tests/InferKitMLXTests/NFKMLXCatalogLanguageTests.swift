@@ -165,6 +165,25 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
         }
     }
 
+    func testTheOPUSMTTargetOptionListsWhatEachPairTranslatesInto() throws {
+        let opus = try descriptor(NFKMLXMarian.modelName)
+        let target = try XCTUnwrap(opus.option(withKey: NFKParameterTargetLanguage))
+        XCTAssertEqual(target.kind, NFKModelOptionKindText, "a tag with a region also resolves")
+        var variantsByTag = [String: [String]]()
+        for choice in target.choices {
+            variantsByTag[try XCTUnwrap(choice.value as? String)] = try XCTUnwrap(choice.extensions["variants"] as? [String])
+        }
+        XCTAssertEqual(Set(variantsByTag.keys),
+                       ["de", "en", "nan", "wuu", "yue", "yue-Hans", "yue-Hant", "zh", "zh-Hans", "zh-Hant"])
+        XCTAssertEqual(variantsByTag["de"], ["opus-mt-en-de"])
+        XCTAssertEqual(variantsByTag["zh-Hant"], ["opus-mt-en-zh"])
+        XCTAssertEqual(variantsByTag["en"]?.count, 7)
+        let identifiers = Set(opus.variants.map(\.identifier))
+        for (tag, variants) in variantsByTag {
+            XCTAssertTrue(Set(variants).isSubset(of: identifiers), tag)
+        }
+    }
+
     func testEveryEntryThatTakesToolsListsTheToolCallingOutputs() {
         for descriptor in descriptors where descriptor.options.contains(where: { $0.key == NFKParameterTools }) {
             XCTAssertTrue(NFKMLXToolCalling.outputKeys.isSubset(of: Set(descriptor.outputs.map(\.key))),

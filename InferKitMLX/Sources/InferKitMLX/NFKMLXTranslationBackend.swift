@@ -42,6 +42,9 @@ public protocol NFKMLXTranslator: AnyObject {
     var fixedSourceLanguage: String? { get }
     /// The target language a per-pair model is fixed to (BCP-47), or nil.
     var fixedTargetLanguage: String? { get }
+    /// The BCP-47 tags the model translates into, where it knows them; empty where it does not list them.
+    /// A refused target names them. Introduced in InferKit 0.4.0.
+    var targetLanguages: [String] { get }
     /// Whether the model reads or produces `language` (a BCP-47 tag).
     func supports(language: String) -> Bool
     /// The decode a request starts from (the model's generation defaults).
@@ -55,6 +58,7 @@ public protocol NFKMLXTranslator: AnyObject {
 }
 
 extension NFKMLXTranslator {
+    public var targetLanguages: [String] { [] }
     public var layerStreams: [NFKMLXLayerStream] { [] }
 }
 
@@ -76,7 +80,9 @@ public protocol NFKMLXTranslationRefiner: NFKMLXTranslator {
 /// `NFKParameterTargetLanguage` (required), and returns the translation under `NFKOutputText`. The
 /// input is translated paragraph by paragraph (split on line breaks), or sentence by sentence under
 /// ``NFKMLXTranslationParameterKey/splitsSentences``. A request whose target the model does not produce,
-/// or whose source a per-pair model does not read, fails with `kNFKError_InferenceUnsupported`.
+/// or whose source a per-pair model does not read, fails with `kNFKError_InferenceUnsupported`; a refused
+/// target names the model's ``NFKMLXTranslator/targetLanguages`` where it lists them. A paragraph longer than
+/// a model with bounded positions reads (OPUS-MT's 512) fails with `kNFKError_InferenceContextExceeded`.
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXTranslationBackend)
@@ -111,6 +117,10 @@ public final class NFKMLXTranslationBackend: NSObject, NFKInferenceBackend {
 
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { translator.identifier }
+
+    /// The BCP-47 tags the model translates into, where it lists them; empty where it does not.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var targetLanguages: [String] { translator.targetLanguages }
 
     /// The repeated layers the model reads from its release in their turn rather than holding; zero
     /// where it holds every layer. Introduced in InferKit 0.4.0.
@@ -213,7 +223,9 @@ public final class NFKMLXTranslationBackend: NSObject, NFKInferenceBackend {
             throw Self.error(.error_InferenceUnsupported, "\(translator.identifier) translates into \(fixed), not \(target)")
         }
         guard translator.supports(language: target) else {
-            throw Self.error(.error_InferenceUnsupported, "\(translator.identifier) does not translate into \(target)")
+            let known = translator.targetLanguages
+            let listed = known.isEmpty ? "" : "; it translates into \(known.joined(separator: ", "))"
+            throw Self.error(.error_InferenceUnsupported, "\(translator.identifier) does not translate into \(target)\(listed)")
         }
         var source = source.map(Self.canonical)
         if let fixed = translator.fixedSourceLanguage {
@@ -361,6 +373,12 @@ enum NFKMLXLanguageCodes {
         "tl": "tgl", "tr": "tur", "uk": "ukr", "ur": "urd", "uz": "uzb", "vi": "vie", "xh": "xho", "yi": "yid",
         "yo": "yor", "zh": "zho", "zu": "zul",
     ]
+
+    /// ISO 639-3 → ISO 639-1, the inverse of ``iso639_3``.
+    static let iso639_1: [String: String] = Dictionary(uniqueKeysWithValues: iso639_3.map { ($0.value, $0.key) })
+
+    /// An individual language → the macrolanguage BCP-47 names it by, the inverse of ``individualLanguage``.
+    static let macrolanguage: [String: String] = Dictionary(uniqueKeysWithValues: individualLanguage.map { ($0.value, $0.key) })
 
     /// The individual language an OPUS group release names where BCP-47 uses a macrolanguage code:
     /// Mandarin for Chinese, Norwegian Bokmål for Norwegian, Standard Malay for Malay, Standard

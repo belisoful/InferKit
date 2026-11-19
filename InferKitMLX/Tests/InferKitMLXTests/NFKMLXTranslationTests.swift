@@ -353,6 +353,89 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(NFKMLXTranslationBackend.detectLanguage(of: "The quick brown fox jumps over the lazy dog."), "en")
     }
 
+    // MARK: OPUS-MT language pairs and limits
+
+    /// A Marian translator over the tiny geometry (32 positions) and random weights, with a unigram model
+    /// that reads each `a` as one piece. `markers` makes it a group release.
+    private func tinyMarian(source: String, target: String, markers: [String] = []) throws -> NFKMLXMarianTranslator {
+        let model = try syntheticModel(kind: 1, pieces: [("\u{2581}a", -1), ("\u{2581}b", -1), ("\u{2581}", -2)])
+        var vocabulary = ["</s>": 0, "<unk>": 1, "\u{2581}a": 2, "\u{2581}b": 3, "\u{2581}": 4]
+        var codes = [String: Int]()
+        for (index, marker) in markers.enumerated() {
+            vocabulary[">>\(marker)<<"] = 10 + index
+            codes[marker] = 10 + index
+        }
+        let configuration = NFKMLXSeq2SeqConfiguration.tinyMarian
+        func tokenizer() -> NFKMLXSentencePieceTokenizer {
+            NFKMLXSentencePieceTokenizer(segmenter: NFKMLXSentencePieceSegmenter(model: model), vocabulary: vocabulary,
+                                         eosTokenId: configuration.eosTokenId)
+        }
+        return NFKMLXMarianTranslator(net: NFKMLXSeq2SeqNet(configuration), sourceTokenizer: tokenizer(),
+                                      targetTokenizer: tokenizer(), sourceLanguage: source, targetLanguage: target,
+                                      targetCodes: codes, beams: 4)
+    }
+
+    func testOPUSMTCodesBecomeLanguageTagsThatSelectTheirMarkers() {
+        let tags = ["eng": "en", "vie": "vi", "de": "de", "cmn": "zh", "cmn_Hant": "zh-Hant", "yue_Hans": "yue-Hans",
+                    "arb": "ar", "nan": "nan"]
+        for (code, tag) in tags {
+            XCTAssertEqual(NFKMLXMarianTranslator.languageTag(forCode: code), tag, code)
+        }
+        for marker in ["cmn", "cmn_Hans", "cmn_Hant", "nan", "wuu", "yue", "yue_Hans", "yue_Hant"] {
+            let tag = NFKMLXMarianTranslator.languageTag(forCode: marker)
+            XCTAssertTrue(NFKMLXMarianTranslator.markerCandidates(for: tag).contains(marker), "\(marker) as \(tag)")
+        }
+    }
+
+    func testOPUSMTRefusesAParagraphPastItsPositionsAndTranslatesOneThatFits() throws {
+        try requireMLXRuntime()
+        let backend = NFKMLXTranslationBackend(translator: try tinyMarian(source: "vie", target: "eng"))
+        let positions = NFKMLXSeq2SeqConfiguration.tinyMarian.maxPositions
+        func paragraph(_ words: Int) -> String { Array(repeating: "a", count: words).joined(separator: " ") }
+        func run(_ text: String) throws -> NFKInferenceResult {
+            try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: text], parameters: [
+                NFKParameterTargetLanguage: "en", NFKParameterMaxTokens: 4 * positions]))
+        }
+        // The end token takes the last position; the decode stops at the positions, past the request's limit.
+        XCTAssertNoThrow(try run(paragraph(positions - 1)))
+        XCTAssertNoThrow(try run(paragraph(positions - 1) + "\n" + paragraph(positions - 1)), "each paragraph fits")
+        XCTAssertThrowsError(try run(paragraph(positions))) { error in
+            let error = error as NSError
+            XCTAssertEqual(error.domain, NFKInferenceErrorDomain)
+            XCTAssertEqual(error.code, NFKInferenceError.error_InferenceContextExceeded.rawValue)
+            XCTAssertEqual(error.userInfo[NFKErrorPromptTokenCountKey] as? Int, positions + 1)
+            XCTAssertEqual(error.userInfo[NFKErrorContextLimitKey] as? Int, positions)
+            XCTAssertTrue(error.localizedDescription.hasPrefix("opus-mt-vie-eng reads 32 source tokens, and this paragraph holds 33."),
+                          error.localizedDescription)
+        }
+    }
+
+    func testOPUSMTRefusalsNameWhatTheReleaseTranslatesInto() throws {
+        try requireMLXRuntime()
+        var decoding = try tinyMarian(source: "eng", target: "zho").defaultDecoding
+        decoding.maxTokens = 2
+        func refusal(_ translator: NFKMLXMarianTranslator, from source: String? = nil, to target: String) -> String? {
+            do {
+                _ = try NFKMLXTranslationBackend(translator: translator).translate("a b", from: source, to: target, decoding: decoding)
+                return nil
+            } catch {
+                return (error as NSError).localizedDescription
+            }
+        }
+        let group = try tinyMarian(source: "eng", target: "zho", markers: ["cmn_Hans", "cmn_Hant", "yue"])
+        XCTAssertEqual(NFKMLXTranslationBackend(translator: group).targetLanguages, ["yue", "zh-Hans", "zh-Hant"])
+        XCTAssertEqual(refusal(group, to: "fr"), "opus-mt-eng-zho does not translate into fr; it translates into yue, zh-Hans, zh-Hant")
+        XCTAssertNil(refusal(group, from: "en", to: "zh-TW"))
+
+        let pair = try tinyMarian(source: "vie", target: "eng")
+        XCTAssertEqual(pair.fixedSourceLanguage, "vi")
+        XCTAssertEqual(pair.fixedTargetLanguage, "en")
+        XCTAssertEqual(pair.targetLanguages, ["en"])
+        XCTAssertEqual(refusal(pair, to: "fr"), "opus-mt-vie-eng translates into en, not fr")
+        XCTAssertEqual(refusal(pair, from: "ja", to: "en"), "opus-mt-vie-eng translates from vi, not ja")
+        XCTAssertNil(refusal(pair, from: "vi", to: "en-GB"))
+    }
+
     func testADecoderOnlyConfigurationReadsAnOutsideMemory() throws {
         try requireMLXRuntime()
         // TrOCR: no encoder layers, a 768-wide memory under a 1024-wide decoder, and an untied head.
@@ -406,6 +489,31 @@ final class NFKMLXTranslationTests: XCTestCase {
             XCTAssertGreaterThan(cosine(joined, whole), 0.9999)
             XCTAssertLessThan(abs(joined - whole).max().item(Float.self), 1e-4)
         }
+    }
+
+    func testAFairseqTableGrowsPastItsPositionsAndKeepsItsRows() throws {
+        try requireMLXRuntime()
+        let configuration = NFKMLXSeq2SeqConfiguration.tinyM2M100
+        let net = NFKMLXSeq2SeqNet(configuration)
+        let first = net.positions(length: 4, offset: 0, table: nil)
+        eval(first)
+        let reference = NFKMLXSeq2SeqNet.fairseqSinusoids(length: 200, channels: configuration.dModel,
+                                                          paddingIndex: configuration.padTokenId)
+        let start = configuration.padTokenId + 1
+        XCTAssertEqual(abs(net.positions(length: 20, offset: 40, table: nil) - reference[start + 40 ..< start + 60]).max().item(Float.self), 0)
+        XCTAssertEqual(abs(net.positions(length: 4, offset: 0, table: nil) - first).max().item(Float.self), 0, "the grown table keeps its rows")
+
+        // A source and a cached decode both past the 32 positions, as transformers reads them.
+        let length = configuration.maxPositions + 18
+        let source = MLXArray((0 ..< length).map { Int32(3 + $0 % 60) }).reshaped([1, length])
+        let target = MLXArray([Int32(configuration.decoderStartTokenId)] + (0 ..< length - 1).map { Int32(3 + $0 % 59) })
+            .reshaped([1, length])
+        let memory = net.encode(source)
+        XCTAssertEqual(memory.shape, [1, length, configuration.dModel])
+        let whole = net.decode(target, memory: memory, cache: net.makeCache())
+        let cache = net.makeCache()
+        let stepped = (0 ..< length).map { net.decode(target[0..., $0 ..< $0 + 1], memory: memory, cache: cache) }
+        XCTAssertLessThan(abs(concatenated(stepped, axis: 1) - whole).max().item(Float.self), 1e-4)
     }
 
     func testTheT5CachedDecodeMatchesTheTeacherForcedLogits() throws {
@@ -1954,6 +2062,68 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(NFKMLXTranslationBackend.impliedScript("zh-Hans-HK"), "Hans", "a script subtag wins over the region")
         XCTAssertEqual(NFKMLXTranslationBackend.impliedScript("sr-Latn"), "Latn")
         XCTAssertNil(NFKMLXTranslationBackend.impliedScript("ja"))
+    }
+
+    func testOPUSMTRefusesAReleaseParagraphPastItsPositionsAndTranslatesItInShorterOnes() throws {
+        try requireMLXRuntime()
+        guard let path = NFKMLXValidationConfig.environment["IK_VAL_MARIAN_ZH_EN"],
+              FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_VAL_MARIAN_ZH_EN to the opus-mt-zh-en release directory")
+        }
+        let backend = NFKMLXTranslationBackend(translator: try NFKMLXMarian.translator(directoryURL: URL(fileURLWithPath: path)))
+        func run(_ text: String) throws -> String {
+            let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: text], parameters: [
+                NFKParameterSourceLanguage: "zh", NFKParameterTargetLanguage: "en", NFKParameterMaxTokens: 16]))
+            return try XCTUnwrap(result.output(forKey: NFKOutputText) as? String)
+        }
+        // The catalog load-overhead measurement's reference request: 480 English words, read by the Chinese source model.
+        let vocabulary = "the river runs past old stone walls and quiet fields".split(separator: " ").map(String.init)
+        let words = (0 ..< 480).map { vocabulary[$0 % vocabulary.count] }
+        XCTAssertThrowsError(try run(words.joined(separator: " "))) { error in
+            let error = error as NSError
+            XCTAssertEqual(error.code, NFKInferenceError.error_InferenceContextExceeded.rawValue, error.localizedDescription)
+            XCTAssertEqual(error.userInfo[NFKErrorPromptTokenCountKey] as? Int, 1249, "the reference source.spm's pieces and the end token")
+            XCTAssertEqual(error.userInfo[NFKErrorContextLimitKey] as? Int, 512)
+        }
+        let paragraphs = stride(from: 0, to: words.count, by: 80).map { words[$0 ..< $0 + 80].joined(separator: " ") }
+        let translated = try run(paragraphs.joined(separator: "\n"))
+        XCTAssertEqual(translated.components(separatedBy: "\n").count, paragraphs.count)
+        XCTAssertFalse(translated.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    func testM2M100AndNLLBTranslateAParagraphPastTheirTrainedPositions() throws {
+        try requireMLXRuntime()
+        let env = NFKMLXValidationConfig.environment
+        let vocabulary = "the river runs past old stone walls and quiet fields".split(separator: " ").map(String.init)
+        let paragraph = (0 ..< 1200).map { vocabulary[$0 % vocabulary.count] }.joined(separator: " ")
+        var ran = 0
+        for key in ["IK_VAL_M2M100", "IK_VAL_NLLB"] {
+            guard let path = env[key], FileManager.default.fileExists(atPath: path) else { continue }
+            ran += 1
+            let directory = URL(fileURLWithPath: path)
+            let translator: any NFKMLXTranslator
+            let sourceCount: Int
+            if key == "IK_VAL_M2M100" {
+                let m2m100 = try NFKMLXM2M100.translator(directoryURL: directory)
+                sourceCount = m2m100.sourceIds(for: paragraph, source: "en", target: "de").count
+                translator = m2m100
+            } else {
+                let nllb = try NFKMLXNLLB.translator(directoryURL: directory)
+                sourceCount = nllb.sourceIds(for: paragraph, source: "en").count
+                translator = nllb
+            }
+            XCTAssertGreaterThan(sourceCount, 1024, "\(key) reads the paragraph past its trained positions")
+            let result = try NFKMLXTranslationBackend(translator: translator).runInference(for: NFKInferenceRequest(
+                inputs: [NFKInputPrompt: paragraph],
+                parameters: [NFKParameterSourceLanguage: "en", NFKParameterTargetLanguage: "de", NFKParameterMaxTokens: 16]))
+            let text = try XCTUnwrap(result.output(forKey: NFKOutputText) as? String)
+            XCTAssertFalse(text.isEmpty, key)
+            print("\(key) past \(sourceCount) source ids:", text)
+            NFKMLXGPU.clearCache()
+        }
+        if ran == 0 {
+            throw XCTSkip("set IK_VAL_M2M100 or IK_VAL_NLLB to a release directory")
+        }
     }
 
     func testMarianProbePairsMatchTheReference() throws {

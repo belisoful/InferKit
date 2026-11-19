@@ -327,8 +327,20 @@ public final class NFKMLXSeq2SeqCache {
 
 /// A sinusoid table kept outside the parameter tree.
 final class NFKSeq2SeqSinusoids {
-    let table: MLXArray
+    private(set) var table: MLXArray
+    private let lock = NSLock()
     init(_ table: MLXArray) { self.table = table }
+
+    /// The rows `range`, the table first rebuilt by `build(rowCount)` to at least twice its rows where it
+    /// ends before `range` does. A row's values depend on its position alone, so a rebuilt table keeps them.
+    func rows(_ range: Range<Int>, growing build: (Int) -> MLXArray) -> MLXArray {
+        lock.lock()
+        defer { lock.unlock() }
+        if range.upperBound > table.dim(0) {
+            table = build(max(range.upperBound, 2 * table.dim(0)))
+        }
+        return table[range]
+    }
 }
 
 // MARK: - Modules
@@ -613,13 +625,20 @@ public final class NFKMLXSeq2SeqNet: Module {
     }
 
     /// The positional term for `length` positions starting at `offset` (positions already consumed).
-    private func positions(length: Int, offset: Int, table: Embedding?) -> MLXArray {
+    ///
+    /// A fairseq table grows past `maxPositions` to the positions a pass reads, as transformers rebuilds
+    /// `M2M100SinusoidalPositionalEmbedding`'s and `TrOCRSinusoidalPositionalEmbedding`'s weights. Marian's
+    /// stays at `maxPositions`, which `MarianSinusoidalPositionalEmbedding` never extends.
+    func positions(length: Int, offset: Int, table: Embedding?) -> MLXArray {
         switch configuration.positions {
         case .marianSinusoidal:
             return sinusoids!.table[offset ..< offset + length]
         case .fairseqSinusoidal:
             let start = configuration.padTokenId + 1 + offset
-            return sinusoids!.table[start ..< start + length]
+            let channels = configuration.dModel, padding = configuration.padTokenId
+            return sinusoids!.rows(start ..< start + length) {
+                Self.fairseqSinusoids(length: $0, channels: channels, paddingIndex: padding)
+            }
         case .learned:
             let ids = MLXArray((offset + 2 ..< offset + 2 + length).map { Int32($0) })
             return table!(ids)
