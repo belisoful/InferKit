@@ -1409,11 +1409,9 @@ enum NFKMLXCatalogImage {
             return model(NFKMLXCLIP.specs(for: variant).name, release.displayName, family: "clip",
                          summary: "An image encoder whose embeddings compare images with each other and with text.",
                          tasks: [NFKModelTaskImageEmbedding],
-                         inputs: [.input(NFKInputImage, title: "Image", help: "The image to embed."),
-                                  .input(NFKInputPrompt, title: "Text",
-                                         help: "Text to embed. The registered backend has no tokenizer and embeds images only.")],
+                         inputs: [imageInput("The image to embed.")],
                          outputs: [.output(NFKOutputEmbedding, required: true, title: "Embedding",
-                                           help: "The normalized embedding in CLIP's joint image-text space.")],
+                                           help: "The normalized image embedding in CLIP's joint image-text space.")],
                          license: openAICLIP, source: download(release.address, requiresConversion: true))
         }
     }

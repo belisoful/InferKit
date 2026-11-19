@@ -12,7 +12,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   port embeds ids rather than text).
   `NFKMLXCLIPBackend` reads `NFKInputImage` → embedding under the new core key `NFKOutputEmbedding`; a
   text prompt encodes when a tokenizer is supplied (byte-level-BPE vocab is a load-time artifact — a
-  caller can pass token ids through `encodeText`). `+register` under `clip-vit-b-32`, and the other
+  caller can pass token ids through `encodeText`). The factories and the registry build without one, so
+  their backends declare `NFKInputImage` alone and the catalog entries list the image as the one required
+  input; `NFKMLXCLIPTests.testEachRegisteredReleaseEmbedsEveryInputItsCatalogEntryLists` holds the two
+  together on initial weights. `+register` under `clip-vit-b-32`, and the other
   released towers under `clip-vit-b-16` / `-l-14` / `-l-14-336` (`NFKMLXCLIPVariant`: `.vitB16`,
   `.vitL14` — vision 1024 wide, 24 blocks, 16 heads, embedding 768, text 768 / 12 / 12 — and
   `.vitL14At336`); B/16 and L/14 load their released checkpoints strictly and return unit embeddings,

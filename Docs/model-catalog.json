@@ -2030,23 +2030,15 @@
       "family" : "clip",
       "id" : "clip-vit-b-16",
       "inputModalities" : [
-        "image",
-        "text"
+        "image"
       ],
       "inputs" : [
         {
           "help" : "The image to embed.",
           "key" : "image",
-          "required" : false,
+          "required" : true,
           "title" : "Image",
           "valueType" : "image"
-        },
-        {
-          "help" : "Text to embed. The registered backend has no tokenizer and embeds images only.",
-          "key" : "prompt",
-          "required" : false,
-          "title" : "Text",
-          "valueType" : "text"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -2065,7 +2057,7 @@
       ],
       "outputs" : [
         {
-          "help" : "The normalized embedding in CLIP's joint image-text space.",
+          "help" : "The normalized image embedding in CLIP's joint image-text space.",
           "key" : "embedding",
           "required" : true,
           "title" : "Embedding",
@@ -2136,23 +2128,15 @@
       "family" : "clip",
       "id" : "clip-vit-b-32",
       "inputModalities" : [
-        "image",
-        "text"
+        "image"
       ],
       "inputs" : [
         {
           "help" : "The image to embed.",
           "key" : "image",
-          "required" : false,
+          "required" : true,
           "title" : "Image",
           "valueType" : "image"
-        },
-        {
-          "help" : "Text to embed. The registered backend has no tokenizer and embeds images only.",
-          "key" : "prompt",
-          "required" : false,
-          "title" : "Text",
-          "valueType" : "text"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -2171,7 +2155,7 @@
       ],
       "outputs" : [
         {
-          "help" : "The normalized embedding in CLIP's joint image-text space.",
+          "help" : "The normalized image embedding in CLIP's joint image-text space.",
           "key" : "embedding",
           "required" : true,
           "title" : "Embedding",
@@ -2242,23 +2226,15 @@
       "family" : "clip",
       "id" : "clip-vit-l-14",
       "inputModalities" : [
-        "image",
-        "text"
+        "image"
       ],
       "inputs" : [
         {
           "help" : "The image to embed.",
           "key" : "image",
-          "required" : false,
+          "required" : true,
           "title" : "Image",
           "valueType" : "image"
-        },
-        {
-          "help" : "Text to embed. The registered backend has no tokenizer and embeds images only.",
-          "key" : "prompt",
-          "required" : false,
-          "title" : "Text",
-          "valueType" : "text"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -2277,7 +2253,7 @@
       ],
       "outputs" : [
         {
-          "help" : "The normalized embedding in CLIP's joint image-text space.",
+          "help" : "The normalized image embedding in CLIP's joint image-text space.",
           "key" : "embedding",
           "required" : true,
           "title" : "Embedding",
@@ -2348,23 +2324,15 @@
       "family" : "clip",
       "id" : "clip-vit-l-14-336",
       "inputModalities" : [
-        "image",
-        "text"
+        "image"
       ],
       "inputs" : [
         {
           "help" : "The image to embed.",
           "key" : "image",
-          "required" : false,
+          "required" : true,
           "title" : "Image",
           "valueType" : "image"
-        },
-        {
-          "help" : "Text to embed. The registered backend has no tokenizer and embeds images only.",
-          "key" : "prompt",
-          "required" : false,
-          "title" : "Text",
-          "valueType" : "text"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -2383,7 +2351,7 @@
       ],
       "outputs" : [
         {
-          "help" : "The normalized embedding in CLIP's joint image-text space.",
+          "help" : "The normalized image embedding in CLIP's joint image-text space.",
           "key" : "embedding",
           "required" : true,
           "title" : "Embedding",

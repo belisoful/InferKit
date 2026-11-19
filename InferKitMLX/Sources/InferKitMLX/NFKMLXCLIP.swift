@@ -388,8 +388,11 @@ public final class NFKMLXCLIPBackend: NSObject, NFKInferenceBackend {
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> { [] }
 
-    /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedInputKeys: Set<String> { [NFKInputImage, NFKInputPrompt] }
+    /// The request inputs the backend reads: the image, and the prompt when the backend holds a tokenizer.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var supportedInputKeys: Set<String> {
+        tokenizer == nil ? [NFKInputImage] : [NFKInputImage, NFKInputPrompt]
+    }
 
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> { [NFKOutputEmbedding] }

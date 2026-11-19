@@ -97,6 +97,27 @@ final class NFKMLXCLIPTests: XCTestCase {
         XCTAssertEqual(embedding.count, NFKMLXCLIPConfiguration.base.embedDimensions, "ViT-B/32 embedding width")
     }
 
+    // The prompt value lets a catalog entry that lists the prompt again fail here while the registered backend
+    // has no tokenizer to read it with.
+    func testEachRegisteredReleaseEmbedsEveryInputItsCatalogEntryLists() throws {
+        try requireMLXRuntime()
+        NFKMLXCLIP.register()
+        let values: [String: Any] = [NFKInputImage: Self.solid(8, 8), NFKInputPrompt: "a photo of a cat"]
+        for variant in NFKMLXCatalogImage.clipReleases {
+            let spec = NFKMLXCLIP.specs(for: variant)
+            let entry = try XCTUnwrap(NFKMLXCatalogImage.clipEntries.first { $0.identifier == spec.name }, spec.name)
+            let backend = try NFKMLXModelRegistry.backend(named: spec.name, weightsURL: nil)
+            XCTAssertEqual(Set(entry.inputs.map(\.key)), backend.supportedInputKeys, spec.name)
+            XCTAssertTrue(entry.inputs.contains(where: \.isRequired), "\(spec.name) lists a required input")
+            for port in entry.inputs {
+                let value = try XCTUnwrap(values[port.key], "\(spec.name) lists \(port.key)")
+                let result = try backend.runInference(for: NFKInferenceRequest(inputs: [port.key: value]))
+                XCTAssertEqual(result.embedding?.count, spec.configuration.embedDimensions, "\(spec.name) \(port.key)")
+            }
+            NFKMLXGPU.clearCache()
+        }
+    }
+
     // MARK: Helpers
 
     static func norm(_ x: MLXArray) -> Float {
