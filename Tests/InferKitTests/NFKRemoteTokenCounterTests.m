@@ -112,6 +112,60 @@
 	XCTAssertNil([NFKRemoteTokenCounter counterForProvider:NFKRemoteProvider.openAI apiKey:@"k" modelName:@"m"]);
 }
 
+// Meta counts on its Responses route, which takes the body a Responses run sends. A limit goes out as
+// the request sets it.
+- (void)testMetaCountsTheResponsesBodyOnItsInputTokensRoute
+{
+	NFKStubTokenCounter *counter = [self counterFor:NFKRemoteProvider.meta model:@"muse-spark-1.3"];
+	XCTAssertEqual(counter.apiStyle, NFKRemoteTokenCounterAPIStyleResponses);
+	counter.stagedBody = @"{\"object\":\"response.input_tokens\",\"input_tokens\":69}";
+	NSArray *messages = @[ @{ @"role": @"system", @"content": @"Be brief." }, @{ @"role": @"user", @"content": @"Hi" } ];
+	NSDictionary *schema = @{ @"type": @"object", @"properties": @{ @"word": @{ @"type": @"string" } } };
+	NSDictionary *tool = @{ @"name": @"lookup", @"description": @"Looks a word up.", @"parameters": schema };
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputMessages: messages }
+															   parameters:@{ NFKParameterTools: @[ tool ],
+																			 NFKParameterMaxTokens: @8,
+																			 NFKParameterPreviousResponseIdentifier: @"resp_1" }];
+	NSError *error = nil;
+	XCTAssertEqualObjects([counter tokenCountForRequest:request error:&error], @69, @"%@", error);
+	XCTAssertEqualObjects(counter.lastRequest.URL.absoluteString, @"https://api.meta.ai/v1/responses/input_tokens");
+	XCTAssertEqualObjects(counter.lastRequest.HTTPMethod, @"POST");
+	XCTAssertEqualObjects([counter.lastRequest valueForHTTPHeaderField:@"Authorization"], @"Bearer k");
+	XCTAssertEqualObjects([counter.lastRequest valueForHTTPHeaderField:@"Content-Type"], @"application/json");
+	NSDictionary *expected = @{ @"model": @"muse-spark-1.3",
+								@"instructions": @"Be brief.",
+								@"input": @[ @{ @"role": @"user", @"content": @[ @{ @"type": @"input_text", @"text": @"Hi" } ] } ],
+								@"tools": @[ @{ @"type": @"function", @"name": @"lookup", @"description": @"Looks a word up.", @"parameters": schema } ],
+								@"max_output_tokens": @8,
+								@"previous_response_id": @"resp_1" };
+	XCTAssertEqualObjects([self bodyOf:counter.lastRequest], expected);
+}
+
+- (void)testMetaCountsAPromptAndReportsAReplyWithoutACount
+{
+	NFKStubTokenCounter *counter = [self counterFor:NFKRemoteProvider.meta model:@"muse-spark-1.3"];
+	counter.stagedBody = @"{\"object\":\"response.input_tokens\",\"input_tokens\":14}";
+	NFKInferenceRequest *prompt = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"What is the capital of France?" }];
+	XCTAssertEqualObjects([counter tokenCountForRequest:prompt error:NULL], @14);
+	NSDictionary *expected = @{ @"model": @"muse-spark-1.3",
+								@"input": @[ @{ @"role": @"user",
+												@"content": @[ @{ @"type": @"input_text", @"text": @"What is the capital of France?" } ] } ] };
+	XCTAssertEqualObjects([self bodyOf:counter.lastRequest], expected);
+
+	NSError *error = nil;
+	counter.stagedBody = @"{\"object\":\"response.input_tokens\"}";
+	XCTAssertNil([counter tokenCountForRequest:prompt error:&error]);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceBackendFailure);
+
+	counter.lastRequest = nil;
+	XCTAssertNil([counter tokenCountForRequest:[NFKInferenceRequest requestWithInputs:@{}] error:&error]);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceMissingInput);
+	XCTAssertNil(counter.lastRequest, @"a request without text is not sent");
+
+	XCTAssertNil([counter tokenIdentifiersForText:@"x" error:&error]);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+}
+
 #pragma mark Classification
 
 - (void)testMistralClassifiesAConversationOnItsChatPathAndNamesSeveralTargets

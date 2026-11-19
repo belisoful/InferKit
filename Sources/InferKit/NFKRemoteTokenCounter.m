@@ -10,6 +10,7 @@
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteTransportPrivate.h"
 #import "NFKAnthropicBackendPrivate.h"
+#import "NFKRemoteResponsesBackendPrivate.h"
 
 @implementation NFKRemoteTokenCounter
 
@@ -34,6 +35,9 @@
 	} else if ([identifier isEqualToString:@"llamacpp"]) {
 		counter.endpointURL = [versionRoot URLByAppendingPathComponent:@"tokenize"];
 		counter.apiStyle = NFKRemoteTokenCounterAPIStyleLlamaCpp;
+	} else if ([identifier isEqualToString:@"meta"]) {
+		counter.endpointURL = [provider URLForPath:@"responses/input_tokens"];
+		counter.apiStyle = NFKRemoteTokenCounterAPIStyleResponses;
 	} else {
 		return nil;
 	}
@@ -68,8 +72,10 @@
 - (nullable NSNumber *)tokenCountForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
 {
 	NSDictionary *reply = nil;
-	if (self.apiStyle == NFKRemoteTokenCounterAPIStyleAnthropic) {
-		NSDictionary *body = [self anthropicBodyForRequest:request error:outError];
+	if (self.apiStyle == NFKRemoteTokenCounterAPIStyleAnthropic || self.apiStyle == NFKRemoteTokenCounterAPIStyleResponses) {
+		NSDictionary *body = self.apiStyle == NFKRemoteTokenCounterAPIStyleAnthropic
+			? [self anthropicBodyForRequest:request error:outError]
+			: [self responsesBodyForRequest:request error:outError];
 		if (body == nil) {
 			return nil;
 		}
@@ -139,6 +145,17 @@
 	NFKAnthropicBackend *builder = [NFKAnthropicBackend backendWithEndpointURL:messagesURL];
 	builder.modelName = self.modelName;
 	return [builder countTokensBodyForRequest:request error:outError];
+}
+
+// The body NFKRemoteResponsesBackend builds for a run of the same request, so the count covers what a
+// run sends. The backend reads the endpoint a run would post to, as the Anthropic builder does.
+- (nullable NSDictionary *)responsesBodyForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	NSURL *responsesURL = [self.endpointURL.lastPathComponent isEqualToString:@"input_tokens"]
+		? self.endpointURL.URLByDeletingLastPathComponent : self.endpointURL;
+	NFKRemoteResponsesBackend *builder = [NFKRemoteResponsesBackend backendWithEndpointURL:responsesURL];
+	builder.modelName = self.modelName;
+	return [builder inputTokensBodyForRequest:request error:outError];
 }
 
 - (nullable NSString *)textForRequest:(NFKInferenceRequest *)request

@@ -16,6 +16,7 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKErrors.h>
 #import <InferKit/NFKInferenceJob.h>
+#import <InferKit/NFKRemoteTransport.h>
 
 /*! A transcription backend whose transport is stubbed: it records the request and returns staged data. */
 @interface StubTranscriptionBackend : NFKRemoteTranscriptionBackend
@@ -23,6 +24,10 @@
 @property (nonatomic, strong, nullable) NSData *stagedData;
 @property (nonatomic, assign) NSInteger stagedStatusCode;
 @property (nonatomic, copy, nullable) NSArray<NSString *> *stagedLines;
+/*! Holds the staged lines until playDeferredStream, so a test sets a progress handler on the job first. */
+@property (nonatomic, assign) BOOL defersStream;
+@property (nonatomic, copy, nullable) void (^deferredStream)(void);
+- (void)playDeferredStream;
 @end
 
 @implementation StubTranscriptionBackend
@@ -53,11 +58,28 @@
 			  completionHandler:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completionHandler
 {
 	self.lastRequest = request;
-	for (NSString *line in self.stagedLines) {
-		lineHandler(line);
+	NSArray<NSString *> *lines = self.stagedLines;
+	void (^stream)(void) = ^{
+		for (NSString *line in lines) {
+			lineHandler(line);
+		}
+		completionHandler([[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil], nil, nil);
+	};
+	if (self.defersStream) {
+		self.deferredStream = stream;
+	} else {
+		stream();
 	}
-	completionHandler([[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil], nil, nil);
 	return ^{};
+}
+
+- (void)playDeferredStream
+{
+	void (^stream)(void) = self.deferredStream;
+	self.deferredStream = nil;
+	if (stream != nil) {
+		stream();
+	}
 }
 
 @end
@@ -205,27 +227,186 @@
 	XCTAssertEqualObjects(result.structured[@"sessionId"], @"s1");
 }
 
-- (void)testMetaAsksForTurnsWhenTimestampsAreWantedAndRunsAStreamedJobAsTheBlockingCall
+- (void)testMetaAsksForTurnsWhenTimestampsAreWantedAndAStreamedJobAsksForTheEventStream
 {
 	StubTranscriptionBackend *meta = [self stubFor:NFKRemoteProvider.meta model:@"muse-voice-transcribe-1.0"];
 	meta.stagedData = [@"{\"sessionId\":\"s2\",\"transcript\":\"Hello.\",\"turns\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
 	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [@"RIFF" dataUsingEncoding:NSUTF8StringEncoding] }];
 	XCTAssertNotNil([meta runInferenceForRequest:request error:NULL]);
 	XCTAssertFalse([[self formOf:meta.lastRequest] containsString:@"\"mode\""], @"the service's default is push to talk");
+	XCTAssertNil(meta.lastRequest.allHTTPHeaderFields[@"Accept"], @"the blocking call takes the buffered reply");
 
 	meta.emitsTimestamps = YES;
 	meta.streams = YES;
+	meta.stagedLines = [self metaStreamLinesForEvents:@[
+		@"{\"type\":\"speechStart\",\"turnId\":1,\"audioProcessedMs\":1200}",
+		@"{\"type\":\"transcript\",\"transcript\":\"how is the weather\",\"final\":false,\"audioProcessedMs\":3200}",
+		@"{\"type\":\"speechEnd\",\"turnId\":1,\"audioProcessedMs\":3600}",
+		@"{\"type\":\"speechComplete\",\"turnId\":1,\"transcript\":\"How is the weather?\",\"audioProcessedMs\":3600}" ]];
 	NFKInferenceJob *job = [meta submitInferenceJobForRequest:request];
-	XCTestExpectation *finished = [self expectationWithDescription:@"the job finishes"];
-	job.completionHandler = ^(NFKInferenceJob *done) {
-		XCTAssertEqualObjects(done.result.text, @"Hello.");
-		XCTAssertNil([done.result outputForKey:NFKOutputSegments], @"no turns came back");
-		[finished fulfill];
-	};
-	[self waitForExpectations:@[ finished ] timeout:5.0];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
 	NSString *form = [self formOf:meta.lastRequest];
 	XCTAssertTrue([form containsString:@"\"mode\":\"ENDPOINTING\""]);
-	XCTAssertNil(meta.lastRequest.allHTTPHeaderFields[@"Accept"], @"the Meta style does not ask for the event stream");
+	XCTAssertFalse([form containsString:@"stream"], @"the Accept header alone selects the stream");
+	XCTAssertEqualObjects(meta.lastRequest.allHTTPHeaderFields[@"Accept"], @"text/event-stream");
+	XCTAssertEqualObjects(job.result.text, @"How is the weather?");
+	NSArray<NFKAudioSegment *> *turns = job.result.segments;
+	XCTAssertEqual(turns.count, 1);
+	XCTAssertEqualObjects(turns[0].label, @"How is the weather?");
+	XCTAssertNil(turns[0].speaker);
+	XCTAssertEqualWithAccuracy(turns[0].startSeconds, 1.2, 1e-9);
+	XCTAssertEqualWithAccuracy(turns[0].endSeconds, 3.6, 1e-9);
+}
+
+#pragma mark Meta's event stream
+
+// Meta's SSE framing: a line naming the event, the data line, and the blank line that ends the event.
+- (NSArray<NSString *> *)metaStreamLinesForEvents:(NSArray<NSString *> *)events
+{
+	NSMutableArray<NSString *> *lines = [NSMutableArray array];
+	for (NSString *event in events) {
+		NSDictionary *object = [NSJSONSerialization JSONObjectWithData:[event dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+		[lines addObject:[@"event: " stringByAppendingString:object[@"type"]]];
+		[lines addObject:[@"data: " stringByAppendingString:event]];
+		[lines addObject:@""];
+	}
+	return lines;
+}
+
+/*! Submits the request on a Meta stub that streams the events, and returns the job finished. texts
+	receives the text of each partial result the job reported, in order. */
+- (NFKInferenceJob *)metaJobStreamingEvents:(NSArray<NSString *> *)events
+								parameters:(NSDictionary<NSString *, id> *)parameters
+							  partialTexts:(NSMutableArray<NSString *> *)texts
+{
+	StubTranscriptionBackend *meta = [self stubFor:NFKRemoteProvider.meta model:@"muse-voice-transcribe-1.0"];
+	meta.streams = YES;
+	meta.defersStream = YES;
+	meta.stagedLines = [self metaStreamLinesForEvents:events];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [@"RIFF" dataUsingEncoding:NSUTF8StringEncoding] }
+															   parameters:parameters];
+	NFKInferenceJob *job = [meta submitInferenceJobForRequest:request];
+	job.progressHandler = ^(NFKInferenceJob *running) {
+		if (running.partialResult.text != nil) {
+			[texts addObject:running.partialResult.text];
+		}
+	};
+	[meta playDeferredStream];
+	self.backend = meta;
+	return job;
+}
+
+- (void)testMetaStreamsAPushToTalkTranscriptWhoseEachPartialReplacesTheLast
+{
+	NSMutableArray<NSString *> *partials = [NSMutableArray array];
+	NFKInferenceJob *job = [self metaJobStreamingEvents:@[
+		@"{\"type\":\"transcript\",\"transcript\":\"i fixed the bag\",\"final\":false,\"audioProcessedMs\":800}",
+		@"{\"type\":\"audioProgress\",\"audioProcessedMs\":900}",
+		@"{\"type\":\"transcript\",\"transcript\":\"I fixed the bug. By fixed\",\"final\":false,\"audioProcessedMs\":1600}",
+		@"{\"type\":\"aLaterEventType\",\"audioProcessedMs\":1700}",
+		@"{\"type\":\"transcript\",\"transcript\":\"I fixed the bug. By fixed, I mean it.\",\"final\":true,\"audioProcessedMs\":2400}" ]
+											parameters:@{}
+										  partialTexts:partials];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	NSArray<NSString *> *expected = @[ @"i fixed the bag", @"I fixed the bug. By fixed", @"I fixed the bug. By fixed, I mean it." ];
+	XCTAssertEqualObjects(partials, expected);
+	XCTAssertEqualObjects(job.result.text, @"I fixed the bug. By fixed, I mean it.");
+	XCTAssertNil(job.result.segments, @"push to talk reports no turns");
+	XCTAssertEqualObjects(job.result.structured[@"turns"], (@[]));
+	XCTAssertFalse([[self formOf:self.backend.lastRequest] containsString:@"\"mode\""]);
+}
+
+// A later turn opens before the earlier one's speechComplete arrives, so the completion finds its turn
+// by id. The speaker event labels the turn the latest speechStart opened.
+- (void)testMetaStreamsADiarizedTranscriptAsTurnsWithTheirSpeakers
+{
+	NSMutableArray<NSString *> *partials = [NSMutableArray array];
+	NFKInferenceJob *job = [self metaJobStreamingEvents:@[
+		@"{\"type\":\"speechStart\",\"turnId\":1,\"audioProcessedMs\":1200}",
+		@"{\"type\":\"transcript\",\"transcript\":\"thanks for calling\",\"final\":false,\"audioProcessedMs\":2400}",
+		@"{\"type\":\"speaker\",\"label\":\"A\",\"audioProcessedMs\":2480}",
+		@"{\"type\":\"speechEnd\",\"turnId\":1,\"audioProcessedMs\":3600}",
+		@"{\"type\":\"speechStart\",\"turnId\":2,\"audioProcessedMs\":4100}",
+		@"{\"type\":\"transcript\",\"transcript\":\"i need a new sim\",\"final\":false,\"audioProcessedMs\":5200}",
+		@"{\"type\":\"speechComplete\",\"turnId\":1,\"transcript\":\"Thanks for calling.\",\"audioProcessedMs\":5300}",
+		@"{\"type\":\"speaker\",\"label\":\"B\",\"audioProcessedMs\":5400}",
+		@"{\"type\":\"speechEnd\",\"turnId\":2,\"audioProcessedMs\":6000}",
+		@"{\"type\":\"speechComplete\",\"turnId\":2,\"transcript\":\"I need a new SIM.\",\"audioProcessedMs\":6000}" ]
+											parameters:@{ NFKParameterSpeakerDiarization: @YES }
+										  partialTexts:partials];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	XCTAssertTrue([[self formOf:self.backend.lastRequest] containsString:@"\"mode\":\"DIARIZATION\""]);
+	NSArray<NSString *> *expected = @[ @"thanks for calling", @"thanks for calling i need a new sim",
+									   @"Thanks for calling. i need a new sim", @"Thanks for calling. I need a new SIM." ];
+	XCTAssertEqualObjects(partials, expected);
+	XCTAssertEqualObjects(job.result.text, @"Thanks for calling. I need a new SIM.");
+	NSArray<NFKAudioSegment *> *turns = job.result.segments;
+	XCTAssertEqual(turns.count, 2);
+	XCTAssertEqualObjects(turns[0].label, @"Thanks for calling.");
+	XCTAssertEqualObjects(turns[0].speaker, @"A");
+	XCTAssertEqualWithAccuracy(turns[0].startSeconds, 1.2, 1e-9);
+	XCTAssertEqualWithAccuracy(turns[0].endSeconds, 3.6, 1e-9);
+	XCTAssertEqualObjects(turns[1].label, @"I need a new SIM.");
+	XCTAssertEqualObjects(turns[1].speaker, @"B");
+	XCTAssertEqualWithAccuracy(turns[1].startSeconds, 4.1, 1e-9);
+	XCTAssertEqualWithAccuracy(turns[1].endSeconds, 6.0, 1e-9);
+	NSDictionary *secondTurn = @{ @"turnId": @2, @"startMs": @4100, @"endMs": @6000, @"transcript": @"I need a new SIM.", @"speaker": @"B" };
+	XCTAssertEqualObjects([job.result.structured[@"turns"] lastObject], secondTurn);
+}
+
+// Under DELTA a partial carries new text only; the final event carries the complete transcript.
+- (void)testMetaAppendsDeltaPartialsAndTakesTheFinalTranscriptWhole
+{
+	NSMutableArray<NSString *> *partials = [NSMutableArray array];
+	NFKInferenceJob *job = [self metaJobStreamingEvents:@[
+		@"{\"type\":\"transcript\",\"transcript\":\"I fixed\",\"final\":false,\"audioProcessedMs\":800}",
+		@"{\"type\":\"transcript\",\"transcript\":\" the bug\",\"final\":false,\"audioProcessedMs\":1600}",
+		@"{\"type\":\"transcript\",\"transcript\":\"I fixed the bug.\",\"final\":true,\"audioProcessedMs\":2000}" ]
+											parameters:@{ @"partialMode": @"DELTA" }
+										  partialTexts:partials];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	XCTAssertTrue([[self formOf:self.backend.lastRequest] containsString:@"\"partialMode\":\"DELTA\""]);
+	NSArray<NSString *> *expected = @[ @"I fixed", @"I fixed the bug", @"I fixed the bug." ];
+	XCTAssertEqualObjects(partials, expected);
+	XCTAssertEqualObjects(job.result.text, @"I fixed the bug.");
+}
+
+- (void)testMetaReadsTheEventLinesNameForADataObjectWithoutAType
+{
+	StubTranscriptionBackend *meta = [self stubFor:NFKRemoteProvider.meta model:@"muse-voice-transcribe-1.0"];
+	meta.streams = YES;
+	meta.stagedLines = @[ @"event: transcript", @"data: {\"transcript\":\"Hello.\",\"final\":true,\"audioProcessedMs\":900}", @"",
+						  @"data: {\"transcript\":\"an object no event line names\",\"final\":true}", @"" ];
+	NFKInferenceJob *job = [meta submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [@"RIFF" dataUsingEncoding:NSUTF8StringEncoding] }]];
+	XCTAssertEqualObjects(job.result.text, @"Hello.", @"%@", job.error);
+}
+
+// Once the stream is open the status is 200, so a failure arrives as an event.
+- (void)testMetaErrorEventFailsAStreamedJobWithTheServicesMessage
+{
+	NSMutableArray<NSString *> *partials = [NSMutableArray array];
+	NFKInferenceJob *job = [self metaJobStreamingEvents:@[
+		@"{\"type\":\"transcript\",\"transcript\":\"how is\",\"final\":false,\"audioProcessedMs\":800}",
+		@"{\"type\":\"error\",\"message\":\"Processing exceeded the server budget.\",\"sessionId\":\"s-9\",\"errorType\":\"server_error\"}",
+		@"{\"type\":\"transcript\",\"transcript\":\"how is the weather\",\"final\":true,\"audioProcessedMs\":1600}" ]
+											parameters:@{}
+										  partialTexts:partials];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusFailed);
+	XCTAssertNil(job.result);
+	XCTAssertEqualObjects(job.error.domain, NFKInferenceErrorDomain);
+	XCTAssertEqual(job.error.code, (NSInteger)kNFKError_InferenceBackendFailure);
+	XCTAssertEqualObjects(job.error.localizedDescription, @"Processing exceeded the server budget.");
+	XCTAssertTrue([job.error.userInfo[NFKRemoteErrorBodyKey] containsString:@"\"sessionId\":\"s-9\""]);
+	XCTAssertEqualObjects(partials, (@[ @"how is" ]), @"an event after the error is not read");
+
+	job = [self metaJobStreamingEvents:@[ @"{\"type\":\"error\",\"message\":\"Too many sessions.\",\"sessionId\":\"\",\"errorType\":\"rate_limit_error\"}" ]
+							parameters:@{}
+						  partialTexts:partials];
+	XCTAssertEqual(job.error.code, (NSInteger)kNFKError_InferenceRateLimited);
+	job = [self metaJobStreamingEvents:@[ @"{\"type\":\"error\",\"message\":\"Unsupported audio.\",\"sessionId\":\"\",\"errorType\":\"invalid_request_error\",\"errorParam\":\"audio\"}" ]
+							parameters:@{}
+						  partialTexts:partials];
+	XCTAssertEqual(job.error.code, (NSInteger)kNFKError_InferenceRefused);
 }
 
 // xAI's /v1/stt times words with speakers; the backend groups them into turns for the segments.

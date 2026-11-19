@@ -4,6 +4,7 @@
 //
 
 #import <InferKit/NFKRemoteResponsesBackend.h>
+#import "NFKRemoteResponsesBackendPrivate.h"
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKRemoteBackend.h>
@@ -528,6 +529,18 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 	if (skills.count > 0) {
 		body[@"skills"] = skills;
 	}
+}
+
+#pragma mark Token counting
+
+- (nullable NSDictionary<NSString *, id> *)inputTokensBodyForRequest:(NFKInferenceRequest *)request
+															   error:(NSError * _Nullable *)outError
+{
+	NSMutableURLRequest *urlRequest = [self urlRequestForRequest:request streaming:NO error:outError];
+	if (urlRequest == nil) {
+		return nil;
+	}
+	return [NSJSONSerialization JSONObjectWithData:urlRequest.HTTPBody options:0 error:NULL];
 }
 
 #pragma mark Output files

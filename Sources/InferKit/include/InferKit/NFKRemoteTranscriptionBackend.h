@@ -28,7 +28,9 @@ NS_ASSUME_NONNULL_BEGIN
 	@constant   NFKRemoteTranscriptionAPIStyleMeta Meta's POST /v1/asr/transcribe: multipart with a
 				JSON request part (model, audioEncoding, mode, keywords, languageBias) and an audio
 				part, and a reply of a transcript with turns[] timed in milliseconds. The service
-				reads WAV only: mono 16-bit PCM at 16 or 24 kHz.
+				reads WAV only: mono 16-bit PCM at 16 or 24 kHz. When streamed, the reply is SSE
+				events named transcript, speechStart, speechEnd, speechComplete, speaker,
+				audioProgress, and error.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ENUM(NSInteger, NFKRemoteTranscriptionAPIStyle) {
@@ -71,6 +73,19 @@ typedef NS_ENUM(NSInteger, NFKRemoteTranscriptionAPIStyle) {
 				English whatever the audio's language. streams asks the service for its event
 				stream, and each delta grows the job's partialResult.
 
+				A streamed Meta job assembles the result the blocking call returns:
+
+				- A transcript event sets the text of the turn in progress, so the partialResult's
+				  text can change what it said before. With the parameter partialMode set to DELTA
+				  the service sends new text only, and the backend appends it.
+				- speechStart and speechEnd time a turn, speechComplete carries its finished text,
+				  and a speaker event names its speaker. Each turn is an NFKAudioSegment under
+				  NFKOutputSegments. The default mode, push to talk, reports no turns.
+				- An error event fails the job with the service's message. The event rides under
+				  NFKRemoteErrorBodyKey, which is where its sessionId is.
+				- NFKOutputStructured holds transcript and turns in the blocking reply's shape,
+				  without sessionId and audioDurationMs, which the stream does not carry.
+
 				runInferenceForRequest: blocks until the call returns, so a caller runs it off the
 				render thread. isReady reports whether an endpoint is set.
 */
@@ -102,8 +117,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteTranscriptionAPIStyle) {
 @property (nonatomic, assign) BOOL translates;
 
 /*! Asks for the service's event stream when the request is submitted as a job, so the transcript
-	grows on the job's partialResult as it arrives. The OpenAI and Mistral styles; the xAI and Meta
-	styles run the blocking call. Off by default,
+	grows on the job's partialResult as it arrives. The OpenAI, Mistral, and Meta styles; the xAI
+	style runs the blocking call. Off by default,
 	because some models refuse it. Introduced in InferKit 0.4.0. */
 @property (nonatomic, assign) BOOL streams;
 

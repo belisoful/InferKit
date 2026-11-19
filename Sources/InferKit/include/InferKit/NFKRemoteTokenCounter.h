@@ -24,6 +24,8 @@ NS_ASSUME_NONNULL_BEGIN
 				token_ids.
 	@constant   NFKRemoteTokenCounterAPIStyleLlamaCpp llama.cpp's POST /tokenize with content,
 				answered with tokens.
+	@constant   NFKRemoteTokenCounterAPIStyleResponses POST /responses/input_tokens with the Responses
+				body, answered with input_tokens.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ENUM(NSInteger, NFKRemoteTokenCounterAPIStyle) {
@@ -31,6 +33,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteTokenCounterAPIStyle) {
 	NFKRemoteTokenCounterAPIStyleGemini,
 	NFKRemoteTokenCounterAPIStyleXAI,
 	NFKRemoteTokenCounterAPIStyleLlamaCpp,
+	NFKRemoteTokenCounterAPIStyleResponses,
 };
 
 /*!
@@ -41,15 +44,19 @@ typedef NS_ENUM(NSInteger, NFKRemoteTokenCounterAPIStyle) {
 				for. The text is NFKInputPrompt, or NFKInputMessages. Anthropic's count takes the
 				body NFKAnthropicBackend sends for a run of the same request (the system turn lifted,
 				the tool conversation as tool_use and tool_result blocks, the attached media, the
-				tools, and the thinking), so it counts what a run costs; the other styles count the
-				joined text. A counting
+				tools, and the thinking), so it counts what a run costs. The Responses style's count
+				takes the body NFKRemoteResponsesBackend sends for a blocking run of the same request
+				(the system turn as instructions, the input items with their media, the tools, and
+				the parameters), and the service adds the history a previous response identifier
+				names. The other styles count the joined text. A counting
 				object rather than a backend, as NFKRemoteReranker is a scoring one. Blocks; run it
 				off the render thread. Introduced in InferKit 0.4.0.
 */
 @interface NFKRemoteTokenCounter : NSObject
 
 /*! The counting endpoint. For the Gemini style it is the models collection (…/v1beta/models); for
-	llama.cpp the server root. */
+	llama.cpp the server root; for the Responses style the input_tokens route under the endpoint a run
+	posts to. */
 @property (nonatomic, copy, nullable) NSURL *endpointURL;
 
 /*! The wire shape the counter speaks. */
@@ -67,8 +74,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteTokenCounterAPIStyle) {
 /*! The session used for the call. Defaults to the shared session. */
 @property (nonatomic, strong) NSURLSession *session;
 
-/*! A counter for the provider's endpoint: anthropic, gemini, xai, and llamacpp serve one; every other
-	preset returns nil. */
+/*! A counter for the provider's endpoint: anthropic, gemini, xai, llamacpp, and meta (its Responses
+	route, /v1/responses/input_tokens) serve one; every other preset returns nil. */
 + (nullable instancetype)counterForProvider:(NFKRemoteProvider *)provider
 									 apiKey:(nullable NSString *)apiKey
 								  modelName:(nullable NSString *)modelName;

@@ -39,12 +39,55 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 @implementation NFKTranscriptionAudio
 @end
 
-/*! What a streamed transcription assembles into. */
+/*! One turn of a Meta event stream. The turn a stream fills before it names any has no identifier
+	and no times, which is the whole of a push-to-talk stream. */
+@interface NFKMetaTranscriptionTurn : NSObject
+@property (nonatomic, strong, nullable) id identifier;
+@property (nonatomic, strong, nullable) NSNumber *startMilliseconds;
+@property (nonatomic, strong, nullable) NSNumber *endMilliseconds;
+@property (nonatomic, strong) NSMutableString *partial;
+@property (nonatomic, copy, nullable) NSString *transcript;
+@property (nonatomic, copy, nullable) NSString *speaker;
+/*! The finished transcript, or the latest partial until speechComplete names one. */
+@property (nonatomic, readonly) NSString *text;
+@end
+
+@implementation NFKMetaTranscriptionTurn
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		_partial = [NSMutableString string];
+	}
+	return self;
+}
+
+- (NSString *)text
+{
+	return self.transcript ?: [self.partial copy];
+}
+@end
+
+/*! What a streamed transcription assembles into. The turns, the open turn, the event name, and the
+	failure belong to the Meta style. */
 @interface NFKTranscriptionStreamState : NSObject
 @property (nonatomic, strong) NSMutableString *text;
 @property (nonatomic, strong) NSMutableArray<NSDictionary *> *segments;
 @property (nonatomic, copy, nullable) NSDictionary *finalBody;
 @property (nonatomic, assign) BOOL finished;
+@property (nonatomic, strong) NSMutableArray<NFKMetaTranscriptionTurn *> *turns;
+/*! The turn the latest speechStart opened, which the partials and the speaker label belong to. */
+@property (nonatomic, strong, nullable) NFKMetaTranscriptionTurn *openTurn;
+/*! Whether a partial extends the one before it (partialMode DELTA) or replaces it. */
+@property (nonatomic, assign) BOOL appendsPartials;
+/*! The name on the latest SSE event line, until the blank line that ends its event. */
+@property (nonatomic, copy, nullable) NSString *eventName;
+@property (nonatomic, strong, nullable) NSError *failure;
+/*! The turn with the identifier, added in arrival order when the stream first names it. Nil for an
+	identifier that is neither a number nor a string. */
+- (nullable NFKMetaTranscriptionTurn *)turnWithIdentifier:(nullable id)identifier;
+/*! The open turn, or a new turn without an identifier when the stream has opened none. */
+- (NFKMetaTranscriptionTurn *)turnForPartials;
 @end
 
 @implementation NFKTranscriptionStreamState
@@ -54,8 +97,34 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 	if (self != nil) {
 		_text = [NSMutableString string];
 		_segments = [NSMutableArray array];
+		_turns = [NSMutableArray array];
 	}
 	return self;
+}
+
+- (nullable NFKMetaTranscriptionTurn *)turnWithIdentifier:(nullable id)identifier
+{
+	if (![identifier isKindOfClass:NSNumber.class] && ![identifier isKindOfClass:NSString.class]) {
+		return nil;
+	}
+	for (NFKMetaTranscriptionTurn *turn in self.turns) {
+		if ([turn.identifier isEqual:identifier]) {
+			return turn;
+		}
+	}
+	NFKMetaTranscriptionTurn *turn = [[NFKMetaTranscriptionTurn alloc] init];
+	turn.identifier = identifier;
+	[self.turns addObject:turn];
+	return turn;
+}
+
+- (NFKMetaTranscriptionTurn *)turnForPartials
+{
+	if (self.openTurn == nil) {
+		self.openTurn = [[NFKMetaTranscriptionTurn alloc] init];
+		[self.turns addObject:self.openTurn];
+	}
+	return self.openTurn;
 }
 @end
 
@@ -182,12 +251,17 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 	}
 	[job reportProgress:-1.0];
 	NFKTranscriptionStreamState *state = [[NFKTranscriptionStreamState alloc] init];
+	state.appendsPartials = [self appendsPartialsForRequest:request];
 	void (^cancel)(void) = [self streamRequest:urlRequest lineHandler:^(NSString *line) {
 		if (state.finished) {
 			return;
 		}
 		NSString *payload = [NFKRemoteTransport SSEDataForLine:line];
-		id event = payload != nil ? [NSJSONSerialization JSONObjectWithData:[payload dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL] : nil;
+		if (payload == nil) {
+			[self readEventNameInLine:line toState:state];
+			return;
+		}
+		id event = [NSJSONSerialization JSONObjectWithData:[payload dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
 		if (![event isKindOfClass:NSDictionary.class]) {
 			return;
 		}
@@ -200,9 +274,9 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 				return;
 			}
 			state.finished = YES;
-			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody] ?: state.failure;
 			if (failure != nil) {
-				[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the transcription call failed"]];
+				[job finishWithError:failure];
 				return;
 			}
 			[job finishWithResult:[self resultFromStreamState:state]];
@@ -212,10 +286,9 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 	return job;
 }
 
-// Meta names each event on an SSE event line, which the line handler here does not read.
 - (BOOL)styleStreams
 {
-	return self.apiStyle == NFKRemoteTranscriptionAPIStyleOpenAI || self.apiStyle == NFKRemoteTranscriptionAPIStyleMistral;
+	return self.apiStyle != NFKRemoteTranscriptionAPIStyleXAI;
 }
 
 #pragma mark Request
@@ -612,9 +685,12 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 
 // OpenAI streams transcript.text.delta and ends with transcript.text.done; Mistral streams
 // transcription.text.delta and transcription.segment and ends with transcription.done. Returns
-// whether the event grew the text.
+// whether the event changed the text.
 - (BOOL)applyStreamEvent:(NSDictionary *)event toState:(NFKTranscriptionStreamState *)state
 {
+	if (self.apiStyle == NFKRemoteTranscriptionAPIStyleMeta) {
+		return [self applyMetaStreamEvent:event toState:state];
+	}
 	NSString *type = [event[@"type"] isKindOfClass:NSString.class] ? event[@"type"] : @"";
 	if ([type hasSuffix:@".text.delta"] && [event[@"delta"] isKindOfClass:NSString.class]) {
 		[state.text appendString:event[@"delta"]];
@@ -632,6 +708,9 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 
 - (NFKInferenceResult *)resultFromStreamState:(NFKTranscriptionStreamState *)state
 {
+	if (self.apiStyle == NFKRemoteTranscriptionAPIStyleMeta) {
+		return [self resultFromBody:[self metaBodyFromStreamState:state]];
+	}
 	NSMutableDictionary *body = [state.finalBody mutableCopy] ?: [NSMutableDictionary dictionary];
 	if (![body[@"text"] isKindOfClass:NSString.class]) {
 		body[@"text"] = [state.text copy];
@@ -640,6 +719,134 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 		body[@"segments"] = [state.segments copy];
 	}
 	return [self resultFromBody:body];
+}
+
+#pragma mark Meta's event stream
+
+- (BOOL)appendsPartialsForRequest:(NFKInferenceRequest *)request
+{
+	id mode = request.parameters[@"partialMode"];
+	return [mode isKindOfClass:NSString.class] && [mode caseInsensitiveCompare:@"DELTA"] == NSOrderedSame;
+}
+
+// Meta names an event on the SSE event line and again as the data object's type. The line's name
+// stands in for an object that carries no type.
+- (void)readEventNameInLine:(NSString *)line toState:(NFKTranscriptionStreamState *)state
+{
+	if (self.apiStyle != NFKRemoteTranscriptionAPIStyleMeta) {
+		return;
+	}
+	if ([line hasPrefix:@"event:"]) {
+		state.eventName = [[line substringFromIndex:6] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+	} else if (line.length == 0) {
+		state.eventName = nil;
+	}
+}
+
+/*! Applies one ServerMessage event and returns whether it changed the text.
+	- speechStart → opens the turn, which starts at audioProcessedMs.
+	- transcript → the open turn's partial, replaced, or extended under partialMode DELTA. A final
+	  one carries the complete text under both modes.
+	- speaker → the open turn's label.
+	- speechEnd → the turn ends at audioProcessedMs.
+	- speechComplete → the turn's finished transcript, found by turnId because turns overlap.
+	- error → the failure the job ends with. Later events are not read.
+	- audioProgress, or a type the backend does not know → no change. */
+- (BOOL)applyMetaStreamEvent:(NSDictionary *)event toState:(NFKTranscriptionStreamState *)state
+{
+	if (state.failure != nil) {
+		return NO;
+	}
+	NSString *type = [event[@"type"] isKindOfClass:NSString.class] ? event[@"type"] : state.eventName;
+	NSNumber *processed = [event[@"audioProcessedMs"] isKindOfClass:NSNumber.class] ? event[@"audioProcessedMs"] : nil;
+	NSString *transcript = [event[@"transcript"] isKindOfClass:NSString.class] ? event[@"transcript"] : nil;
+	if ([type isEqualToString:@"error"]) {
+		state.failure = [self errorForMetaErrorEvent:event];
+		return NO;
+	}
+	if ([type isEqualToString:@"speechStart"]) {
+		state.openTurn = [state turnWithIdentifier:event[@"turnId"]];
+		state.openTurn.startMilliseconds = processed;
+		return NO;
+	}
+	if ([type isEqualToString:@"speechEnd"]) {
+		[state turnWithIdentifier:event[@"turnId"]].endMilliseconds = processed;
+		return NO;
+	}
+	if ([type isEqualToString:@"speaker"]) {
+		state.openTurn.speaker = [event[@"label"] isKindOfClass:NSString.class] ? event[@"label"] : nil;
+		return NO;
+	}
+	if ([type isEqualToString:@"transcript"] && transcript != nil) {
+		NSMutableString *partial = [state turnForPartials].partial;
+		BOOL final = [event[@"final"] isKindOfClass:NSNumber.class] && [event[@"final"] boolValue];
+		if (state.appendsPartials && !final) {
+			[partial appendString:transcript];
+		} else {
+			[partial setString:transcript];
+		}
+	} else if ([type isEqualToString:@"speechComplete"] && transcript != nil) {
+		[state turnWithIdentifier:event[@"turnId"]].transcript = transcript;
+	} else {
+		return NO;
+	}
+	NSString *text = [self metaTranscriptOfStreamState:state];
+	if ([text isEqualToString:state.text]) {
+		return NO;
+	}
+	[state.text setString:text];
+	return YES;
+}
+
+// The turns' texts in arrival order, joined by a space as the buffered reply's transcript is.
+- (NSString *)metaTranscriptOfStreamState:(NFKTranscriptionStreamState *)state
+{
+	NSMutableArray<NSString *> *pieces = [NSMutableArray array];
+	for (NFKMetaTranscriptionTurn *turn in state.turns) {
+		if (turn.text.length > 0) {
+			[pieces addObject:turn.text];
+		}
+	}
+	return [pieces componentsJoinedByString:@" "];
+}
+
+/*! The stream in the buffered reply's shape, so both read through resultFromMetaBody:. The stream
+	carries no sessionId and no audioDurationMs. */
+- (NSDictionary<NSString *, id> *)metaBodyFromStreamState:(NFKTranscriptionStreamState *)state
+{
+	NSMutableArray<NSDictionary *> *turns = [NSMutableArray array];
+	for (NFKMetaTranscriptionTurn *turn in state.turns) {
+		if (turn.identifier == nil) {
+			continue;
+		}
+		NSMutableDictionary<NSString *, id> *entry = [NSMutableDictionary dictionary];
+		entry[@"turnId"] = turn.identifier;
+		entry[@"startMs"] = turn.startMilliseconds;
+		entry[@"endMs"] = turn.endMilliseconds;
+		entry[@"transcript"] = turn.text;
+		entry[@"speaker"] = turn.speaker;
+		[turns addObject:entry];
+	}
+	return @{ @"transcript": [self metaTranscriptOfStreamState:state], @"turns": turns };
+}
+
+// The event carries the error type an HTTP status carries on the buffered reply, so the code follows
+// the transport's split: change the request, back off, or neither.
+- (NSError *)errorForMetaErrorEvent:(NSDictionary *)event
+{
+	NSString *message = [event[@"message"] isKindOfClass:NSString.class] && [event[@"message"] length] > 0
+		? event[@"message"] : @"the transcription stream reported an error";
+	NSString *errorType = [event[@"errorType"] isKindOfClass:NSString.class] ? event[@"errorType"] : @"";
+	NFKInferenceError code = [errorType isEqualToString:@"invalid_request_error"] ? kNFKError_InferenceRefused
+						   : [errorType isEqualToString:@"rate_limit_error"] ? kNFKError_InferenceRateLimited
+						   : kNFKError_InferenceBackendFailure;
+	NSMutableDictionary<NSString *, id> *userInfo = [NSMutableDictionary dictionaryWithObject:message forKey:NSLocalizedDescriptionKey];
+	NSData *body = [NSJSONSerialization isValidJSONObject:event]
+		? [NSJSONSerialization dataWithJSONObject:event options:NSJSONWritingSortedKeys error:NULL] : nil;
+	if (body != nil) {
+		userInfo[NFKRemoteErrorBodyKey] = [[NSString alloc] initWithData:body encoding:NSUTF8StringEncoding];
+	}
+	return [NSError errorWithDomain:NFKInferenceErrorDomain code:code userInfo:userInfo];
 }
 
 #pragma mark Transport
