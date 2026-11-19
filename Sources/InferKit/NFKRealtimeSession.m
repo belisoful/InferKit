@@ -64,7 +64,7 @@
 			return;
 		}
 		if (error != nil) {
-			[socket finishWithError:error];
+			[socket finishWithError:[socket errorForCloseCode:socket.task.closeCode reason:socket.task.closeReason receiveError:error]];
 			return;
 		}
 		if (socket.messageHandler != nil) {
@@ -72,6 +72,24 @@
 		}
 		[socket receive];
 	}];
+}
+
+// A close frame from the service fails the pending receive with ENOTCONN, whatever its code; the
+// task's close code tells a normal end from a refusal. The code is 0 when no close frame arrived.
+- (nullable NSError *)errorForCloseCode:(NSURLSessionWebSocketCloseCode)closeCode reason:(nullable NSData *)reason receiveError:(NSError *)error
+{
+	if (closeCode == NSURLSessionWebSocketCloseCodeNormalClosure) {
+		return nil;
+	}
+	if (closeCode == NSURLSessionWebSocketCloseCodeInvalid) {
+		return error;
+	}
+	NSString *text = reason.length > 0 ? [[NSString alloc] initWithData:reason encoding:NSUTF8StringEncoding] : nil;
+	NSString *description = [NSString stringWithFormat:@"the realtime service closed the socket with code %ld", (long)closeCode];
+	if (text.length > 0) {
+		description = [description stringByAppendingFormat:@": %@", text];
+	}
+	return [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:description];
 }
 
 - (void)finishWithError:(nullable NSError *)error
@@ -109,6 +127,14 @@
 @property (nonatomic, readwrite, getter=isConnected) BOOL connected;
 /*! A Gemini Live turn completed while its interaction was IN_PROGRESS; the turn reports at IDLE. */
 @property (nonatomic, assign) BOOL geminiTurnAwaitsIdle;
+/*! Meta's service answered the handshake with its {sessionId}, after which it takes audio. The three
+	Meta properties are read and written inside @synchronized (self): appendAudio: runs on the caller's
+	thread and the acknowledgement on the socket's queue. */
+@property (nonatomic, assign) BOOL metaHandshakeAcknowledged;
+/*! Audio appended before Meta's acknowledgement, in the order it was appended. */
+@property (nonatomic, strong, nullable) NSMutableArray<NSData *> *metaHeldAudio;
+/*! finishInput ran before Meta's acknowledgement; endStream follows the held audio. */
+@property (nonatomic, assign) BOOL metaEndStreamHeld;
 @end
 
 @implementation NFKRealtimeSession
@@ -146,6 +172,7 @@
 		@(NFKRealtimeAPIStyleTogetherTranscription): @[ @"together", @"realtime" ],
 		@(NFKRealtimeAPIStyleTogetherSpeech): @[ @"together", @"audio/speech/websocket" ],
 		@(NFKRealtimeAPIStyleVLLMTranscription): @[ @"vllm", @"realtime" ],
+		@(NFKRealtimeAPIStyleMetaTranscription): @[ @"meta", @"asr/realtime" ],
 	};
 	if (apiStyle == NFKRealtimeAPIStyleGeminiLive || apiStyle == NFKRealtimeAPIStyleGeminiLiveMusic) {
 		if (![identifier isEqualToString:@"gemini"]) {
@@ -174,6 +201,7 @@
 		case NFKRealtimeAPIStyleOpenAITranscription:
 		case NFKRealtimeAPIStyleOpenAITranslation:
 		case NFKRealtimeAPIStyleXAIConversation:
+		case NFKRealtimeAPIStyleMetaTranscription:
 			return 24000;
 		default:
 			return 16000;
@@ -190,6 +218,7 @@
 - (void)connect
 {
 	self.geminiTurnAwaitsIdle = NO;
+	[self resetMetaHandshake];
 	NSURLRequest *request = [self connectionRequest];
 	self.socket = [self socketForRequest:request];
 	__weak NFKRealtimeSession *weakSelf = self;
@@ -217,8 +246,8 @@
 	return [[NFKRealtimeWebSocket alloc] initWithRequest:request session:self.URLSession];
 }
 
-// The query each style's handshake reads, and the key: Gemini's in the query, every other's in a
-// bearer header.
+// The query each style's handshake reads, and the key: Gemini's in the query, Meta's in its first
+// frame, every other's in a bearer header.
 - (NSURLRequest *)connectionRequest
 {
 	NSURL *endpoint = self.endpointURL;
@@ -265,12 +294,14 @@
 			break;
 		case NFKRealtimeAPIStyleOpenAITranscription:
 		case NFKRealtimeAPIStyleVLLMTranscription:
+		case NFKRealtimeAPIStyleMetaTranscription:
 			break;
 	}
 	components.queryItems = query.count > 0 ? query : nil;
 	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:components.URL ?: endpoint];
 	BOOL keyInQuery = self.apiStyle == NFKRealtimeAPIStyleGeminiLive || self.apiStyle == NFKRealtimeAPIStyleGeminiLiveMusic;
-	if (!keyInQuery && self.apiKey.length > 0) {
+	BOOL keyInFirstFrame = self.apiStyle == NFKRealtimeAPIStyleMetaTranscription;
+	if (!keyInQuery && !keyInFirstFrame && self.apiKey.length > 0) {
 		[request setValue:[@"Bearer " stringByAppendingString:self.apiKey] forHTTPHeaderField:@"Authorization"];
 	}
 	return request;
@@ -333,6 +364,8 @@
 			[setup addEntriesFromDictionary:self.extraConfiguration ?: @{}];
 			return @{ @"setup": setup };
 		}
+		case NFKRealtimeAPIStyleMetaTranscription:
+			return [self metaHandshake];
 		case NFKRealtimeAPIStyleXAITranscription:
 		case NFKRealtimeAPIStyleXAISpeech:
 		case NFKRealtimeAPIStyleTogetherTranscription:
@@ -347,6 +380,84 @@
 		return withExtras;
 	}
 	return message;
+}
+
+// Meta's socket reads the key from this frame and no header. The frame's fields sit at its top level,
+// so extraConfiguration (mode, partialMode, keywords, emitAudioProgress) merges there. The encoding is
+// named from the rate as given, so a rate the service does not take reaches it and is refused there.
+- (NSDictionary *)metaHandshake
+{
+	NSMutableDictionary *handshake = [NSMutableDictionary dictionary];
+	if (self.apiKey.length > 0) {
+		handshake[@"authorization"] = @{ @"accessToken": [@"Bearer " stringByAppendingString:self.apiKey] };
+	}
+	handshake[@"audioEncoding"] = [NSString stringWithFormat:@"PCM_%luKHZ", (unsigned long)(self.inputSampleRate / 1000)];
+	handshake[@"model"] = self.modelName;
+	if (self.language.length > 0) {
+		handshake[@"languageBias"] = @[ self.language ];
+	}
+	[handshake addEntriesFromDictionary:self.extraConfiguration ?: @{}];
+	return handshake;
+}
+
+- (void)resetMetaHandshake
+{
+	@synchronized (self) {
+		self.metaHandshakeAcknowledged = NO;
+		self.metaHeldAudio = nil;
+		self.metaEndStreamHeld = NO;
+	}
+}
+
+- (void)acknowledgeMetaHandshake
+{
+	@synchronized (self) {
+		if (self.metaHandshakeAcknowledged) {
+			return;
+		}
+		self.metaHandshakeAcknowledged = YES;
+		for (NSData *pcm in self.metaHeldAudio) {
+			[self.socket sendData:pcm];
+		}
+		self.metaHeldAudio = nil;
+		if (self.metaEndStreamHeld) {
+			self.metaEndStreamHeld = NO;
+			[self sendEvent:@{ @"type": @"endStream" }];
+		}
+	}
+}
+
+- (void)appendMetaAudio:(NSData *)pcm
+{
+	@synchronized (self) {
+		if (self.metaHandshakeAcknowledged) {
+			[self.socket sendData:pcm];
+			return;
+		}
+		if (self.metaHeldAudio == nil) {
+			self.metaHeldAudio = [NSMutableArray array];
+		}
+		[self.metaHeldAudio addObject:[pcm copy]];
+	}
+}
+
+- (void)finishMetaInput
+{
+	@synchronized (self) {
+		if (self.metaHandshakeAcknowledged) {
+			[self sendEvent:@{ @"type": @"endStream" }];
+		} else {
+			self.metaEndStreamHeld = YES;
+		}
+	}
+}
+
+// Completion follows the mode the handshake asked for: a final transcript event in PUSH_TO_TALK, the
+// service's default, and a speechComplete event for each turn in ENDPOINTING and DIARIZATION.
+- (BOOL)metaTurnsEndAtSpeechComplete
+{
+	id mode = self.extraConfiguration[@"mode"];
+	return [mode isKindOfClass:NSString.class] && ![mode isEqualToString:@"PUSH_TO_TALK"];
 }
 
 // A transcription model (gemini-3.5-transcribe-live) answers in text with the input transcript alone; a
@@ -421,6 +532,9 @@
 		case NFKRealtimeAPIStyleXAITranscription:
 			[self.socket sendData:pcm];
 			break;
+		case NFKRealtimeAPIStyleMetaTranscription:
+			[self appendMetaAudio:pcm];
+			break;
 		case NFKRealtimeAPIStyleGeminiLive: {
 			NSString *mimeType = [NSString stringWithFormat:@"audio/pcm;rate=%lu", (unsigned long)self.inputSampleRate];
 			[self sendEvent:@{ @"realtimeInput": @{ @"audio": @{ @"data": encoded, @"mimeType": mimeType } } }];
@@ -458,6 +572,7 @@
 		case NFKRealtimeAPIStyleXAISpeech:
 		case NFKRealtimeAPIStyleTogetherSpeech:
 		case NFKRealtimeAPIStyleGeminiLiveMusic:
+		case NFKRealtimeAPIStyleMetaTranscription:
 			break;
 		default:
 			[self sendEvent:@{ @"type": @"input_audio_buffer.commit" }];
@@ -489,6 +604,9 @@
 		case NFKRealtimeAPIStyleGeminiLive:
 			[self sendEvent:@{ @"realtimeInput": @{ @"audioStreamEnd": @YES } }];
 			break;
+		case NFKRealtimeAPIStyleMetaTranscription:
+			[self finishMetaInput];
+			break;
 		default:
 			[self commitAudio];
 			break;
@@ -507,6 +625,8 @@
 		case NFKRealtimeAPIStyleGeminiLive:
 			[self sendEvent:@{ @"clientContent": @{ @"turns": @[ @{ @"role": @"user", @"parts": @[ @{ @"text": text } ] } ],
 													 @"turnComplete": @YES } }];
+			break;
+		case NFKRealtimeAPIStyleMetaTranscription:
 			break;
 		default:
 			[self sendEvent:@{ @"type": @"conversation.item.create",
@@ -571,6 +691,7 @@
 	[self.socket close];
 	self.connected = NO;
 	self.geminiTurnAwaitsIdle = NO;
+	[self resetMetaHandshake];
 }
 
 #pragma mark Receiving
@@ -588,6 +709,10 @@
 	}
 	if (self.apiStyle == NFKRealtimeAPIStyleGeminiLive || self.apiStyle == NFKRealtimeAPIStyleGeminiLiveMusic) {
 		[self receiveGeminiEvent:event];
+		return;
+	}
+	if (self.apiStyle == NFKRealtimeAPIStyleMetaTranscription) {
+		[self receiveMetaEvent:event];
 		return;
 	}
 	[self receiveTypedEvent:event];
@@ -641,6 +766,32 @@
 	} else if ([type isEqualToString:@"response.done"] || [type isEqualToString:@"audio.done"]
 			   || [type isEqualToString:@"conversation.item.audio_output.done"]) {
 		[self reportTurn];
+	}
+}
+
+// Meta's acknowledgement {sessionId} is its one frame with no type. speechStart, speechEnd, speaker, and
+// audioProgress have no handler of their own and reach eventHandler alone.
+- (void)receiveMetaEvent:(NSDictionary *)event
+{
+	NSString *type = [event[@"type"] isKindOfClass:NSString.class] ? event[@"type"] : nil;
+	if (type == nil) {
+		if ([event[@"sessionId"] isKindOfClass:NSString.class]) {
+			[self acknowledgeMetaHandshake];
+		}
+		return;
+	}
+	if ([type isEqualToString:@"error"]) {
+		[self reportError:event];
+	} else if ([type isEqualToString:@"speechComplete"]) {
+		[self reportText:event[@"transcript"] kind:NFKRealtimeTextKindInputTranscriptFinal];
+		[self reportTurn];
+	} else if ([type isEqualToString:@"transcript"]) {
+		BOOL final = [event[@"final"] isKindOfClass:NSNumber.class] && [event[@"final"] boolValue];
+		BOOL completes = final && !self.metaTurnsEndAtSpeechComplete;
+		[self reportText:event[@"transcript"] kind:completes ? NFKRealtimeTextKindInputTranscriptFinal : NFKRealtimeTextKindInputTranscript];
+		if (completes) {
+			[self reportTurn];
+		}
 	}
 }
 

@@ -21,7 +21,8 @@ NS_ASSUME_NONNULL_BEGIN
 @protocol NFKRealtimeSocket <NSObject>
 
 /*! Opens the channel. messageHandler receives each text frame as text and each binary frame as data;
-	closeHandler runs once, with an error when the channel failed. */
+	closeHandler runs once, with an error when the channel failed. A close the service makes with code
+	1000 is not a failure. */
 - (void)openWithMessageHandler:(void (^ NS_SWIFT_SENDABLE)(NSString * _Nullable text, NSData * _Nullable data))messageHandler
 				  closeHandler:(void (^ NS_SWIFT_SENDABLE)(NSError * _Nullable error))closeHandler;
 
@@ -46,7 +47,10 @@ NS_ASSUME_NONNULL_BEGIN
 /*! A socket for the request, whose URL is the ws:// or wss:// endpoint and whose headers carry the
 	key, on the session, or on the shared session for nil. On a session from NFKRemoteTransport's
 	sessionWithPinnedCertificateSHA256:, the socket opens only to a wss:// URL whose server presents
-	the pinned certificate; any other URL closes it unopened with kNFKError_InferenceBackendFailure. */
+	the pinned certificate; any other URL closes it unopened with kNFKError_InferenceBackendFailure.
+	A close frame from the service with code 1000 ends the socket with no error; any other code ends it
+	with kNFKError_InferenceBackendFailure naming the code and the service's reason. Foundation reports
+	a code outside NSURLSessionWebSocketCloseCode, 1013 among them, as 1005 with no reason. */
 - (instancetype)initWithRequest:(NSURLRequest *)request session:(nullable NSURLSession *)session NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 
@@ -76,6 +80,8 @@ NS_ASSUME_NONNULL_BEGIN
 	@constant   NFKRealtimeAPIStyleTogetherSpeech Together's streaming text-to-speech
 				(wss …/v1/audio/speech/websocket).
 	@constant   NFKRealtimeAPIStyleVLLMTranscription vLLM's realtime transcription (ws …/v1/realtime).
+	@constant   NFKRealtimeAPIStyleMetaTranscription Meta's realtime speech to text
+				(wss …/v1/asr/realtime): the key in the first frame, audio as binary frames.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ENUM(NSInteger, NFKRealtimeAPIStyle) {
@@ -91,6 +97,7 @@ typedef NS_ENUM(NSInteger, NFKRealtimeAPIStyle) {
 	NFKRealtimeAPIStyleTogetherTranscription,
 	NFKRealtimeAPIStyleTogetherSpeech,
 	NFKRealtimeAPIStyleVLLMTranscription,
+	NFKRealtimeAPIStyleMetaTranscription,
 };
 
 /*!
@@ -153,6 +160,30 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 				POST /v1beta/auth_tokens; the session then connects to BidiGenerateContentConstrained
 				with the token as access_token, which keeps the long-lived key off the device.
 
+				Meta's transcription (muse-voice-transcribe-1.0) sends the key in its first frame and
+				no Authorization header:
+				- connect sends the handshake {authorization, audioEncoding, model}. inputSampleRate
+				  names the encoding: 24000 → PCM_24KHZ, 16000 → PCM_16KHZ. language becomes
+				  languageBias, a language name such as English. extraConfiguration merges into the
+				  handshake: mode (PUSH_TO_TALK, ENDPOINTING, DIARIZATION), partialMode, keywords,
+				  emitAudioProgress, or a languageBias array.
+				- appendAudio: sends binary frames. The service takes audio after it acknowledges the
+				  handshake, so audio appended earlier is held and sent, in order, at the
+				  acknowledgement. The service expects audio paced near real time.
+				- finishInput sends endStream; the service then sends what is pending and closes with
+				  code 1000, which closeHandler reports with no error. commitAudio sends nothing,
+				  because the service has no per-turn commit.
+				- a transcript event is an interim piece, NFKRealtimeTextKindInputTranscript. Under
+				  the default partialMode, CUMULATIVE, each piece is the whole current hypothesis and
+				  replaces the one before it; under DELTA each piece is new text to append.
+				- with no mode, or PUSH_TO_TALK, the transcript event marked final is
+				  NFKRealtimeTextKindInputTranscriptFinal with the whole transcript and ends the turn.
+				- in ENDPOINTING and DIARIZATION every transcript event is interim, and each
+				  speechComplete event is NFKRealtimeTextKindInputTranscriptFinal with its turn's
+				  whole transcript and ends the turn.
+				- the acknowledgement {sessionId}, speechStart, speechEnd, speaker, and audioProgress
+				  arrive on eventHandler alone. A sessionId query on endpointURL names the session.
+
 				OpenAI's WebRTC-only GPT-Live sessions are not reachable here: WebRTC needs a media
 				stack outside the core's dependencies. Introduced in InferKit 0.4.0.
 */
@@ -188,8 +219,8 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 @property (nonatomic, copy, nullable) NSArray<NSDictionary *> *tools;
 
 /*! The sample rate of the audio appendAudio: sends. Each style's default is the rate its service
-	expects: 24000 for OpenAI and xAI conversations, 16000 for Gemini Live and the transcription
-	services. */
+	expects: 24000 for OpenAI and xAI conversations and for Meta's transcription, 16000 for Gemini Live
+	and the other transcription services. */
 @property (nonatomic, assign) NSUInteger inputSampleRate;
 
 /*! The sample rate of the audio audioHandler receives: 24000, or 48000 (stereo) for live music. */
@@ -217,7 +248,7 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 	@abstract   A session pointed at the provider's realtime endpoint for the style, or nil when the
 				provider does not serve it.
 	@discussion openai serves the three OpenAI styles; xai its conversation, transcription, and
-				speech; gemini Live and live music; mistral and vllm transcription; together
+				speech; gemini Live and live music; mistral, vllm, and meta transcription; together
 				transcription and speech. A provider's pinnedCertificateSHA256 sets URLSession to
 				NFKRemoteTransport's pinned session for that fingerprint.
 */

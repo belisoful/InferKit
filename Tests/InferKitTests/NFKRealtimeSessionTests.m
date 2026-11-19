@@ -16,6 +16,8 @@
 @property (nonatomic, strong) NSURLRequest *request;
 @property (nonatomic, strong) NSMutableArray<NSDictionary *> *sentEvents;
 @property (nonatomic, strong) NSMutableArray<NSData *> *sentData;
+/*! Every frame in the order it was sent: an event's dictionary for a text frame, the data for a binary one. */
+@property (nonatomic, strong) NSMutableArray *sentFrames;
 @property (nonatomic, copy) void (^messageHandler)(NSString *, NSData *);
 @property (nonatomic, assign) BOOL closed;
 @end
@@ -26,14 +28,18 @@
 	self.messageHandler = messageHandler;
 	self.sentEvents = [NSMutableArray array];
 	self.sentData = [NSMutableArray array];
+	self.sentFrames = [NSMutableArray array];
 }
 - (void)sendText:(NSString *)text
 {
-	[self.sentEvents addObject:[NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL]];
+	NSDictionary *event = [NSJSONSerialization JSONObjectWithData:[text dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+	[self.sentEvents addObject:event];
+	[self.sentFrames addObject:event];
 }
 - (void)sendData:(NSData *)data
 {
 	[self.sentData addObject:data];
+	[self.sentFrames addObject:data];
 }
 - (void)close
 {
@@ -56,6 +62,10 @@
 	self.scripted.request = request;
 	return self.scripted;
 }
+@end
+
+@interface NFKRealtimeWebSocket (NFKRealtimeSessionTests)
+- (nullable NSError *)errorForCloseCode:(NSURLSessionWebSocketCloseCode)closeCode reason:(nullable NSData *)reason receiveError:(NSError *)error;
 @end
 
 @interface NFKRealtimeSessionTests : XCTestCase
@@ -89,6 +99,10 @@
 						  @"ws://localhost:8000/v1/realtime");
 	XCTAssertTrue([[NFKRealtimeSession sessionForProvider:NFKRemoteProvider.googleGemini apiStyle:NFKRealtimeAPIStyleGeminiLive apiKey:@"k" modelName:@"m"].endpointURL.absoluteString
 				   hasSuffix:@"GenerativeService.BidiGenerateContent"]);
+	XCTAssertEqualObjects([NFKRealtimeSession sessionForProvider:NFKRemoteProvider.meta apiStyle:NFKRealtimeAPIStyleMetaTranscription apiKey:@"k" modelName:@"m"].endpointURL.absoluteString,
+						  @"wss://api.meta.ai/v1/asr/realtime");
+	XCTAssertNil([NFKRealtimeSession sessionForProvider:NFKRemoteProvider.openAI apiStyle:NFKRealtimeAPIStyleMetaTranscription apiKey:@"k" modelName:@"m"]);
+	XCTAssertNil([NFKRealtimeSession sessionForProvider:NFKRemoteProvider.meta apiStyle:NFKRealtimeAPIStyleOpenAITranscription apiKey:@"k" modelName:@"m"]);
 	XCTAssertNil([NFKRealtimeSession sessionForProvider:NFKRemoteProvider.groq apiStyle:NFKRealtimeAPIStyleOpenAIConversation apiKey:@"k" modelName:@"m"]);
 	XCTAssertNil([NFKRealtimeSession sessionForProvider:NFKRemoteProvider.openAI apiStyle:NFKRealtimeAPIStyleGeminiLive apiKey:@"k" modelName:@"m"]);
 }
@@ -324,6 +338,194 @@
 	[session.scripted push:@"{\"type\":\"transcription.text.delta\",\"text\":\"Bonjour\"}"];
 	[session.scripted push:@"{\"type\":\"transcription.done\",\"text\":\"Bonjour.\",\"model\":\"v\"}"];
 	XCTAssertEqualObjects(texts, (@[ @"Bonjour", @"Bonjour." ]));
+}
+
+// Meta's socket reads the key from the first frame: no header, no query the session adds.
+- (void)testMetaTranscriptionSendsItsKeyInTheHandshakeFrameAndNoHeader
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.meta style:NFKRealtimeAPIStyleMetaTranscription model:@"muse-voice-transcribe-1.0"];
+	[session connect];
+	XCTAssertEqualObjects(session.scripted.request.URL.absoluteString, @"wss://api.meta.ai/v1/asr/realtime");
+	XCTAssertNil([session.scripted.request valueForHTTPHeaderField:@"Authorization"]);
+	XCTAssertEqual(session.inputSampleRate, 24000u);
+	NSDictionary *handshake = @{ @"authorization": @{ @"accessToken": @"Bearer k" },
+								 @"audioEncoding": @"PCM_24KHZ",
+								 @"model": @"muse-voice-transcribe-1.0" };
+	XCTAssertEqualObjects(session.scripted.sentFrames, (@[ handshake ]));
+}
+
+- (void)testMetaTranscriptionBuildsItsHandshakeFromTheSessionsProperties
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.meta style:NFKRealtimeAPIStyleMetaTranscription model:@"muse-voice-transcribe-1.0"];
+	session.endpointURL = [NSURL URLWithString:@"wss://api.meta.ai/v1/asr/realtime?sessionId=mic-1"];
+	session.inputSampleRate = 16000;
+	session.language = @"English";
+	session.extraConfiguration = @{ @"mode": @"DIARIZATION", @"partialMode": @"DELTA", @"emitAudioProgress": @NO,
+									@"keywords": @[ @"Acme Mobile", @"eSIM" ] };
+	[session connect];
+	XCTAssertEqualObjects(session.scripted.request.URL.absoluteString, @"wss://api.meta.ai/v1/asr/realtime?sessionId=mic-1");
+	XCTAssertNil([session.scripted.request valueForHTTPHeaderField:@"Authorization"]);
+	NSDictionary *handshake = @{ @"authorization": @{ @"accessToken": @"Bearer k" },
+								 @"audioEncoding": @"PCM_16KHZ",
+								 @"model": @"muse-voice-transcribe-1.0",
+								 @"languageBias": @[ @"English" ],
+								 @"mode": @"DIARIZATION",
+								 @"partialMode": @"DELTA",
+								 @"emitAudioProgress": @NO,
+								 @"keywords": @[ @"Acme Mobile", @"eSIM" ] };
+	XCTAssertEqualObjects(session.scripted.sentEvents.firstObject, handshake);
+
+	session.extraConfiguration = @{ @"languageBias": @[ @"English", @"French" ] };
+	[session connect];
+	NSArray *languages = @[ @"English", @"French" ];
+	XCTAssertEqualObjects(session.scripted.sentEvents.firstObject[@"languageBias"], languages);
+}
+
+// The service takes audio after its {sessionId}; what is appended earlier goes out, in order, when it arrives.
+- (void)testMetaTranscriptionHoldsAudioUntilTheAcknowledgementThenSendsBinaryFrames
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.meta style:NFKRealtimeAPIStyleMetaTranscription model:@"muse-voice-transcribe-1.0"];
+	NSMutableArray<NSDictionary *> *events = [NSMutableArray array];
+	session.eventHandler = ^(NSDictionary *event) { [events addObject:event]; };
+	NSData *first = [@"pcm1" dataUsingEncoding:NSUTF8StringEncoding];
+	NSData *second = [@"pcm2" dataUsingEncoding:NSUTF8StringEncoding];
+	NSData *third = [@"pcm3" dataUsingEncoding:NSUTF8StringEncoding];
+	[session connect];
+	[session appendAudio:first];
+	[session appendAudio:second];
+	XCTAssertEqual(session.scripted.sentData.count, 0u);
+	XCTAssertEqual(session.scripted.sentEvents.count, 1u);
+
+	[session.scripted push:@"{\"sessionId\":\"550e8400\"}"];
+	NSArray *flushed = @[ first, second ];
+	XCTAssertEqualObjects(session.scripted.sentData, flushed);
+	XCTAssertEqualObjects(events, (@[ @{ @"sessionId": @"550e8400" } ]));
+
+	[session appendAudio:third];
+	[session commitAudio];
+	[session sendText:@"ignored"];
+	[session finishInput];
+	NSArray *afterHandshake = @[ first, second, third, @{ @"type": @"endStream" } ];
+	XCTAssertEqualObjects([session.scripted.sentFrames subarrayWithRange:NSMakeRange(1, session.scripted.sentFrames.count - 1)], afterHandshake);
+}
+
+- (void)testMetaTranscriptionEndsTheStreamAfterTheHeldAudioWhenInputFinishesBeforeTheAcknowledgement
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.meta style:NFKRealtimeAPIStyleMetaTranscription model:@"muse-voice-transcribe-1.0"];
+	NSData *audio = [@"pcm" dataUsingEncoding:NSUTF8StringEncoding];
+	[session connect];
+	[session appendAudio:audio];
+	[session finishInput];
+	XCTAssertEqual(session.scripted.sentFrames.count, 1u);
+	[session.scripted push:@"{\"sessionId\":\"s1\"}"];
+	[session.scripted push:@"{\"sessionId\":\"s1\"}"];
+	NSArray *afterHandshake = @[ audio, @{ @"type": @"endStream" } ];
+	XCTAssertEqualObjects([session.scripted.sentFrames subarrayWithRange:NSMakeRange(1, session.scripted.sentFrames.count - 1)], afterHandshake);
+}
+
+- (void)testAReconnectedMetaSessionHoldsAudioForItsOwnAcknowledgement
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.meta style:NFKRealtimeAPIStyleMetaTranscription model:@"muse-voice-transcribe-1.0"];
+	NSData *stale = [@"old" dataUsingEncoding:NSUTF8StringEncoding];
+	NSData *fresh = [@"new" dataUsingEncoding:NSUTF8StringEncoding];
+	[session connect];
+	[session appendAudio:stale];
+	[session close];
+	[session connect];
+	[session.scripted push:@"{\"sessionId\":\"s2\"}"];
+	XCTAssertEqual(session.scripted.sentData.count, 0u);
+
+	[session close];
+	[session connect];
+	[session appendAudio:fresh];
+	XCTAssertEqual(session.scripted.sentData.count, 0u);
+	[session.scripted push:@"{\"sessionId\":\"s3\"}"];
+	XCTAssertEqualObjects(session.scripted.sentData, (@[ fresh ]));
+}
+
+// PUSH_TO_TALK, the service's default: partials replace one another and the transcript marked final ends the turn.
+- (void)testMetaPushToTalkReportsPartialsAndEndsTheTurnAtTheFinalTranscript
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.meta style:NFKRealtimeAPIStyleMetaTranscription model:@"muse-voice-transcribe-1.0"];
+	NSMutableArray *texts = [NSMutableArray array];
+	NSMutableArray<NSString *> *types = [NSMutableArray array];
+	__block NSUInteger turns = 0;
+	session.textHandler = ^(NSString *text, NFKRealtimeTextKind kind) { [texts addObject:@[ text, @(kind) ]]; };
+	session.eventHandler = ^(NSDictionary *event) { [types addObject:event[@"type"] ?: @"acknowledgement"]; };
+	session.turnHandler = ^{ turns += 1; };
+	[session connect];
+	[session.scripted push:@"{\"sessionId\":\"s1\"}"];
+	[session.scripted push:@"{\"type\":\"audioProgress\",\"audioProcessedMs\":800}"];
+	[session.scripted push:@"{\"type\":\"transcript\",\"transcript\":\"I fixed the bug\",\"final\":false,\"audioProcessedMs\":1600}"];
+	[session.scripted push:@"{\"type\":\"transcript\",\"transcript\":\"I fixed the bug. By fixed\",\"final\":false,\"audioProcessedMs\":2400}"];
+	[session.scripted push:@"{\"type\":\"somethingNew\",\"transcript\":\"ignored\"}"];
+	XCTAssertEqual(turns, 0u);
+	[session.scripted push:@"{\"type\":\"transcript\",\"transcript\":\"I fixed the bug. By fixed, I mean it.\",\"final\":true,\"audioProcessedMs\":4000}"];
+	XCTAssertEqualObjects(texts, (@[ @[ @"I fixed the bug", @(NFKRealtimeTextKindInputTranscript) ],
+									 @[ @"I fixed the bug. By fixed", @(NFKRealtimeTextKindInputTranscript) ],
+									 @[ @"I fixed the bug. By fixed, I mean it.", @(NFKRealtimeTextKindInputTranscriptFinal) ] ]));
+	XCTAssertEqual(turns, 1u);
+	XCTAssertEqualObjects(types, (@[ @"acknowledgement", @"audioProgress", @"transcript", @"transcript", @"somethingNew", @"transcript" ]));
+}
+
+// ENDPOINTING and DIARIZATION: a turn ends at its speechComplete, whose transcript may differ from the last partial.
+- (void)testMetaTurnDetectionEndsEachTurnAtItsSpeechComplete
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.meta style:NFKRealtimeAPIStyleMetaTranscription model:@"muse-voice-transcribe-1.0"];
+	session.extraConfiguration = @{ @"mode": @"DIARIZATION" };
+	NSMutableArray *texts = [NSMutableArray array];
+	NSMutableArray<NSDictionary *> *events = [NSMutableArray array];
+	__block NSUInteger turns = 0;
+	session.textHandler = ^(NSString *text, NFKRealtimeTextKind kind) { [texts addObject:@[ text, @(kind) ]]; };
+	session.eventHandler = ^(NSDictionary *event) { [events addObject:event]; };
+	session.turnHandler = ^{ turns += 1; };
+	[session connect];
+	[session.scripted push:@"{\"sessionId\":\"s1\"}"];
+	[session.scripted push:@"{\"type\":\"speechStart\",\"turnId\":1,\"audioProcessedMs\":1200}"];
+	[session.scripted push:@"{\"type\":\"transcript\",\"transcript\":\"thanks for calling\",\"final\":false,\"audioProcessedMs\":2400}"];
+	[session.scripted push:@"{\"type\":\"speaker\",\"label\":\"A\",\"audioProcessedMs\":2480}"];
+	[session.scripted push:@"{\"type\":\"transcript\",\"transcript\":\"thanks for calling how can i help\",\"final\":true,\"audioProcessedMs\":3400}"];
+	[session.scripted push:@"{\"type\":\"speechEnd\",\"turnId\":1,\"audioProcessedMs\":3600}"];
+	XCTAssertEqual(turns, 0u);
+	[session.scripted push:@"{\"type\":\"speechComplete\",\"turnId\":1,\"transcript\":\"Thanks for calling. How can I help?\",\"audioProcessedMs\":3600}"];
+	XCTAssertEqualObjects(texts, (@[ @[ @"thanks for calling", @(NFKRealtimeTextKindInputTranscript) ],
+									 @[ @"thanks for calling how can i help", @(NFKRealtimeTextKindInputTranscript) ],
+									 @[ @"Thanks for calling. How can I help?", @(NFKRealtimeTextKindInputTranscriptFinal) ] ]));
+	XCTAssertEqual(turns, 1u);
+	XCTAssertEqualObjects([events valueForKey:@"type"], (@[ NSNull.null, @"speechStart", @"transcript", @"speaker", @"transcript", @"speechEnd", @"speechComplete" ]));
+	XCTAssertEqualObjects(events[3][@"label"], @"A");
+	XCTAssertEqualObjects(events[1][@"turnId"], @1);
+}
+
+- (void)testAMetaErrorFrameReachesTheErrorHandlerWithItsMessage
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.meta style:NFKRealtimeAPIStyleMetaTranscription model:@"muse-voice-transcribe-1.0"];
+	__block NSError *reported = nil;
+	__block NSDictionary *raw = nil;
+	session.errorHandler = ^(NSError *error) { reported = error; };
+	session.eventHandler = ^(NSDictionary *event) { raw = event; };
+	[session connect];
+	[session appendAudio:[@"pcm" dataUsingEncoding:NSUTF8StringEncoding]];
+	[session.scripted push:@"{\"type\":\"error\",\"message\":\"Unsupported audioEncoding\",\"sessionId\":\"\",\"errorType\":\"invalid_request_error\","
+							"\"errorCode\":\"invalid_value\",\"errorParam\":\"audioEncoding\"}"];
+	XCTAssertEqualObjects(reported.localizedDescription, @"Unsupported audioEncoding");
+	XCTAssertEqualObjects(raw[@"errorParam"], @"audioEncoding");
+	XCTAssertEqual(session.scripted.sentData.count, 0u, @"an error frame is not the acknowledgement");
+}
+
+// A close frame from the service fails the pending receive whatever its code; only a code other than 1000 is a failure.
+- (void)testAServiceCloseWithCode1000IsNotAnErrorAndAnyOtherCodeNamesItself
+{
+	NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:@"wss://api.meta.ai/v1/asr/realtime"]];
+	NFKRealtimeWebSocket *socket = [[NFKRealtimeWebSocket alloc] initWithRequest:request session:nil];
+	NSError *notConnected = [NSError errorWithDomain:NSPOSIXErrorDomain code:ENOTCONN userInfo:nil];
+	NSData *reason = [@"Max session duration reached" dataUsingEncoding:NSUTF8StringEncoding];
+	XCTAssertNil([socket errorForCloseCode:NSURLSessionWebSocketCloseCodeNormalClosure reason:nil receiveError:notConnected]);
+	XCTAssertEqualObjects([socket errorForCloseCode:NSURLSessionWebSocketCloseCodeInvalid reason:nil receiveError:notConnected], notConnected);
+	XCTAssertEqualObjects([socket errorForCloseCode:NSURLSessionWebSocketCloseCodeInternalServerError reason:reason receiveError:notConnected].localizedDescription,
+						  @"the realtime service closed the socket with code 1011: Max session duration reached");
+	XCTAssertEqualObjects([socket errorForCloseCode:NSURLSessionWebSocketCloseCodePolicyViolation reason:nil receiveError:notConnected].localizedDescription,
+						  @"the realtime service closed the socket with code 1008");
 }
 
 - (void)testStreamingSpeechSendsTextAndReportsAudio
