@@ -27,6 +27,10 @@ NS_ASSUME_NONNULL_BEGIN
 				reference_images.
 	@constant   NFKRemoteImageAPIStyleOpenRouter OpenRouter's /images for both operations: size or
 				aspect_ratio and resolution, and the sources as input_references.
+	@constant   NFKRemoteImageAPIStyleMeta Meta's /images/generations and /images/edits, both JSON:
+				a size that sets the aspect ratio only, and the sources as images[] of {image_url}
+				data URLs. The service refuses a field it does not name, so seed, steps, and
+				aspect_ratio are not sent. Streamed as one completed event per image.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ENUM(NSInteger, NFKRemoteImageAPIStyle) {
@@ -34,6 +38,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteImageAPIStyle) {
 	NFKRemoteImageAPIStyleXAI,
 	NFKRemoteImageAPIStyleTogether,
 	NFKRemoteImageAPIStyleOpenRouter,
+	NFKRemoteImageAPIStyleMeta,
 };
 
 /*!
@@ -62,6 +67,16 @@ typedef NS_ENUM(NSInteger, NFKRemoteImageAPIStyle) {
 				parsed body under NFKRemoteBackendRawKey. streams asks the service for partial
 				images, each on the job's partialResult under NFKOutputImage.
 
+				Two encoded formats come back whole:
+
+				- An animated GIF → its first frame under NFKOutputImage, and the whole animation
+				  written to a .gif file in outputDirectoryURL and returned as an NFKVideoAsset under
+				  NFKOutputVideo with its duration, frame rate, and frame size. Several animations
+				  come back under NFKOutputVideos. ImageIO reads the file's frames; AVFoundation
+				  does not open a GIF.
+				- An SVG → its XML source under NFKOutputText. An SVG has no bitmap, so
+				  NFKOutputImage is absent unless the reply also carries a raster image.
+
 				This is the synchronous shape of image generation. A service that answers with a job
 				to poll is NFKAsyncGenerationBackend. runInferenceForRequest: blocks; run it off the
 				render thread. Introduced in InferKit 0.3.0.
@@ -84,9 +99,14 @@ typedef NS_ENUM(NSInteger, NFKRemoteImageAPIStyle) {
 /*! The model name sent in the request. */
 @property (nonatomic, copy, nullable) NSString *modelName;
 
-/*! Asks for partial images when the request is submitted as a job. The OpenAI and OpenRouter styles.
-	Off by default. Introduced in InferKit 0.4.0. */
+/*! Asks for the service's event stream when the request is submitted as a job, with partial images
+	where the service sends them. The OpenAI, OpenRouter, and Meta styles. Off by default. Introduced
+	in InferKit 0.4.0. */
 @property (nonatomic, assign) BOOL streams;
+
+/*! Where an animated GIF lands. Defaults to an InferKit directory under the temporary directory.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, nullable) NSURL *outputDirectoryURL;
 
 /*! The request timeout in seconds. Defaults to 180. */
 @property (nonatomic, assign) NSTimeInterval timeout;
@@ -101,7 +121,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteImageAPIStyle) {
 	@abstract   A backend pointed at the provider's image endpoints in its style, or nil for a
 				provider that serves none.
 	@discussion openai and inferkit take the OpenAI style; gemini the OpenAI style without edits (its layer
-				serves generations only); xai, together, and openrouter their own. anthropic,
+				serves generations only); xai, together, openrouter, and meta their own. anthropic,
 				deepseek, groq, mistral, typesafe, and the local runners return nil.
 */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider

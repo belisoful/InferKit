@@ -3,15 +3,18 @@
 //  InferKitTests
 //
 //  The two image operations through a stub transport: a JSON generation, a multipart edit with and
-//  without a mask, the two reply shapes (inline base64 and a URL fetched through the same seam), and
-//  the provider factory's derivation.
+//  without a mask, the two reply shapes (inline base64 and a URL fetched through the same seam), the
+//  replies that are more than one bitmap (an animated GIF, an SVG), and the provider factory's
+//  derivation.
 //
 
 #import <XCTest/XCTest.h>
+#import <ImageIO/ImageIO.h>
 #import <InferKit/NFKRemoteImageBackend.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKImageCoding.h>
+#import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
@@ -61,7 +64,11 @@
 @property (nonatomic, strong) NFKStubImageBackend *backend;
 @property (nonatomic, assign) CGImageRef square;
 @property (nonatomic, copy) NSData *squarePNG;
+@property (nonatomic, strong) NSURL *directory;
 @end
+
+// An 8x8 lossless WebP, which ImageIO reads and cannot write.
+static NSString * const NFKTestSquareWebPBase64 = @"UklGRhwAAABXRUJQVlA4TA8AAAAvB8ABAAcQ0f/+ByKi/wEA";
 
 @implementation NFKRemoteImageBackendTests
 
@@ -81,6 +88,8 @@
 	self.backend = [NFKStubImageBackend backendWithGenerationsURL:[NSURL URLWithString:@"https://api.openai.com/v1/images/generations"]
 														 editsURL:[NSURL URLWithString:@"https://api.openai.com/v1/images/edits"]];
 	self.backend.modelName = @"gpt-image-1";
+	self.directory = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
+	self.backend.outputDirectoryURL = self.directory;
 	NSString *envelope = [NSString stringWithFormat:@"{\"created\":1,\"data\":[{\"b64_json\":\"%@\"}]}",
 						[self.squarePNG base64EncodedStringWithOptions:0]];
 	self.backend.bodiesByURL = @{
@@ -92,7 +101,53 @@
 - (void)tearDown
 {
 	CGImageRelease(self.square);
+	[NSFileManager.defaultManager removeItemAtURL:self.directory error:NULL];
 	[super tearDown];
+}
+
+- (CGImageRef)newSquareWithRed:(CGFloat)red blue:(CGFloat)blue CF_RETURNS_RETAINED
+{
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef context = CGBitmapContextCreate(NULL, 8, 8, 8, 32, colorSpace,
+												 kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst);
+	CGColorSpaceRelease(colorSpace);
+	CGContextSetRGBFillColor(context, red, 0, blue, 1);
+	CGContextFillRect(context, CGRectMake(0, 0, 8, 8));
+	CGImageRef image = CGBitmapContextCreateImage(context);
+	CGContextRelease(context);
+	return image;
+}
+
+- (NSData *)GIFWithFrameCount:(NSUInteger)frameCount frameDelay:(double)delay
+{
+	NSMutableData *data = [NSMutableData data];
+	CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data, CFSTR("com.compuserve.gif"), frameCount, NULL);
+	NSDictionary *loop = @{ (__bridge NSString *)kCGImagePropertyGIFDictionary: @{ (__bridge NSString *)kCGImagePropertyGIFLoopCount: @0 } };
+	CGImageDestinationSetProperties(destination, (__bridge CFDictionaryRef)loop);
+	NSDictionary *timing = @{ (__bridge NSString *)kCGImagePropertyGIFDictionary: @{ (__bridge NSString *)kCGImagePropertyGIFDelayTime: @(delay) } };
+	for (NSUInteger index = 0; index < frameCount; index++) {
+		CGImageRef frame = [self newSquareWithRed:(CGFloat)(index % 2) blue:(CGFloat)(1 - index % 2)];
+		CGImageDestinationAddImage(destination, frame, (__bridge CFDictionaryRef)timing);
+		CGImageRelease(frame);
+	}
+	CGImageDestinationFinalize(destination);
+	CFRelease(destination);
+	return data;
+}
+
+- (void)stageGenerationEntries:(NSArray<NSData *> *)payloads
+{
+	NSMutableArray<NSDictionary *> *data = [NSMutableArray array];
+	for (NSData *payload in payloads) {
+		[data addObject:@{ @"b64_json": [payload base64EncodedStringWithOptions:0] }];
+	}
+	self.backend.bodiesByURL = @{ @"https://api.openai.com/v1/images/generations":
+									  [NSJSONSerialization dataWithJSONObject:@{ @"created": @1, @"data": data } options:0 error:NULL] };
+}
+
+- (NSArray<NSURL *> *)writtenFiles
+{
+	return [NSFileManager.defaultManager contentsOfDirectoryAtURL:self.directory includingPropertiesForKeys:nil options:0 error:NULL] ?: @[];
 }
 
 - (NSDictionary *)decodedBodyOfRequest:(NSURLRequest *)request
@@ -155,6 +210,97 @@
 	XCTAssertEqual(self.backend.requests.count, 2);
 	XCTAssertEqualObjects(self.backend.requests[1].URL.absoluteString, @"https://cdn.example/out.png");
 	XCTAssertTrue([result outputForKey:NFKOutputImage] != nil);
+}
+
+#pragma mark Replies that are more than one bitmap
+
+- (void)testAnAnimatedGIFKeepsItsFirstFrameAndReturnsTheWholeFileAsAClip
+{
+	self.backend.modelName = @"gpt-image-2.6-flare";
+	NSData *gif = [self GIFWithFrameCount:2 frameDelay:0.2];
+	[self stageGenerationEntries:@[ gif ]];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a lantern swaying" }
+															  parameters:@{ NFKParameterOutputFormat: @"gif", @"frame_count": @2,
+																			@"frame_duration_ms": @200 }
+														  outputModality:NFKModalityImage];
+	NSError *error = nil;
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+
+	NSDictionary *body = [self decodedBodyOfRequest:self.backend.requests.firstObject];
+	XCTAssertEqualObjects(body[@"output_format"], @"gif");
+	XCTAssertEqualObjects(body[@"frame_count"], @2);
+	XCTAssertEqualObjects(body[@"frame_duration_ms"], @200);
+
+	CVPixelBufferRef firstFrame = (__bridge CVPixelBufferRef)[result outputForKey:NFKOutputImage];
+	XCTAssertTrue(firstFrame != NULL, @"the first frame stays where a caller reads a still");
+	XCTAssertEqual(CVPixelBufferGetWidth(firstFrame), 8);
+
+	NFKVideoAsset *animation = [result outputForKey:NFKOutputVideo];
+	XCTAssertTrue([animation isKindOfClass:NFKVideoAsset.class]);
+	XCTAssertEqualObjects(animation.fileURL.pathExtension, @"gif");
+	XCTAssertEqualObjects(animation.fileURL.URLByDeletingLastPathComponent.URLByStandardizingPath.path, self.directory.URLByStandardizingPath.path);
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:animation.fileURL], gif, @"the file is the reply's bytes, every frame");
+	XCTAssertEqualWithAccuracy(animation.durationSeconds, 0.4, 1e-6);
+	XCTAssertEqualWithAccuracy(animation.framesPerSecond, 5.0, 1e-6);
+	XCTAssertEqual(animation.dimensions.width, 8);
+	XCTAssertEqual(animation.dimensions.height, 8);
+	XCTAssertNil([result outputForKey:NFKOutputVideos], @"one animation needs no array");
+	XCTAssertNil([result outputForKey:NFKOutputText]);
+}
+
+- (void)testSeveralAnimationsComeBackAsSeveralClipsAndAStillGIFAsNone
+{
+	[self stageGenerationEntries:@[ [self GIFWithFrameCount:2 frameDelay:0.2], [self GIFWithFrameCount:3 frameDelay:0.1] ]];
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }] error:NULL];
+	NSArray<NFKVideoAsset *> *animations = [result outputForKey:NFKOutputVideos];
+	XCTAssertEqual(animations.count, 2);
+	XCTAssertEqualObjects(animations.firstObject, [result outputForKey:NFKOutputVideo]);
+	XCTAssertEqualWithAccuracy(animations.lastObject.durationSeconds, 0.3, 1e-6);
+	XCTAssertEqual([[result outputForKey:NFKOutputImages] count], 2, @"each animation's first frame");
+
+	[self stageGenerationEntries:@[ [self GIFWithFrameCount:1 frameDelay:0.2] ]];
+	result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }] error:NULL];
+	XCTAssertTrue([result outputForKey:NFKOutputImage] != nil);
+	XCTAssertNil([result outputForKey:NFKOutputVideo], @"a GIF of one frame is a still");
+	XCTAssertEqual(self.writtenFiles.count, 2, @"only the two animations were written");
+}
+
+- (void)testAnSVGReturnsItsSourceAsTextWithNoBitmap
+{
+	self.backend.modelName = @"gpt-image-2.6-sunburst";
+	NSString *source = @"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+		@"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 8 8\"><rect width=\"8\" height=\"8\" fill=\"blue\"/></svg>";
+	[self stageGenerationEntries:@[ [source dataUsingEncoding:NSUTF8StringEncoding] ]];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a blue square icon" }
+															  parameters:@{ NFKParameterOutputFormat: @"svg" }
+														  outputModality:NFKModalityImage];
+	NSError *error = nil;
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	XCTAssertEqualObjects([self decodedBodyOfRequest:self.backend.requests.firstObject][@"output_format"], @"svg");
+	XCTAssertEqualObjects(result.text, source);
+	XCTAssertNil([result outputForKey:NFKOutputImage], @"an SVG has no bitmap");
+	XCTAssertNil([result outputForKey:NFKOutputVideo]);
+	XCTAssertNotNil([result outputForKey:NFKRemoteBackendRawKey]);
+	XCTAssertEqual(self.writtenFiles.count, 0);
+}
+
+- (void)testAPNGReplyCarriesNoClipAndNoTextAndUndecodableBytesStillFail
+{
+	NSError *error = nil;
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }] error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	XCTAssertTrue([result outputForKey:NFKOutputImage] != nil);
+	XCTAssertNil([result outputForKey:NFKOutputImages]);
+	XCTAssertNil([result outputForKey:NFKOutputVideo]);
+	XCTAssertNil([result outputForKey:NFKOutputText]);
+	XCTAssertEqual(self.writtenFiles.count, 0, @"a still writes no file");
+
+	[self stageGenerationEntries:@[ [@"<html><body>not an image</body></html>" dataUsingEncoding:NSUTF8StringEncoding] ]];
+	XCTAssertNil([self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+	XCTAssertTrue([error.localizedDescription containsString:@"could not be decoded"]);
 }
 
 #pragma mark Image to image
@@ -324,6 +470,94 @@
 	XCTAssertEqual([body[@"input_references"] count], 1);
 	XCTAssertEqualObjects(body[@"resolution"], @"2K");
 	XCTAssertEqualObjects(body[@"quality"], @"high");
+}
+
+- (void)testTheFactoryGivesMetaItsOwnStyleOnBothPaths
+{
+	NFKRemoteImageBackend *meta = [NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.meta apiKey:@"k" modelName:@"muse-image-1.0"];
+	XCTAssertEqualObjects(meta.generationsURL.absoluteString, @"https://api.meta.ai/v1/images/generations");
+	XCTAssertEqualObjects(meta.editsURL.absoluteString, @"https://api.meta.ai/v1/images/edits");
+	XCTAssertEqual(meta.apiStyle, NFKRemoteImageAPIStyleMeta);
+	XCTAssertEqualObjects(meta.apiKey, @"k");
+	XCTAssertEqualObjects(meta.modelName, @"muse-image-1.0");
+}
+
+// Meta answers 400 to a top-level field it does not name, so the contract keys it has no field for stay home.
+- (void)testMetaGeneratesWithOnlyTheFieldsItNamesAndItsDefaultWebPDecodes
+{
+	NFKStubImageBackend *meta = [self stubFor:NFKRemoteProvider.meta model:@"muse-image-1.0" entries:1];
+	NSString *reply = [NSString stringWithFormat:@"{\"created\":1784584435,\"data\":[{\"b64_json\":\"%@\"}],\"output_format\":\"webp\","
+					   @"\"background\":\"opaque\",\"usage\":{\"input_tokens\":9831,\"output_tokens\":749,\"total_tokens\":10580}}",
+					   NFKTestSquareWebPBase64];
+	meta.bodiesByURL = @{ meta.generationsURL.absoluteString: [reply dataUsingEncoding:NSUTF8StringEncoding] };
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a red fox in snow", NFKInputNegativePrompt: @"blur" }
+															   parameters:@{ NFKParameterWidth: @1792, NFKParameterHeight: @1024, NFKParameterSampleCount: @1,
+																			 NFKParameterSeed: @7, NFKParameterSteps: @20, NFKParameterGuidanceScale: @3.5,
+																			 NFKParameterAspectRatio: @"16:9", NFKParameterResolution: @"2K",
+																			 @"reasoning_strength": @"low",
+																			 @"tool_enablement": @{ @"enable_web_search": @NO } }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [meta runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+
+	NSURLRequest *sent = meta.requests.firstObject;
+	XCTAssertEqualObjects(sent.URL.absoluteString, @"https://api.meta.ai/v1/images/generations");
+	XCTAssertEqualObjects([sent valueForHTTPHeaderField:@"Content-Type"], @"application/json");
+	NSDictionary *expected = @{ @"model": @"muse-image-1.0", @"prompt": @"a red fox in snow", @"size": @"1792x1024", @"n": @1,
+								@"reasoning_strength": @"low", @"tool_enablement": @{ @"enable_web_search": @NO } };
+	XCTAssertEqualObjects([self decodedBodyOfRequest:sent], expected);
+
+	CVPixelBufferRef image = (__bridge CVPixelBufferRef)[result outputForKey:NFKOutputImage];
+	XCTAssertTrue(image != NULL, @"the WebP the service answers with by default decodes");
+	XCTAssertEqual(CVPixelBufferGetWidth(image), 8);
+	XCTAssertEqual(CVPixelBufferGetPixelFormatType(image), kCVPixelFormatType_32BGRA);
+
+	NFKInferenceRequest *png = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" } parameters:@{ NFKParameterOutputFormat: @"png" }];
+	XCTAssertNotNil([meta runInferenceForRequest:png error:NULL]);
+	XCTAssertEqualObjects([self decodedBodyOfRequest:meta.requests.lastObject][@"output_format"], @"png");
+}
+
+// The JSON edit names its sources as images[] of {image_url}; the multipart form has no output_format.
+- (void)testMetaEditsByJSONWithItsSourcesAsImageURLItemsAndTakesNoMask
+{
+	NFKStubImageBackend *meta = [self stubFor:NFKRemoteProvider.meta model:@"muse-image-1.0" entries:1];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"put the fox beside the mug",
+																			  NFKInputImage: (__bridge id)self.square,
+																			  NFKInputImages: @[ (__bridge id)self.square ] }
+															   parameters:@{ NFKParameterOutputFormat: @"jpeg" }];
+	NSError *error = nil;
+	XCTAssertNotNil([meta runInferenceForRequest:request error:&error], @"%@", error);
+	NSURLRequest *sent = meta.requests.firstObject;
+	XCTAssertEqualObjects(sent.URL.absoluteString, @"https://api.meta.ai/v1/images/edits");
+	XCTAssertEqualObjects([sent valueForHTTPHeaderField:@"Content-Type"], @"application/json");
+	NSString *source = [@"data:image/png;base64," stringByAppendingString:[self.squarePNG base64EncodedStringWithOptions:0]];
+	NSDictionary *expected = @{ @"model": @"muse-image-1.0", @"prompt": @"put the fox beside the mug", @"output_format": @"jpeg",
+								@"images": @[ @{ @"image_url": source }, @{ @"image_url": source } ] };
+	XCTAssertEqualObjects([self decodedBodyOfRequest:sent], expected);
+
+	NFKInferenceRequest *masked = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x", NFKInputImage: (__bridge id)self.square,
+																			 NFKInputMask: (__bridge id)self.square }];
+	XCTAssertNil([meta runInferenceForRequest:masked error:&error]);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+	XCTAssertEqual(meta.requests.count, 1, @"the masked edit was not sent");
+}
+
+- (void)testMetaStreamsWithoutPartialImagesAndReadsAnEventNamedOnItsEventLine
+{
+	NFKStubImageBackend *meta = [self stubFor:NFKRemoteProvider.meta model:@"muse-image-1.0" entries:0];
+	meta.streams = YES;
+	meta.stagedLines = @[ @"event: image_generation.completed",
+						  [NSString stringWithFormat:@"data: {\"type\": \"image_generation.completed\", \"b64_json\": \"%@\", \"created_at\": 1784584435, \"output_index\": 0}",
+						   NFKTestSquareWebPBase64],
+						  @"",
+						  @"event: image_generation.completed",
+						  [NSString stringWithFormat:@"data: {\"b64_json\": \"%@\", \"output_index\": 1}", NFKTestSquareWebPBase64] ];
+	NFKInferenceJob *job = [meta submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a fox" }
+																						 parameters:@{ NFKParameterSampleCount: @2 }]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	XCTAssertEqual([[job.result outputForKey:NFKOutputImages] count], 2, @"both completed events are images of the result");
+	NSDictionary *expected = @{ @"model": @"muse-image-1.0", @"prompt": @"a fox", @"n": @2, @"stream": @YES };
+	XCTAssertEqualObjects([self decodedBodyOfRequest:meta.requests.firstObject], expected);
 }
 
 - (void)testOpenAIEditsSeveralImagesAsRepeatedImageFields

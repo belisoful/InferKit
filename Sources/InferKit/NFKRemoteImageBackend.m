@@ -8,6 +8,7 @@
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKImageCoding.h>
+#import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceJob.h>
@@ -15,7 +16,9 @@
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteBatchPrivate.h"
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKRemoteMediaSupport.h"
 #import "NFKJobGuard.h"
+#import <ImageIO/ImageIO.h>
 
 /*! The contract keys this backend translates; every other parameter goes out under its own name. */
 static NSSet<NSString *> *NFKImageMappedParameters(void)
@@ -43,6 +46,64 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 		b = remainder;
 	}
 	return a;
+}
+
+/*! The bytes as SVG source, or nil when they are not UTF-8 markup holding an svg element. */
+static NSString * _Nullable NFKImageSVGSource(NSData *bytes)
+{
+	const uint8_t *cursor = bytes.bytes;
+	const uint8_t *end = cursor + bytes.length;
+	if (end - cursor >= 3 && cursor[0] == 0xEF && cursor[1] == 0xBB && cursor[2] == 0xBF) {
+		cursor += 3;
+	}
+	while (cursor < end && (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')) {
+		cursor++;
+	}
+	if (cursor == end || *cursor != '<') {
+		return nil;
+	}
+	NSString *source = [[NSString alloc] initWithData:bytes encoding:NSUTF8StringEncoding];
+	return [source rangeOfString:@"<svg" options:NSCaseInsensitiveSearch].location != NSNotFound ? source : nil;
+}
+
+/*! The seconds one GIF frame shows: the delay the file states, or the one ImageIO substitutes for a
+	delay too short to honor. */
+static double NFKImageGIFFrameDelay(CGImageSourceRef source, size_t index)
+{
+	NSDictionary *properties = CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source, index, NULL));
+	NSDictionary *gif = properties[(__bridge NSString *)kCGImagePropertyGIFDictionary];
+	NSNumber *stated = gif[(__bridge NSString *)kCGImagePropertyGIFUnclampedDelayTime];
+	NSNumber *delay = stated.doubleValue > 0.0 ? stated : gif[(__bridge NSString *)kCGImagePropertyGIFDelayTime];
+	return delay.doubleValue;
+}
+
+/*! An animated GIF's duration, frame rate, and frame size as a clip without a file, or nil for bytes
+	that are not a GIF of two or more frames. */
+static NFKVideoAsset * _Nullable NFKImageGIFAnimation(NSData *bytes)
+{
+	if (bytes.length < 6 || (memcmp(bytes.bytes, "GIF89a", 6) != 0 && memcmp(bytes.bytes, "GIF87a", 6) != 0)) {
+		return nil;
+	}
+	CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)bytes, NULL);
+	if (source == NULL) {
+		return nil;
+	}
+	size_t frameCount = CGImageSourceGetCount(source);
+	double duration = 0.0;
+	for (size_t index = 0; index < frameCount; index++) {
+		duration += NFKImageGIFFrameDelay(source, index);
+	}
+	NSDictionary *properties = CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source, 0, NULL));
+	CFRelease(source);
+	if (frameCount < 2) {
+		return nil;
+	}
+	CGSize dimensions = CGSizeMake([properties[(__bridge NSString *)kCGImagePropertyPixelWidth] doubleValue],
+								   [properties[(__bridge NSString *)kCGImagePropertyPixelHeight] doubleValue]);
+	return [NFKVideoAsset videoAssetWithFileURL:nil
+								durationSeconds:duration
+								 framesPerSecond:duration > 0.0 ? (double)frameCount / duration : 0.0
+									  dimensions:dimensions];
 }
 
 /*! The images a request edits, as PNG: NFKInputImage first, then NFKInputImages. */
@@ -87,6 +148,9 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 		NSURL *images = [provider URLForPath:@"images"];
 		backend = [self backendWithGenerationsURL:images editsURL:images];
 		backend.apiStyle = NFKRemoteImageAPIStyleOpenRouter;
+	} else if ([identifier isEqualToString:@"meta"]) {
+		backend = [self backendWithGenerationsURL:generations editsURL:[provider URLForPath:@"images/edits"]];
+		backend.apiStyle = NFKRemoteImageAPIStyleMeta;
 	}
 	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
 	if (pinned != nil) {
@@ -128,7 +192,8 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 
 - (NSSet<NSString *> *)supportedOutputKeys
 {
-	return [NSSet setWithArray:@[ NFKOutputImage, NFKOutputImages, NFKRemoteBackendRawKey ]];
+	return [NSSet setWithArray:@[ NFKOutputImage, NFKOutputImages, NFKOutputVideo, NFKOutputVideos, NFKOutputText,
+								  NFKRemoteBackendRawKey ]];
 }
 
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
@@ -148,8 +213,7 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
 {
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
-	BOOL streamable = self.streams && (self.apiStyle == NFKRemoteImageAPIStyleOpenAI || self.apiStyle == NFKRemoteImageAPIStyleOpenRouter);
-	if (!streamable) {
+	if (!(self.streams && self.styleStreams)) {
 		NFKJobDispatchGuarded(job, ^{
 			if (job.status == NFKInferenceJobStatusCancelled) {
 				return;
@@ -174,13 +238,19 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 	[job reportProgress:-1.0];
 	NSMutableArray<NSDictionary *> *completed = [NSMutableArray array];
 	__block BOOL finished = NO;
+	__block NSString *eventName = nil;
 	void (^cancel)(void) = [self streamRequest:urlRequest lineHandler:^(NSString *line) {
+		// Meta names each event on an event: line. The type inside the data wins where both are present.
+		if ([line hasPrefix:@"event:"]) {
+			eventName = [[line substringFromIndex:6] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+			return;
+		}
 		NSString *payload = [NFKRemoteTransport SSEDataForLine:line];
 		id event = payload != nil ? [NSJSONSerialization JSONObjectWithData:[payload dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL] : nil;
 		if (finished || ![event isKindOfClass:NSDictionary.class] || ![event[@"b64_json"] isKindOfClass:NSString.class]) {
 			return;
 		}
-		NSString *type = [event[@"type"] isKindOfClass:NSString.class] ? event[@"type"] : @"";
+		NSString *type = [event[@"type"] isKindOfClass:NSString.class] ? event[@"type"] : eventName ?: @"";
 		if ([type hasSuffix:@".completed"]) {
 			[completed addObject:@{ @"b64_json": event[@"b64_json"] }];
 			return;
@@ -208,6 +278,12 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 	}];
 	job.cancellationHandler = cancel;
 	return job;
+}
+
+- (BOOL)styleStreams
+{
+	return self.apiStyle == NFKRemoteImageAPIStyleOpenAI || self.apiStyle == NFKRemoteImageAPIStyleOpenRouter
+		|| self.apiStyle == NFKRemoteImageAPIStyleMeta;
 }
 
 #pragma mark Requests
@@ -360,6 +436,17 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 			}
 			break;
 		}
+		case NFKRemoteImageAPIStyleMeta: {
+			fields[@"size"] = size;
+			NSMutableArray<NSDictionary *> *images = [NSMutableArray array];
+			for (NSData *png in sources.images) {
+				[images addObject:@{ @"image_url": NFKImageDataURI(png) }];
+			}
+			if (images.count > 0) {
+				fields[@"images"] = images;
+			}
+			break;
+		}
 	}
 	NSSet<NSString *> *mapped = NFKImageMappedParameters();
 	for (NSString *key in parameters) {
@@ -463,49 +550,74 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 	return object;
 }
 
-// The envelope is data[] of {b64_json} or {url}; every entry decodes, the first is NFKOutputImage.
+// The envelope is data[] of {b64_json} or {url}. A raster entry decodes and the first is NFKOutputImage;
+// an animated GIF also lands whole in a file, and an SVG is text with no bitmap.
 - (nullable NFKInferenceResult *)resultFromBody:(NSDictionary *)body error:(NSError * _Nullable *)outError
 {
 	NSArray *entries = [body[@"data"] isKindOfClass:NSArray.class] ? body[@"data"] : @[];
 	NSMutableArray *images = [NSMutableArray array];
+	NSMutableArray<NFKVideoAsset *> *animations = [NSMutableArray array];
+	NSString *vectorSource = nil;
 	for (NSDictionary *entry in entries) {
 		if (![entry isKindOfClass:NSDictionary.class]) {
 			continue;
 		}
-		CVPixelBufferRef pixelBuffer = [self imageInEntry:entry error:outError];
-		if (pixelBuffer == NULL) {
+		NSData *bytes = [self bytesOfEntry:entry error:outError];
+		if (bytes == nil) {
 			return nil;
+		}
+		// Read before ImageIO sees the bytes, so an SVG is text on every OS release.
+		NSString *source = NFKImageSVGSource(bytes);
+		if (source != nil) {
+			vectorSource = vectorSource ?: source;
+			continue;
+		}
+		CVPixelBufferRef pixelBuffer = [NFKImageCoding pixelBufferWithImageData:bytes];
+		if (pixelBuffer == NULL) {
+			return [self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response's image could not be decoded" error:outError];
 		}
 		[images addObject:(__bridge id)pixelBuffer];
 		CVPixelBufferRelease(pixelBuffer);
+		NFKVideoAsset *timing = NFKImageGIFAnimation(bytes);
+		if (timing == nil) {
+			continue;
+		}
+		NSURL *fileURL = NFKRemoteWriteMediaFile(bytes, @"image", @"gif", self.outputDirectoryURL, outError);
+		if (fileURL == nil) {
+			return nil;
+		}
+		[animations addObject:[NFKVideoAsset videoAssetWithFileURL:fileURL
+												  durationSeconds:timing.durationSeconds
+												   framesPerSecond:timing.framesPerSecond
+														dimensions:timing.dimensions]];
 	}
-	if (images.count == 0) {
+	if (images.count == 0 && vectorSource == nil) {
 		return [self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response carries no image" error:outError];
 	}
-	NSMutableDictionary<NSString *, id> *outputs = [NSMutableDictionary dictionaryWithObjectsAndKeys:
-													images.firstObject, NFKOutputImage, body, NFKRemoteBackendRawKey, nil];
+	NSMutableDictionary<NSString *, id> *outputs = [NSMutableDictionary dictionaryWithObject:body forKey:NFKRemoteBackendRawKey];
+	outputs[NFKOutputImage] = images.firstObject;
 	if (images.count > 1) {
 		outputs[NFKOutputImages] = images;
 	}
+	outputs[NFKOutputVideo] = animations.firstObject;
+	if (animations.count > 1) {
+		outputs[NFKOutputVideos] = animations;
+	}
+	outputs[NFKOutputText] = vectorSource;
 	return [NFKInferenceResult resultWithOutputs:outputs];
 }
 
-- (nullable CVPixelBufferRef)imageInEntry:(NSDictionary *)entry error:(NSError * _Nullable *)outError CF_RETURNS_RETAINED
+- (nullable NSData *)bytesOfEntry:(NSDictionary *)entry error:(NSError * _Nullable *)outError
 {
-	NSData *bytes = nil;
-	if ([entry[@"b64_json"] isKindOfClass:NSString.class]) {
-		bytes = [[NSData alloc] initWithBase64EncodedString:entry[@"b64_json"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
-	} else if ([entry[@"url"] isKindOfClass:NSString.class]) {
-		bytes = [self fetchImageAtURL:[NSURL URLWithString:entry[@"url"]] error:outError];
-		if (bytes == nil) {
-			return NULL;
-		}
+	if ([entry[@"url"] isKindOfClass:NSString.class] && ![entry[@"b64_json"] isKindOfClass:NSString.class]) {
+		return [self fetchImageAtURL:[NSURL URLWithString:entry[@"url"]] error:outError];
 	}
-	CVPixelBufferRef pixelBuffer = bytes != nil ? [NFKImageCoding pixelBufferWithImageData:bytes] : NULL;
-	if (pixelBuffer == NULL) {
+	NSData *bytes = [entry[@"b64_json"] isKindOfClass:NSString.class]
+		? [[NSData alloc] initWithBase64EncodedString:entry[@"b64_json"] options:NSDataBase64DecodingIgnoreUnknownCharacters] : nil;
+	if (bytes == nil) {
 		[self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response's image could not be decoded" error:outError];
 	}
-	return pixelBuffer;
+	return bytes;
 }
 
 - (nullable NSData *)fetchImageAtURL:(nullable NSURL *)url error:(NSError * _Nullable *)outError
