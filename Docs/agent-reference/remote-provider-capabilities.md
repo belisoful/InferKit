@@ -48,6 +48,7 @@ misshapes part of it), **gap** (nothing reaches it).
 | citations on the reply | `/messages` | covered (`NFKParameterCitations`, `NFKOutputCitations`) |
 | server tools: web search, web fetch, code execution (file outputs) | `/messages` | covered: the caller passes the tool by wire shape (any entry with a `type`); calls and results come back under `NFKOutputServerToolResults` |
 | token count | `/messages/count_tokens` | covered (`NFKRemoteTokenCounter`) |
+| recovery from the prefix check on replayed thinking (Fable 5.2, Mythos 5.2, and the five other preserved-thinking models) | `/messages`, `/messages/count_tokens` | covered (2026-11-18): the 400 is sent once more without the refused thinking (`recoversFromPrefixMismatch`, on by default), and `prefixMismatchBehavior` sends `prefix_mismatch_behavior` under `thinking-binding-controls-2026-08-01`; removed and dropped blocks come back under `NFKAnthropicBackendInputTransformationsKey` |
 | skills: create, version, list, delete; load in a request | `/v1/skills`, Messages `container.skills` + code execution | covered (`NFKRemoteSkillStore`, `NFKParameterSkills`, 2026-10-23) |
 | audio, image output, embeddings | — | not offered |
 | batches of Messages requests | `/v1/messages/batches` (inline) | covered (`NFKRemoteBatch`, Anthropic style, 2026-10-23) |
@@ -227,8 +228,9 @@ Meta's Model API at `https://api.meta.ai/v1`, added 2026-11-18 with Muse Ember's
 | audio → text with turns and diarization (`muse-voice-transcribe-1.0`) | `POST /asr/transcribe` (multipart, JSON request part, WAV only) | covered (`NFKRemoteTranscriptionAPIStyleMeta`; `streams` reads the SSE transcript, partials, turns, and speakers; stub-tested) |
 | realtime audio → text | `wss /v1/asr/realtime` (handshake frame carries the key) | covered (`NFKRealtimeSession`, `NFKRealtimeAPIStyleMetaTranscription`); unverified with a key |
 | text → image, image(s) → image (`muse-image-1.0`) | `/images/generations`, `/images/edits` | covered (`NFKRemoteImageAPIStyleMeta`, JSON edits, streamed completed events); no mask; unverified live |
-| token count | `/responses/input_tokens`, `/messages/count_tokens` | covered (`NFKRemoteTokenCounter`, Responses style, `/responses/input_tokens`); `/messages/count_tokens` is a gap |
-| Anthropic-format chat | `/messages` | gap (the same models answer on the two routes above) |
+| token count | `/responses/input_tokens` | covered (`NFKRemoteTokenCounter`, Responses style) |
+| token count | `/messages/count_tokens` | covered (`-[NFKAnthropicBackend tokenCountForRequest:error:]`); `NFKRemoteTokenCounter` does not reach it |
+| text + image + PDF → text, tools, reasoning effort, structured output (Anthropic format) | `/messages` | covered (`NFKAnthropicBackend`, Bearer key, 2026-11-18); stop sequences applied to the reply; a video goes as sampled frames, and the route's `video` block is a gap |
 | image or video → boxes and masks (`sam-3.1`) | `/responses` | gap (the reply is text) |
 | batches, video | `/batches`, `/videos` | registered by probe, undocumented |
 

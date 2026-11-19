@@ -1272,6 +1272,18 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(counter?.endpointURL?.absoluteString, "https://api.meta.ai/v1/responses/input_tokens")
     }
 
+    // The Messages backend's provider factory and its prefix-check settings from Swift.
+    func testMessagesRouteOnMetaAndThePrefixCheck() {
+        let museChat = NFKAnthropicBackend(for: .meta, apiKey: "key", modelName: "muse-spark-1.3")
+        XCTAssertEqual(museChat?.endpointURL?.absoluteString, "https://api.meta.ai/v1/messages")
+        XCTAssertEqual(museChat?.authorizesWithBearerToken, true)
+
+        let fable = NFKAnthropicBackend(for: .anthropic, apiKey: "sk-ant-…", modelName: "claude-fable-5-2")
+        XCTAssertEqual(fable?.recoversFromPrefixMismatch, true)
+        fable?.prefixMismatchBehavior = .dropBlock
+        XCTAssertEqual(fable?.prefixMismatchBehavior, .dropBlock)
+    }
+
     // Gemini's Decisions API from Swift: the same optional factory, on the gemini preset.
     func testGeminiDecisions() throws {
         let decider = NFKGeminiDecisionsBackend(for: .googleGemini, apiKey: "key", modelName: "gemini-decision-1")

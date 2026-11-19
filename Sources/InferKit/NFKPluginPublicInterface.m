@@ -18,6 +18,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKAgentCLICommandErrorKey,
 	(const void *)&NFKAgentCLIExitStatusErrorKey,
 	(const void *)&NFKAgentCLIOutputErrorKey,
+	(const void *)&NFKAnthropicBackendInputTransformationsKey,
 	(const void *)&NFKDownloadErrorDomain,
 	(const void *)&NFKDownloadHTTPStatusCodeKey,
 	(const void *)&NFKDownloadUnknownByteCount,

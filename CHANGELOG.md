@@ -35,6 +35,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   socket (`wss …/v1/asr/realtime`): the key travels in the handshake frame, audio goes as binary PCM
   frames held until the service acknowledges, and `finishInput` sends `endStream`. Turn detection and
   speaker labels are asked for in `extraConfiguration` (`mode`, `partialMode`, `keywords`).
+- `NFKAnthropicBackend` reaches Meta's Anthropic-format Messages route (`POST /v1/messages`).
+  `+[NFKAnthropicBackend backendForProvider:apiKey:modelName:]` builds a backend for the `meta`,
+  `anthropic`, `opencode`, `opencode-go`, and `inferkit` presets, and `authorizesWithBearerToken`
+  sends the key as a Bearer token, which the factories set for `meta`.
+- For a `muse-` model `NFKAnthropicBackend` keeps `stop_sequences` and `top_k` off the wire and
+  applies the stop sequences to the reply, sends `temperature` and `top_p`, asks for a JSON schema
+  through `output_config.format`, and reads the thinking token count into `NFKUsageReasoningTokens`.
+  `tokenCountForRequest:error:` reaches `POST /v1/messages/count_tokens` on the same key.
 - `NFKRemoteTranscriptionBackend` streams Meta's speech-to-text route when `streams` is set: the
   transcript grows on the job's `partialResult`, each turn comes back under `NFKOutputSegments` with
   its speaker when the request diarizes, and an `error` event fails the job with the service's message.
@@ -66,6 +74,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `output_config.format`, because both refuse a forced `tool_choice` with HTTP 400, as the 5.1 models do.
 - `NFKGeminiInteractionsBackend` and `NFKGeminiGenerateContentBackend` pass the `xhigh` thinking level
   to Gemini 4 Hydrogen and Gemini 4 Neon as written.
+- `NFKAnthropicBackend` recovers from the prefix check that Claude Fable 5.2 and Claude Mythos 5.2
+  run on every request. A request refused with HTTP 400 because its system prompt, tools, or an
+  earlier message changed after a thinking block was produced is sent once more without the
+  refused block and the thinking blocks after it. `recoversFromPrefixMismatch` turns this off.
+- `prefixMismatchBehavior` sends `thinking.block_binding.prefix_mismatch_behavior` (`error` or
+  `drop_block`) under the `thinking-binding-controls-2026-08-01` beta.
+  `NFKAnthropicBackendInputTransformationsKey` lists the thinking blocks the backend removed and
+  the ones the API dropped.
 
 #### Gemini voice remixing and voice editing
 

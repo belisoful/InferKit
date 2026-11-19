@@ -285,11 +285,41 @@ the release notes, the 5.2 migration guide, and the thinking and prefix-check pa
   every model. `NFKAnthropicAPIVersion` is `2023-06-01`, and the current-model default sends none.
 - The prefix check applies to every account. An assistant turn that carries thinking blocks goes
   back as the API returned it. A request whose `system`, `tools`, or an earlier message changed
-  after a thinking block was produced returns 400 (`Invalid signature in thinking block`), and a
-  retry of the same body fails again. The fix is to drop the named block and every thinking block
-  after it. The backend replays an assistant turn's blocks with their signatures, so a caller that
-  edits the system prompt or the tools in the middle of a tool conversation meets this error on a
-  5.2 model. The backend does not strip the blocks and retry.
+  after a thinking block was produced returns 400 (`messages.{i}.content.{j}: Invalid `signature`
+  in `thinking` block. The block is bound to a different conversation.`), and a retry of the same
+  body fails again. Fable 5.1, Mythos 5.1, Opus 5.5, Sonnet 5.5, and Haiku 5.5 run the same check;
+  Mythos 5.1 answers 400, and the other four answer 400 or let the failing block through. The
+  backend replays an assistant turn's blocks with their signatures, so a caller that edits the
+  system prompt or the tools in the middle of a conversation meets this error.
+- `recoversFromPrefixMismatch` (YES by default, user decision 2026-11-18) handles the 400. The
+  match is the sentence "The block is bound to a different conversation", which Anthropic's
+  error page says to match alone. The backend removes the named block and every `thinking` and
+  `redacted_thinking` block after it, keeps every other block, and sends once more. Two
+  neighbouring wire messages of one role make the named position unreadable against the array
+  (the API counts them as one message), and every thinking block is removed then. A second
+  refusal is the error. The run, the streamed job, and `tokenCountForRequest:error:` recover. The
+  result lists each removed block under `NFKAnthropicBackendInputTransformationsKey` as
+  `{type: thinking_removed, path}`. The caller's messages still hold the refused blocks, so each
+  later run of that conversation costs a refused request and a resend, and loses the thinking
+  produced since.
+- `prefixMismatchBehavior` sends `thinking.block_binding.prefix_mismatch_behavior` (`error` or
+  `drop_block`) with the beta `thinking-binding-controls-2026-08-01`. The field without the
+  header is a 400 ending `block_binding: Extra inputs are not permitted`. With `drop_block` the
+  API drops the invalid blocks and answers, and its `input_transformations` entries
+  (`{type: thinking_dropped | thinking_mismatch_allowed, path, reason}`) come back under the same
+  output key, from the body, a batch item, or the stream's `message_start`. The setting acts on
+  one request, so it stays set for the rest of a conversation whose history holds the change.
+  The object needs `thinking.type: adaptive`, so a request without an effort gains
+  `{type: adaptive}`, which is what these models run unasked. `NFKAnthropicPrefixCheckFamilies()`
+  names who is sent it: the seven models the prefix-check page lists. Every other model, a
+  `muse-` model included, is sent neither the field nor the header. `count_tokens` takes the
+  setting under the same header and returns no `input_transformations`. A batch item with the
+  setting unset is never refused: the API drops the failing blocks.
+- Unverified live: the 400's text and the recovery rule are quoted from Anthropic's error page.
+  The pages do not say which cloud platforms and gateways pass the beta header, or where
+  `message_delta` carries `input_transformations` after a mid-stream fallback. A mid-conversation
+  `role: system` message is lifted into the top-level `system` field, which is itself a prefix
+  change on these models; that handling predates the recovery and is unchanged.
 - Fast mode is `speed: "fast"` with no beta header, a body field the backend passes by name.
   `computer_toolset_20260801` replaces `computer_20251124`, which returns 400 outside Bedrock.
 - Fable 5.1 drops 5.2's thinking blocks without an error, and 5.2 reads Opus 5.5's.
@@ -1558,6 +1588,31 @@ writes images, `muse-voice-transcribe-1.0` transcribes, and `sam-3.1` answers on
   text replayed before a `function_call` must carry `phase: "commentary"`. The backend replays an
   assistant turn's own output items, so the phase goes back when the service wrote it; a tool
   conversation is unverified live. `store` defaults to true on this route.
+- Messages (`NFKAnthropicBackend`, `POST /v1/messages`), a stateless adapter over Responses.
+  `+[NFKAnthropicBackend backendForProvider:apiKey:modelName:]` builds it for the preset, and so
+  does `NFKRemoteProvider`'s factory for a model routed there with
+  `providerWithAPIStyle:forModelName:`. The key goes as a Bearer token
+  (`authorizesWithBearerToken`), which is the documented header: the reference's header table
+  also lists `x-api-key`, while the agent guides say to avoid the variable that sends it, and
+  `x-api-key` alone is unconfirmed without a key. `anthropic-version` is optional and sent. A
+  `muse-` model follows the route's rules: `stop_sequences`, `top_k`, `container`,
+  `inference_geo`, an unknown top-level field, `thinking: {type: disabled}`, and a named
+  `tool_choice` answer 400. The backend keeps `stop_sequences` and `top_k` off the wire, applies
+  the stop sequences to the reply, sends `temperature` and `top_p` beside an effort (the route
+  takes both), and asks for a schema through `output_config.format`. An effort is
+  `thinking: {type: adaptive, display: summarized}` with `output_config.effort` (`low` to
+  `max`); a budget is accepted by the route and not translated, and the backend refuses a
+  numeric effort. A reply opens with a `redacted_thinking` block, which carries no reasoning
+  text and goes back with the turn; a replayed thinking `signature` is accepted and ignored.
+  Usage adds `output_tokens_details.thinking_tokens`, read into
+  `NFKUsageReasoningTokens`. `GET /v1/models/{id}` states no output limit, so a run that names no
+  limit sends 1024; set `maxTokens`. Skills and MCP servers pass through as `container` and
+  `mcp_servers`, which the route refuses. A video is sent as sampled frames; the route's own
+  `video` block is not used.
+- Token count on the Messages route (`POST /v1/messages/count_tokens`,
+  `-[NFKAnthropicBackend tokenCountForRequest:error:]`). The body is the run's, reduced to the
+  fields the route names, and the reply is `{input_tokens}`. `NFKRemoteTokenCounter` reaches the
+  Responses count only.
 - Files (`NFKRemoteFileStore`, OpenAI style, `/v1/files`). The purpose is `user_data` or `batch`;
   any other answers 400, so the default is `user_data`. A file is at most 1 GiB.
 - Speech to text (`NFKRemoteTranscriptionAPIStyleMeta`, `POST /v1/asr/transcribe`). The body is
@@ -1658,9 +1713,7 @@ writes images, `muse-voice-transcribe-1.0` transcribes, and `sam-3.1` answers on
   to another preset: `openai` still returns nil.
 
 *Not built.*
-- The Messages route, `POST /v1/messages`, an adapter over Responses. Bearer is the documented
-  header and whether `x-api-key` alone authenticates is unconfirmed, so `NFKAnthropicBackend` is
-  not pointed at it. `thinking: {type: disabled}`, `stop_sequences`, and `top_k` answer 400 there.
+- The Messages route's `video` block (`{type: video, source, fps}`) for a whole clip.
 - `sam-3.1`'s boxes and masks, which come back as text on Responses.
 
 *Errors and probes.* The body is `{error: {message, type, param, code}}`; the transcription route

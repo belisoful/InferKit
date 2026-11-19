@@ -1309,6 +1309,26 @@
 	XCTAssertTrue([outputs containsObject:NFKOutputText]);
 }
 
+- (void)testExampleMessagesRouteOnMetaAndThePrefixCheck
+{
+	// Meta serves its Muse models on an Anthropic-format Messages route behind a Bearer key.
+	NFKAnthropicBackend *museChat = [NFKAnthropicBackend backendForProvider:NFKRemoteProvider.meta
+																	 apiKey:@"key" modelName:@"muse-spark-1.3"];
+	museChat.maxTokens = 4096;
+	XCTAssertEqualObjects(museChat.endpointURL.absoluteString, @"https://api.meta.ai/v1/messages");
+	XCTAssertTrue(museChat.authorizesWithBearerToken);
+
+	// Claude Fable 5.2 refuses replayed thinking after the system prompt or tools change. The backend
+	// sends such a request once more without the refused thinking unless this is turned off, and
+	// DropBlock asks the API to drop the blocks itself.
+	NFKAnthropicBackend *fable = [NFKAnthropicBackend backendForProvider:NFKRemoteProvider.anthropic
+																  apiKey:@"sk-ant-…" modelName:@"claude-fable-5-2"];
+	XCTAssertTrue(fable.recoversFromPrefixMismatch);
+	XCTAssertFalse(fable.authorizesWithBearerToken);
+	fable.prefixMismatchBehavior = NFKAnthropicPrefixMismatchBehaviorDropBlock;
+	XCTAssertEqual(fable.prefixMismatchBehavior, NFKAnthropicPrefixMismatchBehaviorDropBlock);
+}
+
 - (void)testExampleGeminiDecisions
 {
 	// Gemini's Decisions API takes the same questions and returns the same answers. It is one more

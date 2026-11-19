@@ -4514,6 +4514,49 @@ keeps rides by its URI. A `resolution` request parameter (`low`, `medium`, `high
 on each image and video block. The service blocks a whole request its safety filters refuse with
 HTTP 400, so no single question comes back refused.
 
+### The Messages route beyond Anthropic, and the prefix check (`NFKAnthropicBackend`)
+
+`+backendForProvider:apiKey:modelName:` builds the Messages backend for a preset that serves the
+route. Meta serves its Muse models there behind a Bearer key, which the factory sets. The route
+refuses stop sequences, so the backend applies them to the reply:
+
+```objc
+NFKAnthropicBackend *museChat = [NFKAnthropicBackend backendForProvider:NFKRemoteProvider.meta
+                                                                 apiKey:key modelName:@"muse-spark-1.3"];
+museChat.maxTokens = 4096;
+NFKInferenceRequest *rivers = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Name three rivers." }
+                                                          parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortModerate,
+                                                                        NFKParameterStopSequences: @[ @"\n\n" ] }];
+NFKInferenceResult *named = [museChat runInferenceForRequest:rivers error:&error];
+NSNumber *inputTokens = [museChat tokenCountForRequest:rivers error:&error];
+```
+
+Claude Fable 5.2 and Claude Mythos 5.2 refuse a request that replays a thinking block after the
+system prompt, the tools, or an earlier message changed. The backend sends such a request once more
+without the refused thinking and reports what it removed. Asking the API to drop the blocks itself
+saves the refused request on every later turn of that conversation:
+
+<!-- objc-check: given NFKInferenceRequest *conversation = nil; -->
+```objc
+NFKAnthropicBackend *fable = [NFKAnthropicBackend backendForProvider:NFKRemoteProvider.anthropic
+                                                              apiKey:key modelName:@"claude-fable-5-2"];
+NFKInferenceResult *reply = [fable runInferenceForRequest:conversation error:&error];
+NSArray<NSDictionary *> *changed = [reply outputForKey:NFKAnthropicBackendInputTransformationsKey];
+if (changed.count > 0) {
+    // The history holds a change. The API drops the invalid blocks for the rest of this conversation.
+    fable.prefixMismatchBehavior = NFKAnthropicPrefixMismatchBehaviorDropBlock;
+}
+fable.recoversFromPrefixMismatch = NO;       // for a caller that wants the 400 itself
+```
+
+```swift
+let fable = NFKAnthropicBackend(for: .anthropic, apiKey: key, modelName: "claude-fable-5-2")!
+let reply = try fable.runInference(for: conversation)
+if let changed = reply.output(forKey: NFKAnthropicBackendInputTransformationsKey) as? [[String: Any]], !changed.isEmpty {
+    fable.prefixMismatchBehavior = .dropBlock
+}
+```
+
 Midjourney has no official public API, so there is no preset for it. Codex is OpenAI's agent using
 the OpenAI API, so it is the `openai` preset. OpenCode's gateways are the `opencode` and `opencode-go`
 presets.
