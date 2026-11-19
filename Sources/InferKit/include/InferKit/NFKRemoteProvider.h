@@ -31,7 +31,8 @@ extern const NSTimeInterval NFKRemoteProviderProbeTimeout;
 typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	/*! POST /chat/completions with a Bearer token; the reply carries choices[0].message.content. */
 	NFKRemoteAPIStyleOpenAIChat = 0,
-	/*! POST /messages with an x-api-key header; the reply carries content[0].text. */
+	/*! POST /messages with an x-api-key header, or a Bearer token on the meta preset; the reply carries
+		content[0].text. */
 	NFKRemoteAPIStyleAnthropicMessages = 1,
 	/*! POST /systemone with a Bearer token; the reply carries typed answers rather than text.
 		Introduced in InferKit 0.4.0. */
@@ -364,12 +365,14 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	Virginia. Introduced in InferKit 0.4.0. */
 @property (class, nonatomic, readonly) NFKRemoteProvider *modelStudio;
 /*! Meta's Model API at https://api.meta.ai/v1, which serves the Muse models (Muse Wonder, Muse Spark,
-	Muse Ember) on chat completions, the preset's style, and on the Responses API, which
-	NFKRemoteResponsesBackend reaches. The chat route refuses stop sequences, so NFKRemoteBackend
-	applies them to the reply for a muse- model. NFKRemoteFileStore reaches its Files API,
-	NFKRemoteImageBackend its image routes, NFKRemoteTranscriptionBackend its speech-to-text route
-	(POST /asr/transcribe, which serves Muse Voice Transcribe), and NFKRealtimeSession the realtime
-	form of that route. The key is a Bearer token. Introduced in InferKit 0.4.0. */
+	Muse Ember) on chat completions, the preset's style, on the Responses API, which
+	NFKRemoteResponsesBackend reaches, and on an Anthropic-format Messages route, which
+	NFKAnthropicBackend's backendForProvider:apiKey:modelName: reaches. The chat and Messages routes
+	refuse stop sequences, so both backends apply them to the reply for a muse- model.
+	NFKRemoteFileStore reaches its Files API, NFKRemoteImageBackend its image routes,
+	NFKRemoteTranscriptionBackend its speech-to-text route (POST /asr/transcribe, which serves Muse
+	Voice Transcribe), and NFKRealtimeSession the realtime form of that route. The key is a Bearer
+	token. Introduced in InferKit 0.4.0. */
 @property (class, nonatomic, readonly) NFKRemoteProvider *meta;
 
 // Local servers. Each is the project's own default address; nothing is assumed to be running.

@@ -2,12 +2,17 @@
 //  NFKAnthropicBackendPrivate.h
 //  InferKit
 //
-//  The count_tokens body NFKAnthropicBackend and NFKRemoteTokenCounter both send. Private to the core.
+//  The count_tokens body NFKAnthropicBackend and NFKRemoteTokenCounter both send, and the rule for a
+//  provider whose Messages route takes a Bearer key. Private to the core.
 //
 
 #import <InferKit/NFKAnthropicBackend.h>
 
 NS_ASSUME_NONNULL_BEGIN
+
+/*! Whether the provider's Messages route takes the key as an Authorization Bearer token in place of
+	the x-api-key header: the meta preset, whose documented header is Bearer. */
+BOOL NFKAnthropicProviderTakesBearerToken(NFKRemoteProvider *provider);
 
 @interface NFKAnthropicBackend ()
 

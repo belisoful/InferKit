@@ -16,6 +16,7 @@
 #import "NFKToolMessageSupport.h"
 #import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKRemoteFileStore.h>
+#import <InferKit/NFKRemoteProvider.h>
 #import "NFK_ARC.h"
 #import "NFKAnthropicBackendPrivate.h"
 #import "NFKRemoteBatchPrivate.h"
@@ -94,6 +95,36 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	return NO;
 }
 
+/*! Whether the model is one of Meta's Muse models, which Meta's Model API serves on a Messages route.
+	That route takes temperature and top_p beside the reasoning and answers 400 to top_k, to
+	stop_sequences, and to a named tool_choice. */
+static BOOL NFKAnthropicModelIsMuse(NSString * _Nullable model)
+{
+	return [model hasPrefix:@"muse-"];
+}
+
+BOOL NFKAnthropicProviderTakesBearerToken(NFKRemoteProvider *provider)
+{
+	return [provider.identifier isEqualToString:@"meta"];
+}
+
+/*! The text up to the earliest of the stop sequences, which is what a route returns when it applies
+	them itself. */
+static NSString *NFKAnthropicTextBeforeStops(NSString *text, NSArray<NSString *> *stops)
+{
+	NSUInteger end = text.length;
+	for (NSString *stop in stops) {
+		if (![stop isKindOfClass:NSString.class] || stop.length == 0) {
+			continue;
+		}
+		NSRange found = [text rangeOfString:stop];
+		if (found.location != NSNotFound && found.location < end) {
+			end = found.location;
+		}
+	}
+	return [text substringToIndex:end];
+}
+
 /*! What a streamed reply assembles into: content blocks by index, each text, thinking, or a tool
 	use, and the token counts the message events report. */
 @interface NFKAnthropicStreamState : NSObject
@@ -144,6 +175,8 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 @property (nonatomic, readonly) BOOL acceptsSampling;
 /*! Whether the model takes a forced tool_choice. */
 @property (nonatomic, readonly) BOOL acceptsForcedTool;
+/*! Whether the model is one of Meta's Muse models. */
+@property (nonatomic, readonly) BOOL servesMuseModel;
 - (nullable NSString *)effortLevelForEffort:(nullable id)effort;
 @end
 
@@ -155,6 +188,25 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	if (endpointURL != nil) {
 		backend.endpointURL = endpointURL;
 	}
+	return backend;
+}
+
++ (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
+									 apiKey:(nullable NSString *)apiKey
+								  modelName:(nullable NSString *)modelName
+{
+	NSArray<NSString *> *serving = @[ @"anthropic", @"opencode", @"opencode-go", @"meta", @"inferkit" ];
+	if (![serving containsObject:provider.identifier]) {
+		return nil;
+	}
+	NFKAnthropicBackend *backend = [self backendWithEndpointURL:[provider URLForPath:@"messages"]];
+	backend.authorizesWithBearerToken = NFKAnthropicProviderTakesBearerToken(provider);
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
+	}
+	backend.apiKey = apiKey;
+	backend.modelName = modelName;
 	return backend;
 }
 
@@ -241,11 +293,11 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		return [self failWithCode:kNFKError_InferenceRefused description:@"the model declined to answer" error:outError];
 	}
 	NSArray *content = [responseBody[@"content"] isKindOfClass:NSArray.class] ? responseBody[@"content"] : @[];
-	return NFKResultWithFinishReason([self resultForContentBlocks:content
-															usage:[self usageInMessageBody:responseBody]
-															  raw:responseBody
-												expectsStructured:[self requestExpectsStructuredReply:request]],
-									 responseBody[@"stop_reason"]);
+	return [self resultForContentBlocks:content
+								  usage:[self usageInMessageBody:responseBody]
+									raw:responseBody
+							 stopReason:responseBody[@"stop_reason"]
+								request:request];
 }
 
 // A run that has to ask the Models API for the model's maximum asks off the caller's thread, so a slow
@@ -284,7 +336,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	[job reportProgress:-1.0];
 
 	NFKAnthropicStreamState *state = [[NFKAnthropicStreamState alloc] init];
-	BOOL expectsStructured = [self requestExpectsStructuredReply:request];
+	NSArray<NSString *> *clientStops = [self clientStopsForRequest:request];
 	void (^cancel)(void) = [self streamRequest:urlRequest lineHandler:^(NSString *line) {
 		if (state.finished) {
 			return;
@@ -300,7 +352,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		NSString *type = [event[@"type"] isKindOfClass:NSString.class] ? event[@"type"] : @"";
 		if ([type isEqualToString:@"message_stop"]) {
 			state.finished = YES;
-			[self finishJob:job fromStreamState:state expectsStructured:expectsStructured];
+			[self finishJob:job fromStreamState:state request:request];
 			return;
 		}
 		if ([type isEqualToString:@"error"]) {
@@ -312,7 +364,8 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		}
 		if ([self applyStreamEvent:event type:type toState:state]) {
 			NSMutableDictionary<NSString *, id> *partial = [NSMutableDictionary dictionary];
-			partial[NFKRemoteBackendTextKey] = [self textInState:state];
+			NSString *text = [self textInState:state];
+			partial[NFKRemoteBackendTextKey] = clientStops != nil ? NFKAnthropicTextBeforeStops(text, clientStops) : text;
 			NSString *reasoning = [self reasoningInState:state];
 			if (reasoning.length > 0) {
 				partial[NFKOutputReasoning] = reasoning;
@@ -330,7 +383,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 				[job finishWithError:failure];
 				return;
 			}
-			[self finishJob:job fromStreamState:state expectsStructured:expectsStructured];
+			[self finishJob:job fromStreamState:state request:request];
 		});
 	}];
 	job.cancellationHandler = cancel;
@@ -441,8 +494,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		lookup.HTTPMethod = @"GET";
 		lookup.timeoutInterval = MIN(self.timeout, NFKAnthropicModelLookupTimeout);
 		[lookup setValue:@"application/json" forHTTPHeaderField:@"Accept"];
-		[NFKRemoteTransport authorizeRequest:lookup apiKey:self.apiKey style:NFKRemoteAPIStyleAnthropicMessages];
-		[lookup setValue:self.apiVersion forHTTPHeaderField:@"anthropic-version"];
+		[self authorizeURLRequest:lookup];
 		NSHTTPURLResponse *response = nil;
 		NSData *data = [self sendRequest:lookup response:&response error:NULL];
 		if (data == nil || response.statusCode != 200) {
@@ -459,13 +511,13 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 }
 
 /*! A stream that ended with a refusal fails the job as one; any other end delivers what streamed. */
-- (void)finishJob:(NFKInferenceJob *)job fromStreamState:(NFKAnthropicStreamState *)state expectsStructured:(BOOL)expectsStructured
+- (void)finishJob:(NFKInferenceJob *)job fromStreamState:(NFKAnthropicStreamState *)state request:(NFKInferenceRequest *)request
 {
 	if ([state.stopReason isEqual:@"refusal"]) {
 		[job finishWithError:[NFKRemoteTransport errorWithCode:kNFKError_InferenceRefused reason:@"the model declined to answer"]];
 		return;
 	}
-	[job finishWithResult:[self resultFromStreamState:state expectsStructured:expectsStructured]];
+	[job finishWithResult:[self resultFromStreamState:state request:request]];
 }
 
 /*! The core code a streamed error event's type maps to: an overload or a rate limit says back off, an
@@ -592,9 +644,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	if (streaming) {
 		[urlRequest setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
 	}
-	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleAnthropicMessages];
-	// The transport sets the version this release was written against; apiVersion overrides it.
-	[urlRequest setValue:self.apiVersion forHTTPHeaderField:@"anthropic-version"];
+	[self authorizeURLRequest:urlRequest];
 	NSMutableArray<NSString *> *betas = [NSMutableArray array];
 	if ([body[@"mcp_servers"] count] > 0) {
 		[betas addObject:NFKAnthropicMCPConnectorBeta];
@@ -606,6 +656,15 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		[urlRequest setValue:[betas componentsJoinedByString:@","] forHTTPHeaderField:@"anthropic-beta"];
 	}
 	return urlRequest;
+}
+
+/*! Writes the key, as x-api-key or as a Bearer token when authorizesWithBearerToken is set, and the
+	anthropic-version header, which a service that takes the Bearer token accepts too. */
+- (void)authorizeURLRequest:(NSMutableURLRequest *)urlRequest
+{
+	NFKRemoteAPIStyle style = self.authorizesWithBearerToken ? NFKRemoteAPIStyleOpenAIChat : NFKRemoteAPIStyleAnthropicMessages;
+	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:style];
+	[urlRequest setValue:self.apiVersion forHTTPHeaderField:@"anthropic-version"];
 }
 
 /*! The request's skills as container.skills, {type: anthropic | custom, skill_id, version}, with the
@@ -656,8 +715,9 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 									  toBody:body outputConfig:outputConfig];
 
 	// Thinking rules the sampling: the API refuses temperature, top_p, or top_k beside it, and the
-	// models from Claude Opus 4.7 on refuse them outright, so the three are dropped there.
-	BOOL samples = !thinks && self.acceptsSampling;
+	// models from Claude Opus 4.7 on refuse them outright, so the three are dropped there. Meta's
+	// route takes temperature and top_p beside the reasoning its models always do.
+	BOOL samples = self.servesMuseModel || (!thinks && self.acceptsSampling);
 	NSNumber *temperature = [request parameterForKey:NFKParameterTemperature];
 	if ([temperature isKindOfClass:NSNumber.class] && samples) {
 		body[@"temperature"] = temperature;
@@ -669,11 +729,11 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		body[@"top_p"] = topP;
 	}
 	NSNumber *topK = [request parameterForKey:NFKParameterTopK];
-	if ([topK isKindOfClass:NSNumber.class] && samples) {
+	if ([topK isKindOfClass:NSNumber.class] && samples && !self.servesMuseModel) {
 		body[@"top_k"] = topK;
 	}
 	NSArray<NSString *> *stopSequences = [request parameterForKey:NFKParameterStopSequences];
-	if ([stopSequences isKindOfClass:NSArray.class]) {
+	if ([stopSequences isKindOfClass:NSArray.class] && !self.servesMuseModel) {
 		body[@"stop_sequences"] = stopSequences;
 	}
 
@@ -777,7 +837,20 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 
 - (BOOL)acceptsForcedTool
 {
-	return !NFKAnthropicModelIsInFamilies(self.modelName, NFKAnthropicUnforcedToolFamilies());
+	return !self.servesMuseModel && !NFKAnthropicModelIsInFamilies(self.modelName, NFKAnthropicUnforcedToolFamilies());
+}
+
+- (BOOL)servesMuseModel
+{
+	return NFKAnthropicModelIsMuse(self.modelName);
+}
+
+/*! The stop sequences the backend applies to the reply, for a model whose route refuses them on the
+	wire. */
+- (nullable NSArray<NSString *> *)clientStopsForRequest:(NFKInferenceRequest *)request
+{
+	NSArray<NSString *> *stops = [request parameterForKey:NFKParameterStopSequences];
+	return self.servesMuseModel && [stops isKindOfClass:NSArray.class] && stops.count > 0 ? stops : nil;
 }
 
 // The three levels the contract names come from the table; a numeric string is a budget, which an
@@ -1020,8 +1093,8 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 
 // The API splits the input three ways: input_tokens is only what was read past the last cache
 // breakpoint, beside cache_read_input_tokens and cache_creation_input_tokens. NFKUsageInputTokens is the
-// whole input, so it is their sum. The API reports no reasoning count: the thinking tokens are part of
-// the output total.
+// whole input, so it is their sum. Anthropic reports no reasoning count: the thinking tokens are part of
+// the output total. Meta's route reports it under output_tokens_details.thinking_tokens.
 - (nullable NSDictionary<NSString *, NSNumber *> *)usageInMessageBody:(nullable NSDictionary *)body
 {
 	NSDictionary *usage = [body[@"usage"] isKindOfClass:NSDictionary.class] ? body[@"usage"] : nil;
@@ -1035,16 +1108,23 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	if (uncached != nil || cacheRead != nil || cacheWrite != nil) {
 		input = @(uncached.integerValue + cacheRead.integerValue + cacheWrite.integerValue);
 	}
-	return NFKRemoteUsage(input, cacheRead, usage[@"output_tokens"], nil);
+	NSDictionary *outputDetails = [usage[@"output_tokens_details"] isKindOfClass:NSDictionary.class] ? usage[@"output_tokens_details"] : nil;
+	NSNumber *thinking = [outputDetails[@"thinking_tokens"] isKindOfClass:NSNumber.class] ? outputDetails[@"thinking_tokens"] : nil;
+	return NFKRemoteUsage(input, cacheRead, usage[@"output_tokens"], thinking);
 }
 
 /*! Joins the text blocks into the text output and reads the tool uses. The API returns a list of
-	typed blocks, not one string; the forced structured tool's input is the structured output. */
+	typed blocks, not one string; the forced structured tool's input is the structured output. The
+	text ends at the earliest stop sequence the route left to the backend, and the finish reason is
+	the reply's stop reason, or a stop sequence where one cut the text. */
 - (NFKInferenceResult *)resultForContentBlocks:(NSArray *)content
 											 usage:(nullable NSDictionary<NSString *, NSNumber *> *)usage
 										   raw:(id)raw
-							 expectsStructured:(BOOL)expectsStructured
+									stopReason:(nullable id)stopReason
+									   request:(NFKInferenceRequest *)request
 {
+	BOOL expectsStructured = [self requestExpectsStructuredReply:request];
+	id finishReason = stopReason;
 	NSMutableDictionary *outputs = [NSMutableDictionary dictionary];
 	NSMutableArray<NSString *> *pieces = [NSMutableArray array];
 	NSMutableArray<NSString *> *reasoning = [NSMutableArray array];
@@ -1101,7 +1181,13 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 								@"argumentsJSON": json != nil ? [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding] : @"{}" }];
 	}
 	if (pieces.count > 0) {
-		outputs[NFKRemoteBackendTextKey] = [pieces componentsJoinedByString:@""];
+		NSString *text = [pieces componentsJoinedByString:@""];
+		NSArray<NSString *> *clientStops = [self clientStopsForRequest:request];
+		NSString *kept = clientStops != nil ? NFKAnthropicTextBeforeStops(text, clientStops) : text;
+		if (kept.length < text.length) {
+			finishReason = NFKFinishReasonStopSequence;
+		}
+		outputs[NFKRemoteBackendTextKey] = kept;
 	}
 	// A schema asked for through output_config.format comes back as the text of the reply.
 	if (expectsStructured && outputs[NFKOutputStructured] == nil && pieces.count > 0) {
@@ -1131,7 +1217,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		outputs[NFKOutputServerToolResults] = ran;
 	}
 	outputs[NFKRemoteBackendRawKey] = raw;
-	return [NFKInferenceResult resultWithOutputs:outputs];
+	return NFKResultWithFinishReason([NFKInferenceResult resultWithOutputs:outputs], finishReason);
 }
 
 // A text block's citations name the span they support, as a character range, a page range, a block
@@ -1263,7 +1349,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 
 // The assembled blocks are read the way a blocking reply's are; a tool use's input is the parse of
 // its accumulated partial JSON (an empty input streams as no deltas at all).
-- (NFKInferenceResult *)resultFromStreamState:(NFKAnthropicStreamState *)state expectsStructured:(BOOL)expectsStructured
+- (NFKInferenceResult *)resultFromStreamState:(NFKAnthropicStreamState *)state request:(NFKInferenceRequest *)request
 {
 	NSMutableArray *content = [NSMutableArray array];
 	for (NSNumber *index in [state.blocksByIndex.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
@@ -1277,11 +1363,11 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		}
 		[content addObject:block];
 	}
-	return NFKResultWithFinishReason([self resultForContentBlocks:content
-															usage:state.usage
-															  raw:@{ @"role": @"assistant", @"content": content }
-												expectsStructured:expectsStructured],
-									 state.stopReason);
+	return [self resultForContentBlocks:content
+								  usage:state.usage
+									raw:@{ @"role": @"assistant", @"content": content }
+							 stopReason:state.stopReason
+								request:request];
 }
 
 #pragma mark Transport
@@ -1342,11 +1428,11 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		return [self failWithCode:kNFKError_InferenceRefused description:@"the model declined to answer" error:outError];
 	}
 	NSArray *content = [reply[@"content"] isKindOfClass:NSArray.class] ? reply[@"content"] : @[];
-	return NFKResultWithFinishReason([self resultForContentBlocks:content
-															usage:[self usageInMessageBody:reply]
-															  raw:reply
-												expectsStructured:[self requestExpectsStructuredReply:request]],
-									 reply[@"stop_reason"]);
+	return [self resultForContentBlocks:content
+								  usage:[self usageInMessageBody:reply]
+									raw:reply
+							 stopReason:reply[@"stop_reason"]
+								request:request];
 }
 
 @end

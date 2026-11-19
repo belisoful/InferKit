@@ -395,6 +395,89 @@
 	XCTAssertNil(body[@"temperature"], @"the API refuses sampling beside thinking");
 }
 
+#pragma mark Meta's Messages route
+
+// Meta's Messages route answers 400 to top_k, to stop_sequences, and to thinking: disabled, takes
+// temperature and top_p beside the reasoning its models always do, and opens a reply with the
+// encrypted reasoning.
+- (void)testAMuseModelOnMessagesKeepsItsSamplingAndHasItsStopSequencesAppliedToTheReply
+{
+	self.anthropic.modelName = @"muse-spark-1.3";
+	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"redacted_thinking\",\"data\":\"enc\"},"
+		"{\"type\":\"text\",\"text\":\"one\\nEND\\ntwo\"}],\"stop_reason\":\"end_turn\","
+		"\"usage\":{\"input_tokens\":14,\"output_tokens\":8,\"cache_read_input_tokens\":4,"
+		"\"output_tokens_details\":{\"thinking_tokens\":5}}}";
+	NSDictionary *sampling = @{ NFKParameterTemperature: @0.5, NFKParameterTopP: @0.9, NFKParameterTopK: @40,
+								NFKParameterStopSequences: @[ @"never", @"END" ], NFKParameterMaxTokens: @4096 };
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"count" parameters:sampling] error:NULL];
+	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertEqualObjects(body[@"temperature"], @0.5);
+	XCTAssertEqualObjects(body[@"top_p"], @0.9);
+	XCTAssertNil(body[@"top_k"]);
+	XCTAssertNil(body[@"stop_sequences"]);
+	XCTAssertNil(body[@"thinking"], @"a request without an effort names no thinking, and never disables it");
+	XCTAssertEqualObjects(result.text, @"one\n", @"the text ends at the earliest stop sequence");
+	XCTAssertEqualObjects([result outputForKey:NFKOutputFinishReason], NFKFinishReasonStopSequence);
+	XCTAssertNil([result outputForKey:NFKOutputReasoning], @"the reasoning is encrypted");
+	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
+	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @18);
+	XCTAssertEqualObjects(usage[NFKUsageOutputTokens], @8);
+	XCTAssertEqualObjects(usage[NFKUsageReasoningTokens], @5);
+
+	NSMutableDictionary *thinking = [sampling mutableCopy];
+	thinking[NFKParameterReasoningEffort] = @"xhigh";
+	[self.anthropic runInferenceForRequest:[self prompt:@"count" parameters:thinking] error:NULL];
+	body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertEqualObjects(body[@"thinking"], (@{ @"type": @"adaptive", @"display": @"summarized" }));
+	XCTAssertEqualObjects(body[@"output_config"][@"effort"], @"xhigh");
+	XCTAssertEqualObjects(body[@"temperature"], @0.5, @"the route takes sampling beside the reasoning");
+	XCTAssertEqualObjects(body[@"top_p"], @0.9);
+	XCTAssertNil(body[@"top_k"]);
+
+	NSError *error = nil;
+	XCTAssertNil([self.anthropic runInferenceForRequest:[self prompt:@"count" parameters:@{ NFKParameterReasoningEffort: @"4096" }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceUnsupported, @"the route translates no budget into an effort");
+}
+
+- (void)testAStopSequenceThatCutsNothingLeavesAMuseReplyAndItsFinishReason
+{
+	self.anthropic.modelName = @"muse-ember-1.0";
+	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"text\",\"text\":\"one two\"}],\"stop_reason\":\"max_tokens\"}";
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"count" parameters:@{ NFKParameterStopSequences: @[ @"END" ] }]
+																  error:NULL];
+	XCTAssertEqualObjects(result.text, @"one two");
+	XCTAssertEqualObjects([result outputForKey:NFKOutputFinishReason], NFKFinishReasonLength);
+}
+
+- (void)testAClaudeModelKeepsItsStopSequencesOnTheWire
+{
+	self.anthropic.modelName = @"claude-opus-5-5";
+	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"text\",\"text\":\"one\\nEND\\ntwo\"}],\"stop_reason\":\"end_turn\"}";
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"count" parameters:@{ NFKParameterStopSequences: @[ @"END" ] }]
+																  error:NULL];
+	XCTAssertEqualObjects([self bodyOf:self.anthropic.lastRequest][@"stop_sequences"], (@[ @"END" ]));
+	XCTAssertEqualObjects(result.text, @"one\nEND\ntwo", @"Anthropic applies the stop sequences itself");
+	XCTAssertEqualObjects([result outputForKey:NFKOutputFinishReason], NFKFinishReasonStop);
+}
+
+// The route's tool_choice is auto, any, or none; a named tool answers 400.
+- (void)testAMuseModelOnMessagesTakesASchemaThroughTheResponseFormat
+{
+	self.anthropic.modelName = @"muse-spark-1.3";
+	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"redacted_thinking\",\"data\":\"enc\"},"
+		"{\"type\":\"text\",\"text\":\"{\\\"answer\\\":4}\"}],\"stop_reason\":\"end_turn\"}";
+	NSDictionary *schema = @{ @"type": @"object", @"properties": @{ @"answer": @{ @"type": @"integer" } } };
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"2+2?"
+																		  parameters:@{ NFKParameterJSONSchema: schema, NFKParameterTools: self.weatherTool }]
+																  error:NULL];
+	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertEqualObjects(body[@"output_config"][@"format"], (@{ @"type": @"json_schema", @"schema": schema }));
+	XCTAssertNil(body[@"tool_choice"]);
+	XCTAssertEqual([body[@"tools"] count], 1, @"only the caller's tool is declared");
+	XCTAssertEqualObjects(body[@"tools"][0][@"name"], @"get_weather");
+	XCTAssertEqualObjects(result.structured, @{ @"answer": @4 });
+}
+
 - (void)testAnthropicAttachesSeveralImagesBeforeTheText
 {
 	self.anthropic.stagedBody = @"{\"content\":[{\"type\":\"text\",\"text\":\"same\"}]}";

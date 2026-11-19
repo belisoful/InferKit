@@ -215,6 +215,27 @@ NFK_STAGED_TRANSPORT
 	XCTAssertEqualObjects(replayed[1][@"id"], @"toolu_1");
 }
 
+// Meta's Messages route opens a reply with the encrypted reasoning and asks for it back as returned.
+- (void)testAMuseTurnReplaysItsRedactedThinkingBesideTheToolUse
+{
+	NFKConversationAnthropicStub *muse = self.anthropicStub;
+	muse.endpointURL = [NSURL URLWithString:@"https://api.meta.ai/v1/messages"];
+	muse.modelName = @"muse-spark-1.3";
+	muse.staged = [NSMutableArray arrayWithObject:@"{\"content\":["
+		"{\"type\":\"redacted_thinking\",\"data\":\"enc-1\"},"
+		"{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"get_weather\",\"input\":{\"city\":\"Rome\"}}],"
+		"\"stop_reason\":\"tool_use\"}"];
+	NFKInferenceResult *reply = [muse runInferenceForRequest:[self requestWith:@[ @{ @"role": @"user", @"content": @"Rome?" } ]] error:NULL];
+	XCTAssertEqualObjects([reply outputForKey:NFKOutputFinishReason], NFKFinishReasonToolCalls);
+	NSArray *conversation = @[ @{ @"role": @"user", @"content": @"Rome?" }, [NFKToolMessages assistantMessageForResult:reply],
+							   [NFKToolMessages messageForToolCallIdentifier:@"toolu_1" name:@"get_weather" result:[NFKToolResult resultWithText:@"21 C"]] ];
+	[muse runInferenceForRequest:[self requestWith:conversation] error:NULL];
+	NSArray *replayed = [muse bodyAt:1][@"messages"][1][@"content"];
+	XCTAssertEqualObjects(replayed[0], (@{ @"type": @"redacted_thinking", @"data": @"enc-1" }));
+	XCTAssertEqualObjects(replayed[1][@"id"], @"toolu_1");
+	XCTAssertEqualObjects([muse bodyAt:1][@"messages"][2][@"content"][0][@"tool_use_id"], @"toolu_1");
+}
+
 - (void)testAnthropicLeavesTheForcedSchemaToolOutOfTheRecordedTurn
 {
 	NFKConversationAnthropicStub *anthropic = self.anthropicStub;

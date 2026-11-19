@@ -16,6 +16,7 @@
 #import "NFKInferKitDiscovery.h"
 #import "NFKPinnedServersPrivate.h"
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKAnthropicBackendPrivate.h"
 
 const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 
@@ -591,6 +592,7 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 	NSURL *endpointURL = [provider endpointURLForModelName:modelName];
 	if (apiStyle == NFKRemoteAPIStyleAnthropicMessages) {
 		NFKAnthropicBackend *backend = [NFKAnthropicBackend backendWithEndpointURL:endpointURL];
+		backend.authorizesWithBearerToken = NFKAnthropicProviderTakesBearerToken(provider);
 		backend.apiKey = apiKey;
 		backend.modelName = modelName;
 		return backend;

@@ -519,6 +519,43 @@
 	XCTAssertEqualObjects(usage[NFKUsageOutputTokens], @6);
 }
 
+// Meta's Messages route refuses stop_sequences, so the stream's text ends at the stop sequence too, and
+// its closing event carries the thinking token count.
+- (void)testAMuseStreamOnMessagesEndsItsTextAtTheStopSequenceAndCountsTheThinking
+{
+	self.anthropic.modelName = @"muse-spark-1.3";
+	self.anthropic.authorizesWithBearerToken = YES;
+	self.anthropic.stagedLines = @[
+		@"data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\",\"content\":[],\"usage\":{\"input_tokens\":14}}}",
+		@"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"redacted_thinking\",\"data\":\"enc\"}}",
+		@"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+		@"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"one\\nEN\"}}",
+		@"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"D\\ntwo\"}}",
+	];
+	self.anthropic.holdOpen = YES;
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"count" }
+															   parameters:@{ NFKParameterStopSequences: @[ @"END" ] }];
+	NFKInferenceJob *running = [self.anthropic submitInferenceJobForRequest:request];
+	XCTAssertEqualObjects(running.partialResult.text, @"one\n", @"a partial result ends at the stop sequence");
+	XCTAssertNil([self bodyOf:self.anthropic.lastRequest][@"stop_sequences"]);
+	XCTAssertEqualObjects(self.anthropic.lastRequest.allHTTPHeaderFields[@"Authorization"], @"Bearer k");
+	XCTAssertNil(self.anthropic.lastRequest.allHTTPHeaderFields[@"x-api-key"]);
+	[running cancel];
+
+	self.anthropic.stagedLines = [self.anthropic.stagedLines arrayByAddingObjectsFromArray:@[
+		(@"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},"
+		  "\"usage\":{\"output_tokens\":9,\"output_tokens_details\":{\"thinking_tokens\":5}}}"),
+		@"data: {\"type\":\"message_stop\"}" ]];
+	NFKInferenceJob *job = [self.anthropic submitInferenceJobForRequest:request];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded);
+	XCTAssertEqualObjects(job.result.text, @"one\n");
+	XCTAssertEqualObjects([job.result outputForKey:NFKOutputFinishReason], NFKFinishReasonStopSequence);
+	NSDictionary *usage = [job.result outputForKey:NFKOutputUsage];
+	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @14);
+	XCTAssertEqualObjects(usage[NFKUsageOutputTokens], @9);
+	XCTAssertEqualObjects(usage[NFKUsageReasoningTokens], @5);
+}
+
 - (void)testALocalRunnerStreamsTokenByToken
 {
 	NSDictionary *environment = NSProcessInfo.processInfo.environment;

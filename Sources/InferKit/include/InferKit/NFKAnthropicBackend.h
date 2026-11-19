@@ -8,6 +8,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class NFKRemoteProvider;
+
 /*!
 	@class      NFKAnthropicBackend
 	@abstract   An inference backend that calls Anthropic's Messages API.
@@ -54,6 +56,22 @@ NS_ASSUME_NONNULL_BEGIN
 				kNFKError_InferenceUnsupported. Thinking counts toward max_tokens, so a reasoning
 				effort raises it above the matching budget.
 
+				Meta's Model API serves its Muse models on the same route (POST /v1/messages), which
+				backendForProvider:apiKey:modelName: reaches on the meta preset. A model named muse-…
+				follows that route's rules:
+
+				- the key travels as a Bearer token (authorizesWithBearerToken)
+				- NFKParameterTemperature and NFKParameterTopP are sent beside a reasoning effort,
+				  and NFKParameterTopK is dropped, because the route refuses top_k
+				- NFKParameterStopSequences stays off the wire, because the route refuses
+				  stop_sequences; the text ends at the earliest stop sequence, and
+				  NFKOutputFinishReason is then NFKFinishReasonStopSequence
+				- NFKParameterJSONSchema goes out as output_config.format, because the route refuses
+				  a named tool_choice
+				- NFKUsageReasoningTokens is the thinking token count the route reports
+				- the reasoning is redacted, so NFKOutputReasoning holds the summary when the route
+				  returns one, and the encrypted block is replayed with the assistant turn
+
 				Inference is synchronous and multi-second: run it off the main or render thread, or
 				submit a job. isReady reports whether an endpoint and a model are set.
 				Introduced in InferKit 0.1.0.
@@ -63,8 +81,18 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The messages endpoint. Defaults to Anthropic's own. */
 @property (nonatomic, copy, nullable) NSURL *endpointURL;
 
-/*! The key sent as x-api-key. */
+/*! The key sent as x-api-key, or as a Bearer token when authorizesWithBearerToken is set. */
 @property (nonatomic, copy, nullable) NSString *apiKey;
+
+/*!
+	@property   authorizesWithBearerToken
+	@abstract   Whether apiKey travels as an Authorization Bearer token in place of the x-api-key header.
+	@discussion NO by default, which is Anthropic's header. YES is for a service that serves the
+				Messages route behind a Bearer key. The factories set it for the meta preset, whose
+				documented header is Bearer. The run, count_tokens, and the Models API lookup all
+				follow it, and anthropic-version is sent either way. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, assign) BOOL authorizesWithBearerToken;
 
 /*! The model name sent in the request body. Required by the API. */
 @property (nonatomic, copy, nullable) NSString *modelName;
@@ -98,6 +126,24 @@ NS_ASSUME_NONNULL_BEGIN
 + (instancetype)backendWithEndpointURL:(nullable NSURL *)endpointURL;
 
 /*!
+	@method     backendForProvider:apiKey:modelName:
+	@abstract   A backend pointed at the provider's Messages endpoint, or nil for a provider that
+				serves none.
+	@discussion anthropic, opencode, opencode-go, meta, and inferkit serve one at the base plus
+				/messages; every other preset returns nil. OpenCode answers this route only for the
+				models it routes to Messages (see NFKRemoteProvider's modelAPIStyles). The meta preset's
+				own style is chat completions, so this factory is how a caller reaches Meta's Messages
+				route, with the key as a Bearer token. NFKRemoteProvider's
+				backendForProvider:apiKey:modelName: builds the same backend for a model the provider
+				routes to NFKRemoteAPIStyleAnthropicMessages. Meta's Models API states no output limit,
+				so a run that names no NFKParameterMaxTokens and no maxTokens sends 1024 there.
+				Introduced in InferKit 0.4.0.
+*/
++ (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
+									 apiKey:(nullable NSString *)apiKey
+								  modelName:(nullable NSString *)modelName;
+
+/*!
 	@method     submitInferenceJobForRequest:
 	@abstract   Starts a streamed run and returns the job to follow it.
 	@discussion The request is sent with stream enabled and the reply read as the Messages API's
@@ -114,8 +160,8 @@ NS_ASSUME_NONNULL_BEGIN
 	@discussion The request body is the one a run sends (the system turn, the converted tool
 				conversation, the attached media, the tools, and the thinking), reduced to the fields
 				count_tokens takes, and posted to the endpoint's count_tokens path
-				(…/messages/count_tokens). Blocks; run it off the render thread. Introduced in
-				InferKit 0.4.0.
+				(…/messages/count_tokens), which Meta's Model API serves for its Muse models too.
+				Blocks; run it off the render thread. Introduced in InferKit 0.4.0.
 */
 - (nullable NSNumber *)tokenCountForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)error;
 

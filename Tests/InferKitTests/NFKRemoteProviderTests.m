@@ -119,6 +119,7 @@ static const uint16_t NFKDeadPort = 9;
 /*! An Anthropic backend whose transport is stubbed: it records the request and returns staged data. */
 @interface NFKAnthropicStubBackend : NFKAnthropicBackend
 @property (nonatomic, strong) NSURLRequest *lastRequest;
+@property (nonatomic, strong) NSMutableArray<NSURLRequest *> *requests;
 @property (nonatomic, strong, nullable) NSData *stagedData;
 @property (nonatomic, assign) NSInteger stagedStatusCode;
 @end
@@ -130,6 +131,7 @@ static const uint16_t NFKDeadPort = 9;
 	self = [super init];
 	if (self) {
 		_stagedStatusCode = 200;
+		_requests = [NSMutableArray array];
 	}
 	return self;
 }
@@ -137,6 +139,7 @@ static const uint16_t NFKDeadPort = 9;
 - (NSData *)sendRequest:(NSURLRequest *)request response:(NSHTTPURLResponse **)outResponse error:(NSError **)outError
 {
 	self.lastRequest = request;
+	[self.requests addObject:request];
 	if (outResponse != NULL) {
 		*outResponse = [[NSHTTPURLResponse alloc] initWithURL:request.URL
 												   statusCode:self.stagedStatusCode
@@ -443,6 +446,79 @@ static const uint16_t NFKDeadPort = 9;
 	NFKRemoteProvider *moved = [added providerWithBaseURL:[NSURL URLWithString:@"https://proxy.test/v1"]];
 	XCTAssertEqualObjects([moved endpointURLForModelName:@"claude-next"].absoluteString, @"https://proxy.test/v1/messages",
 						  @"the routes travel with a re-based provider");
+}
+
+#pragma mark Meta's Messages route
+
+// Meta's Model API serves POST /v1/messages for its Muse models; its documented key header is Bearer.
+- (void)testTheMetaPresetReachesItsMessagesRouteWithABearerKey
+{
+	NFKRemoteProvider *meta = NFKRemoteProvider.meta;
+	NFKAnthropicBackend *messages = [NFKAnthropicBackend backendForProvider:meta apiKey:@"k" modelName:@"muse-spark-1.3"];
+	XCTAssertEqualObjects(messages.endpointURL.absoluteString, @"https://api.meta.ai/v1/messages");
+	XCTAssertTrue(messages.authorizesWithBearerToken);
+	XCTAssertEqualObjects(messages.modelName, @"muse-spark-1.3");
+	XCTAssertTrue(messages.isReady);
+
+	XCTAssertTrue([[NFKRemoteProvider backendForProvider:meta apiKey:@"k" modelName:@"muse-spark-1.3"] isKindOfClass:NFKRemoteBackend.class],
+				  @"the preset's own style stays chat completions");
+	NFKRemoteProvider *routed = [meta providerWithAPIStyle:NFKRemoteAPIStyleAnthropicMessages forModelName:@"muse-spark-1.3"];
+	NFKAnthropicBackend *chosen = (NFKAnthropicBackend *)[NFKRemoteProvider backendForProvider:routed apiKey:@"k" modelName:@"muse-spark-1.3"];
+	XCTAssertTrue([chosen isKindOfClass:NFKAnthropicBackend.class]);
+	XCTAssertEqualObjects(chosen.endpointURL.absoluteString, @"https://api.meta.ai/v1/messages");
+	XCTAssertTrue(chosen.authorizesWithBearerToken, @"a model routed to Messages on the preset takes the Bearer key too");
+}
+
+- (void)testTheMessagesFactoryServesThePresetsWithAMessagesRouteAndKeepsTheirKeyHeader
+{
+	NSDictionary<NSString *, NSString *> *endpoints = @{ @"anthropic": @"https://api.anthropic.com/v1/messages",
+														 @"opencode": @"https://opencode.ai/inference/v1/messages",
+														 @"opencode-go": @"https://opencode.ai/inference/go/v1/messages" };
+	for (NSString *identifier in endpoints) {
+		NFKAnthropicBackend *backend = [NFKAnthropicBackend backendForProvider:[NFKRemoteProvider providerWithIdentifier:identifier]
+																		apiKey:@"k" modelName:@"claude-haiku-5-5"];
+		XCTAssertEqualObjects(backend.endpointURL.absoluteString, endpoints[identifier], @"%@", identifier);
+		XCTAssertFalse(backend.authorizesWithBearerToken, @"%@ takes x-api-key", identifier);
+	}
+	NFKAnthropicBackend *served = [NFKAnthropicBackend backendForProvider:NFKRemoteProvider.inferKit apiKey:nil modelName:@"m"];
+	XCTAssertEqualObjects(served.endpointURL.path, @"/v1/messages");
+	for (NSString *identifier in @[ @"openai", @"gemini", @"mistral", @"typesafe", @"ollama" ]) {
+		XCTAssertNil([NFKAnthropicBackend backendForProvider:[NFKRemoteProvider providerWithIdentifier:identifier] apiKey:@"k" modelName:@"m"],
+					 @"%@ serves no Messages route", identifier);
+	}
+	NFKAnthropicBackend *claude = (NFKAnthropicBackend *)[NFKRemoteProvider backendForProvider:NFKRemoteProvider.openCodeZen
+																						apiKey:@"k" modelName:@"claude-opus-5-5"];
+	XCTAssertFalse(claude.authorizesWithBearerToken);
+}
+
+// The run, the Models API lookup a run without a limit makes first, and count_tokens all carry the key
+// the same way.
+- (void)testABearerKeyTravelsInTheAuthorizationHeaderOnTheRunTheLookupAndTheCount
+{
+	self.anthropic.endpointURL = [NSURL URLWithString:@"https://api.meta.ai/v1/messages"];
+	self.anthropic.modelName = @"muse-spark-1.3";
+	self.anthropic.authorizesWithBearerToken = YES;
+	self.anthropic.stagedData = [@"{\"content\":[{\"type\":\"text\",\"text\":\"Paris\"}],\"input_tokens\":14}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }];
+	XCTAssertEqualObjects([self.anthropic runInferenceForRequest:request error:NULL].text, @"Paris");
+	XCTAssertEqualObjects([self.anthropic tokenCountForRequest:request error:NULL], @14);
+
+	XCTAssertEqual(self.anthropic.requests.count, 3);
+	NSArray<NSString *> *expected = @[ @"GET https://api.meta.ai/v1/models/muse-spark-1.3",
+									   @"POST https://api.meta.ai/v1/messages",
+									   @"POST https://api.meta.ai/v1/messages/count_tokens" ];
+	for (NSUInteger index = 0; index < self.anthropic.requests.count; index++) {
+		NSURLRequest *sent = self.anthropic.requests[index];
+		NSString *line = [NSString stringWithFormat:@"%@ %@", sent.HTTPMethod, sent.URL.absoluteString];
+		XCTAssertEqualObjects(line, expected[index]);
+		XCTAssertEqualObjects(sent.allHTTPHeaderFields[@"Authorization"], @"Bearer a-key", @"%@", line);
+		XCTAssertNil(sent.allHTTPHeaderFields[@"x-api-key"], @"%@", line);
+		XCTAssertGreaterThan([sent.allHTTPHeaderFields[@"anthropic-version"] length], 0, @"the route accepts the version header");
+	}
+	XCTAssertEqualObjects([self.anthropic decodedRequestBody][@"model"], @"muse-spark-1.3");
+	XCTAssertNil([self.anthropic decodedRequestBody][@"max_tokens"], @"count_tokens takes no max_tokens");
+	NSDictionary *run = [NSJSONSerialization JSONObjectWithData:self.anthropic.requests[1].HTTPBody options:0 error:NULL];
+	XCTAssertEqualObjects(run[@"max_tokens"], @1024, @"Meta's Models API states no output limit, so the run sends the fallback");
 }
 
 #pragma mark Anthropic's wire format
