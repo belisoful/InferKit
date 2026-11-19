@@ -81335,7 +81335,8 @@
       "family" : "wan",
       "id" : "wan2.2-ti2v-5b",
       "inputModalities" : [
-        "text"
+        "text",
+        "image"
       ],
       "inputs" : [
         {
@@ -81351,6 +81352,13 @@
           "required" : false,
           "title" : "Negative prompt",
           "valueType" : "text"
+        },
+        {
+          "help" : "An image the clip starts from, resized to the clip's size.",
+          "key" : "image",
+          "required" : false,
+          "title" : "First frame",
+          "valueType" : "image"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -81504,7 +81512,7 @@
         "staged"
       ],
       "standIn" : false,
-      "summary" : "A diffusion transformer that films a clip from a prompt.",
+      "summary" : "A diffusion transformer that films a clip from a prompt, or from a prompt and its first frame.",
       "tasks" : [
         "video-generation"
       ],

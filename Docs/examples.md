@@ -3515,8 +3515,10 @@ the low-noise expert (`transformer_2/`) the rest, each at its own guidance scale
 both releases. Each expert is a stage of its own, so a machine that cannot hold both loads the low-noise
 expert when the schedule reaches it. Both releases store their experts at float32 (57 GB each), so a
 packed load is the practical one. I2V-A14B starts the clip from an image, resized to the clip's size with
-PIL's Lanczos filter as diffusers resizes it, and ends it at a second image where one is given. A Wan 2.2
-LoRA ships as a pair of files, one per expert.
+PIL's Lanczos filter as diffusers resizes it, and ends it at a second image where one is given. Wan 2.2
+TI2V-5B takes an image too (`startsFromImage`): the image becomes the clip's first latent frame, held clean
+through every step, and the clip takes no last frame. A Wan 2.2 LoRA ships as a pair of files, one per
+expert.
 
 ```swift
 let i2v = try NFKMLXWanVideoGenerator.generator(directoryURL: i2vRelease, residency: .automatic,

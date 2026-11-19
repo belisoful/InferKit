@@ -1488,6 +1488,16 @@ What the glue had wrong or lacked before the oracle, all invisible to a shape te
   shift is per release (3.0 for 2.1 1.3B, 5.0 for 2.2 5B).
 - Wan 2.2 TI2V's `expand_timesteps` gives every token the same timestep in text-to-video; the
   reference's two forms differ by 1.9e-6, so the scalar timestep serves both.
+- Wan 2.2 TI2V starts a clip from an image through the same `expand_timesteps`
+  (`WanImageToVideoPipeline`, `NFKMLXWanVideoGenerator.startsFromImage`): the image is resized by PIL's
+  Lanczos, encoded alone as one frame (`firstFrameLatent`), and replaces the latent's first frame before
+  every step and after the last; the first frame's tokens read timestep 0 and the others `t`. The
+  transformer takes the first frame's modulation from the timestep-0 embedding and selects it per token
+  with `which`, which equals the reference's per-token embedding without a `[tokens, 6, inner]` table.
+  diffusers ignores a last frame here; the generator refuses one. Measured (`run_reference.py
+  wan_ti2v_pipeline --checkpoint <IK_VAL_T5_TOKENIZER>` → `IK_PARITY_WAN_TI2V_PIPELINE`, wananimate env, tiny umT5, transformer, and residual Wan 2.2 autoencoder, a 40 × 56
+  picture to 9 frames of 32 × 48, four guided steps): resize byte-exact, first-frame latent
+  0.9999999999999997, final latents 0.9999999999990189, clip 0.9999999999999506.
 - `prompt_clean` runs `ftfy.fix_text`, which no oracle env carries and the port does not implement; it
   changes only mis-decoded text. The oracle stubs it to identity and says so.
 

@@ -345,9 +345,14 @@ enum NFKMLXCatalogVideo {
         return releases.map { release in
             let framesPerSecond: Double = release.name == "wan2.2-ti2v-5b" ? 24 : 16
             var entry = NFKMLXCatalogImage.model(release.name, release.displayName, family: "wan",
-                                            summary: "A diffusion transformer that films a clip from a prompt.",
+                                            summary: release.name == "wan2.2-ti2v-5b"
+                                                ? "A diffusion transformer that films a clip from a prompt, or from a prompt and its first frame."
+                                                : "A diffusion transformer that films a clip from a prompt.",
                                             tasks: [NFKModelTaskVideoGeneration],
-                                            inputs: promptInputs,
+                                            inputs: release.name == "wan2.2-ti2v-5b"
+                                                ? promptInputs + [.input(NFKInputImage, title: "First frame",
+                                                                         help: "An image the clip starts from, resized to the clip's size.")]
+                                                : promptInputs,
                                             outputs: [clipOutput("The generated clip as a QuickTime movie.")],
                                             parameters: videoOptions(frames: 81, width: 832, height: 480,
                                                                      framesPerSecond: framesPerSecond,

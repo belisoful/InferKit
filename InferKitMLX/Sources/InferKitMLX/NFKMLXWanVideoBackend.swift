@@ -37,6 +37,9 @@ extension NFKMLXWanVideoGenerator {
     /// The request inputs an image-to-video release's backend reads.
     static let imageToVideoInputKeys = backendInputKeys.union([NFKInputImage, NFKMLXVideoInputKey.lastImage])
 
+    /// The request inputs Wan 2.2 TI2V-5B's backend reads: an optional first frame.
+    static let firstFrameInputKeys = backendInputKeys.union([NFKInputImage])
+
     /// The request parameters a single-transformer release's backend reads.
     static let backendParameterKeys: Set<String> = [
         NFKParameterFrameCount, NFKParameterWidth, NFKParameterHeight, NFKParameterFramesPerSecond,
@@ -51,7 +54,8 @@ extension NFKMLXWanVideoGenerator {
     /// @discussion The backend reads `NFKInputPrompt` (required) and `NFKInputNegativePrompt`, and for an
     /// image-to-video release the first frame under `NFKInputImage` (required) and the last under
     /// ``NFKMLXVideoInputKey/lastImage``. It returns an `NFKVideoAsset` (a QuickTime movie in the temporary
-    /// directory) under `NFKOutputVideo`. A two-expert release reads
+    /// directory) under `NFKOutputVideo`. Wan 2.2 TI2V-5B reads an optional first frame under `NFKInputImage`
+    /// (``startsFromImage``). A two-expert release reads
     /// ``NFKMLXGenerationParameterKey/lowNoiseGuidanceScale`` (``lowNoiseGuidance``). Parameters:
     /// `NFKParameterFrameCount` (81), `NFKParameterWidth` (832), `NFKParameterHeight` (480),
     /// `NFKParameterFramesPerSecond` (``framesPerSecond``: 24 for Wan 2.2 TI2V-5B, 16 for Wan 2.1),
@@ -62,13 +66,15 @@ extension NFKMLXWanVideoGenerator {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName,
-                                inputKeys: isImageToVideo ? Self.imageToVideoInputKeys : Self.backendInputKeys,
+                                inputKeys: isImageToVideo ? Self.imageToVideoInputKeys
+                                    : startsFromImage ? Self.firstFrameInputKeys : Self.backendInputKeys,
                                 parameterKeys: hasExperts ? Self.expertParameterKeys : Self.backendParameterKeys,
                                 outputKeys: [NFKOutputVideo]) { [self] request, job in
             let prompt = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             let negative = NFKMLXGenerationBackend.text(request, NFKInputNegativePrompt)
             func parameter(_ key: String) -> NSNumber? { NFKMLXGenerationBackend.number(request, key) }
-            let image = isImageToVideo ? try NFKMLXGenerationBackend.requiredImage(request, NFKInputImage) : nil
+            let image = isImageToVideo ? try NFKMLXGenerationBackend.requiredImage(request, NFKInputImage)
+                : startsFromImage ? try NFKMLXGenerationBackend.image(request, NFKInputImage) : nil
             let lastImage = isImageToVideo ? try NFKMLXGenerationBackend.image(request, NFKMLXVideoInputKey.lastImage) : nil
             let (savedSteps, savedGuidance, savedLowNoise) = (steps, guidance, lowNoiseGuidance)
             defer { (steps, guidance, lowNoiseGuidance) = (savedSteps, savedGuidance, savedLowNoise) }

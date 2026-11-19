@@ -1827,7 +1827,8 @@
 		@"backendWithDirectoryURL:residency:precision:quantizationBits:error:")]);
 	for (NSString *selector in @[ @"framesForPrompt:image:lastImage:negativePrompt:frames:width:height:seed:error:",
 								  @"addAdapterAtURL:scale:expert:error:", @"lowNoiseGuidance", @"setLowNoiseGuidance:",
-								  @"hasExperts", @"isImageToVideo", @"quantizationBits", @"streamedLayerCount" ]) {
+								  @"hasExperts", @"isImageToVideo", @"startsFromImage", @"quantizationBits",
+								  @"streamedLayerCount" ]) {
 		XCTAssertTrue([NFKMLXWanVideoGenerator instancesRespondToSelector:NSSelectorFromString(selector)], @"-%@", selector);
 	}
 	XCTAssertEqualObjects(NFKMLXWanVideoGenerator.textToVideoExpertsRepo, @"Wan-AI/Wan2.2-T2V-A14B-Diffusers");

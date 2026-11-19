@@ -18,6 +18,8 @@ import MLXRandom
 // whose timestep is at least `boundary_ratio · 1000`, at the guidance scale, and the low-noise expert the
 // rest, at the second guidance scale. Guidance applies on both only where the first scale is above 1, as
 // the reference decides. I2V-A14B reads the noise, a mask, and the image's latents together (36 channels).
+// Wan 2.2 TI2V-5B starts a clip from an image through `expand_timesteps`: the image's latent replaces the
+// first latent frame before every step and after the last, and that frame's tokens read timestep 0.
 //
 // The sampler is Wan's released `UniPCMultistepScheduler` in its flow-prediction configuration
 // (`NFKMLXUniPCScheduler`), whose shift the release's `scheduler_config.json` states. Wan 2.2 TI2V runs
@@ -151,6 +153,19 @@ public final class NFKMLXWanPipeline {
         return condition
     }
 
+    /// The standardized latent `[zDim, 1, H', W']` of `image` (`[H, W, 3]` in −1…1) encoded as a one-frame
+    /// clip, which Wan 2.2 TI2V holds as the first latent frame.
+    func firstFrameLatent(_ image: MLXArray) -> MLXArray {
+        let dtype = NFKReferenceRounding.parameterType(of: holder.vae)
+        var latent = holder.vae.encode(image.expandedDimensions(axes: [0, 1]).asType(dtype))[0].asType(.float32)
+        if let latentsMean, let latentsStd {
+            latent = (latent - latentsMean) * (1 / latentsStd)
+        }
+        let channelsFirst = latent.transposed(3, 0, 1, 2)
+        eval(channelsFirst)
+        return channelsFirst
+    }
+
     /// The image-to-video mask `[4, latentFrames, height, width]`: the first latent frame stands for four
     /// copies of pixel frame 0, each later one for four pixel frames in turn, and a channel is 1 where its
     /// pixel frame is `marked`.
@@ -198,13 +213,16 @@ struct NFKWanDenoiser {
     private let lowNoiseGuidance: Float
     private let boundary: Float?
     private let condition: MLXArray?
+    private let firstFrame: MLXArray?
 
     /// - Parameters:
     ///   - boundary: the timestep below which the low-noise expert runs (`boundary_ratio · 1000`), or nil.
     ///   - lowNoiseGuidance: the low-noise expert's scale; nil takes `guidance`.
     ///   - condition: the channels read beside the latent (I2V-A14B's mask and image latents), or nil.
+    ///   - firstFrame: a clean first latent frame `[zDim, 1, H', W']` held in place at timestep 0 (TI2V), or nil.
     init(schedule: NFKMLXUniPCConfiguration, steps: Int, text: MLXArray, negative: MLXArray?, guidance: Float,
-         lowNoiseGuidance: Float? = nil, boundary: Float? = nil, condition: MLXArray? = nil, noise: MLXArray) {
+         lowNoiseGuidance: Float? = nil, boundary: Float? = nil, condition: MLXArray? = nil,
+         firstFrame: MLXArray? = nil, noise: MLXArray) {
         scheduler = NFKMLXUniPCScheduler(schedule)
         scheduler.setTimesteps(steps)
         self.text = text
@@ -213,7 +231,16 @@ struct NFKWanDenoiser {
         self.lowNoiseGuidance = lowNoiseGuidance ?? guidance
         self.boundary = boundary
         self.condition = condition
+        self.firstFrame = firstFrame
         latent = noise
+    }
+
+    /// The latent the run ends at: ``latent`` with the clean first frame in place where one is held.
+    var finalLatent: MLXArray { withFirstFrame(latent) }
+
+    private func withFirstFrame(_ x: MLXArray) -> MLXArray {
+        guard let firstFrame else { return x }
+        return concatenated([firstFrame.asType(x.dtype), x[0..., 1...]], axis: 1)
     }
 
     var timesteps: [Float] { scheduler.timesteps }
@@ -227,12 +254,14 @@ struct NFKWanDenoiser {
     mutating func step(_ index: Int, with transformer: NFKMLXWanTransformerNet) {
         // The reference keeps the latents float32 and hands the transformer its own type.
         let dtype = NFKReferenceRounding.parameterType(of: transformer)
-        let input = (condition.map { concatenated([latent, $0], axis: 0) } ?? latent).asType(dtype)
+        let held = withFirstFrame(latent)
+        let input = (condition.map { concatenated([held, $0], axis: 0) } ?? held).asType(dtype)
         let step = MLXArray([scheduler.timesteps[index]])
-        let conditioned = transformer(input, text: text.asType(dtype), t: step)
+        let firstFrameStep = firstFrame.map { _ in MLXArray([Float(0)]) }
+        let conditioned = transformer(input, text: text.asType(dtype), t: step, firstFrameTimestep: firstFrameStep)
         var velocity = conditioned
         if guidance > 1, let negative {
-            let unconditioned = transformer(input, text: negative.asType(dtype), t: step)
+            let unconditioned = transformer(input, text: negative.asType(dtype), t: step, firstFrameTimestep: firstFrameStep)
             velocity = NFKReferenceRounding.guided(unconditioned, conditioned,
                                                    scale: usesLowNoiseExpert(index) ? lowNoiseGuidance : guidance)
         }

@@ -65,6 +65,14 @@ enum NFKMLXWanRelease {
             outChannels: json["out_channels"] as? Int)
     }
 
+    /// Whether a release runs each token at its own timestep (`expand_timesteps` in `model_index.json`, Wan 2.2
+    /// TI2V-5B), which lets it start a clip from an image.
+    static func expandsTimesteps(ofDirectory directoryURL: URL) throws -> Bool {
+        let url = directoryURL.appendingPathComponent("model_index.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        return (try json(url)["expand_timesteps"] as? NSNumber)?.boolValue ?? false
+    }
+
     /// The timestep fraction at which an A14B release hands the schedule to its low-noise expert
     /// (`boundary_ratio` in `model_index.json`: 0.875 for T2V-A14B, 0.9 for I2V-A14B), or nil for a release
     /// with one transformer.
@@ -244,6 +252,11 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// Introduced in InferKit 0.4.0.
     @objc public let isImageToVideo: Bool
 
+    /// Whether the release can start a text-to-video clip from an image (Wan 2.2 TI2V-5B, whose tokens each
+    /// read their own timestep): ``video(forPrompt:image:lastImage:negativePrompt:frames:width:height:seed:)``
+    /// takes an image, and no last frame. Introduced in InferKit 0.4.0.
+    @objc public let startsFromImage: Bool
+
     /// The bits the transformers' block weights are packed to, or 0. Introduced in InferKit 0.4.0.
     @objc public internal(set) var quantizationBits = 0
 
@@ -286,7 +299,8 @@ public final class NFKMLXWanVideoGenerator: NSObject {
          framesPerSecond: Double = 16,
          sequenceLength: Int = NFKMLXWanVideoGenerator.maximumSequenceLength,
          adapters: [NFKWanAdapterList] = [NFKWanAdapterList()],
-         imageToVideo: Bool = false, boundaryRatio: Float? = nil, mergesOnLoad: Bool = false,
+         imageToVideo: Bool = false, startsFromImage: Bool = false, boundaryRatio: Float? = nil,
+         mergesOnLoad: Bool = false,
          loadTextEncoder: @escaping () throws -> NFKMLXT5EncoderNet,
          loadPipeline: @escaping () throws -> NFKMLXWanPipeline,
          loadExperts: [() throws -> NFKMLXWanTransformerNet] = []) {
@@ -297,6 +311,7 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         expertStages = loadExperts.map { NFKMLXStage($0) }
         self.boundaryRatio = boundaryRatio
         self.isImageToVideo = imageToVideo
+        self.startsFromImage = startsFromImage
         self.mergesOnLoad = mergesOnLoad
         self.segmenter = segmenter
         self.compression = compression
@@ -425,6 +440,7 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         let schedule = try NFKMLXWanRelease.schedule(
             fromHuggingFace: directoryURL.appendingPathComponent("scheduler/scheduler_config.json"))
         let imageToVideo = configurations[0].inChannels != configurations[0].outChannels
+        let startsFromImage = try !imageToVideo && NFKMLXWanRelease.expandsTimesteps(ofDirectory: directoryURL)
 
         // umT5-XXL (stored at float32, 22.7 GB) takes float32 as its wider precision over the bfloat16
         // the reference pipeline runs it at.
@@ -466,7 +482,9 @@ public final class NFKMLXWanVideoGenerator: NSObject {
             resident: plan.holdsStagesResident, segmenter: segmenter,
             compression: compression(of: vae.configuration),
             framesPerSecond: framesPerSecond(of: vae.configuration), adapters: adapters,
-            imageToVideo: imageToVideo, boundaryRatio: boundaryRatio,
+            imageToVideo: imageToVideo,
+            startsFromImage: startsFromImage,
+            boundaryRatio: boundaryRatio,
             mergesOnLoad: bits != nil || streamed.contains { !$0.isEmpty },
             loadTextEncoder: {
                 let encoder = NFKMLXT5Encoder.makeNet(textConfiguration)
@@ -733,10 +751,16 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         guard frames >= 1, grid.1 > 0, grid.2 > 0 else {
             throw NFKMLXError.unsupportedConfiguration("a clip is at least one frame of \(tile)×\(tile) pixels")
         }
-        guard isImageToVideo == (image != nil), lastImage == nil || image != nil else {
-            throw NFKMLXError.unsupportedConfiguration(isImageToVideo
-                ? "this release starts a clip from an image; pass one"
-                : "this release generates from text alone; it takes no image")
+        if isImageToVideo, image == nil {
+            throw NFKMLXError.unsupportedConfiguration("this release starts a clip from an image; pass one")
+        }
+        if image != nil, !isImageToVideo, !startsFromImage {
+            throw NFKMLXError.unsupportedConfiguration("this release generates from text alone; it takes no image")
+        }
+        if lastImage != nil, !isImageToVideo {
+            throw NFKMLXError.unsupportedConfiguration(startsFromImage
+                ? "this release starts a clip from an image and takes no last frame"
+                : "a last frame needs a first one")
         }
         let pixelFrames = (grid.0 - 1) * compression.temporal + 1
         let size = (width: grid.2 * compression.spatial, height: grid.1 * compression.spatial)
@@ -752,10 +776,12 @@ public final class NFKMLXWanVideoGenerator: NSObject {
             }
             // The encode's buffers, and umT5's own where it was released, stay in MLX's cache until cleared.
             NFKMLXGPU.clearCache()
-            func denoiser(_ schedule: NFKMLXUniPCConfiguration, channels: Int, condition: MLXArray?) -> NFKWanDenoiser {
+            func denoiser(_ schedule: NFKMLXUniPCConfiguration, channels: Int, condition: MLXArray?,
+                          firstFrame: MLXArray? = nil) -> NFKWanDenoiser {
                 NFKWanDenoiser(schedule: schedule, steps: steps, text: features[0], negative: guides ? features[1] : nil,
                                guidance: guidance, lowNoiseGuidance: lowNoiseGuidance,
                                boundary: boundaryRatio.map { $0 * Float(schedule.trainTimesteps) }, condition: condition,
+                               firstFrame: firstFrame,
                                noise: noise ?? NFKMLXWanPipeline.noise(channels: channels, frames: grid.0, height: grid.1,
                                                                        width: grid.2, seed: seed))
             }
@@ -770,12 +796,14 @@ public final class NFKMLXWanVideoGenerator: NSObject {
                     guard let transformer = pipeline.transformer else {
                         throw NFKMLXError.unsupportedConfiguration("the pipeline holds no transformer")
                     }
-                    var run = denoiser(pipeline.schedule, channels: transformer.config.inChannels, condition: nil)
+                    let firstFrame = pictures[0].map { pipeline.firstFrameLatent($0) }
+                    var run = denoiser(pipeline.schedule, channels: transformer.config.inChannels, condition: nil,
+                                       firstFrame: firstFrame)
                     for index in run.timesteps.indices {
                         run.step(index, with: transformer)
                         try transformer.verifyStream()
                     }
-                    return (decoded(pipeline, run.latent), run.latent)
+                    return (decoded(pipeline, run.finalLatent), run.finalLatent)
                 }
             }
             let (schedule, channels, condition) = try staging.use(pipelineStage) { pipeline in
@@ -793,7 +821,7 @@ public final class NFKMLXWanVideoGenerator: NSObject {
                     }
                 }
             }
-            let latent = run.latent
+            let latent = run.finalLatent
             return (try staging.use(pipelineStage) { decoded($0, latent) }, latent)
         }
     }

@@ -6423,6 +6423,7 @@
         "unipc",
         "wan_pipeline",
         "wan22_a14b_pipeline",
+        "wan_ti2v_pipeline",
         "sam2_video",
         "sam3_vision",
         "sam3_text",

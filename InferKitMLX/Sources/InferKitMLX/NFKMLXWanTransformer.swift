@@ -164,17 +164,17 @@ final class NFKWanBlock: Module {
         self.norm3 = LayerNorm(dimensions: config.innerDim, eps: config.eps, affine: false)
     }
 
-    /// `x` `[N, inner]`, `context` `[Lc, inner]`, `temb` `[6, inner]`.
-    func callAsFunction(_ x: MLXArray, context: MLXArray, temb: MLXArray, cos c: MLXArray, sin s: MLXArray) -> MLXArray {
-        let inner = x.dim(1)
+    /// `x` `[N, inner]`, `context` `[Lc, inner]`, `temb` `[6, inner]`. `firstFrame`, where given, is the
+    /// modulation `[6, inner]` of the tokens `mask` (`[N, 1]`) marks, which read another timestep.
+    func callAsFunction(_ x: MLXArray, context: MLXArray, temb: MLXArray, cos c: MLXArray, sin s: MLXArray,
+                        firstFrame: (temb: MLXArray, mask: MLXArray)? = nil) -> MLXArray {
         if NFKReferenceRounding.isReduced(x) {
-            return reduced(x, context: context, temb: temb, cos: c, sin: s)
+            return reduced(x, context: context, temb: temb, cos: c, sin: s, firstFrame: firstFrame)
         }
-        let mod = scaleShiftTable[0] + temb                               // [6, inner]
-        let shiftMSA = mod[0].reshaped([1, inner]), scaleMSA = mod[1].reshaped([1, inner])
-        let gateMSA = mod[2].reshaped([1, inner])
-        let cShiftMSA = mod[3].reshaped([1, inner]), cScaleMSA = mod[4].reshaped([1, inner])
-        let cGateMSA = mod[5].reshaped([1, inner])
+        let mod = Self.modulation(scaleShiftTable[0] + temb,
+                                  firstFrame: firstFrame.map { (scaleShiftTable[0] + $0.temb, $0.mask) })
+        let shiftMSA = mod(0), scaleMSA = mod(1), gateMSA = mod(2)
+        let cShiftMSA = mod(3), cScaleMSA = mod(4), cGateMSA = mod(5)
 
         var h = x + attn1(norm1(x) * (1.0 + scaleMSA) + shiftMSA, context: nil, cos: c, sin: s) * gateMSA
         h = h + attn2(norm2(h), context: context, cos: nil, sin: nil)
@@ -184,10 +184,12 @@ final class NFKWanBlock: Module {
 
     /// The block on a half-precision stream, rounded where the reference rounds: the modulation, the
     /// norms, and the gated residual sums are float32, each step rounded once to the stream's type.
-    private func reduced(_ x: MLXArray, context: MLXArray, temb: MLXArray, cos c: MLXArray, sin s: MLXArray) -> MLXArray {
-        let inner = x.dim(1), dtype = x.dtype
-        let mod = scaleShiftTable[0].asType(.float32) + temb.asType(.float32)
-        func row(_ index: Int) -> MLXArray { mod[index].reshaped([1, inner]) }
+    private func reduced(_ x: MLXArray, context: MLXArray, temb: MLXArray, cos c: MLXArray, sin s: MLXArray,
+                         firstFrame: (temb: MLXArray, mask: MLXArray)?) -> MLXArray {
+        let dtype = x.dtype
+        let table = scaleShiftTable[0].asType(.float32)
+        let row = Self.modulation(table + temb.asType(.float32),
+                                  firstFrame: firstFrame.map { (table + $0.temb.asType(.float32), $0.mask) })
         func normed(_ y: MLXArray) -> MLXArray {
             NFKReferenceRounding.layerNorm(y.asType(.float32), weight: nil, bias: nil, eps: eps)
         }
@@ -198,6 +200,19 @@ final class NFKWanBlock: Module {
         h = h + attn2(crossNormed, context: context, cos: nil, sin: nil)
         let fed = ffn((normed(h) * (1 + row(4)) + row(3)).asType(dtype))
         return (h.asType(.float32) + fed.asType(.float32) * row(5)).asType(dtype)
+    }
+}
+
+extension NFKWanBlock {
+    /// Row `i` of a block's modulation `[6, inner]` as `[1, inner]`, or, with a first-frame modulation, as
+    /// `[N, inner]` taking the first frame's row where `mask` is set.
+    static func modulation(_ mod: MLXArray, firstFrame: (MLXArray, MLXArray)?) -> (Int) -> MLXArray {
+        let inner = mod.dim(-1)
+        return { index in
+            let row = mod[index].reshaped([1, inner])
+            guard let (first, mask) = firstFrame else { return row }
+            return which(mask, first[index].reshaped([1, inner]), row)
+        }
     }
 }
 
@@ -215,12 +230,17 @@ final class NFKWanConditionEmbedder: Module {
 
     /// `t` scalar, `text` `[Lc, textDim]` → `(temb [inner], timestepProj [6·inner], context [Lc, inner])`.
     func callAsFunction(_ t: MLXArray, text: MLXArray, freqDim: Int) -> (temb: MLXArray, proj: MLXArray, context: MLXArray) {
+        let (temb, proj) = timestep(t, dtype: text.dtype, freqDim: freqDim)
+        return (temb, proj, textEmbedder(text))                           // context [Lc, inner]
+    }
+
+    /// The timestep embedding `[inner]` and its projection `[6·inner]` of a scalar `t`.
+    func timestep(_ t: MLXArray, dtype: DType, freqDim: Int) -> (temb: MLXArray, proj: MLXArray) {
         // The float32 sinusoids take the embedder's type, and its output the text's, as the reference casts them.
         let sinusoid = ltxTimestepEmbedding(t, channels: freqDim)         // cos-first
-        let temb = timeEmbedder(sinusoid.asType(timeEmbedder.linear1.weight.dtype)).asType(text.dtype)  // [1, inner]
+        let temb = timeEmbedder(sinusoid.asType(timeEmbedder.linear1.weight.dtype)).asType(dtype)  // [1, inner]
         let proj = timeProj(NFKReferenceRounding.silu(temb))              // [1, 6·inner]
-        let context = textEmbedder(text)                                  // [Lc, inner]
-        return (temb[0], proj[0], context)
+        return (temb[0], proj[0])
     }
 }
 
@@ -272,6 +292,12 @@ public final class NFKMLXWanTransformerNet: Module {
     /// Velocity prediction. `x` `[inChannels, F, H, W]`, `text` `[Lc, textDim]`, `t` scalar; the prediction
     /// is `[outChannels, F, H, W]`.
     public func callAsFunction(_ x: MLXArray, text: MLXArray, t: MLXArray) -> MLXArray {
+        callAsFunction(x, text: text, t: t, firstFrameTimestep: nil)
+    }
+
+    /// Velocity prediction with the first latent frame's tokens at `firstFrameTimestep` and the others at `t`,
+    /// as Wan 2.2 TI2V's `expand_timesteps` runs a clip that starts from an image (the first frame clean, at 0).
+    func callAsFunction(_ x: MLXArray, text: MLXArray, t: MLXArray, firstFrameTimestep: MLXArray?) -> MLXArray {
         let c = config.outChannels, f = x.dim(1), h = x.dim(2), w = x.dim(3)
         let pt = config.patchSize[0], ph = config.patchSize[1], pw = config.patchSize[2]
         let ft = f / pt, ht = h / ph, wt = w / pw
@@ -298,11 +324,17 @@ public final class NFKMLXWanTransformerNet: Module {
 
         let (temb, proj, context) = conditionEmbedder(t, text: text, freqDim: config.freqDim)
         let blockMod = proj.reshaped([6, inner])                          // shared across blocks
+        let firstFrame = firstFrameTimestep.map { timestep -> (temb: MLXArray, proj: MLXArray, mask: MLXArray) in
+            let (firstTemb, firstProj) = conditionEmbedder.timestep(timestep, dtype: text.dtype, freqDim: config.freqDim)
+            let mask = MLXArray(0 ..< (ft * ht * wt)).reshaped([-1, 1]) .< (ht * wt)
+            return (firstTemb, firstProj.reshaped([6, inner]), mask)
+        }
 
         for (index, block) in blocks.enumerated() {
             let input = hidden
             guard let output = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
-                block(input, context: context, temb: blockMod, cos: cosT, sin: sinT)
+                block(input, context: context, temb: blockMod, cos: cosT, sin: sinT,
+                      firstFrame: firstFrame.map { ($0.proj, $0.mask) })
             }, keeping: { [$0] }) else {
                 continue
             }
@@ -310,8 +342,9 @@ public final class NFKMLXWanTransformerNet: Module {
         }
 
         // Output modulation from the shared timestep embedding.
-        let outMod = scaleShiftTable[0] + temb.reshaped([1, inner])       // [2, inner]
-        let shift = outMod[0].reshaped([1, inner]), scale = outMod[1].reshaped([1, inner])
+        let outMod = NFKWanBlock.modulation(scaleShiftTable[0] + temb.reshaped([1, inner]),       // [2, inner]
+                                            firstFrame: firstFrame.map { (scaleShiftTable[0] + $0.temb.reshaped([1, inner]), $0.mask) })
+        let shift = outMod(0), scale = outMod(1)
         if NFKReferenceRounding.isReduced(hidden) {
             // The reference normalizes in float32 and rounds the modulated result once.
             hidden = (NFKReferenceRounding.layerNorm(hidden.asType(.float32), weight: nil, bias: nil, eps: config.eps)

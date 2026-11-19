@@ -8,6 +8,7 @@
 //  Tools/mlx-metallib.sh).
 //
 
+import CoreGraphics
 import XCTest
 import InferKit
 import MLX
@@ -143,6 +144,75 @@ final class NFKMLXWanPipelineTests: XCTestCase {
         XCTAssertGreaterThan(latentCosine, 0.99999, "the loop matches the reference")
         XCTAssertGreaterThan(expandedCosine, 0.99999, "and the per-token timestep form of it")
         XCTAssertGreaterThan(videoCosine, 0.99999, "the de-normalized decode matches the reference")
+    }
+
+    private func picture(_ pixels: MLXArray) throws -> CGImage {
+        let height = pixels.dim(0), width = pixels.dim(1)
+        let rgb = pixels.asType(.uint8).asArray(UInt8.self)
+        var rgba = [UInt8](repeating: 255, count: width * height * 4)
+        for pixel in 0 ..< width * height {
+            rgba[pixel * 4] = rgb[pixel * 3]
+            rgba[pixel * 4 + 1] = rgb[pixel * 3 + 1]
+            rgba[pixel * 4 + 2] = rgb[pixel * 3 + 2]
+        }
+        let provider = try XCTUnwrap(CGDataProvider(data: Data(rgba) as CFData))
+        return try XCTUnwrap(CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                                     bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                     bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                                     provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+    }
+
+    // Wan 2.2 TI2V starts a clip from an image: the picture resized by PIL's Lanczos and encoded alone as the
+    // first latent frame, held in place at timestep 0 through every step, as diffusers' WanImageToVideoPipeline
+    // runs it with expand_timesteps.
+    func testTI2VStartsFromAnImageAsTheReferenceDoes() throws {
+        try requireMLXRuntime()
+        guard let path = NFKMLXValidationConfig.environment["IK_PARITY_WAN_TI2V_PIPELINE"] else {
+            throw XCTSkip("set IK_PARITY_WAN_TI2V_PIPELINE (run_reference.py wan_ti2v_pipeline)")
+        }
+        let segmenter = try segmenter()
+        let arrays = try MLX.loadArrays(url: URL(fileURLWithPath: path))
+        func weights(_ prefix: String) -> [(String, MLXArray)] {
+            arrays.compactMap { key, value in key.hasPrefix(prefix) ? (String(key.dropFirst(prefix.count)), value) : nil }
+        }
+        let generator = NFKMLXWanVideoGenerator(
+            resident: true, segmenter: segmenter, compression: NFKMLXWanVideoGenerator.compression(of: .tiny),
+            framesPerSecond: 24, sequenceLength: 64, startsFromImage: true,
+            loadTextEncoder: {
+                let encoder = NFKMLXT5Encoder.makeNet(self.umt5)
+                try NFKMLXWeights.apply(weights("t5::"), to: encoder, verifyShapes: true)
+                return encoder
+            },
+            loadPipeline: {
+                let net = NFKMLXWanTransformerNet(self.transformer)
+                try NFKMLXWeights.apply(weights("t::").map { ($0.0, $0.1.ndim == 5 ? $0.1.transposed(0, 2, 3, 4, 1) : $0.1) },
+                                        to: net, verifyShapes: true)
+                let vae = NFKMLXWanVideoVAENet(.tiny)
+                try NFKMLXWeights.apply(weights("v::").map(NFKMLXWanRelease.adaptedVAE), to: vae, verifyShapes: true)
+                return NFKMLXWanPipeline(transformer: net, vae: vae, latentsMean: self.mean, latentsStd: self.std,
+                                         schedule: NFKMLXUniPCConfiguration(flowShift: 5))
+            })
+        generator.steps = 4
+        generator.guidance = 5
+        let first = try picture(try XCTUnwrap(arrays["picture"]))
+        let prepared = try NFKMLXWanVideoGenerator.preparedImage(first, width: 48, height: 32)
+        let resizeGap = abs(prepared - arrays["image"]!).max().item(Float.self)
+        XCTAssertLessThan(resizeGap, 1e-6, "PIL's Lanczos resize, byte for byte")
+        let firstFrame = try generator.usingPipeline { $0.firstFrameLatent(prepared) }
+        let firstFrameCosine = cosine(firstFrame, try XCTUnwrap(arrays["first_frame"]))
+        XCTAssertGreaterThan(firstFrameCosine, 0.9999999)
+        XCTAssertThrowsError(try generator.video(forPrompt: "a fox", image: first, lastImage: first, frames: 9,
+                                                 width: 48, height: 32), "a TI2V clip takes no last frame")
+
+        let run = try generator.generate(prompt: "  A red fox   walking through fresh snow, cinematic ", image: first,
+                                         lastImage: nil, negativePrompt: "worst quality, blurry", frames: 9, width: 48,
+                                         height: 32, seed: 0, noise: try XCTUnwrap(arrays["latents"]))
+        let latentCosine = cosine(run.latent, try XCTUnwrap(arrays["final_latents"]))
+        let videoCosine = cosine(run.clip, try XCTUnwrap(arrays["video"]))
+        print("VALIDATION PARITY wan-ti2v-pipeline: resize gap \(resizeGap), first frame \(firstFrameCosine), "
+              + "final latents \(latentCosine), video \(videoCosine)")
+        XCTAssertGreaterThan(latentCosine, 0.9999999)
+        XCTAssertGreaterThan(videoCosine, 0.9999999)
     }
 
     // A staged generator and a resident one over the same weights produce the same clip.

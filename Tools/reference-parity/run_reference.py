@@ -27690,6 +27690,98 @@ def run_wan_pipeline(image, checkpoint):
 CHECKPOINT_MODELS["wan_pipeline"] = run_wan_pipeline
 
 
+def run_wan_ti2v_pipeline(image, checkpoint):
+    """Wan 2.2 TI2V's image-to-video glue, from diffusers' own `WanImageToVideoPipeline` with
+    `expand_timesteps` (the form `Wan-AI/Wan2.2-TI2V-5B-Diffusers` declares), at a tiny random geometry.
+
+    `--checkpoint` is a directory holding a T5 `tokenizer.json`, as for `wan_pipeline`. The umT5 encoder, the
+    transformer, and a residual Wan 2.2 autoencoder (patch 2, spatial compression 4, temporal 2) are tiny
+    random ones. A 40 × 56 picture is resized by the pipeline's PIL Lanczos to 32 × 48 and encoded alone as
+    the first latent frame; that frame replaces the latent's first frame before each of the four guided
+    UniPC steps and after the last, and its tokens read timestep 0. Records the picture's bytes, the resized
+    picture, the first-frame latent, the starting latents, the latents after each step (`step.<i>`), the
+    final latents, the decoded clip, the prompt features, and the three models' weights in release naming.
+    Runs under the `wananimate` oracle env (diffusers 0.40). `image` unused.
+    """
+    import types
+
+    import PIL.Image
+    from diffusers import AutoencoderKLWan, UniPCMultistepScheduler, WanImageToVideoPipeline, WanTransformer3DModel
+    from diffusers.pipelines.wan import pipeline_wan_i2v
+    from transformers import T5TokenizerFast, UMT5Config, UMT5EncoderModel
+
+    # The pipeline's cleanup runs `ftfy.fix_text`, which repairs mis-decoded text and leaves well-formed
+    # text as it is; no oracle environment carries ftfy, and this prompt is well formed.
+    pipeline_wan_i2v.ftfy = types.SimpleNamespace(fix_text=lambda text: text)
+
+    tokenizer = T5TokenizerFast(tokenizer_file=os.path.join(checkpoint, "tokenizer.json"),
+                                eos_token="</s>", unk_token="<unk>", pad_token="<pad>", extra_ids=0)
+    text_encoder = UMT5EncoderModel(UMT5Config(
+        vocab_size=32128, d_model=32, d_kv=16, d_ff=64, num_layers=2, num_heads=2,
+        relative_attention_num_buckets=16, relative_attention_max_distance=32,
+        feed_forward_proj="gated-gelu", layer_norm_epsilon=1e-6))
+    _randomized(text_encoder, seed=51, scale=0.1)
+    transformer = WanTransformer3DModel(
+        patch_size=(1, 2, 2), num_attention_heads=2, attention_head_dim=16, in_channels=4, out_channels=4,
+        text_dim=32, freq_dim=256, ffn_dim=48, num_layers=2, cross_attn_norm=True,
+        qk_norm="rms_norm_across_heads", eps=1e-6, rope_max_seq_len=1024)
+    _randomized(transformer, seed=52, scale=0.1)
+    vae = AutoencoderKLWan(base_dim=8, decoder_base_dim=8, z_dim=4, dim_mult=[2, 2], num_res_blocks=1,
+                           attn_scales=[], temperal_downsample=[True], is_residual=True, patch_size=2,
+                           in_channels=12, out_channels=12, scale_factor_spatial=4, scale_factor_temporal=2,
+                           latents_mean=[0.1, -0.2, 0.3, -0.4], latents_std=[1.1, 0.9, 1.3, 0.8])
+    _randomized(vae, seed=53, scale=0.1)
+    scheduler = UniPCMultistepScheduler(
+        prediction_type="flow_prediction", use_flow_sigmas=True, flow_shift=5.0, num_train_timesteps=1000,
+        solver_order=2, solver_type="bh2", final_sigmas_type="zero", lower_order_final=True, predict_x0=True)
+    pipeline = WanImageToVideoPipeline(tokenizer=tokenizer, text_encoder=text_encoder, transformer=transformer,
+                                       vae=vae, scheduler=scheduler, image_encoder=None, image_processor=None,
+                                       expand_timesteps=True)
+    captured = {}
+    prepare_latents = pipeline.prepare_latents
+
+    def recording_prepare(image, *args, **kwargs):
+        captured["image"] = image[0].detach().clone()
+        result = prepare_latents(image, *args, **kwargs)
+        captured["first_frame"] = result[1][0].detach().clone()
+        return result
+    pipeline.prepare_latents = recording_prepare
+
+    picture = (np.random.default_rng(54).random((40, 56, 3)) * 255).astype(np.uint8)
+    prompt, negative = "  A red fox   walking through fresh snow, cinematic ", "worst quality, blurry"
+    arguments = dict(image=PIL.Image.fromarray(picture), prompt=prompt, negative_prompt=negative, height=32,
+                     width=48, num_frames=9, num_inference_steps=4, guidance_scale=5.0, max_sequence_length=64)
+    torch.manual_seed(55)
+    latents = torch.randn(1, 4, 5, 8, 12)
+    stepped = []
+
+    def recording_step(pipe, index, timestep, values):
+        stepped.append(values["latents"][0].detach().clone())
+        return {}
+    with torch.no_grad():
+        final = pipeline(latents=latents.clone(), output_type="latent", return_dict=False,
+                         callback_on_step_end=recording_step, **arguments)[0]
+        video = pipeline(latents=latents.clone(), output_type="pt", return_dict=False, **arguments)[0]
+        embeds, negative_embeds = pipeline.encode_prompt(prompt=prompt, negative_prompt=negative,
+                                                         do_classifier_free_guidance=True, max_sequence_length=64)
+    extra = {"picture": torch.from_numpy(picture).contiguous(), "image": captured["image"].permute(1, 2, 0).contiguous(),
+             "first_frame": captured["first_frame"].contiguous(), "latents": latents[0].contiguous(),
+             "final_latents": final[0].contiguous(), "video": video[0].permute(0, 2, 3, 1).contiguous(),
+             "prompt_embeds": embeds[0].contiguous(), "negative_embeds": negative_embeds[0].contiguous()}
+    for index, value in enumerate(stepped):
+        extra[f"step.{index}"] = value.contiguous()
+    for prefix, model in (("t5::", text_encoder), ("t::", transformer), ("v::", vae)):
+        for key, value in model.state_dict().items():
+            if key == "encoder.embed_tokens.weight":
+                continue
+            extra[prefix + key] = value.float().clone().contiguous()
+    globals()["_extra"] = extra
+    return extra["final_latents"].clone()
+
+
+CHECKPOINT_MODELS["wan_ti2v_pipeline"] = run_wan_ti2v_pipeline
+
+
 def run_wan22_a14b_pipeline(image, checkpoint):
     """Wan 2.2 A14B's two-expert glue, from diffusers' own `WanPipeline` (T2V-A14B) or
     `WanImageToVideoPipeline` (I2V-A14B), end to end over a release directory.

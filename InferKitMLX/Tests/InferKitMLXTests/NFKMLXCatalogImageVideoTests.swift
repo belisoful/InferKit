@@ -227,7 +227,8 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
                     parameters: NFKMLXLTXVideoGenerator.backendParameterKeys.union([NFKParameterAdapterStrengths]),
                     outputs: [NFKOutputVideo])
         for name in [NFKMLXWanVideoGenerator.modelName] + NFKMLXCatalogVideo.wanAdditionalReleases.map(\.name) {
-            assertPorts(name, inputs: NFKMLXWanVideoGenerator.backendInputKeys,
+            assertPorts(name, inputs: name == "wan2.2-ti2v-5b" ? NFKMLXWanVideoGenerator.firstFrameInputKeys
+                                                                 : NFKMLXWanVideoGenerator.backendInputKeys,
                         parameters: NFKMLXWanVideoGenerator.backendParameterKeys, outputs: [NFKOutputVideo])
         }
         assertPorts("wan2.2-t2v-a14b", inputs: NFKMLXWanVideoGenerator.backendInputKeys,
