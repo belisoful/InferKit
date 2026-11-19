@@ -27,7 +27,7 @@ misshapes part of it), **gap** (nothing reaches it).
 | prompt-cache controls: key, retention, options (mode, TTL, prewarm), per-part breakpoints | `/chat/completions`, `/responses` | covered (2026-10-23); prewarm and the 12-hour TTL are Responses-only; the cache-write usage counts are not read |
 | text + image → image inside Responses | `image_generation` tool | covered |
 | text → image, image(s) + mask → image | `/images/generations`, `/images/edits` | covered (multi-image `image[]`, streamed partial images) |
-| text (+ images) → animated GIF, text → SVG (`gpt-image-2.6-*`) | `/images/generations`, `/images/edits` (`output_format` `gif` or `svg`) | partial: a GIF decodes to its first frame (the file stays in the raw body); an SVG fails to decode |
+| text (+ images) → animated GIF, text → SVG (`gpt-image-2.6-*`) | `/images/generations`, `/images/edits` (`output_format` `gif` or `svg`) | covered (2026-11-18): a GIF's first frame under `NFKOutputImage` and the whole file as an `NFKVideoAsset` under `NFKOutputVideo`; an SVG's source under `NFKOutputText`; unverified live |
 | text → speech | `/audio/speech` | covered (`stream_format: sse`); a custom voice object goes by name |
 | audio → text | `/audio/transcriptions` | covered (`gpt-transcribe` text and stream, diarized_json, words); `whisper-1` family shuts down 2027-02-26 |
 | audio → English text | `/audio/translations` | covered until `whisper-1` shuts down |
@@ -71,9 +71,8 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 | service tier, safety settings, webhooks, labels | Interactions top-level fields | covered (by parameter name) |
 | text + images → image (generate and edit, Nano Banana) | Interactions `response_format: image` | covered |
 | text → speech (30 voices, two speakers) | Interactions `response_format: audio` | covered (Interactions) |
-| voice library: list, get, design, replicate, delete | `/v1beta/voices` (2026-09-22) | covered (`NFKGeminiVoiceLibrary`) |
-| voice remixing | `POST /v1beta/voices` with `gemini-3.8-flash-tts` (2026-11-04) | not surveyed |
-| voice editing of a transcribed clip | `source_text` on `gemini-3.5-transcribe` and `-transcribe-live` (2026-11-17) | not surveyed |
+| voice library: list, get, design, remix, replicate, delete | `/v1beta/voices` (2026-09-22; remixing 2026-11-04) | covered (`NFKGeminiVoiceLibrary`; `remixVoiceWithIdentifier:` 2026-11-18) |
+| voice editing of a text by spoken instructions | `transcription_config.mode {type: smart, source_text}` on `gemini-3.5-transcribe`; `inputAudioTranscription {mode: SMART, sourceText}` on `-transcribe-live` (2026-11-17) | covered for `gemini-3.5-transcribe` (Interactions, `source_text` parameter, 2026-11-18); the Live model by `extraConfiguration`, with no session support |
 | audio → text with diarization and word times | Interactions `transcription_config` (`gemini-3.5-transcribe`) | covered (Interactions) |
 | text (+ images) → music | Interactions (`lyria-3.5`, `lyria-3-*`) | covered |
 | text + image + video + audio → video, video editing | Interactions (`gemini-omni-1.2-flash`; 1.1 routes to it from 2026-12-03) | covered (Interactions, background); Google names Omni the default video model over Veo |
@@ -225,10 +224,10 @@ Meta's Model API at `https://api.meta.ai/v1`, added 2026-11-18 with Muse Ember's
 | text + image + audio + video + file → text, tools, reasoning summaries, web search | `/responses` | covered (`NFKRemoteResponsesBackend`); a tool conversation's `phase` replay is unverified |
 | files | `/files` | covered (`NFKRemoteFileStore`, purpose `user_data`) |
 | model list | `/models` | covered (ids only) |
-| audio → text with turns and diarization (`muse-voice-transcribe-1.0`) | `POST /asr/transcribe` (multipart, JSON request part, WAV only) | covered (`NFKRemoteTranscriptionAPIStyleMeta`); the SSE transcript is a gap |
-| realtime audio → text | `wss /v1/asr/realtime` (handshake frame carries the key) | gap |
-| text (+ images) → image (`muse-image-1.0`) | `/images/generations`, `/images/edits` | gap |
-| token count | `/responses/input_tokens`, `/messages/count_tokens` | gap |
+| audio → text with turns and diarization (`muse-voice-transcribe-1.0`) | `POST /asr/transcribe` (multipart, JSON request part, WAV only) | covered (`NFKRemoteTranscriptionAPIStyleMeta`; `streams` reads the SSE transcript, partials, turns, and speakers; stub-tested) |
+| realtime audio → text | `wss /v1/asr/realtime` (handshake frame carries the key) | covered (`NFKRealtimeSession`, `NFKRealtimeAPIStyleMetaTranscription`); unverified with a key |
+| text → image, image(s) → image (`muse-image-1.0`) | `/images/generations`, `/images/edits` | covered (`NFKRemoteImageAPIStyleMeta`, JSON edits, streamed completed events); no mask; unverified live |
+| token count | `/responses/input_tokens`, `/messages/count_tokens` | covered (`NFKRemoteTokenCounter`, Responses style, `/responses/input_tokens`); `/messages/count_tokens` is a gap |
 | Anthropic-format chat | `/messages` | gap (the same models answer on the two routes above) |
 | image or video → boxes and masks (`sam-3.1`) | `/responses` | gap (the reply is text) |
 | batches, video | `/batches`, `/videos` | registered by probe, undocumented |
@@ -297,7 +296,7 @@ registered, so what a mode does depends on that backend.
   `prefix: true` on its `/beta` base, reachable through `NFKRemoteBackend` by endpoint and message
   shape).
 
-- **Phase 4 done (2026-09-22).** `NFKRealtimeSession` speaks twelve realtime protocols over
+- **Phase 4 done (2026-09-22).** `NFKRealtimeSession` speaks thirteen realtime protocols (Meta's joined 2026-11-18) over
   `NFKRealtimeSocket`. Detail in `remote-providers.md` ("Realtime sessions").
 - **Phase 5 done (2026-09-22).** `NFKRemoteFileStore` with file references in every request shape,
   `NFKRemoteRetrievalStore`, and `NFKRemoteUsageReporter`. Detail in `remote-providers.md` ("Files,

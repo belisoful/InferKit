@@ -1257,6 +1257,21 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertTrue(declined.isRefused)
     }
 
+    // Meta's realtime dictation, images, and token counts from Swift: each factory is optional.
+    func testMetaVoiceImagesAndTokenCounts() {
+        let dictation = NFKRealtimeSession(for: .meta, apiStyle: .metaTranscription, apiKey: "key",
+                                           modelName: "muse-voice-transcribe-1.0")
+        dictation?.language = "English"
+        dictation?.extraConfiguration = ["mode": "ENDPOINTING"]
+        XCTAssertEqual(dictation?.endpointURL?.absoluteString, "wss://api.meta.ai/v1/asr/realtime")
+        XCTAssertEqual(dictation?.inputSampleRate, 24000)
+
+        let painter = NFKRemoteImageBackend(for: .meta, apiKey: "key", modelName: "muse-image-1.0")
+        XCTAssertEqual(painter?.apiStyle, .meta)
+        let counter = NFKRemoteTokenCounter(for: .meta, apiKey: "key", modelName: "muse-spark-1.3")
+        XCTAssertEqual(counter?.endpointURL?.absoluteString, "https://api.meta.ai/v1/responses/input_tokens")
+    }
+
     // Gemini's Decisions API from Swift: the same optional factory, on the gemini preset.
     func testGeminiDecisions() throws {
         let decider = NFKGeminiDecisionsBackend(for: .googleGemini, apiKey: "key", modelName: "gemini-decision-1")

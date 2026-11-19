@@ -4063,6 +4063,30 @@ NFKInferenceRequest *inpaint =                          // + mask → the masked
                                               NFKInputMask: (__bridge id)mask }];
 ```
 
+A reply that is not a still comes back whole. An animated GIF (`gpt-image-2.6-*` with `output_format`
+`gif`) keeps its first frame under `NFKOutputImage` and returns the file as an `NFKVideoAsset` under
+`NFKOutputVideo`, written to the backend's `outputDirectoryURL`. An SVG has no bitmap, so its source
+comes back under `NFKOutputText` and `NFKOutputImage` is absent. Meta's `muse-image-1.0` answers on the
+`meta` preset, where an image under `NFKInputImage` makes the request an edit:
+
+```objc
+NFKRemoteImageBackend *flare =
+    [NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.openAI apiKey:key modelName:@"gpt-image-2.6-flare"];
+NFKInferenceResult *animated = [flare runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a lantern swaying, seamless loop" }
+                                parameters:@{ NFKParameterOutputFormat: @"gif", @"frame_count": @9 }] error:&error];
+NFKVideoAsset *animation = [animated outputForKey:NFKOutputVideo];      // animation.fileURL is the .gif
+NSString *svg = [flare runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a compass icon" }
+                                parameters:@{ NFKParameterOutputFormat: @"svg" }] error:&error].text;
+
+NFKRemoteImageBackend *muse =
+    [NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.meta apiKey:key modelName:@"muse-image-1.0"];
+NFKInferenceResult *fox = [muse runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a red fox in snow" }
+                                parameters:@{ NFKParameterWidth: @1792, NFKParameterHeight: @1024 }] error:&error];
+```
+
 And an image beside a prompt is a vision question through the ordinary chat backend — no new class.
 `NFKRemoteBackend` puts it on the last user turn as an `image_url` content part (inline, base64 PNG),
 which every OpenAI-compatible vision model reads, local runners included; `NFKAnthropicBackend` puts
@@ -4251,6 +4275,17 @@ NSData *preview = astronomer.sampleAudioData;                           // a WAV
 gemini.modelName = @"gemini-3.8-flash-tts";
 gemini.voice = astronomer.identifier;                                   // voice_…
 
+// Remix a voice by describing the change; the result is a new stored voice and the base is unchanged.
+NFKRemoteVoice *older = [voices remixVoiceWithIdentifier:@"Puck"
+                                            instructions:@"Slightly older, with a warm British accent and audiobook pacing."
+                                             displayName:@"Older Puck" attributes:nil error:&error];
+
+// Voice editing: spoken instructions edit a text, and the whole edited text comes back.
+NFKGeminiInteractionsBackend *editor = [NFKGeminiInteractionsBackend backendWithAPIKey:key modelName:@"gemini-3.5-transcribe"];
+NSString *edited = [editor runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: wavData }             // "Change the time to 3:30 PM."
+                                parameters:@{ @"source_text": @"The meeting is at 2:00 PM tomorrow." }] error:&error].text;
+
 // Gemini's Antigravity agent writes and runs code in a hosted sandbox; what it writes (here an STL
 // mesh for a 3D printer) is read back from its environment.
 NFKGeminiInteractionsBackend *maker = [NFKGeminiInteractionsBackend backendWithAPIKey:key modelName:@"gemini-4-argon"];
@@ -4274,6 +4309,8 @@ NSString *markdown = [reader runInferenceForRequest:
     [NFKInferenceRequest requestWithInputs:@{ NFKInputDocument: pdfURL }] error:&error].text;
 NFKRemoteTokenCounter *counter = [NFKRemoteTokenCounter counterForProvider:NFKRemoteProvider.anthropic apiKey:key modelName:@"claude-opus-5-5"];
 NSNumber *tokens = [counter tokenCountForRequest:request error:&error];
+NFKRemoteTokenCounter *museCounter = [NFKRemoteTokenCounter counterForProvider:NFKRemoteProvider.meta apiKey:key modelName:@"muse-spark-1.3"];
+NSNumber *museTokens = [museCounter tokenCountForRequest:request error:&error];   // POST /responses/input_tokens
 
 // A live spoken conversation over a WebSocket; the same calls reach xAI, Gemini Live, and the
 // streaming transcription and speech sockets through apiStyle.
@@ -4287,6 +4324,19 @@ live.textHandler = ^(NSString *text, NFKRealtimeTextKind kind) { NSLog(@"%@", te
 [live appendAudio:microphonePCM];          // 16-bit mono at live.inputSampleRate
 [live commitAudio];
 [live requestResponse];
+
+// Live dictation on Meta's speech-to-text socket. The key rides in the first frame, and audio
+// appended before the service acknowledges is held and sent in order.
+NFKRealtimeSession *dictation = [NFKRealtimeSession sessionForProvider:NFKRemoteProvider.meta
+                                                              apiStyle:NFKRealtimeAPIStyleMetaTranscription
+                                                                apiKey:key modelName:@"muse-voice-transcribe-1.0"];
+dictation.language = @"English";
+dictation.extraConfiguration = @{ @"mode": @"ENDPOINTING" };            // a final text per turn
+dictation.textHandler = ^(NSString *text, NFKRealtimeTextKind kind) { NSLog(@"%@", text); };
+dictation.closeHandler = ^(NSError *closeError) { /* nil after the service's normal close */ };
+[dictation connect];
+[dictation appendAudio:microphonePCM];     // 16-bit mono at dictation.inputSampleRate (24 kHz)
+[dictation finishInput];                   // endStream; keep the session until closeHandler runs
 
 // Files: upload once, then name the file in any request that takes a document or image.
 NFKRemoteFileStore *files = [NFKRemoteFileStore fileStoreForProvider:NFKRemoteProvider.anthropic apiKey:key];
@@ -6806,6 +6856,12 @@ NFKInferenceResult *minutes = [muse runInferenceForRequest:meeting error:&error]
 for (NFKAudioSegment *turn in [minutes outputForKey:NFKOutputSegments]) {
     NSLog(@"%@ %.1fs: %@", turn.speaker, turn.startSeconds, turn.label);     // "A 0.0s: Hello."
 }
+
+muse.streams = YES;                                                      // the transcript as it is heard
+NFKInferenceJob *job = [muse submitInferenceJobForRequest:meeting];
+job.progressHandler = ^(NFKInferenceJob *running) {
+    NSLog(@"%@", running.partialResult.text);                            // replaces what it showed before
+};
 ```
 
 ```swift

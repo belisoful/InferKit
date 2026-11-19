@@ -31,6 +31,34 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKRemoteTranscriptionAPIStyleMeta` speaks Meta's speech-to-text route (`POST /asr/transcribe`),
   which serves `muse-voice-transcribe-1.0`: a JSON request part beside the audio part, and a reply of
   turns that come back under `NFKOutputSegments`, each with its speaker when the request diarizes.
+- `NFKRealtimeAPIStyleMetaTranscription` transcribes a live stream on Meta's realtime speech-to-text
+  socket (`wss …/v1/asr/realtime`): the key travels in the handshake frame, audio goes as binary PCM
+  frames held until the service acknowledges, and `finishInput` sends `endStream`. Turn detection and
+  speaker labels are asked for in `extraConfiguration` (`mode`, `partialMode`, `keywords`).
+- `NFKRemoteTranscriptionBackend` streams Meta's speech-to-text route when `streams` is set: the
+  transcript grows on the job's `partialResult`, each turn comes back under `NFKOutputSegments` with
+  its speaker when the request diarizes, and an `error` event fails the job with the service's message.
+  The `partialMode` parameter `DELTA` appends each partial.
+- `NFKRemoteTokenCounter` counts for the `meta` preset through `POST /v1/responses/input_tokens`
+  (`NFKRemoteTokenCounterAPIStyleResponses`), sending the body `NFKRemoteResponsesBackend` sends for a run.
+- `NFKRemoteImageAPIStyleMeta`: `NFKRemoteImageBackend` serves the `meta` preset (`muse-image-1.0`)
+  with JSON generations and JSON edits, sending only the fields Meta names, and streams its completed
+  events.
+
+#### Animated GIF and SVG replies from the remote image backend
+
+- `NFKRemoteImageBackend` returns an animated GIF whole: the first frame stays under `NFKOutputImage`,
+  and the file is written to the new `outputDirectoryURL` and returned as an `NFKVideoAsset` under
+  `NFKOutputVideo` (`NFKOutputVideos` for several) with its duration, frame rate, and frame size.
+- `NFKRemoteImageBackend` returns an SVG reply as its XML source under `NFKOutputText`. The request
+  previously failed with "the response's image could not be decoded".
+- The image backend's stream reader takes an event's name from the SSE `event:` line when the data
+  carries no `type`.
+
+#### A realtime service's normal close is no error
+
+- `NFKRealtimeWebSocket` reports a service's close with code 1000 as a clean close, for every realtime
+  style. Any other close code reports an error naming the code and the service's reason.
 
 #### Claude Fable 5.2, Claude Mythos 5.2, and Gemini 4
 
@@ -38,6 +66,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `output_config.format`, because both refuse a forced `tool_choice` with HTTP 400, as the 5.1 models do.
 - `NFKGeminiInteractionsBackend` and `NFKGeminiGenerateContentBackend` pass the `xhigh` thinking level
   to Gemini 4 Hydrogen and Gemini 4 Neon as written.
+
+#### Gemini voice remixing and voice editing
+
+- `NFKGeminiVoiceLibrary` remixes a voice: `remixVoiceWithIdentifier:instructions:displayName:attributes:error:`
+  stores a new voice changed from a prebuilt, catalog, or stored designed voice by a description of
+  the changes, and returns its id and a WAV preview.
+- `NFKGeminiInteractionsBackend` sends a `source_text` request parameter beside audio as
+  `transcription_config.mode {type: smart, source_text}`, Gemini 3.5 Transcribe's voice editing: the
+  spoken instructions edit that text and the edited text is the reply.
 
 #### The server's chat route counts each turn's media
 

@@ -1266,6 +1266,49 @@
 	XCTAssertFalse(damaged.isRefused);
 }
 
+- (void)testExampleMetaVoiceImagesAndTokenCounts
+{
+	// Live dictation on Meta's speech-to-text socket: the key rides in the first frame, so the
+	// session is built for the meta preset in its own style.
+	NFKRealtimeSession *dictation = [NFKRealtimeSession sessionForProvider:NFKRemoteProvider.meta
+																  apiStyle:NFKRealtimeAPIStyleMetaTranscription
+																	apiKey:@"key" modelName:@"muse-voice-transcribe-1.0"];
+	dictation.language = @"English";
+	dictation.extraConfiguration = @{ @"mode": @"ENDPOINTING" };
+	XCTAssertEqualObjects(dictation.endpointURL.absoluteString, @"wss://api.meta.ai/v1/asr/realtime");
+	XCTAssertEqual(dictation.inputSampleRate, 24000);
+
+	// The buffered route streams its transcript when streams is set and the request is submitted.
+	NFKRemoteTranscriptionBackend *muse = [NFKRemoteTranscriptionBackend backendForProvider:NFKRemoteProvider.meta
+																					 apiKey:@"key"
+																				  modelName:@"muse-voice-transcribe-1.0"];
+	muse.streams = YES;
+	XCTAssertTrue(muse.isReady);
+
+	// muse-image-1.0 and a token count before sending, both on the same preset.
+	NFKRemoteImageBackend *painter = [NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.meta
+																		apiKey:@"key" modelName:@"muse-image-1.0"];
+	XCTAssertEqual(painter.apiStyle, NFKRemoteImageAPIStyleMeta);
+	NFKRemoteTokenCounter *counter = [NFKRemoteTokenCounter counterForProvider:NFKRemoteProvider.meta
+																		apiKey:@"key" modelName:@"muse-spark-1.3"];
+	XCTAssertEqualObjects(counter.endpointURL.absoluteString, @"https://api.meta.ai/v1/responses/input_tokens");
+}
+
+- (void)testExampleAnimatedAndVectorImageReplies
+{
+	// gpt-image-2.6 writes animated GIFs and SVGs. A GIF comes back as its first frame under
+	// NFKOutputImage and the whole file as an NFKVideoAsset under NFKOutputVideo; an SVG comes back
+	// as its source under NFKOutputText.
+	NFKRemoteImageBackend *flare = [NFKRemoteImageBackend backendForProvider:NFKRemoteProvider.openAI
+																	  apiKey:@"sk-…" modelName:@"gpt-image-2.6-flare"];
+	NFKInferenceRequest *animate = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a lantern swaying, seamless loop" }
+															   parameters:@{ NFKParameterOutputFormat: @"gif", @"frame_count": @9 }];
+	XCTAssertEqualObjects(animate.parameters[NFKParameterOutputFormat], @"gif");
+	NSSet<NSString *> *outputs = flare.supportedOutputKeys;
+	XCTAssertTrue([outputs containsObject:NFKOutputVideo]);
+	XCTAssertTrue([outputs containsObject:NFKOutputText]);
+}
+
 - (void)testExampleGeminiDecisions
 {
 	// Gemini's Decisions API takes the same questions and returns the same answers. It is one more

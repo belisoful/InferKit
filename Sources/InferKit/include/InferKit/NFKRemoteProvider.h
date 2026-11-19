@@ -366,9 +366,10 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*! Meta's Model API at https://api.meta.ai/v1, which serves the Muse models (Muse Wonder, Muse Spark,
 	Muse Ember) on chat completions, the preset's style, and on the Responses API, which
 	NFKRemoteResponsesBackend reaches. The chat route refuses stop sequences, so NFKRemoteBackend
-	applies them to the reply for a muse- model. NFKRemoteFileStore reaches its Files API, and
-	NFKRemoteTranscriptionBackend its speech-to-text route (POST /asr/transcribe, which serves Muse
-	Voice Transcribe). The key is a Bearer token. Introduced in InferKit 0.4.0. */
+	applies them to the reply for a muse- model. NFKRemoteFileStore reaches its Files API,
+	NFKRemoteImageBackend its image routes, NFKRemoteTranscriptionBackend its speech-to-text route
+	(POST /asr/transcribe, which serves Muse Voice Transcribe), and NFKRealtimeSession the realtime
+	form of that route. The key is a Bearer token. Introduced in InferKit 0.4.0. */
 @property (class, nonatomic, readonly) NFKRemoteProvider *meta;
 
 // Local servers. Each is the project's own default address; nothing is assumed to be running.

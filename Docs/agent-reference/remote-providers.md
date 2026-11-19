@@ -359,14 +359,18 @@ shapes:
     opts out, and it passes by name.
   - 2026-11-02: `gemini-2.5-pro` and `gemini-2.5-flash` are deprecated and route to
     `gemini-3.8-flash` and `gemini-3.5-flash-lite` from 2026-12-01. `gemini-2.5-flash-lite` stays.
-  - 2026-11-04: voice remixing on `POST /v1beta/voices` with `gemini-3.8-flash-tts`. Not surveyed
-    against `NFKGeminiVoiceLibrary`.
+  - 2026-11-04: voice remixing. `POST /v1beta/voices` with `type: prompted` and
+    `prompted {base_voice, input}` stores a new voice changed from an existing one. Built as
+    `remixVoiceWithIdentifier:instructions:displayName:attributes:error:` (2026-11-18); see "Gemini's
+    voice library".
   - 2026-11-05: `gemini-omni-1.2-flash` is GA. Function results accept audio, video, and document
     parts on both native APIs. Not built.
   - 2026-11-06: `gemini-embedding-2-preview` routes to `gemini-embedding-2`.
   - 2026-11-11: the Decisions API ("Gemini's Decisions API" below).
-  - 2026-11-17: `gemini-3.5-transcribe` and `gemini-3.5-transcribe-live` take `source_text` for
-    voice editing. Not surveyed.
+  - 2026-11-17: voice editing. `gemini-3.5-transcribe` takes `transcription_config.mode {type: smart,
+    source_text}` and returns the whole edited text; the Interactions backend maps a `source_text`
+    parameter to it (2026-11-18). `gemini-3.5-transcribe-live` takes `inputAudioTranscription {mode:
+    SMART, sourceText}` at setup, reachable through `extraConfiguration` and not built into the session.
   - 2026-12-18: `gemini-3.1-flash-tts-preview`, `gemini-2.5-flash-preview-tts`, and
     `gemini-2.5-pro-preview-tts` shut down.
 - **DeepSeek:** `deepseek-flash` (V4.1-Flash) and `deepseek-v4-pro`; effort `none|low|high|max`
@@ -437,9 +441,17 @@ nil for a preset that does not serve the path.
     - `output_format: "svg"` returns static SVG XML in `b64_json`, generations only, with `n` 1. An
       SVG is not an edit input.
     - In the backend, `output_format`, `frame_count`, and `frame_duration_ms` reach the request by
-      name. The response decodes each entry through `NFKImageCoding`, so a GIF yields its first
-      frame on `NFKOutputImage` and the whole file only inside `NFKRemoteBackendRawKey`. An SVG
-      fails to decode and the request fails with "the response's image could not be decoded".
+      name. The reply is read by its bytes (2026-11-18):
+      - A GIF of two or more frames → its first frame under `NFKOutputImage`, and the whole file
+        written to `outputDirectoryURL` and returned as an `NFKVideoAsset` under `NFKOutputVideo`
+        (`NFKOutputVideos` for several). The asset's duration is the sum of the file's frame delays.
+        ImageIO reads the frames; AVFoundation does not open a GIF.
+      - An SVG → its XML source under `NFKOutputText`, with `NFKOutputImage` absent. ImageIO has no
+        SVG decoder. The SVG test runs before ImageIO, so the result is the same on every OS
+        release. Several SVG entries keep the first; OpenAI documents `n` 1.
+      - The guide (read 2026-11-18) says both formats arrive in `b64_json` and take no streaming.
+        It does not say whether either can arrive as a `url` or whether the response echoes
+        `output_format`. The backend reads the bytes either way.
 - **Transcription:** `whisper-1` and the `gpt-4o-*-transcribe` models shut down 2027-02-26 for
   `gpt-transcribe` (same path, no documented `verbose_json` / `segments[]`) or `gpt-live-transcribe`
   (Realtime only). `whisper-1` is also OpenAI's only `/audio/translations` model. Groq `whisper-large-v3`
@@ -500,7 +512,8 @@ shape the way the video backend does, and their factories return nil for a prese
   `image` for one source and `images[]` for several, `{url: data URI}`, ratio from the size,
   `response_format: b64_json`), Together (edits on the generations path, `width` / `height`,
   `image_url` + `reference_images` as data URIs, `response_format: base64`), OpenRouter (`/images`,
-  `input_references`). A mask is OpenAI-only. Streaming reads `*.partial_image` into the partial
+  `input_references`), Meta (JSON edits as `images[]` of `{image_url}`, `size` as a ratio, no
+  seed, steps, or aspect ratio). A mask is OpenAI-only. Streaming reads `*.partial_image` into the partial
   result and `*.completed` into the final one.
 
 **Chat dialects and reply extras (2026-09-22).** `NFKRemoteBackend.chatDialect` is set by
@@ -589,7 +602,13 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
   (`mime_type: application/json`, `schema`). Transcription: `transcription_config {language_codes,
   custom_vocabulary, mode: {type: verbatim, diarization_mode: speaker, timestamp_granularities:
   [word]}}`, read back from `word_info` annotations (`start_offset` / `end_offset` as `"1.2s"` strings
-  or numbers). `thinking_level` + `thinking_summaries: auto`, `NFKParameterTopP` as `top_p`; everything else goes
+  or numbers). `mode` is the string `smart` or `verbatim`, or an object; verbatim is the default. A
+  `source_text` parameter beside audio becomes `mode {type: smart, source_text}` (voice editing, up
+  to 64 KiB), and the edited text is the reply's text. Requests are independent, so a second edit
+  sends the first reply as `source_text`. Diarization or word times beside it stay in the same mode
+  object and the service answers the conflict. Smart mode without a source text goes as a
+  `transcription_config` parameter, which passes by name and replaces the mapped configuration.
+  `thinking_level` + `thinking_summaries: auto`, `NFKParameterTopP` as `top_p`; everything else goes
   into `generation_config`. Reply steps: `thought` → reasoning, `function_call` (`id`, `name`, object
   `arguments`), `model_output` blocks → text / image / audio (PCM wrapped in a 24 kHz mono WAV unless
   the MIME type names mp3 or wav) / video (`uri` fetched with the key on Google's host); other step types
@@ -686,14 +705,15 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
   vLLM `/classify` at the server root answers `data[0] {label, probs[]}`, only the top class named.
 - `NFKRemoteTokenCounter`: Anthropic `count_tokens` (Messages body, system lifted) → `input_tokens`;
   Gemini `models/{m}:countTokens` → `totalTokens`; xAI `tokenize-text` → `token_ids[{token_id}]`;
-  llama.cpp `/tokenize {content}` → `tokens`.
+  llama.cpp `/tokenize {content}` → `tokens`; Meta `responses/input_tokens` (the Responses run body)
+  → `input_tokens`.
 
-**Realtime sessions (`NFKRealtimeSession`, 2026-09-22).** One class, twelve protocols; the socket is
+**Realtime sessions (`NFKRealtimeSession`, 2026-09-22).** One class, thirteen protocols (Meta's speech to text joined 2026-11-18; see "Meta's Model API"); the socket is
 `NFKRealtimeSocket` (`NFKRealtimeWebSocket` on `NSURLSessionWebSocketTask`, one receive per message),
 and `socketForRequest:` is the test seam. `sessionForProvider:apiStyle:apiKey:modelName:` builds the ws(s) URL from the
 provider's base (`http` → `ws`, else `wss`); Gemini's two sockets are fixed `…/ws/google.ai.
 generativelanguage.v1beta.GenerativeService.BidiGenerateContent` and `….v1alpha.…BidiGenerateMusic`
-with the key as `?key=`; every other style sends `Authorization: Bearer`. Handshake queries: `model`
+with the key as `?key=`; Meta's key travels in its first frame; every other style sends `Authorization: Bearer`. Handshake queries: `model`
 (OpenAI conversation and translation, xAI conversation, Mistral), xAI STT `sample_rate`, `encoding=pcm`,
 `interim_results=true`, `language`; xAI TTS `voice`, `language` (default `auto`), `codec=pcm`,
 `sample_rate`; Together STT `model`, `input_audio_format=pcm_s16le_<rate>`; Together TTS `model`,
@@ -753,6 +773,11 @@ live-translate, live-transcribe, and ephemeral-token guides, google-genai v2.30.
   customVocabulary, mode: VERBATIM | SMART}`; `serverContent.interimInputTranscription` is speculative
   and `inputTranscription` final. Ten-minute sessions, no diarization. (Vertex names it
   `…-live-preview`.)
+  Voice editing: `inputAudioTranscription {mode: SMART, sourceText}` (setup only, up to 64 KiB). In
+  SMART mode each `inputTranscription.text` is the whole replacement text, unset when an edit clears
+  it, and `interimInputTranscription` is the spoken instruction. Reached through `extraConfiguration`,
+  which replaces the session's own `inputAudioTranscription` (repeat `languageCodes` there). The
+  session drops an empty final transcript.
 - `gemini-3.5-live-translate-preview`: `generationConfig.translationConfig {targetLanguageCode,
   echoTargetLanguage}`; the source is detected; audio in only, no instructions or tools.
 - Live Avatar (`setup.avatarConfig {avatarName | customizedAvatar {imageData, imageMimeType}}`,
@@ -1441,6 +1466,13 @@ with `x-goog-api-key`:
 - `POST /voices` takes `{store, voice}`. `voice` carries `type`, `model` (optional; the latest
   voice-design model otherwise), `display_name`, the discovery fields, and either `prompted: {input}`
   or `replicated: {source_audio, consent_audio}`, each `{mime_type, data}` with data in base64.
+- Remixing (2026-11-04, `aistudio.google.com/docs/voice-remixing`) is the same create call with
+  `prompted: {base_voice, input}`. `base_voice` is a prebuilt name, a catalog id from a listing, or a
+  stored prompted `voice_…` id, and `input` describes changes relative to it. The reply is a new stored
+  voice with its own id and `sample_audio`; `prompted.base_voice` comes back on create, get, and list.
+  The base is unchanged, and using a voice as a base resets its one-year expiry. Remixing needs a
+  paid-tier project. The guide limits bases to prebuilt, catalog, and prompted voices; the create
+  reference also names replicated ones. The library sends the identifier unchanged.
 - A reply voice carries `id` (stored) or `key` (`voicekey_…`, replicated with `store: false`), plus
   `sample_audio` (a WAV preview on create and get, not in a listing), `expire_time`, and `usage`.
 
@@ -1540,20 +1572,92 @@ writes images, `muse-voice-transcribe-1.0` transcribes, and `sam-3.1` answers on
   minutes and 32 MB a request. The backend sends the audio as it is given, so a clip in another
   container answers 400.
 
+- Realtime speech to text (`NFKRealtimeAPIStyleMetaTranscription`, `wss://api.meta.ai/v1/asr/realtime`).
+  The request carries no `Authorization` header and no query of the session's own; a `sessionId`
+  query on `endpointURL` is kept. `connect` sends the handshake as the first text frame:
+  `{authorization: {accessToken: "Bearer <key>"}, audioEncoding, model}`. `audioEncoding` is
+  `PCM_<inputSampleRate / 1000>KHZ`, so 24000 (the style's default) gives `PCM_24KHZ` and 16000 gives
+  `PCM_16KHZ`; another rate reaches the service and is refused. `language` becomes
+  `languageBias: [language]`, a language name such as `English`. `extraConfiguration` merges at the
+  frame's top level: `mode`, `partialMode`, `keywords`, `emitAudioProgress`, or a `languageBias` array.
+  - The acknowledgement `{sessionId}` is the one frame with no `type`. `appendAudio:` before it holds
+    the audio; the acknowledgement sends the held frames in order as binary frames of 16-bit
+    little-endian mono PCM, then `endStream` when `finishInput` ran early. `connect` and `close`
+    clear the hold. The flush is one burst, the length of the handshake wait.
+  - `finishInput` sends `{type: endStream}`. `commitAudio` and `sendText:` send nothing: the service
+    has no per-turn commit and takes no other text frame.
+  - Receiving: `transcript` is `NFKRealtimeTextKindInputTranscript`, passed as sent (`CUMULATIVE`
+    replaces the previous partial, `DELTA` appends). With no `mode` or `PUSH_TO_TALK`, a `transcript`
+    with `final: true` is `NFKRealtimeTextKindInputTranscriptFinal` and ends the turn. With any other
+    `mode`, every `transcript` is interim and `speechComplete` is the final text and ends the turn.
+    `error` reports its `message`. `speechStart`, `speechEnd`, `speaker`, `audioProgress`, the
+    acknowledgement, and unknown types reach `eventHandler` alone.
+  - The session does not pace the audio, pad silence, or reconnect before the 60-minute limit. The
+    service asks for audio near real time, at most 5 seconds ahead. Close codes: 1000 normal, 1008
+    invalid request or pacing, 1011 internal, 1013 rate limited.
+  - Closing (`NFKRealtimeWebSocket`, every style, 2026-11-18). A close frame from the service fails
+    the pending receive with `NSPOSIXErrorDomain 57` whatever its code. The socket reads the task's
+    `closeCode`: 1000 reports no error, another code reports `kNFKError_InferenceBackendFailure`
+    naming the code and reason, and no close frame passes the receive error through. Foundation
+    reports 1013 as 1005 with no reason (measured against a local stub).
+- Images (`NFKRemoteImageAPIStyleMeta`, `POST /v1/images/generations` and `/v1/images/edits`, both
+  JSON, `muse-image-1.0`). The style sends `prompt`, `model`, `n`, `size` from the width and height,
+  and `output_format`; any other parameter goes by name (`reasoning_strength`, `tool_enablement`,
+  `temperature`, `user`, `response_format`). An unknown top-level field answers 400, so the contract
+  keys with no field are not sent: seed, steps, guidance scale, aspect ratio, resolution, and the
+  negative prompt. `size` sets the aspect ratio only. An edit sends its sources as `images[]` of
+  `{image_url}` PNG data URLs. The multipart form is not used: its schema has no `output_format`,
+  and `mask`, `input_fidelity`, and `partial_images` answer 400 there. A mask fails before the call.
+  The reply is `{created, data[{b64_json | url}], output_format, background, usage}`; `b64_json` and
+  WebP are the defaults, and ImageIO decodes WebP, so the style asks for no other format. `streams`
+  sends `stream: true` without `partial_images` and reads the `image_generation.completed` and
+  `image_edit.completed` events, by the `type` in the data or the name on the `event:` line.
+  `usage` is not read into `NFKOutputUsage`.
+
+- The streamed transcript (`streams` on `NFKRemoteTranscriptionAPIStyleMeta`). `Accept:
+  text/event-stream` on the same request returns `ServerMessage` events; the request part has no
+  stream field. Each event is an `event: <type>` line and a `data:` line whose JSON carries the same
+  `type`, so the backend reads the type from the data and takes the event line's name only for an
+  object without one. The stream has no `[DONE]` and no summary event: it ends after the last event,
+  and the job finishes when the stream closes.
+  - `transcript {transcript, final, audioProcessedMs}` sets the open turn's partial. Under
+    `partialMode: CUMULATIVE` (the default) it replaces the partial; under `DELTA`, read from the
+    request's `partialMode` parameter, it is appended, and a `final: true` event carries the complete
+    text in both. Partials carry no `turnId`; they belong to the turn the latest `speechStart` opened.
+  - `speechStart {turnId, audioProcessedMs}` opens a turn and gives its `startMs`; `speechEnd` gives
+    its `endMs`; `speechComplete {turnId, transcript}` gives its finished text, found by `turnId`
+    because a later turn can open before an earlier one completes; `speaker {label}` labels the open
+    turn. `audioProgress` and unknown types are ignored.
+  - Push to talk sends no turn events: the transcript is the last `transcript` event's text and
+    `turns` is empty. In the turn modes the transcript is the turns' texts in arrival order joined
+    by a space, a turn without `speechComplete` contributing its last partial.
+  - The result goes through the buffered reader: `NFKOutputStructured` is `{transcript, turns}` with
+    each turn `{turnId, startMs, endMs, transcript, speaker}`, without `sessionId` and
+    `audioDurationMs`, which the stream does not carry. A turn missing either time is left out of
+    `NFKOutputSegments`.
+  - A terminal `error {message, sessionId, errorType, errorCode, errorParam}` under HTTP 200 fails
+    the job with `message`; later events are not read. `errorType` `invalid_request_error` →
+    `kNFKError_InferenceRefused`, `rate_limit_error` → `kNFKError_InferenceRateLimited`, anything
+    else → `kNFKError_InferenceBackendFailure`. The event's JSON rides under `NFKRemoteErrorBodyKey`,
+    which is where the `sessionId` is.
+  - The backend leaves `emitAudioProgress` at the service's default, so progress events keep an
+    idle connection inside the request timeout.
+  - Unstated in the docs: that a turn's times equal the `audioProcessedMs` of its `speechStart` and
+    `speechEnd`, which turn a `speaker` event labels when turns overlap, and whether push to talk
+    emits turn events on the stream.
+- Token counts (`NFKRemoteTokenCounter`, `NFKRemoteTokenCounterAPIStyleResponses`, `POST
+  /v1/responses/input_tokens`). The body is the one `NFKRemoteResponsesBackend` sends for a blocking
+  run of the same request, built through `-[NFKRemoteResponsesBackend inputTokensBodyForRequest:error:]`
+  (private, `NFKRemoteResponsesBackendPrivate.h`) on a backend pointed at the counter's endpoint less
+  `input_tokens`: `model`, `input`, `instructions`, `tools`, `text`, `reasoning`, `max_output_tokens`,
+  `previous_response_id`, the prompt-cache fields, and any unmapped parameter. Every field the backend
+  writes is in Meta's `TokenCountsBody` except `prompt_cache_options`. The reply is `{object:
+  "response.input_tokens", input_tokens}`. The count includes the history `previous_response_id`
+  resolves and the server's prompt scaffolding. `tokenIdentifiersForText:` answers
+  `kNFKError_InferenceUnsupported`. `/v1/messages/count_tokens` is not used. The style is not wired
+  to another preset: `openai` still returns nil.
+
 *Not built.*
-- The streamed transcript. `Accept: text/event-stream` returns `ServerMessage` events (`transcript`,
-  `speechStart`, `speechEnd`, `speechComplete`, `speaker`, `audioProgress`, `error`), each named on
-  an SSE `event:` line that the backend's line handler does not read, so `streams` runs the
-  blocking call for this style.
-- Realtime speech to text, `wss://api.meta.ai/v1/asr/realtime`. The socket reads no header: the
-  first text frame is `{authorization: {accessToken: "Bearer <key>"}, audioEncoding: PCM_24KHZ |
-  PCM_16KHZ, model, mode, …}`, the server answers `{sessionId}`, audio goes as binary 16-bit
-  little-endian mono PCM frames paced near real time, and `{type: endStream}` closes it. The server
-  frames are the `ServerMessage` set. `NFKRealtimeSession` has no style for it.
-- Images: `POST /v1/images/generations` (`muse-image-1.0`; `response_format` `b64_json` by default,
-  `output_format` `webp` by default, unknown fields answer 400) and `/v1/images/edits` (JSON with
-  `images[]`, or multipart). `NFKRemoteImageBackend` returns nil for the preset.
-- Token counts: `POST /v1/responses/input_tokens` and `/v1/messages/count_tokens`.
 - The Messages route, `POST /v1/messages`, an adapter over Responses. Bearer is the documented
   header and whether `x-api-key` alone authenticates is unconfirmed, so `NFKAnthropicBackend` is
   not pointed at it. `thinking: {type: disabled}`, `stop_sequences`, and `top_k` answer 400 there.
