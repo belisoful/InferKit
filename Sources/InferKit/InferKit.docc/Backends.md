@@ -74,8 +74,8 @@ Pure Apple frameworks, always available:
   serves beside Interactions and OpenCode Zen serves its Gemini models on.
 - ``NFKGeminiInteractionsBackend`` — Gemini's native Interactions API: text, images, speech, music,
   transcription, and video from one endpoint, and Google's Deep Research and Antigravity agents.
-- ``NFKGeminiVoiceLibrary`` — Gemini's voice library: list, design, replicate, and delete the voices
-  the Interactions backend speaks with.
+- ``NFKGeminiVoiceLibrary`` — Gemini's voice library: list, design, remix, replicate, and delete the
+  voices the Interactions backend speaks with.
 - ``NFKGeminiEnvironmentStore`` — the sandboxes Gemini's Antigravity agent works in: list their files,
   read what the agent wrote, write files in, and delete them.
 - ``NFKRemoteCompletionBackend`` — raw continuation and fill-in-the-middle for code.

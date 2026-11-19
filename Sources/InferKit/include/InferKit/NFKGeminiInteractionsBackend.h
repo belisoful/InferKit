@@ -38,7 +38,12 @@ extern NSString * const NFKGeminiOutputEnvironmentIdentifier;
 				Audio in with NFKParameterSpeakerDiarization, NFKParameterWordTimestamps,
 				NFKParameterVocabulary, or NFKParameterSourceLanguage asks for a transcription
 				(gemini-3.5-transcribe); the words come back under NFKOutputWords and the speaker
-				turns under NFKOutputSegments. NFKParameterReasoningEffort becomes thinking_level with
+				turns under NFKOutputSegments. Audio in with a "source_text" parameter asks for a
+				voice edit: the model applies the spoken instructions to that text in its smart
+				transcription mode, and the whole edited text comes back under NFKOutputText. Each
+				request stands alone, so a second edit takes the first one's text as its
+				"source_text". The service takes up to 64 KiB of source text and refuses speakers or
+				word times beside it. NFKParameterReasoningEffort becomes thinking_level with
 				thought summaries under NFKOutputReasoning, NFKParameterTools the function tools (a
 				wire-shaped entry such as {type: google_search} passes through),
 				NFKParameterMaxTokens max_output_tokens, NFKParameterSeed and NFKParameterStopSequences

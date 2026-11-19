@@ -261,6 +261,66 @@
 	XCTAssertEqualObjects(turns[1].speaker, @"spk_2");
 }
 
+- (void)testASourceTextAsksForAVoiceEditInTheSmartModeAndReadsTheEditedText
+{
+	[self.backend stage:@"{\"status\":\"completed\",\"steps\":[{\"type\":\"model_output\",\"content\":[{\"type\":\"text\","
+	 "\"text\":\"The meeting is at 3:30 PM tomorrow in building 42.\"}]}]}"];
+	self.backend.modelName = @"gemini-3.5-transcribe";
+	NSString *sourceText = @"The meeting is at 2:00 PM tomorrow in building 42.";
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [@"RIFF" dataUsingEncoding:NSUTF8StringEncoding] }
+															   parameters:@{ @"source_text": sourceText }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:request error:&error];
+	XCTAssertEqualObjects([result outputForKey:NFKOutputText], @"The meeting is at 3:30 PM tomorrow in building 42.", @"%@", error);
+	NSDictionary *generation = [self.backend bodyAt:0][@"generation_config"];
+	XCTAssertEqualObjects(generation, (@{ @"transcription_config": @{ @"mode": @{ @"type": @"smart", @"source_text": sourceText } } }),
+						  @"the source text sits in the mode and nowhere else");
+}
+
+- (void)testASourceTextKeepsTheLanguageAndVocabularyBesideItsMode
+{
+	self.backend.modelName = @"gemini-3.5-transcribe";
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [@"RIFF" dataUsingEncoding:NSUTF8StringEncoding] }
+															   parameters:@{ @"source_text": @"", NFKParameterVocabulary: @[ @"InferKit" ],
+																			 NFKParameterSourceLanguage: @"en-US" }];
+	[self.backend runInferenceForRequest:request error:NULL];
+	NSDictionary *expected = @{ @"language_codes": @[ @"en-US" ], @"custom_vocabulary": @[ @"InferKit" ],
+								@"mode": @{ @"type": @"smart", @"source_text": @"" } };
+	XCTAssertEqualObjects([self.backend bodyAt:0][@"generation_config"][@"transcription_config"], expected,
+						  @"an empty source text is sent as given");
+}
+
+- (void)testASourceTextBesideSpeakersOrWordTimesLeavesTheRefusalToTheService
+{
+	self.backend.modelName = @"gemini-3.5-transcribe";
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [@"RIFF" dataUsingEncoding:NSUTF8StringEncoding] }
+															   parameters:@{ @"source_text": @"Draft.", NFKParameterSpeakerDiarization: @YES,
+																			 NFKParameterWordTimestamps: @YES }];
+	[self.backend runInferenceForRequest:request error:NULL];
+	NSDictionary *expected = @{ @"type": @"smart", @"source_text": @"Draft.", @"diarization_mode": @"speaker",
+								@"timestamp_granularities": @[ @"word" ] };
+	XCTAssertEqualObjects([self.backend bodyAt:0][@"generation_config"][@"transcription_config"][@"mode"], expected);
+}
+
+- (void)testASourceTextWithoutAudioAsksForNoTranscription
+{
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello." }
+															   parameters:@{ @"source_text": @"Draft." }];
+	[self.backend runInferenceForRequest:request error:NULL];
+	XCTAssertNil([self.backend bodyAt:0][@"generation_config"]);
+}
+
+- (void)testATranscriptionConfigurationParameterPassesThroughAsWritten
+{
+	self.backend.modelName = @"gemini-3.5-transcribe";
+	NSDictionary *smart = @{ @"language_codes": @[ @"en-US" ], @"mode": @"smart" };
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: [@"RIFF" dataUsingEncoding:NSUTF8StringEncoding] }
+															   parameters:@{ @"transcription_config": smart }];
+	[self.backend runInferenceForRequest:request error:NULL];
+	XCTAssertEqualObjects([self.backend bodyAt:0][@"generation_config"], (@{ @"transcription_config": smart }),
+						  @"the smart mode without a source text is reached by the wire name");
+}
+
 - (void)testAVideoDurationIsSentAsWholeSecondsInTheResponseFormat
 {
 	self.backend.runsInBackground = YES;

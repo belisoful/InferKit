@@ -16,7 +16,8 @@ NS_ASSUME_NONNULL_BEGIN
 /*!
 	@class      NFKGeminiVoiceLibrary
 	@abstract   The Gemini API's voice library: lists the prebuilt and custom voices, designs a voice from
-				a description, replicates one from a recording, and deletes a stored one.
+				a description, remixes an existing voice, replicates one from a recording, and deletes
+				a stored one.
 	@discussion /v1beta/voices. Every voice comes back as an NFKRemoteVoice whose identifier is what
 				NFKGeminiInteractionsBackend takes as its voice (or a "voice" request parameter) to
 				speak with it on the TTS models:
@@ -26,8 +27,9 @@ NS_ASSUME_NONNULL_BEGIN
 				- a replicated voice made with stores off → its voicekey_… key, which the caller keeps
 				  and which expires after seven days
 
-				A designed voice and a voice looked up by identifier carry a WAV preview under
-				sampleAudioData; a listing omits it. A project keeps at most 200 stored custom voices.
+				A designed or remixed voice and a voice looked up by identifier carry a WAV preview
+				under sampleAudioData; a listing omits it. A project keeps at most 200 stored custom
+				voices.
 				Gemini speaks a custom voice in a single-speaker reply only; two speakers take
 				prebuilt voices. Every call blocks for its round trip, so run it off the main or render
 				thread. Introduced in InferKit 0.4.0.
@@ -88,6 +90,28 @@ NS_ASSUME_NONNULL_BEGIN
 											displayName:(nullable NSString *)displayName
 											 attributes:(nullable NSDictionary<NSString *, id> *)attributes
 												  error:(NSError * _Nullable *)outError;
+
+/*!
+	@method     remixVoiceWithIdentifier:instructions:displayName:attributes:error:
+	@abstract   Creates and stores a new voice by changing an existing one.
+	@discussion identifier names the base voice: a prebuilt voice's name (for example Puck), a catalog
+				voice's id from a listing, or a stored designed or remixed voice's voice_… id.
+				instructions describes the changes relative to that voice, for example "slightly
+				older, with a warm British accent and audiobook pacing". The base voice keeps its
+				language and accent unless the instructions name new ones. displayName and attributes
+				are sent as designVoiceWithDescription:displayName:attributes:error: sends them.
+
+				The result is an independent stored voice with its own voice_… id and a WAV preview.
+				Its raw entry names the base voice under prompted.base_voice. The base voice is
+				unchanged, and deleting it later leaves the remix in place. A remix is a base voice
+				for another remix. The service requires a paid-tier project for remixing.
+				Introduced in InferKit 0.4.0.
+*/
+- (nullable NFKRemoteVoice *)remixVoiceWithIdentifier:(NSString *)identifier
+										 instructions:(NSString *)instructions
+										  displayName:(nullable NSString *)displayName
+										   attributes:(nullable NSDictionary<NSString *, id> *)attributes
+												error:(NSError * _Nullable *)outError;
 
 /*!
 	@method     replicateVoiceFromAudio:consentAudio:displayName:stores:error:

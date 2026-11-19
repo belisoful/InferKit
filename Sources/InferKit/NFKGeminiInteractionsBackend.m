@@ -34,7 +34,7 @@ static NSSet<NSString *> *NFKInteractionsMappedParameters(void)
 										NFKParameterWordTimestamps, NFKParameterVocabulary, NFKParameterSourceLanguage,
 										NFKParameterVideoFrameCount, NFKParameterDurationSeconds, NFKParameterMCPServers, NFKParameterSkills,
 										@"voice", @"speakers",
-										@"processing" ]];
+										@"processing", @"source_text" ]];
 	});
 	return mapped;
 }
@@ -640,15 +640,18 @@ static double NFKInteractionsSeconds(id offset)
 	return configuration;
 }
 
-// Audio in with any of the transcription keys asks for a transcription: verbatim with speakers or
-// word times, smart otherwise.
+// Audio in with any of the transcription keys asks for a transcription. A source text selects the
+// smart mode, which edits that text by the spoken instructions; speakers or word times select the
+// verbatim mode; neither leaves the mode to the service. The verbatim fields stay beside a source
+// text, so the service answers that combination itself.
 - (nullable NSDictionary *)transcriptionConfigurationFor:(NSDictionary *)parameters attachments:(NFKRemoteAttachments *)attachments
 {
 	BOOL diarizes = [parameters[NFKParameterSpeakerDiarization] boolValue];
 	BOOL words = [parameters[NFKParameterWordTimestamps] boolValue];
 	NSArray *vocabulary = [parameters[NFKParameterVocabulary] isKindOfClass:NSArray.class] ? parameters[NFKParameterVocabulary] : nil;
 	NSString *language = [parameters[NFKParameterSourceLanguage] isKindOfClass:NSString.class] ? parameters[NFKParameterSourceLanguage] : nil;
-	if (attachments.audioData == nil || (!diarizes && !words && vocabulary == nil && language == nil)) {
+	NSString *sourceText = [parameters[@"source_text"] isKindOfClass:NSString.class] ? parameters[@"source_text"] : nil;
+	if (attachments.audioData == nil || (!diarizes && !words && vocabulary == nil && language == nil && sourceText == nil)) {
 		return nil;
 	}
 	NSMutableDictionary *configuration = [NSMutableDictionary dictionary];
@@ -656,8 +659,9 @@ static double NFKInteractionsSeconds(id offset)
 		configuration[@"language_codes"] = @[ language ];
 	}
 	configuration[@"custom_vocabulary"] = vocabulary;
-	if (diarizes || words) {
-		NSMutableDictionary *mode = [NSMutableDictionary dictionaryWithObject:@"verbatim" forKey:@"type"];
+	if (diarizes || words || sourceText != nil) {
+		NSMutableDictionary *mode = [NSMutableDictionary dictionaryWithObject:sourceText != nil ? @"smart" : @"verbatim" forKey:@"type"];
+		mode[@"source_text"] = sourceText;
 		if (diarizes) {
 			mode[@"diarization_mode"] = @"speaker";
 		}

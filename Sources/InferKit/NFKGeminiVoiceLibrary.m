@@ -134,9 +134,34 @@ static NSSet<NSString *> *NFKGeminiVoiceReservedFields(void)
 	if (description.length == 0) {
 		return [self failWithCode:kNFKError_InferenceMissingInput reason:@"a designed voice needs a description of how it sounds" error:outError];
 	}
+	return [self createPromptedVoice:@{ @"input": description } displayName:displayName attributes:attributes error:outError];
+}
+
+- (nullable NFKRemoteVoice *)remixVoiceWithIdentifier:(NSString *)identifier
+										 instructions:(NSString *)instructions
+										  displayName:(nullable NSString *)displayName
+										   attributes:(nullable NSDictionary<NSString *, id> *)attributes
+												error:(NSError * _Nullable *)outError
+{
+	if (identifier.length == 0) {
+		return [self failWithCode:kNFKError_InferenceMissingInput reason:@"a remix needs the identifier of its base voice" error:outError];
+	}
+	if (instructions.length == 0) {
+		return [self failWithCode:kNFKError_InferenceMissingInput reason:@"a remix needs instructions for changing its base voice" error:outError];
+	}
+	return [self createPromptedVoice:@{ @"base_voice": identifier, @"input": instructions }
+						 displayName:displayName attributes:attributes error:outError];
+}
+
+/*! A designed or remixed voice, stored because the service stores every prompted voice. */
+- (nullable NFKRemoteVoice *)createPromptedVoice:(NSDictionary<NSString *, NSString *> *)prompted
+									 displayName:(nullable NSString *)displayName
+									  attributes:(nullable NSDictionary<NSString *, id> *)attributes
+										   error:(NSError * _Nullable *)outError
+{
 	NSMutableDictionary<NSString *, id> *voice = [self voiceWithAttributes:attributes];
 	voice[@"type"] = @"prompted";
-	voice[@"prompted"] = @{ @"input": description };
+	voice[@"prompted"] = prompted;
 	if (displayName.length > 0) {
 		voice[@"display_name"] = displayName;
 	}

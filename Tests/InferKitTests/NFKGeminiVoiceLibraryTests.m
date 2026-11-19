@@ -3,7 +3,7 @@
 //  InferKitTests
 //
 //  The Gemini voice library through a stub transport: listing with filters and pages, lookup,
-//  design, replication, deletion, and the provider factory. A live listing is gated on a key.
+//  design, remixing, replication, deletion, and the provider factory. A live listing is gated on a key.
 //
 
 #import <XCTest/XCTest.h>
@@ -147,6 +147,63 @@
 	XCTAssertNil([self.library designVoiceWithDescription:@"" displayName:nil attributes:nil error:&error]);
 	XCTAssertEqual(error.code, kNFKError_InferenceMissingInput);
 	XCTAssertEqual(self.library.requests.count, 0);
+}
+
+#pragma mark Remixing
+
+- (void)testARemixIsAStoredPromptedVoiceAnchoredOnItsBaseVoice
+{
+	self.library.modelName = @"gemini-3.8-flash-tts";
+	[self.library.stagedBodies addObject:@"{\"id\":\"voice_remix\",\"type\":\"prompted\",\"display_name\":\"Older Puck\","
+		"\"prompted\":{\"base_voice\":\"Puck\",\"input\":\"Slightly older, with a warm British accent.\"},"
+		"\"sample_audio\":{\"mime_type\":\"audio/wav\",\"data\":\"UklGRg==\"}}"];
+	NSError *error = nil;
+	NFKRemoteVoice *voice = [self.library remixVoiceWithIdentifier:@"Puck"
+													  instructions:@"Slightly older, with a warm British accent."
+													   displayName:@"Older Puck"
+														attributes:@{ @"accent": @"British", @"prompted": @{ @"base_voice": @"Kore" } }
+															 error:&error];
+	XCTAssertEqualObjects(voice.identifier, @"voice_remix", @"%@", error);
+	XCTAssertEqualObjects(voice.raw[@"prompted"][@"base_voice"], @"Puck");
+	XCTAssertEqualObjects(voice.sampleAudioData, [@"RIFF" dataUsingEncoding:NSASCIIStringEncoding]);
+
+	NSURLRequest *request = self.library.requests[0];
+	XCTAssertEqualObjects(request.HTTPMethod, @"POST");
+	XCTAssertEqualObjects(request.URL.absoluteString, @"https://generativelanguage.googleapis.com/v1beta/voices");
+	XCTAssertEqualObjects([self bodyOfRequest:0], (@{ @"store": @YES, @"voice": @{
+		@"type": @"prompted", @"model": @"gemini-3.8-flash-tts", @"display_name": @"Older Puck", @"accent": @"British",
+		@"prompted": @{ @"base_voice": @"Puck", @"input": @"Slightly older, with a warm British accent." } } }),
+		@"a reserved attribute does not change the base voice");
+}
+
+- (void)testARemixOfAStoredVoiceSendsItsIdentifierUnchangedAndNoModelUnlessSet
+{
+	[self.library.stagedBodies addObject:@"{\"id\":\"voice_second\",\"type\":\"prompted\"}"];
+	NFKRemoteVoice *voice = [self.library remixVoiceWithIdentifier:@"voice_remix" instructions:@"Calmer and lower in pitch."
+													   displayName:nil attributes:nil error:NULL];
+	XCTAssertEqualObjects(voice.identifier, @"voice_second");
+	XCTAssertEqualObjects([self bodyOfRequest:0], (@{ @"store": @YES, @"voice": @{
+		@"type": @"prompted", @"prompted": @{ @"base_voice": @"voice_remix", @"input": @"Calmer and lower in pitch." } } }));
+}
+
+- (void)testARemixWithoutABaseVoiceOrInstructionsSendsNothing
+{
+	NSError *error = nil;
+	XCTAssertNil([self.library remixVoiceWithIdentifier:@"" instructions:@"Calmer." displayName:nil attributes:nil error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceMissingInput);
+	error = nil;
+	XCTAssertNil([self.library remixVoiceWithIdentifier:@"Puck" instructions:@"" displayName:nil attributes:nil error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceMissingInput);
+	XCTAssertEqual(self.library.requests.count, 0);
+}
+
+- (void)testARemixRefusedByTheServiceReportsItsError
+{
+	self.library.stagedStatusCode = 400;
+	[self.library.stagedBodies addObject:@"{\"error\":{\"code\":400,\"message\":\"Base voice not found.\",\"status\":\"INVALID_ARGUMENT\"}}"];
+	NSError *error = nil;
+	XCTAssertNil([self.library remixVoiceWithIdentifier:@"voice_gone" instructions:@"Calmer." displayName:nil attributes:nil error:&error]);
+	XCTAssertTrue([error.localizedDescription containsString:@"Base voice not found"], @"%@", error);
 }
 
 #pragma mark Replicating
