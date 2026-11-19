@@ -901,6 +901,23 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   hold run through their towers (each one's token count is known before its tower). Released at float32
   (`NFKMLXPhi4MMTests/testAConversationAboutAPhotoContinuesFromTheKeptCache`): the follow-up reuses 570
   positions and answers as a run that keeps nothing; a text-only turn after it reuses none.
+- **Loading (2026-11-19).** The decoder reads one group at a time (`NFKMLXPhi4MM.decoderGroups`): the
+  embedding, the final norm, then each of the 32 layers. Each group's stored bf16 tensors are read in one
+  evaluation and folded, widened, or split in the next, and the stored copies are released before the
+  next group is read, so no GPU command buffer waits on a file. Read and formed in the apply's single
+  evaluation, the load timed out on the GPU (`kIOGPUCommandBufferCallbackErrorTimeout`) 40 to 65 s into a
+  test, in four different tests across five Commit Checks, and once in 16 isolated loads of 674dc54f
+  under the LMC lock: a bf16 mixture load, 58 s into a load that otherwise takes 4 to 14 s. Read per
+  layer, it timed out in none of 16 isolated loads and none of three rounds of the 13 `NFKMLXPhi4MMTests`
+  and `testPhi4MultimodalInBFloat16MatchesTheBFloat16Reference`, each test in its own process, with every
+  recorded figure unchanged. Peaks from the load through a forward in each adapter, MLX's and the
+  kernel's footprint: the folded float32 decoder 17.63 → 16.03 GB (footprint 17.7 → 16.2); the mixture
+  at float32 12.07 GB (12.23) and at bf16 9.39 GB (9.45), both unchanged. The mixture reads both
+  adapters at the load, including the 0.74 GB vision adapter that the lazy load read at the first image
+  request. Warm-cache load times: the mixture at bf16 0.6 to 8.4 s against 3.7 to 11.5 s, and at float32
+  4.5 to 5.3 s against 8.1 to 9.1 s. The folded decoder, which only the per-mode parity tests load, takes
+  11 to 12 s against 5 to 7 s: forming one layer at a time serializes the GPU work, and reading the next
+  layer during each fold moved neither the time nor the MLX peak.
 - **Reuse and customization**: the decoder is `NFKMLXLanguageNet` and the image encoder layers are the
   shared SigLIP blocks. The new work is LongRoPE, partial rotary, the NaViT embedding and mask, the HD
   layout, the Conformer, the mixture-of-LoRAs layer, and both preprocessors. The factories take a release

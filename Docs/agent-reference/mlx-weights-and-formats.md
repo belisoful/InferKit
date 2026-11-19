@@ -113,12 +113,15 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   and converts in groups of about 256 MB and returns them evaluated, which lowers a large load's
   footprint and leaves no file read for a GPU command buffer to wait on. Every loader whose tensors
   convert one at a time reads through it (2026-10-08). A caller that builds new arrays from most of
-  what it reads stays lazy: an eager read would hold every original beside its result, which doubles
-  the peak of per-expert stacking (`stackingExperts`) and adds about 13 GB to Phi-4's float32 LoRA
-  fold. The lazy readers that remain:
+  what it reads takes the lazy reader: an eager read of the whole release would hold every original
+  beside its result, which doubles the peak of per-expert stacking (`stackingExperts`) and adds about
+  13 GB to Phi-4's float32 LoRA fold. Such a caller still evaluates the reads before the GPU work
+  that consumes them, one group at a time, as Phi-4-multimodal's decoder does
+  (`NFKMLXPhi4MM.decoderGroups`: each layer read in one evaluation, folded in the next, its stored
+  tensors released before the next layer). The lazy readers that remain:
   - the per-expert tensors of a language release (`NFKMLXLanguage.isPerExpert`), read beside the
     materialized rest;
-  - Phi-4-multimodal's decoder, whose LoRA fold spans tensors;
+  - Phi-4-multimodal's decoder, which reads and folds one layer at a time;
   - FLUX.2's latent codec, which takes two `bn.` statistics from the autoencoder's file;
   - Sa2VA-Qwen's SAM 3 probe, which reads one key's presence and no tensor.
   A remap that drops what a loader never applies keeps an eager read from reading it: the SmolVLM and

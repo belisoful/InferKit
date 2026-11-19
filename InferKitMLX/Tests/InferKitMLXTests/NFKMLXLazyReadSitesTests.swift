@@ -18,7 +18,7 @@ final class NFKMLXLazyReadSitesTests: XCTestCase {
     private static let lazyReleaseReads: [String: (count: Int, reason: String)] = [
         "NFKMLXFlux2Transformer.swift": (1, "the latent codec takes two bn statistics from the autoencoder"),
         "NFKMLXLanguageBackend.swift": (1, "per-expert tensors are read as their stack forms"),
-        "NFKMLXPhi4MM.swift": (1, "the decoder's LoRA fold spans tensors"),
+        "NFKMLXPhi4MM.swift": (1, "the decoder reads and folds one layer at a time"),
         "NFKMLXSa2VAQwen.swift": (1, "a probe for one key's presence"),
     ]
 

@@ -151,21 +151,54 @@ public final class NFKMLXPhi4MM: NSObject {
         return alpha / rank
     }
 
-    /// The decoder's stored tensors by their release names: the embedding, the norms, each projection's
-    /// `base_layer`, and the low-rank pairs of the named adapters. The towers and any adapter not named
-    /// are skipped.
-    static func decoderTensors(directoryURL: URL, precision: NFKMLXWeightPrecision,
-                               adapters: Set<String>) throws -> [String: MLXArray] {
-        let raw = try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL, precision: precision) { key -> String? in
+    /// The decoder's arrays, formed one group at a time from its stored tensors: the embedding, the final
+    /// norm, then each layer. A group holds the embedding, the norm, or one layer's norms, projection
+    /// bases, and the named adapters' low-rank pairs; the towers and any adapter not named are never read.
+    ///
+    /// @discussion MLX reads a file only on the CPU stream, and a GPU operation evaluated together with
+    /// the read it consumes waits for that read inside its command buffer. The released decoder read,
+    /// converted, and folded in one evaluation held its command buffers on about 9 GB of reads, and
+    /// timed out on the GPU at random. Here each group's stored tensors are read in one evaluation,
+    /// `build` forms the group's arrays from them, those are evaluated in the next, and the stored tensors
+    /// are released before the next group is read. The peak is the formed decoder and one group.
+    ///
+    /// - Parameter build: a group's arrays from its key prefix (`model.embed_tokens.`, `model.norm.`, or
+    ///   `model.layers.N.`) and its stored tensors by their release names.
+    static func decoderGroups(directoryURL: URL, configuration: NFKMLXLanguageConfiguration, adapters: Set<String>,
+                              build: (_ prefix: String, _ group: [String: MLXArray]) throws -> [(String, MLXArray)])
+        throws -> [(String, MLXArray)] {
+        var unread = [String: MLXArray]()
+        for (key, value) in try NFKMLXReleaseWeights.arrays(inDirectory: directoryURL, precision: .checkpoint, remap: { key in
             guard isDecoderTensor(key) else { return nil }
             if key.contains(".lora_A.") || key.contains(".lora_B.") {
                 return adapters.contains(where: { key.contains(".\($0).") }) ? key : nil
             }
             return key
+        }) {
+            unread[key] = value
         }
-        var byKey = [String: MLXArray](minimumCapacity: raw.count)
-        for (key, value) in raw { byKey[key] = value }
-        return byKey
+        let prefixes = ["model.embed_tokens.", "model.norm."]
+            + (0 ..< configuration.layerCount).map { "model.layers.\($0)." }
+        var formed = [(String, MLXArray)]()
+        for prefix in prefixes {
+            var group = [String: MLXArray]()
+            for key in unread.keys.filter({ $0.hasPrefix(prefix) }) {
+                group[key] = unread.removeValue(forKey: key)
+            }
+            eval(Array(group.values))
+            let arrays = try build(prefix, group)
+            eval(arrays.map(\.1))
+            formed += arrays
+        }
+        return formed
+    }
+
+    /// A stored tensor of a group, by its release name.
+    static func tensor(_ name: String, in group: [String: MLXArray]) throws -> MLXArray {
+        guard let value = group[name] else {
+            throw NFKMLXError.malformedCheckpoint("Phi-4-multimodal is missing \(name)")
+        }
+        return value
     }
 
     /// The decoder tensors for one modality, in ``NFKMLXLanguageNet``'s names: the selected adapter is
@@ -177,55 +210,50 @@ public final class NFKMLXPhi4MM: NSObject {
                               modality: NFKMLXPhi4MMModality,
                               precision: NFKMLXWeightPrecision = .float32) throws -> [(String, MLXArray)] {
         let adapter = modality.adapterName
-        let byKey = try decoderTensors(directoryURL: directoryURL, precision: precision,
-                                       adapters: adapter.map { [$0] } ?? [])
         let scale = try adapter.map { try loRAScale(directoryURL: directoryURL, adapter: $0) } ?? 0
-        return try splitArrays(byKey: byKey, configuration: configuration) { base in
-            guard let weight = byKey[base + ".base_layer.weight"] else {
-                throw NFKMLXError.malformedCheckpoint("Phi-4-multimodal is missing \(base).base_layer.weight")
+        func converted(_ value: MLXArray) -> MLXArray {
+            precision == .checkpoint || !value.dtype.isFloatingPoint ? value : value.asType(.float32)
+        }
+        return try decoderGroups(directoryURL: directoryURL, configuration: configuration,
+                                 adapters: adapter.map { [$0] } ?? []) { prefix, group in
+            try splitGroup(prefix, group, configuration: configuration, plain: converted) { base in
+                let weight = converted(try tensor(base + ".base_layer.weight", in: group))
+                guard let adapter else { return weight }
+                let a = converted(try tensor(base + ".lora_A.\(adapter).weight", in: group))
+                let b = converted(try tensor(base + ".lora_B.\(adapter).weight", in: group))
+                return weight + matmul(b, a) * scale
             }
-            guard let adapter else { return weight }
-            guard let a = byKey[base + ".lora_A.\(adapter).weight"],
-                  let b = byKey[base + ".lora_B.\(adapter).weight"] else {
-                throw NFKMLXError.malformedCheckpoint("Phi-4-multimodal is missing the \(adapter) adapter for \(base)")
-            }
-            return weight + matmul(b, a) * scale
         }
     }
 
-    /// The decoder tensors in ``NFKMLXLanguageNet``'s names, each fused projection produced by `weight`
+    /// One group's arrays in ``NFKMLXLanguageNet``'s names: the embedding, the final norm, or one layer's
+    /// norms and projections, each passed through `plain` or, for a fused projection, produced by `fold`
     /// (a base or an adapter-folded base) and split into the separate projections the decoder holds.
-    static func splitArrays(byKey: [String: MLXArray], configuration: NFKMLXLanguageConfiguration,
-                            weight fold: (String) throws -> MLXArray) throws -> [(String, MLXArray)] {
-        func tensor(_ name: String) throws -> MLXArray {
-            guard let value = byKey[name] else {
-                throw NFKMLXError.malformedCheckpoint("Phi-4-multimodal is missing \(name)")
-            }
-            return value
+    static func splitGroup(_ prefix: String, _ group: [String: MLXArray], configuration: NFKMLXLanguageConfiguration,
+                           plain: (MLXArray) -> MLXArray,
+                           fold: (String) throws -> MLXArray) throws -> [(String, MLXArray)] {
+        guard prefix.hasPrefix("model.layers.") else {
+            let name = prefix + "weight"
+            return [(name, plain(try tensor(name, in: group)))]
         }
-        var out = [(String, MLXArray)]()
-        out.append(("model.embed_tokens.weight", try tensor("model.embed_tokens.weight")))
-        out.append(("model.norm.weight", try tensor("model.norm.weight")))
-
         let qDim = configuration.headCount * configuration.headDimensions
         let kvDim = configuration.keyValueHeadCount * configuration.headDimensions
         let intermediate = configuration.intermediateSize
-        for layer in 0 ..< configuration.layerCount {
-            let base = "model.layers.\(layer)"
-            out.append(("\(base).input_layernorm.weight", try tensor("\(base).input_layernorm.weight")))
-            out.append(("\(base).post_attention_layernorm.weight", try tensor("\(base).post_attention_layernorm.weight")))
-
-            let qkv = try fold("\(base).self_attn.qkv_proj")
-            out.append(("\(base).self_attn.q_proj.weight", qkv[0 ..< qDim]))
-            out.append(("\(base).self_attn.k_proj.weight", qkv[qDim ..< (qDim + kvDim)]))
-            out.append(("\(base).self_attn.v_proj.weight", qkv[(qDim + kvDim) ..< (qDim + 2 * kvDim)]))
-            out.append(("\(base).self_attn.o_proj.weight", try fold("\(base).self_attn.o_proj")))
-
-            let gateUp = try fold("\(base).mlp.gate_up_proj")
-            out.append(("\(base).mlp.gate_proj.weight", gateUp[0 ..< intermediate]))
-            out.append(("\(base).mlp.up_proj.weight", gateUp[intermediate ..< (2 * intermediate)]))
-            out.append(("\(base).mlp.down_proj.weight", try fold("\(base).mlp.down_proj")))
+        let base = String(prefix.dropLast())
+        var out = [(String, MLXArray)]()
+        for norm in ["input_layernorm", "post_attention_layernorm"] {
+            out.append(("\(base).\(norm).weight", plain(try tensor("\(base).\(norm).weight", in: group))))
         }
+        let qkv = try fold("\(base).self_attn.qkv_proj")
+        out.append(("\(base).self_attn.q_proj.weight", qkv[0 ..< qDim]))
+        out.append(("\(base).self_attn.k_proj.weight", qkv[qDim ..< (qDim + kvDim)]))
+        out.append(("\(base).self_attn.v_proj.weight", qkv[(qDim + kvDim) ..< (qDim + 2 * kvDim)]))
+        out.append(("\(base).self_attn.o_proj.weight", try fold("\(base).self_attn.o_proj")))
+
+        let gateUp = try fold("\(base).mlp.gate_up_proj")
+        out.append(("\(base).mlp.gate_proj.weight", gateUp[0 ..< intermediate]))
+        out.append(("\(base).mlp.up_proj.weight", gateUp[intermediate ..< (2 * intermediate)]))
+        out.append(("\(base).mlp.down_proj.weight", try fold("\(base).mlp.down_proj")))
         return out
     }
 
@@ -257,17 +285,16 @@ public final class NFKMLXPhi4MM: NSObject {
                                       precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXLanguageNet {
         let configuration = try decoderConfiguration(directoryURL: directoryURL)
         let net = NFKMLXLanguageNet(configuration)
-        let byKey = try decoderTensors(directoryURL: directoryURL, precision: .checkpoint, adapters: ["vision", "speech"])
-        let arrays = try splitArrays(byKey: byKey, configuration: configuration) { base in
-            guard let weight = byKey[base + ".base_layer.weight"] else {
-                throw NFKMLXError.malformedCheckpoint("Phi-4-multimodal is missing \(base).base_layer.weight")
+        func widened(_ value: MLXArray) -> MLXArray { precision == .float32 ? value.asType(.float32) : value }
+        let formed = try decoderGroups(directoryURL: directoryURL, configuration: configuration,
+                                       adapters: ["vision", "speech"]) { prefix, group in
+            let bases = try splitGroup(prefix, group, configuration: configuration, plain: widened) { projection in
+                try tensor(projection + ".base_layer.weight", in: group)
             }
-            return weight
+            return bases + group.filter { $0.key.contains(".lora_") }.map { ($0.key, $0.value) }
         }
-        try NFKMLXWeights.apply(arrays.map { name, value in
-            let widens = precision == .float32 && (value.ndim == 1 || name == "model.embed_tokens.weight")
-            return (name, widens ? value.asType(.float32) : value)
-        }, to: net, verifyShapes: true)
+        let byKey = Dictionary(formed.filter { $0.0.contains(".lora_") }, uniquingKeysWith: { first, _ in first })
+        try NFKMLXWeights.apply(formed.filter { !$0.0.contains(".lora_") }, to: net, verifyShapes: true)
 
         let scales = [try loRAScale(directoryURL: directoryURL, adapter: "vision"),
                       try loRAScale(directoryURL: directoryURL, adapter: "speech")]

@@ -61,7 +61,10 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   float32 load peaked at 23.6 GB that way and at 15.4 GB read group by group, each group read in one
   evaluation and widened in the next (`NFKMLXReleaseWeights.materializedArrays`). Measured in
   isolation, a GPU command buffer waiting up to 26 s on a CPU-stream input, with GPU work ahead of the
-  wait or without, completes without a watchdog timeout.
+  wait or without, completes without a watchdog timeout. A whole release still does time out that way:
+  Phi-4-multimodal's 9 GB bf16 decoder, read and formed in one evaluation, timed out once in 16 loads
+  under the LMC lock (58 s into a load that otherwise takes 4 to 14 s), and read and formed one layer
+  at a time it timed out in none (2026-11-19, `NFKMLXPhi4MM.decoderGroups`).
 - Splitting a lazy computation into blocks bounds no memory unless each block is evaluated before the
   next: MLX schedules the graph as a whole. SAM 3's reference flash attention over 5,184 keys held
   +1.97 GB of float32 scores unsplit and +2.87 GB split into 512-row query blocks; evaluating each block
