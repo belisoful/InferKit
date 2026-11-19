@@ -20,6 +20,7 @@ per modality that is already scoped; the entries here are the wider field the ro
 - [Tier 3 — strategic frontier, high cost](#tier-3--strategic-frontier-high-cost)
 - [Updates to shipped families (Tiers A–C)](#updates-to-shipped-families-tiers-ac)
 - [Text-to-speech candidates](#text-to-speech-candidates)
+- [Speech recognition, speech-to-speech, and enhancement candidates](#speech-recognition-speech-to-speech-and-enhancement-candidates)
 - [3D asset generation candidates](#3d-asset-generation-candidates)
 - [Novel but license-blocked](#novel-but-license-blocked)
 - [Vendor verdicts](#vendor-verdicts)
@@ -215,6 +216,9 @@ claims; the tables below carry the verified facts.
 | **SD 3.5 Large Turbo** — SHIPPED (`sd3.5-large-turbo`, `NFKMLXSD3Generator`) | Stability AI | Stability Community, gated | Shares the Large geometry, autoencoder, and text encoders byte for byte. The released transformer is measured on a four-block cut against diffusers at float32 (velocity 0.99999999999950), and the same pass records Large (0.99999999999951). The registry and catalog run it at 4 steps and a guidance of 0 |
 | **Hyper-SD** — SHIPPED (`NFKMLXSDLoRA`, `NFKTCDScheduler`, six catalog adapters) | ByteDance | The SD adapters are under ByteDance's CreativeML Open RAIL++-M License (use restrictions); the FLUX adapters carry FLUX.1 [dev] non-commercial terms and are not taken | The SD 1.5 and SDXL adapters merge through the LoRA reader: the 4-step files under trailing DDIM without guidance, the CFG-preserved 8-step files at guidance 5, and the unified files under the trajectory consistency sampler. Measured end to end against diffusers with the adapter fused: SD 1.5 4-step image cosine 0.99999862, SDXL 4-step 0.99999953, SD 1.5 8-step CFG 0.99999558, SDXL 8-step CFG 0.99999947, SD 1.5 unified 0.99999725, SDXL unified 0.99999938 |
 | **Qwen-Image 2.1 Turbo** — QUEUED | Alibaba Qwen | Qwen Research License (non-commercial), not gated | `Qwen/Qwen-Image-2.1-Turbo` is a full-weight distillation of the shipped `QwenImage21Transformer2DModel`: the transformer config matches the base exactly, and the autoencoder (bf16 here, float32 in the base) and the Qwen3-VL 8B text encoder are the base's. It samples eight fixed sigmas from `model_index.json` (`sample_sigmas`, 1.0 → 0.414568) at a static shift of 1.0 with no terminal stretch and CFG 1. `NFKMLXFlowMatchConfiguration` has no field for a fixed sigma list, so the work is that field, a `.qwenImage21Turbo` preset, a released-weight parity run (transformer 14.2 GB bf16), and a release row. The oracle needs diffusers with PR #14950 (fixed sampling sigmas) |
+| **Granite Speech 5.0-2B** | IBM | Apache-2.0, not gated | Unscheduled. `ibm-granite/granite-speech-5.0-2b` at `ec49ca6b`, created 2026-10-07: 2.31B parameters, 4.63 GB bf16, plus a 0.41 GB `out_llm.safetensors`. The class (`GraniteSpeechForConditionalGeneration`) and the three component model types are the ones `NFKMLXGraniteSpeech` reads. Against the shipped 3.3-2b config the projector is unchanged and the encoder differs only in `output_dim` (348, was 256), which the loader reads. The decoder is the dense `granite` type at the granite-4.0-1b-base geometry: 40 layers, 2048 wide, 16 heads with 4 key-value heads, intermediate 4096, a 100,353-token vocabulary, untied embeddings, `rope_theta` 10000, and YaRN scaling (factor 4, 4096 original positions). `has_lora_adapter` is false, so no adapter folds. The loader reads no `rope_scaling` today, and `NFKMLXRoPEScaling` implements YaRN. The work is that field, a check of the Granite 4.0 tokenizer and chat template against the role markers the backend fixes, and a released-weight parity run against transformers 4.57. The release adds Japanese, language-identification prompts, and keyword lists of up to 2000 entries. `out_llm.safetensors` has the size of a 1024 × 100,353 float32 matrix, the encoder's BPE CTC head; the card does not say what reads it |
+| **Parakeet Ultra** | Moondream | CC-BY-4.0, not gated | Unscheduled. `moondream/parakeet-ultra` at `73175eb7`, created 2026-09-22: 0.63B parameters, 1.26 GB float16. A post-training of Parakeet-TDT 0.6B v3 over the same 25 languages. Its `config.json` is byte-identical to `nvidia/parakeet-tdt-0.6b-v3`'s (`ParakeetForTDT`: 24 layers, 1024 wide, 8193 tokens, durations 0 to 4), so the network is the shipped `NFKMLXParakeetNet`. The release is transformers-layout safetensors with a `tokenizer.json`, and `NFKMLXParakeet` reads an unpacked `.nemo` with a `*_tokenizer.vocab`. The work is a reader for the transformers key layout and the piece table, then a released-weight measurement. The card runs the model in Moondream's Photon runtime |
+| **Fluid Speech Pro** | FluidVoice | CC-BY-4.0, not gated | Unscheduled. `FluidVoice-Labs/fluid-speech-pro` at `46027a3b`, created 2026-10-30: 0.63B parameters, built on Parakeet-TDT 0.6B v3 and Parakeet Ultra. Its `config.json` differs from NVIDIA's in `layerdrop` (0.0, was 0.1) and the transformers version only. The repo ships a 2.63 GB `.nemo`, the form `NFKMLXParakeet` reads, beside a 2.51 GB float32 safetensors copy. The work is a measurement on the released weights. Its `NOTICE` gives the attribution line a user reproduces |
 
 Notes:
 
@@ -226,6 +230,10 @@ Notes:
   Hugging Face; the xlarge and xxlarge releases are segmentation checkpoints, and those ship.
 - Wan 2.7 was announced as API-only. Its audio output would be a new stage, so it moves to Tier B if
   its weights are released.
+- The Granite Speech 5.0, Parakeet Ultra, and Fluid Speech Pro rows were checked on 2026-11-18 against
+  the Hugging Face detail endpoint, and each `config.json` was diffed against the shipped release's.
+  None is scheduled. The rest of that date's speech survey is under
+  [Speech recognition, speech-to-speech, and enhancement candidates](#speech-recognition-speech-to-speech-and-enhancement-candidates).
 
 ### Tier B — same vendor, new architecture
 
@@ -306,10 +314,13 @@ Checked on 2026-11-06 and left alone:
 
 ## Text-to-speech candidates
 
-Surveyed on 2026-09-26 against the Hugging Face detail endpoint (`/api/models/<repo>?blobs=true`).
+Surveyed on 2026-09-26, and again on 2026-11-18 for the releases since, against the Hugging Face
+detail endpoint (`/api/models/<repo>?blobs=true`).
 The goal is long-form narration above the shipped Chatterbox and Kokoro. Download is the size of the
 weights a port needs: duplicate formats, optimizer states, and training shards are excluded. Several
 releases postdate the survey author's knowledge, so audition samples before committing to a port.
+The 2026-11-18 rows sit at the end of the priority 2 and priority 3 tables, and none of them is
+scheduled.
 
 Priority rules:
 
@@ -349,6 +360,14 @@ Priority rules:
 | **AuK, AuK-Flash** | Tencent | 6.8 GB each | MIT | — |
 | **KugelAudio-0** | KugelAudio | 18.7 GB | MIT | — |
 | **Supertonic-3** | Supertone | 0.4 GB | OpenRAIL | Published as ONNX only; needs a conversion step |
+| **ZONOS3-Mini** | Zyphra | 2.4 GB in `Zyphra/ZONOS3-Mini-hf`, one checkpoint with the backbone, the `keep2_plain` decoder head, and the speaker encoder. The main repo is 30.9 GB with GGUF and WebGPU copies; its PyTorch files are 15.3 GB and hold the whole codec (`autoencoder/generator.pt`, 7.96 GB) | Apache-2.0 | Supersedes Zonos v0.1 with a new architecture. Reuses the gated delta-rule recurrence of `NFKMLXHybridLanguageNet`. Needs the 11-layer backbone (9 delta-rule layers, 2 attention layers, a latent mixture of 64 experts with 2 per token), 10 codebooks under a delay pattern, the ZAC 1 codec decoder (causal transformer stages and a multi-resolution iSTFT head, 44.1 kHz at 15 Hz), the MECT-B2 speaker encoder, and a SuperBPE tokenizer. 43 languages. Cloning from codec codes needs the codec encoder; the transformers repo clones through the speaker embedding. Reference: the release's remote code (`Zonos3MiniForTextToSpeech`, transformers 4.57 or later) and Zyphra/ZONOS3-Mini |
+| **Audio8-TTS-Realistic-Air** | Edge0 | 2.55 GB (1.20 GB bf16 model, 1.35 GB codec); the 3.76 GB GGUF set is excluded | Apache-2.0 | A slow decoder at the Qwen2.5-0.5B geometry (24 layers, 896 wide) emits one semantic token a frame, and a 4-layer fast decoder fills 10 codebooks, the dual-autoregressive design of Fish Audio S2. Needs the fast decoder and the release's own 44.1 kHz codec. 23 languages. Reference: the release's remote code (`ArkttsModel`, transformers 4.57) |
+| **Ming-3.0-tts-0.5B** | Ant Group | 3.0 GB | MIT | Qwen2.5-0.5B decoder. Needs a diffusion-transformer head over continuous latents, an audio VAE whose causal encoder and decoder are Qwen2-shaped, and a CAM++ speaker encoder that ships as ONNX only. 44.1 kHz, 7 languages. Reference: inclusionAI/Ming-3.0-tts |
+| **Phonon 31M (English)** | Gradium | 0.10 GB, plus the voices in `gradium/phonon-voices` (0.07 GB, Apache-2.0); GGUF copies excluded | Apache-2.0 | Pocket TTS lineage: a 6-layer transformer with a flow-matching head emits one 32-wide continuous latent per 80 ms frame, and a Mimi decoder renders it at 24 kHz. Reuses the Mimi decoder (`NFKMLXMimi`) at a smaller geometry (ratios 6, 5, 4 and 2 transformer layers). Voice cloning is offered through the vendor's studio only. Reference: transformers `GradiumPhononTTSForConditionalGeneration` (git main) |
+| **Kitten TTS 2 Mini** | KittenML | 0.39 GB (0.33 GB float32 safetensors, 0.06 GB voice packs); ONNX copies excluded | Apache-2.0 | The `architecture` block of `config.json` equals `NFKMLXKokoroConfiguration.v1` field for field, so the network is the shipped `NFKMLXKokoro`. Tensor names are not checked. Needs the release's phoneme front end (a one-layer BART model and a lexicon) and its `.npz` voice packs. 16 languages, 118 voices. The Nano and Pico siblings narrow the decoder. Reference: the `kittenml` package's PyTorch backend |
+| **tiny-voca** | n4ze3m | 0.02 GB; ONNX and GGUF copies excluded | Apache-2.0 | 4.5M parameters, English, two voices. Three small rotary transformers predict durations, pitch, and the cepstra of a source-filter synthesizer; no neural vocoder. Needs the `dizione` phonemizer data (0.005 GB, CMUdict terms). Reference: n4ze3m/tiny-voca |
+| **Mithi v1 Flash** | Oomni | 0.20 GB | Apache-2.0 | 11 Indian languages, two voices. Reuses the Kokoro text encoder and iSTFTNet decoder (`NFKMLXKokoro`), fine-tuned. Needs an 18.8M prosody writer, a trimmed indic-bert Albert encoder, and an Indic text normalizer. Reference: the `mithi_tts` package inside the repo |
+| **Inflect Mini v3** | Owen Song | 0.14 GB core, plus a 0.011 GB 48 kHz enhancer and a 0.015 GB pitch component | Apache-2.0 for the Inflect-owned weights | 34.3M parameters, English, six voices. A Kokoro-derived network distilled from Kokoro; `config.json` does not state its geometry. The optional voice-tuner enrollment pulls a CC-BY-SA-3.0 encoder and GPL-3.0 dependencies. Reference: the runtime inside the repo |
 
 ### Priority 3 — restrictive license (lowest)
 
@@ -364,9 +383,100 @@ Priority rules:
 | **Spark-TTS 0.5B** | SparkAudio | 3.9 GB | CC-BY-NC-SA-4.0 |
 | **MaskGCT** | Amphion | 6.6 GB | CC-BY-NC-4.0 |
 | **OmniVoice** | k2-fsa | 3.3 GB | undeclared on the card |
+| **Fish Audio Drama 3** | Fish Audio | 41.5 GB (39.6 GB of FP8 experts and bf16 weights, 1.87 GB codec), which exceeds a 32 GB machine at the published precision | Fish Audio Community License 1.0: research and non-commercial use, commercial use under USD 500,000 of annual revenue, no hosted service |
+| **Phonon 40M** (multilingual; English, French, German, Spanish, and Portuguese siblings) | Gradium | 0.12 GB each; gated=auto | CC-BY-NC-4.0 |
+| **Underdog Woof** | Conway Research | 0.04 GB, int8 weights in one `.npz`; no float weights are published | Underdog Non-Commercial License 1.0: non-commercial use with attribution, no training on its audio |
 
 The Higgs Audio v2 generation repo (`bosonai/higgs-audio-v2-generation-3B-base`) returned an empty
 response on 2026-09-26, and `microsoft/VibeVoice-Large` returned 401.
+
+Notes on the 2026-11-18 rows:
+
+- Fish Audio Drama 3 is a 35.9B-parameter model with 3B active per token: a 40-layer mixture-of-experts
+  text backbone of the Qwen3.5 hybrid shape (256 experts, 8 per token) and a 4-layer decoder over 10
+  codebooks. Its card names the license `fish-audio-research-license`, and the `LICENSE` file in the
+  repo is the Fish Audio Community License Agreement.
+- Phonon 40M shares the Phonon 31M class and layout. The gated repo serves its detail record and returns
+  401 for its README and `config.json`.
+- Underdog Woof runs from a numpy runtime inside its repo, and its decoder is adapted from Mimi's.
+- `inclusionAI/Ming-3.0-tts-1.5B` returned 401.
+- Creation date and checked revision of each repo: `Zyphra/ZONOS3-Mini` 2026-11-09 `2921b882`,
+  `Zyphra/ZONOS3-Mini-hf` 2026-11-11 `e39d30df`, `Edge0/Audio8-TTS-Realistic-Air` 2026-10-14
+  `6bf7a980`, `inclusionAI/Ming-3.0-tts-0.5B` 2026-09-22 `7247f4c9`, `gradium/phonon-31m-en`
+  2026-10-19 `8f7a37c9`, `gradium/phonon-voices` 2026-10-19 `0ee17205`, `KittenML/kitten-tts-2-mini`
+  2026-11-13 `8e89ae2a`, `n4ze3m/tiny-voca` 2026-11-14 `1e732622`, `Oomni/mithi-v1-flash` 2026-11-07
+  `94bc455a`, `owensong/Inflect-Mini-v3` 2026-11-10 `fdefa06e`, `fishaudio/drama-3` 2026-10-01
+  `78e5ab79`, `gradium/phonon-40m-multilingual` 2026-10-19 `1537ce46`, `ConwayResearch/Underdog-Woof`
+  2026-11-05 `be702960`. Only the Phonon 40M repos are gated.
+
+## Speech recognition, speech-to-speech, and enhancement candidates
+
+Surveyed on 2026-11-18 against the Hugging Face detail endpoint (`/api/models/<repo>?blobs=true`), with
+each card's README, `config.json`, and license file read. The scope is the releases since 2026-09-20
+that take speech in: recognizers, full-duplex speech-to-speech models, and speech enhancers. Download
+is the size of the weights a port needs, as in the text-to-speech tables. The priority rules are those
+of [Text-to-speech candidates](#text-to-speech-candidates). Nothing in this section is scheduled, so it
+has no priority 1 table. Three recognizers load into a shipped network and are listed under
+[Tier A](#tier-a--successor-weights-on-a-shipped-architecture): Granite Speech 5.0-2B, Parakeet Ultra,
+and Fluid Speech Pro.
+
+### Priority 2 — potential (permissive)
+
+Speech recognition:
+
+| Model | Vendor | Download | License | Reuses or needs |
+|-------|--------|----------|---------|-----------------|
+| **Nemotron 3.5 Transcribe 30B-A4B** | NVIDIA | 67.5 GB bf16, 34.7 GB FP8, or 21.6 GB NVFP4, each in its own repo | OpenMDW-1.1 | 33.7B parameters, 4.3B active, 40 languages, recordings up to one hour. The backbone is `nemotron_h` with 128 routed experts (6 per token, one shared), so it needs the mixture-of-experts layer `NFKMLXNemotronH` lacks (Tier B, Nemotron 3.5 Super VL). Also new: a 600M transformer speech encoder, a Sortformer speaker encoder, and CTC timestamp heads. Only the NVFP4 release fits a 32 GB machine. Reference: transformers (git main) and NeMo Speech |
+| **SOV-Transcribe-1** | Salesforce | 53.3 GB bf16, which exceeds a 32 GB machine at the published precision | Apache-2.0 | 26.6B parameters, 4.6B active, 7 languages. Every part is shipped: the Whisper large-v3 encoder, a projector that stacks 4 frames into two linears as Voxtral's does, and the Gemma 4 26B-A4B decoder (`NFKMLXGemmaLanguage`). The work is the wiring and a released-weight run. Reference: the release's remote code (transformers 5.19 to 5.22) |
+| **Rumble-2-Flash** | Reson8 | 1.37 GB (1.02 GB bf16 model, 0.36 GB CTC head) | Apache-2.0 | 0.51B parameters on the Qwen3-ASR architecture, which is not shipped: an 18-layer audio encoder (896 wide) feeds a 14-layer Qwen3 decoder (1024 wide). `Qwen/Qwen3-ASR-0.6B` and `Qwen/Qwen3-ASR-1.7B` (2026-01-28, Apache-2.0, 1.88 and 4.70 GB) carry the same class under a nested config layout. Reference: transformers `Qwen3ASRForConditionalGeneration` |
+| **Whistle** | Cactus Compute | 0.22 GB float safetensors; the 0.017 GB `.cact` file is the packed form its engine runs | Apache-2.0 | Seven languages, word timestamps, and speech embeddings. The card does not describe the network. `config.json` names grouped-query attention, a `hadamard` MLP, and 80 ms encoder frames. Reference: the Cactus C++ engine (cactus-compute/cactus); no PyTorch reference found |
+| **Phonon-2** | Fermion Research | 0.16 GB | CC-BY-4.0 weights, Apache-2.0 code | Parakeet-TDT 0.6B v3 with its encoder linears retrained to a five-value alphabet and the other parameters stored as 6-bit tables. English only. The network is the shipped `NFKMLXParakeetNet`, and the work is a reader for the vendor's `model.fermion` container. No float weights are published. `FermionResearch/Phonon-2.5-English` (2026-10-22) is its successor in the same packing. Reference: the repo's `reference_transformers.py` over `ParakeetForTDT` |
+
+Speech to speech:
+
+| Model | Vendor | Download | License | Reuses or needs |
+|-------|--------|----------|---------|-----------------|
+| **Haru-4B** | Higurashi AI | 10.5 GB | Apache-2.0 | Full-duplex dialogue at 7.5 Hz: the user's audio latent, the model's last text token, and its last audio latent sum into one decoder position. Reuses the Qwen3.5-4B text decoder (`NFKMLXHybridLanguage`). Needs the VibeVoice acoustic tokenizer (text-to-speech priority 1, not shipped) and a 4-layer MeanFlow head that samples a 64-wide latent in one step. 9 languages. The card calls it a pretrained base model released for research. Reference: higurashi-ai/Haru (PyTorch and MLX) |
+| **Sophon-Realtime 4B Flash** | Adventists AI | 13.0 GB (8.4 GB thinker, 3.9 GB talker, 0.68 GB speech tokenizer) | Apache-2.0 | Full-duplex dialogue in Chinese and English. The thinker is a Qwen3-4B decoder with a Qwen3-ASR audio encoder. The talker is a fine-tune of Qwen3-TTS 12Hz 1.7B Base (text-to-speech priority 1) with that release's speech tokenizer unchanged. Reference: the vLLM-Omni plugin in adventists-ai/sophon-realtime |
+| **Sophon-Realtime 32B** (Tag, Flash, E2E) | Adventists AI | 44.6, 40.9, and 108.3 GB repos. The shared FP8 thinker is 36.3 GB, which exceeds a 32 GB machine at the published precision | Apache-2.0 | The thinker derives from Qwen3-VL 32B and carries a Qwen3-ASR audio encoder. The Tag talker derives from Fun-CosyVoice3 0.5B and the Flash talker from Qwen3-TTS 12Hz 1.7B. E2E adds a 350M talker over continuous latents. `adventists-ai/Sophon-Realtime-v1` is the family page and holds no weights |
+| **caramel-1** | naklecha | 0.83 GB | Apache-2.0 | 413M parameters, trained on speech alone with no text stream. A 16-layer transformer (1024 wide) reads two streams of 8 Mimi codebooks at 12.5 Hz, and a 6-layer depth transformer (512 wide) writes the next frame. Reuses `NFKMLXMimi`. The card states that most of its speech does not make sense yet. Reference: naklecha/caramel |
+
+Speech enhancement:
+
+| Model | Vendor | Download | License | Reuses or needs |
+|-------|--------|----------|---------|-----------------|
+| **Inworld Voice Isolator v1** | Inworld | 0.26 GB offline, 0.23 GB realtime | Apache-2.0 | 48 kHz voice isolation at 64.0M and 58.2M parameters. A band-split dual-path network over the STFT: 46 bands, 4 attention blocks, and 3 Mamba blocks (state 16) that run along time and across bands, with a complex mask per band. Reuses `NFKMLXComplexSTFT`. The Mamba layer comes from `mamba-ssm`; compare it with the shipped Mamba-2 mixer before reuse. The realtime checkpoint is causal with 20 ms of look-ahead. Reference: inworld-ai/voice-isolator, plain PyTorch on the CPU and MPS |
+| **VoxLock** | Arbaz Siddiqui | 0.11 GB; ONNX copies excluded | Apache-2.0 | Target-speaker extraction, a task with no shipped model: it keeps the caller's voice and removes the other voices. A 27M causal band-split RNN fine-tuned from the REAL-TSE baseline and conditioned on a WeSpeaker ECAPA-TDNN speaker embedding, with 24 ms of algorithmic latency. Reference: arbazsiddiqui/voxlock (PyTorch) |
+
+### Priority 3 — restrictive license (lowest)
+
+| Model | Vendor | Download | License |
+|-------|--------|----------|---------|
+| **LFM3-Omni-2B** (speech to speech) | Liquid AI | 4.5 GB (4.33 GB bf16 model, 0.15 GB audio tokenizer) | LFM Open License v1.0: commercial use only under USD 10M of annual revenue |
+| **Quail Voice Focus** (enhancement) | ai-coustics | 0.014 GB, two `.aicmodel` files | ai-coustics model license: no extraction, conversion, or reverse engineering of the model files, which run only in the vendor SDK with a key |
+
+Notes:
+
+- LFM3-Omni-2B has 2.17B parameters. It takes text, images, video, and 16 kHz audio, and it answers in
+  text and 24 kHz speech. Its LFM3 backbone interleaves convolution, full-attention, and
+  sliding-attention layers, and no LFM layer is shipped. Reference: the release's remote code
+  (`Lfm3OmniForConditionalGeneration`, transformers 5.19 development). `LiquidAI/LFM3-Audio-2B`
+  (2026-09-08, 4.15 GB) is the audio-only sibling under the same license.
+- Quail Voice Focus has no runnable open reference, and its license forbids converting the model files.
+- The first pass came from the Hub's trending lists. A second scan of the `text-to-speech`,
+  `automatic-speech-recognition`, `audio-to-audio`, and `any-to-any` lists on the survey date added
+  SOV-Transcribe-1, VoxLock, and Sophon-Realtime 4B Flash.
+- Creation date and checked revision of each repo:
+  `nvidia/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B` 2026-10-07 `c1766764` (FP8 `2b6209f8` and NVFP4
+  `66c6adc4`, both 2026-10-12), `salesforce-sovereign-intelligence/SOV-Transcribe-1` 2026-11-10
+  `505d8fae`, `Reson8/Rumble-2-Flash` 2026-10-14 `a0c34287`, `Cactus-Compute/whistle` 2026-09-30
+  `88cb00ee`, `FermionResearch/Phonon-2` 2026-09-28 `3e6ab3a8`, `higurashi-ai/Haru-4B` 2026-11-12
+  `8d6e83bc`, `adventists-ai/Sophon-Realtime-4B-Flash` 2026-11-16 `8597f03b`,
+  `adventists-ai/Sophon-Realtime-32B-Tag` 2026-10-29 `59a48507`, `-32B-Flash` 2026-11-07 `ccfdb988`,
+  `-32B-E2E` 2026-11-08 `a340379e`, `naklecha/caramel-1` 2026-11-10 `3b1fa6db`,
+  `inworld/voice-isolator` 2026-11-14 `9b0285b3`, `arbazsiddiqui/voxlock` 2026-10-11 `1df3074a`,
+  `LiquidAI/LFM3-Omni-2B` 2026-10-21 `21d75123`, `ai-coustics/quail-voice-focus` 2026-10-29
+  `e0f60cce`. None is gated.
 
 ## 3D asset generation candidates
 
