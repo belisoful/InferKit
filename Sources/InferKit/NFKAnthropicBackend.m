@@ -32,6 +32,25 @@ static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 /*! The beta Claude's MCP connector is served under. */
 static NSString * const NFKAnthropicMCPConnectorBeta = @"mcp-client-2025-11-20";
 
+NSString * const NFKAnthropicBackendInputTransformationsKey = @"inputTransformations";
+
+/*! The beta that adds thinking.block_binding.prefix_mismatch_behavior to a request and the
+	input_transformations array to its reply. */
+static NSString * const NFKAnthropicThinkingBindingBeta = @"thinking-binding-controls-2026-08-01";
+
+/*! The sentence that marks the 400 a failed prefix check returns. Anthropic's page on the error says to
+	match on it alone, since the rest of the message can change. */
+static NSString * const NFKAnthropicPrefixMismatchSentence = @"The block is bound to a different conversation";
+
+/*! The families that run the prefix check on replayed thinking blocks, which are the models
+	Anthropic's prefix-check page lists (2026-11-18). All of them think adaptively when a request
+	names no thinking. */
+static NSArray<NSString *> *NFKAnthropicPrefixCheckFamilies(void)
+{
+	return @[ @"claude-fable-5-2", @"claude-mythos-5-2", @"claude-fable-5-1", @"claude-mythos-5-1",
+			  @"claude-opus-5-5", @"claude-sonnet-5-5", @"claude-haiku-5-5" ];
+}
+
 /*! The thinking budget each reasoning effort the contract names asks for. The Messages API takes a
 	token budget rather than a named level, so the three levels are a table of budgets. The API's own
 	floor is 1024 tokens, and max_tokens is raised where a budget would not fit under it. */
@@ -131,6 +150,10 @@ static NSString *NFKAnthropicTextBeforeStops(NSString *text, NSArray<NSString *>
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NSMutableDictionary *> *blocksByIndex;
 @property (nonatomic, copy, nullable) NSDictionary<NSString *, NSNumber *> *usage;
 @property (nonatomic, copy, nullable) NSString *stopReason;
+/*! The blocks the backend removed before this stream was sent. */
+@property (nonatomic, copy, nullable) NSArray<NSDictionary *> *removedThinking;
+/*! The input_transformations the reply reports under the thinking-binding beta. */
+@property (nonatomic, copy, nullable) NSArray<NSDictionary *> *inputTransformations;
 @property (nonatomic, assign) BOOL finished;
 @end
 
@@ -177,6 +200,9 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 @property (nonatomic, readonly) BOOL acceptsForcedTool;
 /*! Whether the model is one of Meta's Muse models. */
 @property (nonatomic, readonly) BOOL servesMuseModel;
+/*! The prefix_mismatch_behavior value a request to this model carries, or nil where it carries none:
+	the behavior is unset, or the model runs no prefix check. */
+@property (nonatomic, readonly, nullable) NSString *prefixMismatchSetting;
 - (nullable NSString *)effortLevelForEffort:(nullable id)effort;
 @end
 
@@ -217,6 +243,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		_endpointURL = [NSURL URLWithString:@"https://api.anthropic.com/v1/messages"];
 		_apiVersion = NFKAnthropicAPIVersion;
 		_timeout = 120;
+		_recoversFromPrefixMismatch = YES;
 		_modelMaximums = [NSMutableDictionary dictionary];
 		_lookupQueue = dispatch_queue_create("com.inferkit.anthropic.model-lookup", DISPATCH_QUEUE_SERIAL);
 		_session = NSURLSession.sharedSession;
@@ -248,7 +275,8 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 {
 	return [NSSet setWithArray:@[ NFKRemoteBackendTextKey, NFKOutputStructured, NFKOutputReasoning,
 								  NFKOutputToolCalls, NFKOutputAssistantMessage, NFKOutputUsage, NFKOutputFinishReason,
-								  NFKOutputCitations, NFKOutputServerToolResults, NFKRemoteBackendRawKey ]];
+								  NFKOutputCitations, NFKOutputServerToolResults, NFKRemoteBackendRawKey,
+								  NFKAnthropicBackendInputTransformationsKey ]];
 }
 
 - (BOOL)isReady
@@ -271,16 +299,9 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	if (urlRequest == nil) {
 		return nil;
 	}
-	NSHTTPURLResponse *response = nil;
-	NSError *sendError = nil;
-	NSData *responseData = [self sendRequest:urlRequest response:&response error:&sendError];
+	NSArray<NSDictionary *> *removedThinking = nil;
+	NSData *responseData = [self dataBySendingRequest:urlRequest removedThinking:&removedThinking error:outError];
 	if (responseData == nil) {
-		if (outError != NULL) { *outError = sendError; }
-		return nil;
-	}
-	NSError *statusError = [NFKRemoteTransport errorForResponse:response data:responseData];
-	if (statusError != nil) {
-		if (outError != NULL) { *outError = statusError; }
 		return nil;
 	}
 	NSDictionary *responseBody = [NSJSONSerialization JSONObjectWithData:responseData options:0 error:NULL];
@@ -297,6 +318,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 								  usage:[self usageInMessageBody:responseBody]
 									raw:responseBody
 							 stopReason:responseBody[@"stop_reason"]
+						transformations:[self transformationsAfter:removedThinking reportedIn:responseBody]
 								request:request];
 }
 
@@ -334,9 +356,21 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		return;
 	}
 	[job reportProgress:-1.0];
+	[self streamURLRequest:urlRequest forRequest:request removedThinking:nil intoJob:job];
+}
 
+/*! Streams urlRequest into job. A stream the prefix check refuses is sent once more without the
+	mismatched thinking; removedThinking names the blocks an earlier attempt removed, and is nil for
+	the first attempt. */
+- (void)streamURLRequest:(NSMutableURLRequest *)urlRequest
+			  forRequest:(NFKInferenceRequest *)request
+		 removedThinking:(nullable NSArray<NSDictionary *> *)removedThinking
+				 intoJob:(NFKInferenceJob *)job
+{
 	NFKAnthropicStreamState *state = [[NFKAnthropicStreamState alloc] init];
+	state.removedThinking = removedThinking;
 	NSArray<NSString *> *clientStops = [self clientStopsForRequest:request];
+	__block BOOL resent = NO;
 	void (^cancel)(void) = [self streamRequest:urlRequest lineHandler:^(NSString *line) {
 		if (state.finished) {
 			return;
@@ -379,6 +413,14 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 			}
 			state.finished = YES;
 			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			NSArray<NSDictionary *> *removed = nil;
+			NSMutableURLRequest *retry = removedThinking == nil
+				? [self requestByRemovingMismatchedThinkingFrom:urlRequest afterError:failure removed:&removed] : nil;
+			if (retry != nil) {
+				resent = YES;
+				[self streamURLRequest:retry forRequest:request removedThinking:removed intoJob:job];
+				return;
+			}
 			if (failure != nil) {
 				[job finishWithError:failure];
 				return;
@@ -386,6 +428,10 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 			[self finishJob:job fromStreamState:state request:request];
 		});
 	}];
+	// A stream that ended inside the call above and was sent again has set a handler of its own.
+	if (resent) {
+		return;
+	}
 	job.cancellationHandler = cancel;
 	// A cancel that arrived while the lookup ran found no handler to call.
 	if (job.status == NFKInferenceJobStatusCancelled) {
@@ -563,14 +609,8 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	}
 	urlRequest.URL = [self.endpointURL URLByAppendingPathComponent:@"count_tokens"];
 	urlRequest.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
-	NSHTTPURLResponse *response = nil;
-	NSError *sendError = nil;
-	NSData *data = [self sendRequest:urlRequest response:&response error:&sendError];
-	NSError *failure = data == nil ? sendError : [NFKRemoteTransport errorForResponse:response data:data];
-	if (failure != nil || data == nil) {
-		if (outError != NULL) {
-			*outError = failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the count call failed"];
-		}
+	NSData *data = [self dataBySendingRequest:urlRequest removedThinking:NULL error:outError];
+	if (data == nil) {
 		return nil;
 	}
 	NSDictionary *reply = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
@@ -652,6 +692,9 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	if (modelMaximum && NFKAnthropicModelIsInFamilies(self.modelName, NFKAnthropicContextErrorFamilies())) {
 		[betas addObject:NFKAnthropicContextWindowExceededBeta];
 	}
+	if (body[@"thinking"][@"block_binding"] != nil) {
+		[betas addObject:NFKAnthropicThinkingBindingBeta];
+	}
 	if (betas.count > 0) {
 		[urlRequest setValue:[betas componentsJoinedByString:@","] forHTTPHeaderField:@"anthropic-beta"];
 	}
@@ -713,6 +756,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	NSMutableDictionary *outputConfig = [NSMutableDictionary dictionary];
 	BOOL thinks = [self addThinkingForEffort:[request parameterForKey:NFKParameterReasoningEffort]
 									  toBody:body outputConfig:outputConfig];
+	[self addPrefixMismatchSettingToBody:body];
 
 	// Thinking rules the sampling: the API refuses temperature, top_p, or top_k beside it, and the
 	// models from Claude Opus 4.7 on refuse them outright, so the three are dropped there. Meta's
@@ -821,6 +865,20 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	return YES;
 }
 
+/*! Writes thinking.block_binding.prefix_mismatch_behavior for a model that runs the prefix check. The
+	setting rides on an adaptive thinking object, which is what such a model runs when the request
+	names none, so a request without an effort gains {type: adaptive} and thinks as it did. */
+- (void)addPrefixMismatchSettingToBody:(NSMutableDictionary *)body
+{
+	NSString *setting = self.prefixMismatchSetting;
+	if (setting == nil) {
+		return;
+	}
+	NSMutableDictionary *thinking = [body[@"thinking"] mutableCopy] ?: [NSMutableDictionary dictionaryWithObject:@"adaptive" forKey:@"type"];
+	thinking[@"block_binding"] = @{ @"prefix_mismatch_behavior": setting };
+	body[@"thinking"] = thinking;
+}
+
 #pragma mark Model generations
 
 // A name outside the known earlier families is taken as a current model: every model Anthropic has
@@ -843,6 +901,19 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 - (BOOL)servesMuseModel
 {
 	return NFKAnthropicModelIsMuse(self.modelName);
+}
+
+- (nullable NSString *)prefixMismatchSetting
+{
+	if (!NFKAnthropicModelIsInFamilies(self.modelName, NFKAnthropicPrefixCheckFamilies())) {
+		return nil;
+	}
+	switch (self.prefixMismatchBehavior) {
+		case NFKAnthropicPrefixMismatchBehaviorError: return @"error";
+		case NFKAnthropicPrefixMismatchBehaviorDropBlock: return @"drop_block";
+		case NFKAnthropicPrefixMismatchBehaviorUnset: break;
+	}
+	return nil;
 }
 
 /*! The stop sequences the backend applies to the reply, for a model whose route refuses them on the
@@ -1121,6 +1192,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 											 usage:(nullable NSDictionary<NSString *, NSNumber *> *)usage
 										   raw:(id)raw
 									stopReason:(nullable id)stopReason
+							   transformations:(nullable NSArray<NSDictionary *> *)transformations
 									   request:(NFKInferenceRequest *)request
 {
 	BOOL expectsStructured = [self requestExpectsStructuredReply:request];
@@ -1216,6 +1288,9 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	if (ran.count > 0) {
 		outputs[NFKOutputServerToolResults] = ran;
 	}
+	if (transformations.count > 0) {
+		outputs[NFKAnthropicBackendInputTransformationsKey] = transformations;
+	}
 	outputs[NFKRemoteBackendRawKey] = raw;
 	return NFKResultWithFinishReason([NFKInferenceResult resultWithOutputs:outputs], finishReason);
 }
@@ -1275,6 +1350,9 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	}
 	if ([type isEqualToString:@"message_start"] || [type isEqualToString:@"message_delta"]) {
 		NSDictionary *carrier = [event[@"message"] isKindOfClass:NSDictionary.class] ? event[@"message"] : event;
+		if ([carrier[@"input_transformations"] isKindOfClass:NSArray.class]) {
+			state.inputTransformations = carrier[@"input_transformations"];
+		}
 		NSDictionary<NSString *, NSNumber *> *reported = [self usageInMessageBody:carrier];
 		if (reported != nil) {
 			NSMutableDictionary<NSString *, NSNumber *> *usage = [state.usage mutableCopy] ?: [NSMutableDictionary dictionary];
@@ -1367,7 +1445,143 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 								  usage:state.usage
 									raw:@{ @"role": @"assistant", @"content": content }
 							 stopReason:state.stopReason
+						transformations:[self transformationsAfter:state.removedThinking reported:state.inputTransformations]
 								request:request];
+}
+
+#pragma mark Prefix check
+
+/*! Whether the error is the 400 a replayed thinking block gets when the content before it changed
+	since the model produced it. */
+- (BOOL)isPrefixMismatchError:(nullable NSError *)error
+{
+	return [error.userInfo[NFKRemoteErrorStatusCodeKey] integerValue] == 400
+		&& [error.userInfo[NFKRemoteErrorBodyKey] containsString:NFKAnthropicPrefixMismatchSentence];
+}
+
+/*! The position the error names, messages.{i}.content.{j}, as {i, j}, or nil where it names none. The
+	message opens with the position, so the first match is the failed block's. */
+- (nullable NSArray<NSNumber *> *)blockPositionNamedInError:(NSError *)error
+{
+	NSString *detail = error.userInfo[NFKRemoteErrorBodyKey] ?: @"";
+	NSRegularExpression *path = [NSRegularExpression regularExpressionWithPattern:@"messages\\.(\\d+)\\.content\\.(\\d+)" options:0 error:NULL];
+	NSTextCheckingResult *match = [path firstMatchInString:detail options:0 range:NSMakeRange(0, detail.length)];
+	if (match == nil) {
+		return nil;
+	}
+	return @[ @([detail substringWithRange:[match rangeAtIndex:1]].integerValue),
+			  @([detail substringWithRange:[match rangeAtIndex:2]].integerValue) ];
+}
+
+/*! Whether two neighbouring messages share a role or a message has the system role. The error counts
+	such a message as part of the one before it, so the position it names is not an index into the
+	array. */
+- (BOOL)errorPositionsAreAmbiguousFor:(NSArray *)messages
+{
+	NSString *previous = nil;
+	for (NSDictionary *message in messages) {
+		NSString *role = [message isKindOfClass:NSDictionary.class] && [message[@"role"] isKindOfClass:NSString.class] ? message[@"role"] : @"";
+		if ([role isEqualToString:@"system"] || [role isEqualToString:previous]) {
+			return YES;
+		}
+		previous = role;
+	}
+	return NO;
+}
+
+/*! urlRequest without the thinking the prefix check refused, or nil where failure is another error,
+	recoversFromPrefixMismatch is off, or the body holds no thinking to remove. The recovery is the one
+	Anthropic documents for removing the blocks by hand: the named block and every thinking and
+	redacted_thinking block after it go, and every thinking block goes where the named position cannot be
+	read against the array. Each removed block is listed in outRemoved as {type: thinking_removed, path},
+	the path being its place in the request as first sent. */
+- (nullable NSMutableURLRequest *)requestByRemovingMismatchedThinkingFrom:(NSURLRequest *)urlRequest
+															   afterError:(nullable NSError *)failure
+																  removed:(NSArray<NSDictionary *> * _Nullable * _Nullable)outRemoved
+{
+	if (!self.recoversFromPrefixMismatch || ![self isPrefixMismatchError:failure] || urlRequest.HTTPBody == nil) {
+		return nil;
+	}
+	NSMutableDictionary *body = [NSJSONSerialization JSONObjectWithData:urlRequest.HTTPBody options:NSJSONReadingMutableContainers error:NULL];
+	NSMutableArray *messages = [body isKindOfClass:NSDictionary.class] && [body[@"messages"] isKindOfClass:NSArray.class] ? body[@"messages"] : nil;
+	if (messages == nil) {
+		return nil;
+	}
+	NSArray<NSNumber *> *named = [self errorPositionsAreAmbiguousFor:messages] ? nil : [self blockPositionNamedInError:failure];
+	NSInteger firstMessage = named != nil ? named[0].integerValue : 0;
+	NSInteger firstBlock = named != nil ? named[1].integerValue : 0;
+	NSMutableArray<NSDictionary *> *removed = [NSMutableArray array];
+	for (NSInteger index = firstMessage; index < (NSInteger)messages.count; index++) {
+		NSMutableDictionary *message = [messages[index] isKindOfClass:NSDictionary.class] ? messages[index] : nil;
+		NSArray *content = [message[@"content"] isKindOfClass:NSArray.class] ? message[@"content"] : nil;
+		NSMutableArray *kept = [NSMutableArray array];
+		for (NSInteger position = 0; position < (NSInteger)content.count; position++) {
+			NSDictionary *block = content[position];
+			BOOL thinking = [block isKindOfClass:NSDictionary.class]
+				&& ([block[@"type"] isEqual:@"thinking"] || [block[@"type"] isEqual:@"redacted_thinking"]);
+			if (thinking && (index > firstMessage || position >= firstBlock)) {
+				[removed addObject:@{ @"type": @"thinking_removed",
+									  @"path": [NSString stringWithFormat:@"messages.%ld.content.%ld", (long)index, (long)position] }];
+				continue;
+			}
+			[kept addObject:block];
+		}
+		if (content != nil) {
+			message[@"content"] = kept;
+		}
+	}
+	if (removed.count == 0) {
+		return nil;
+	}
+	NSMutableURLRequest *retry = [urlRequest mutableCopy];
+	retry.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+	if (outRemoved != NULL) {
+		*outRemoved = removed;
+	}
+	return retry;
+}
+
+/*! Sends urlRequest and returns the body of a 2xx answer, or nil with the transport's or the status's
+	error. A request the prefix check refuses is sent once more without the mismatched thinking, and
+	outRemoved then lists the removed blocks. */
+- (nullable NSData *)dataBySendingRequest:(NSURLRequest *)urlRequest
+						  removedThinking:(NSArray<NSDictionary *> * _Nullable * _Nullable)outRemoved
+									error:(NSError * _Nullable *)outError
+{
+	NSURLRequest *sending = urlRequest;
+	for (NSInteger attempt = 0; ; attempt++) {
+		NSHTTPURLResponse *response = nil;
+		NSError *sendError = nil;
+		NSData *data = [self sendRequest:sending response:&response error:&sendError];
+		NSError *failure = data == nil
+			? (sendError ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the call returned nothing"])
+			: [NFKRemoteTransport errorForResponse:response data:data];
+		if (failure == nil) {
+			return data;
+		}
+		NSURLRequest *retry = attempt == 0 ? [self requestByRemovingMismatchedThinkingFrom:sending afterError:failure removed:outRemoved] : nil;
+		if (retry == nil) {
+			if (outError != NULL) { *outError = failure; }
+			return nil;
+		}
+		sending = retry;
+	}
+}
+
+/*! The blocks the backend removed, then the input_transformations entries the reply reports under the
+	thinking-binding beta. */
+- (nullable NSArray<NSDictionary *> *)transformationsAfter:(nullable NSArray<NSDictionary *> *)removedThinking
+												  reported:(nullable NSArray *)reported
+{
+	NSArray<NSDictionary *> *all = [removedThinking ?: @[] arrayByAddingObjectsFromArray:reported ?: @[]];
+	return all.count > 0 ? all : nil;
+}
+
+- (nullable NSArray<NSDictionary *> *)transformationsAfter:(nullable NSArray<NSDictionary *> *)removedThinking
+												reportedIn:(nullable NSDictionary *)reply
+{
+	NSArray *reported = [reply[@"input_transformations"] isKindOfClass:NSArray.class] ? reply[@"input_transformations"] : nil;
+	return [self transformationsAfter:removedThinking reported:reported];
 }
 
 #pragma mark Transport
@@ -1432,6 +1646,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 								  usage:[self usageInMessageBody:reply]
 									raw:reply
 							 stopReason:reply[@"stop_reason"]
+						transformations:[self transformationsAfter:nil reportedIn:reply]
 								request:request];
 }
 

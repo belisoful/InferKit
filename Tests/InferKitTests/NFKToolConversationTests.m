@@ -63,6 +63,72 @@ NFK_STAGED_TRANSPORT
 NFK_STAGED_TRANSPORT
 @end
 
+/*! An Anthropic backend that answers each call from a staged list of {status, body}: a blocking call
+	from responses, and a stream from streams, where a 200's body is its SSE lines joined by newlines. */
+@interface NFKPrefixCheckStub : NFKAnthropicBackend
+@property (nonatomic, strong) NSMutableArray<NSURLRequest *> *requests;
+@property (nonatomic, strong) NSMutableArray<NSArray *> *responses;
+@property (nonatomic, strong) NSMutableArray<NSArray *> *streams;
+@end
+
+@implementation NFKPrefixCheckStub
+
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		_requests = [NSMutableArray array];
+		_responses = [NSMutableArray array];
+		_streams = [NSMutableArray array];
+	}
+	return self;
+}
+
+- (NSArray *)nextOf:(NSMutableArray<NSArray *> *)staged
+{
+	NSArray *next = staged.firstObject ?: @[ @200, @"{}" ];
+	if (staged.count > 0) {
+		[staged removeObjectAtIndex:0];
+	}
+	return next;
+}
+
+- (NSData *)sendRequest:(NSURLRequest *)request response:(NSHTTPURLResponse **)outResponse error:(NSError **)outError
+{
+	[self.requests addObject:request];
+	NSArray *next = [self nextOf:self.responses];
+	if (outResponse != NULL) {
+		*outResponse = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:[next[0] integerValue] HTTPVersion:@"HTTP/1.1" headerFields:nil];
+	}
+	return [next[1] dataUsingEncoding:NSUTF8StringEncoding];
+}
+
+- (void (^)(void))streamRequest:(NSURLRequest *)request
+					lineHandler:(void (^)(NSString *))lineHandler
+			  completionHandler:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completionHandler
+{
+	[self.requests addObject:request];
+	NSArray *next = [self nextOf:self.streams];
+	NSInteger status = [next[0] integerValue];
+	NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:nil];
+	if (status != 200) {
+		completionHandler(response, [next[1] dataUsingEncoding:NSUTF8StringEncoding], nil);
+		return ^{};
+	}
+	for (NSString *line in [next[1] componentsSeparatedByString:@"\n"]) {
+		lineHandler(line);
+	}
+	completionHandler(response, nil, nil);
+	return ^{};
+}
+
+- (NSDictionary *)bodyAt:(NSUInteger)index
+{
+	return [NSJSONSerialization JSONObjectWithData:self.requests[index].HTTPBody options:0 error:NULL];
+}
+
+@end
+
 @interface NFKToolConversationTests : XCTestCase
 @property (nonatomic, copy) NSData *png;
 @end
@@ -278,6 +344,281 @@ NFK_STAGED_TRANSPORT
 	XCTAssertEqualObjects(second[2][@"content"][0][@"tool_use_id"], @"toolu_1");
 	XCTAssertEqualObjects(second[2][@"content"][0][@"content"], @"A cat sat.");
 	XCTAssertEqualObjects([result outputForKey:NFKOutputUsage][NFKUsageInputTokens], @130);
+}
+
+#pragma mark The prefix check
+
+- (NFKPrefixCheckStub *)prefixCheckStub
+{
+	NFKPrefixCheckStub *stub = [[NFKPrefixCheckStub alloc] init];
+	stub.modelName = @"claude-fable-5-2";
+	stub.maxTokens = 4096;
+	return stub;
+}
+
+// The 400 a replayed thinking block gets when the content before it changed, naming the block.
+- (NSArray *)prefixMismatchAt:(NSString *)path
+{
+	NSString *message = [NSString stringWithFormat:@"%@: Invalid `signature` in `thinking` block. The block is bound to a different "
+						 "conversation. Remove the block, or set `thinking.block_binding.prefix_mismatch_behavior` to \\\"drop_block\\\". "
+						 "That setting requires the `thinking-binding-controls-2026-08-01` value in the `anthropic-beta` header.", path];
+	return @[ @400, [NSString stringWithFormat:@"{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"%@\"}}", message] ];
+}
+
+// Two tool turns, each opening with a signed thinking block: user, assistant, tool result, assistant,
+// tool result. The assistant turns sit at messages.1 and messages.3 on the wire.
+- (NSArray<NSDictionary *> *)twoThinkingTurnsThrough:(NFKPrefixCheckStub *)stub
+{
+	NSMutableArray<NSDictionary *> *conversation = [NSMutableArray arrayWithObject:@{ @"role": @"user", @"content": @"Rome, then Oslo?" }];
+	NSArray<NSString *> *cities = @[ @"Rome", @"Oslo" ];
+	for (NSUInteger turn = 0; turn < cities.count; turn++) {
+		NSString *call = [NSString stringWithFormat:@"toolu_%lu", (unsigned long)turn + 1];
+		NSString *reply = [NSString stringWithFormat:@"{\"content\":["
+						   "{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"sig-%lu\"},"
+						   "{\"type\":\"tool_use\",\"id\":\"%@\",\"name\":\"get_weather\",\"input\":{\"city\":\"%@\"}}]}",
+						   (unsigned long)turn + 1, call, cities[turn]];
+		[stub.responses addObject:@[ @200, reply ]];
+		NFKInferenceResult *result = [stub runInferenceForRequest:[self requestWith:conversation] error:NULL];
+		[conversation addObject:[NFKToolMessages assistantMessageForResult:result]];
+		[conversation addObject:[NFKToolMessages messageForToolCallIdentifier:call name:@"get_weather" result:[NFKToolResult resultWithText:@"21 C"]]];
+	}
+	[stub.requests removeAllObjects];
+	return conversation;
+}
+
+- (NSArray<NSString *> *)blockTypesOf:(NSDictionary *)body atMessage:(NSUInteger)index
+{
+	return [body[@"messages"][index][@"content"] valueForKey:@"type"];
+}
+
+- (void)testAPrefixMismatchIsSentOnceMoreWithoutTheNamedThinkingAndTheThinkingAfterIt
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	NSArray<NSDictionary *> *conversation = [self twoThinkingTurnsThrough:stub];
+	NSArray *edited = [@[ @{ @"role": @"system", @"content": @"Answer in Celsius." } ] arrayByAddingObjectsFromArray:conversation];
+	[stub.responses addObject:[self prefixMismatchAt:@"messages.3.content.0"]];
+	[stub.responses addObject:@[ @200, @"{\"content\":[{\"type\":\"text\",\"text\":\"Both are 21 C.\"}],\"stop_reason\":\"end_turn\"}" ]];
+
+	NSError *error = nil;
+	NFKInferenceResult *result = [stub runInferenceForRequest:[self requestWith:edited] error:&error];
+	XCTAssertEqualObjects(result.text, @"Both are 21 C.", @"%@", error);
+	XCTAssertEqual(stub.requests.count, 2, @"the refused request is sent once more");
+
+	NSDictionary *refused = [stub bodyAt:0];
+	XCTAssertEqualObjects([self blockTypesOf:refused atMessage:1], (@[ @"thinking", @"tool_use" ]));
+	XCTAssertEqualObjects([self blockTypesOf:refused atMessage:3], (@[ @"thinking", @"tool_use" ]));
+
+	NSDictionary *resent = [stub bodyAt:1];
+	XCTAssertEqualObjects(resent[@"messages"][1], refused[@"messages"][1], @"the thinking before the named block stays");
+	XCTAssertEqualObjects([self blockTypesOf:resent atMessage:3], (@[ @"tool_use" ]));
+	XCTAssertEqualObjects(resent[@"messages"][3][@"content"][0], refused[@"messages"][3][@"content"][1]);
+	NSMutableDictionary *rest = [resent mutableCopy];
+	NSMutableDictionary *before = [refused mutableCopy];
+	[rest removeObjectForKey:@"messages"];
+	[before removeObjectForKey:@"messages"];
+	XCTAssertEqualObjects(rest, before, @"nothing but the thinking changes");
+	for (NSUInteger index = 0; index < [refused[@"messages"] count]; index++) {
+		if (index != 3) {
+			XCTAssertEqualObjects(resent[@"messages"][index], refused[@"messages"][index], @"messages.%lu", (unsigned long)index);
+		}
+	}
+	XCTAssertEqualObjects(stub.requests[1].allHTTPHeaderFields, stub.requests[0].allHTTPHeaderFields);
+	XCTAssertNil(stub.requests[1].allHTTPHeaderFields[@"anthropic-beta"], @"the recovery needs no beta");
+	XCTAssertEqualObjects([result outputForKey:NFKAnthropicBackendInputTransformationsKey],
+						  (@[ @{ @"type": @"thinking_removed", @"path": @"messages.3.content.0" } ]));
+}
+
+- (void)testAMismatchAtTheFirstThinkingBlockRemovesEveryOneAfterItToo
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	NSArray<NSDictionary *> *conversation = [self twoThinkingTurnsThrough:stub];
+	[stub.responses addObject:[self prefixMismatchAt:@"messages.1.content.0"]];
+	[stub.responses addObject:@[ @200, @"{\"content\":[{\"type\":\"redacted_thinking\",\"data\":\"enc\"},{\"type\":\"text\",\"text\":\"ok\"}]}" ]];
+	NFKInferenceResult *result = [stub runInferenceForRequest:[self requestWith:conversation] error:NULL];
+	XCTAssertEqualObjects(result.text, @"ok");
+	XCTAssertEqualObjects([self blockTypesOf:[stub bodyAt:1] atMessage:1], (@[ @"tool_use" ]));
+	XCTAssertEqualObjects([self blockTypesOf:[stub bodyAt:1] atMessage:3], (@[ @"tool_use" ]));
+	NSArray *removed = @[ @{ @"type": @"thinking_removed", @"path": @"messages.1.content.0" },
+						  @{ @"type": @"thinking_removed", @"path": @"messages.3.content.0" } ];
+	XCTAssertEqualObjects([result outputForKey:NFKAnthropicBackendInputTransformationsKey], removed);
+	NSArray *turn = [NFKToolMessages assistantMessageForResult:result][NFKMessageMetadataKey][@"turn"];
+	XCTAssertEqualObjects(turn[0][@"type"], @"redacted_thinking", @"the new turn keeps the thinking the model produced since");
+}
+
+// The error counts two neighbouring messages of one role as one, so the position it names is not an
+// index into the array, and every thinking block goes.
+- (void)testAMismatchWhoseNamedPositionCannotBeReadRemovesEveryThinkingBlock
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	NSArray<NSDictionary *> *conversation = [self twoThinkingTurnsThrough:stub];
+	NSArray *doubled = [@[ @{ @"role": @"user", @"content": @"A question first." } ] arrayByAddingObjectsFromArray:conversation];
+	[stub.responses addObject:[self prefixMismatchAt:@"messages.3.content.0"]];
+	[stub.responses addObject:@[ @200, @"{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}" ]];
+	NFKInferenceResult *result = [stub runInferenceForRequest:[self requestWith:doubled] error:NULL];
+	XCTAssertEqualObjects(result.text, @"ok");
+	NSDictionary *resent = [stub bodyAt:1];
+	XCTAssertEqualObjects([self blockTypesOf:resent atMessage:2], (@[ @"tool_use" ]));
+	XCTAssertEqualObjects([self blockTypesOf:resent atMessage:4], (@[ @"tool_use" ]));
+	NSArray *removed = @[ @{ @"type": @"thinking_removed", @"path": @"messages.2.content.0" },
+						  @{ @"type": @"thinking_removed", @"path": @"messages.4.content.0" } ];
+	XCTAssertEqualObjects([result outputForKey:NFKAnthropicBackendInputTransformationsKey], removed);
+}
+
+- (void)testAPrefixMismatchIsReturnedWhenTheRecoveryIsOffOrTheSecondAttemptIsRefused
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	NSArray<NSDictionary *> *conversation = [self twoThinkingTurnsThrough:stub];
+	stub.recoversFromPrefixMismatch = NO;
+	[stub.responses addObject:[self prefixMismatchAt:@"messages.3.content.0"]];
+	NSError *error = nil;
+	XCTAssertNil([stub runInferenceForRequest:[self requestWith:conversation] error:&error]);
+	XCTAssertEqual(stub.requests.count, 1);
+	XCTAssertEqualObjects(error.userInfo[NFKRemoteErrorStatusCodeKey], @400);
+	XCTAssertTrue([error.userInfo[NFKRemoteErrorBodyKey] containsString:@"bound to a different conversation"]);
+
+	stub.recoversFromPrefixMismatch = YES;
+	[stub.requests removeAllObjects];
+	[stub.responses addObject:[self prefixMismatchAt:@"messages.1.content.0"]];
+	[stub.responses addObject:[self prefixMismatchAt:@"messages.1.content.0"]];
+	[stub.responses addObject:@[ @200, @"{\"content\":[{\"type\":\"text\",\"text\":\"never read\"}]}" ]];
+	error = nil;
+	XCTAssertNil([stub runInferenceForRequest:[self requestWith:conversation] error:&error]);
+	XCTAssertEqual(stub.requests.count, 2, @"the request is sent again once");
+	XCTAssertEqualObjects(error.userInfo[NFKRemoteErrorStatusCodeKey], @400);
+}
+
+// A signature that does not verify answers 400 without the sentence about another conversation, and
+// removing thinking is no recovery for it.
+- (void)testAnotherBadRequestAndAMismatchWithNoThinkingToRemoveAreNotSentAgain
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	NSArray<NSDictionary *> *conversation = [self twoThinkingTurnsThrough:stub];
+	[stub.responses addObject:@[ @400, (@"{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\","
+										"\"message\":\"messages.1.content.0: Invalid `signature` in `thinking` block.\"}}") ]];
+	NSError *error = nil;
+	XCTAssertNil([stub runInferenceForRequest:[self requestWith:conversation] error:&error]);
+	XCTAssertEqual(stub.requests.count, 1);
+	XCTAssertEqualObjects(error.userInfo[NFKRemoteErrorStatusCodeKey], @400);
+
+	[stub.requests removeAllObjects];
+	[stub.responses addObject:[self prefixMismatchAt:@"messages.1.content.0"]];
+	NSArray<NSDictionary *> *plain = @[ @{ @"role": @"user", @"content": @"Rome?" } ];
+	XCTAssertNil([stub runInferenceForRequest:[self requestWith:plain] error:&error]);
+	XCTAssertEqual(stub.requests.count, 1, @"a body without thinking has nothing to remove");
+}
+
+- (void)testARequestThatPassesThePrefixCheckGoesOutOnceAsBuilt
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	NSArray<NSDictionary *> *conversation = [self twoThinkingTurnsThrough:stub];
+	[stub.responses addObject:@[ @200, @"{\"content\":[{\"type\":\"text\",\"text\":\"Both are 21 C.\"}]}" ]];
+	NFKInferenceResult *result = [stub runInferenceForRequest:[self requestWith:conversation] error:NULL];
+	XCTAssertEqualObjects(result.text, @"Both are 21 C.");
+	XCTAssertEqual(stub.requests.count, 1);
+	NSDictionary *body = [stub bodyAt:0];
+	XCTAssertNil(body[@"thinking"], @"no setting rides on a request by default");
+	XCTAssertNil(stub.requests[0].allHTTPHeaderFields[@"anthropic-beta"]);
+	XCTAssertEqualObjects(body[@"messages"][1][@"content"][0], (@{ @"type": @"thinking", @"thinking": @"", @"signature": @"sig-1" }),
+						  @"a thinking block goes back as returned, its text empty or not");
+	XCTAssertEqualObjects(body[@"messages"][3][@"content"][0][@"signature"], @"sig-2");
+	XCTAssertNil([result outputForKey:NFKAnthropicBackendInputTransformationsKey]);
+}
+
+- (void)testThePrefixMismatchBehaviorRidesOnAdaptiveThinkingUnderItsBeta
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	stub.prefixMismatchBehavior = NFKAnthropicPrefixMismatchBehaviorDropBlock;
+	NSString *dropped = @"{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"input_transformations\":["
+		"{\"type\":\"thinking_dropped\",\"path\":\"messages.1.content.0\",\"reason\":\"prefix_binding_mismatch\"}]}";
+	[stub.responses addObject:@[ @200, dropped ]];
+	NFKInferenceRequest *plain = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }];
+	NFKInferenceResult *result = [stub runInferenceForRequest:plain error:NULL];
+	NSDictionary *binding = @{ @"prefix_mismatch_behavior": @"drop_block" };
+	XCTAssertEqualObjects([stub bodyAt:0][@"thinking"], (@{ @"type": @"adaptive", @"block_binding": binding }));
+	XCTAssertEqualObjects(stub.requests[0].allHTTPHeaderFields[@"anthropic-beta"], @"thinking-binding-controls-2026-08-01");
+	NSArray *reported = @[ @{ @"type": @"thinking_dropped", @"path": @"messages.1.content.0", @"reason": @"prefix_binding_mismatch" } ];
+	XCTAssertEqualObjects([result outputForKey:NFKAnthropicBackendInputTransformationsKey], reported);
+
+	stub.prefixMismatchBehavior = NFKAnthropicPrefixMismatchBehaviorError;
+	NFKInferenceRequest *thinking = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }
+															   parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortLight }];
+	[stub runInferenceForRequest:thinking error:NULL];
+	NSDictionary *sent = [stub bodyAt:1][@"thinking"];
+	XCTAssertEqualObjects(sent, (@{ @"type": @"adaptive", @"display": @"summarized", @"block_binding": @{ @"prefix_mismatch_behavior": @"error" } }));
+
+	[stub.responses addObject:@[ @200, @"{\"input_tokens\":9}" ]];
+	XCTAssertEqualObjects([stub tokenCountForRequest:plain error:NULL], @9);
+	XCTAssertEqualObjects([stub bodyAt:2][@"thinking"][@"block_binding"], (@{ @"prefix_mismatch_behavior": @"error" }));
+	XCTAssertEqualObjects(stub.requests[2].allHTTPHeaderFields[@"anthropic-beta"], @"thinking-binding-controls-2026-08-01");
+
+	// Claude Opus 5 and Claude Haiku 4.5 run no prefix check, and Meta's route refuses fields it does not name.
+	for (NSString *model in @[ @"claude-opus-5", @"claude-haiku-4-5", @"muse-spark-1.3" ]) {
+		stub.modelName = model;
+		[stub.requests removeAllObjects];
+		[stub runInferenceForRequest:plain error:NULL];
+		XCTAssertNil([stub bodyAt:0][@"thinking"], @"%@", model);
+		XCTAssertNil(stub.requests[0].allHTTPHeaderFields[@"anthropic-beta"], @"%@", model);
+	}
+}
+
+- (void)testAStreamThePrefixCheckRefusesIsSentAgainWithoutTheThinking
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	NSArray<NSDictionary *> *conversation = [self twoThinkingTurnsThrough:stub];
+	NSString *lines = @"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n"
+		"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Both are 21 C.\"}}\n"
+		"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n"
+		"data: {\"type\":\"message_stop\"}";
+	[stub.streams addObject:[self prefixMismatchAt:@"messages.3.content.0"]];
+	[stub.streams addObject:@[ @200, lines ]];
+	NFKInferenceJob *job = [stub submitInferenceJobForRequest:[self requestWith:conversation]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	XCTAssertEqualObjects(job.result.text, @"Both are 21 C.");
+	XCTAssertEqual(stub.requests.count, 2);
+	XCTAssertEqualObjects([stub bodyAt:1][@"stream"], @YES);
+	XCTAssertEqualObjects([self blockTypesOf:[stub bodyAt:1] atMessage:1], (@[ @"thinking", @"tool_use" ]));
+	XCTAssertEqualObjects([self blockTypesOf:[stub bodyAt:1] atMessage:3], (@[ @"tool_use" ]));
+	XCTAssertEqualObjects([job.result outputForKey:NFKAnthropicBackendInputTransformationsKey],
+						  (@[ @{ @"type": @"thinking_removed", @"path": @"messages.3.content.0" } ]));
+
+	[stub.requests removeAllObjects];
+	[stub.streams addObject:[self prefixMismatchAt:@"messages.3.content.0"]];
+	[stub.streams addObject:[self prefixMismatchAt:@"messages.3.content.0"]];
+	NFKInferenceJob *refused = [stub submitInferenceJobForRequest:[self requestWith:conversation]];
+	XCTAssertEqual(refused.status, NFKInferenceJobStatusFailed);
+	XCTAssertEqual(stub.requests.count, 2, @"the stream is sent again once");
+	XCTAssertEqualObjects(refused.error.userInfo[NFKRemoteErrorStatusCodeKey], @400);
+}
+
+// Under the beta the stream's opening message carries the blocks the API dropped.
+- (void)testAStreamReportsTheBlocksTheAPIDropped
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	stub.prefixMismatchBehavior = NFKAnthropicPrefixMismatchBehaviorDropBlock;
+	NSString *lines = @"data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\",\"content\":[],\"input_transformations\":["
+		"{\"type\":\"thinking_dropped\",\"path\":\"messages.1.content.0\",\"reason\":\"prefix_binding_mismatch\"}]}}\n"
+		"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"ok\"}}\n"
+		"data: {\"type\":\"message_stop\"}";
+	[stub.streams addObject:@[ @200, lines ]];
+	NFKInferenceJob *job = [stub submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }]];
+	XCTAssertEqualObjects(job.result.text, @"ok");
+	XCTAssertEqualObjects([job.result outputForKey:NFKAnthropicBackendInputTransformationsKey][0][@"reason"], @"prefix_binding_mismatch");
+	XCTAssertEqualObjects(stub.requests[0].allHTTPHeaderFields[@"anthropic-beta"], @"thinking-binding-controls-2026-08-01");
+}
+
+// count_tokens runs the same check, so a count of an edited conversation recovers the same way.
+- (void)testACountThePrefixCheckRefusesIsSentAgainWithoutTheThinking
+{
+	NFKPrefixCheckStub *stub = self.prefixCheckStub;
+	NSArray<NSDictionary *> *conversation = [self twoThinkingTurnsThrough:stub];
+	[stub.responses addObject:[self prefixMismatchAt:@"messages.3.content.0"]];
+	[stub.responses addObject:@[ @200, @"{\"input_tokens\":42}" ]];
+	NSError *error = nil;
+	XCTAssertEqualObjects([stub tokenCountForRequest:[self requestWith:conversation] error:&error], @42, @"%@", error);
+	XCTAssertEqual(stub.requests.count, 2);
+	XCTAssertEqualObjects(stub.requests[1].URL.absoluteString, @"https://api.anthropic.com/v1/messages/count_tokens");
+	XCTAssertEqualObjects([self blockTypesOf:[stub bodyAt:1] atMessage:1], (@[ @"thinking", @"tool_use" ]));
+	XCTAssertEqualObjects([self blockTypesOf:[stub bodyAt:1] atMessage:3], (@[ @"tool_use" ]));
 }
 
 #pragma mark Responses

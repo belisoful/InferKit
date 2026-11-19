@@ -11,6 +11,41 @@ NS_ASSUME_NONNULL_BEGIN
 @class NFKRemoteProvider;
 
 /*!
+	@const      NFKAnthropicBackendInputTransformationsKey
+	@abstract   The output key for what happened to the thinking blocks a request replayed.
+	@discussion An NSArray of NSDictionary, absent when nothing happened. Two sources fill it:
+
+				- the backend, after the prefix-check 400 → one {type: thinking_removed, path} per
+				  block it removed before sending again (see recoversFromPrefixMismatch)
+				- the API, under prefixMismatchBehavior → its input_transformations entries as
+				  returned, {type, path, reason}: thinking_dropped for a block it dropped, and
+				  thinking_mismatch_allowed for a failing block it let through
+
+				path is messages.{i}.content.{j}, the block's place in the request as first sent. The
+				API adds entry types and reasons over time, so a reader skips one it does not know.
+				Introduced in InferKit 0.4.0.
+*/
+extern NSString * const NFKAnthropicBackendInputTransformationsKey;
+
+/*!
+	@enum       NFKAnthropicPrefixMismatchBehavior
+	@abstract   What a request asks the API to do with a replayed thinking block that fails the prefix
+				check.
+	@discussion The values are thinking.block_binding.prefix_mismatch_behavior, which the beta header
+				thinking-binding-controls-2026-08-01 adds. Introduced in InferKit 0.4.0.
+*/
+typedef NS_ENUM(NSInteger, NFKAnthropicPrefixMismatchBehavior) {
+	/*! Sends neither the setting nor the beta header. The model decides: Claude Fable 5.2 and Claude
+		Mythos 5.2 answer 400. */
+	NFKAnthropicPrefixMismatchBehaviorUnset = 0,
+	/*! "error": a failing block is a 400 on every model that runs the check. */
+	NFKAnthropicPrefixMismatchBehaviorError = 1,
+	/*! "drop_block": the API drops the failing blocks and answers, and lists them under
+		NFKAnthropicBackendInputTransformationsKey. */
+	NFKAnthropicPrefixMismatchBehaviorDropBlock = 2,
+};
+
+/*!
 	@class      NFKAnthropicBackend
 	@abstract   An inference backend that calls Anthropic's Messages API.
 	@discussion Every other hosted service this toolkit talks to speaks the OpenAI chat-completions
@@ -55,6 +90,14 @@ NS_ASSUME_NONNULL_BEGIN
 				A numeric thinking budget sent to an adaptive model is refused with
 				kNFKError_InferenceUnsupported. Thinking counts toward max_tokens, so a reasoning
 				effort raises it above the matching budget.
+
+				Claude Fable 5.2 and Claude Mythos 5.2 run a prefix check on every request that replays
+				thinking blocks, and Claude Fable 5.1, Claude Mythos 5.1, Claude Opus 5.5, Claude
+				Sonnet 5.5, and Claude Haiku 5.5 can. A block is valid only while the system prompt,
+				the tools, and every earlier message are what they were when the model produced it. A
+				conversation that keeps its system prompt and tools and only appends messages passes.
+				One that changed any of them answers 400, and the same body fails again.
+				recoversFromPrefixMismatch and prefixMismatchBehavior are the two recoveries.
 
 				Meta's Model API serves its Muse models on the same route (POST /v1/messages), which
 				backendForProvider:apiKey:modelName: reaches on the meta preset. A model named muse-…
@@ -122,6 +165,52 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! The session used for transport. */
 @property (nonatomic, strong) NSURLSession *session;
+
+/*!
+	@property   recoversFromPrefixMismatch
+	@abstract   Whether a request the prefix check refuses is sent once more without the refused thinking.
+	@discussion YES by default. The 400 is recognized by its sentence "The block is bound to a different
+				conversation". The backend then removes the block the error names and every thinking and
+				redacted_thinking block after it, keeps every other block, and sends the request again
+				once. Where two neighbouring messages share a role, the named position cannot be read
+				against the array, and every thinking block is removed. The result lists the removed
+				blocks under NFKAnthropicBackendInputTransformationsKey. A second refusal is returned as
+				the error.
+
+				The model answers that turn without the removed reasoning, and the prompt cache misses
+				from the first removed block on. The caller's messages still hold the refused blocks, so
+				each later run of the conversation is refused and sent again the same way, and loses the
+				thinking produced since. Setting prefixMismatchBehavior to
+				NFKAnthropicPrefixMismatchBehaviorDropBlock for the rest of that conversation avoids
+				both. submitInferenceJobForRequest:, runInferenceForRequest:error:, and
+				tokenCountForRequest:error: all recover; a batch item is never refused. NO returns the
+				400 as the error. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, assign) BOOL recoversFromPrefixMismatch;
+
+/*!
+	@property   prefixMismatchBehavior
+	@abstract   The prefix_mismatch_behavior a request carries, with the beta header that adds it.
+	@discussion NFKAnthropicPrefixMismatchBehaviorUnset by default, which sends nothing. Any other
+				value sends thinking.block_binding.prefix_mismatch_behavior and the anthropic-beta value
+				thinking-binding-controls-2026-08-01 on a run, a count, and a batch item, to the models
+				that run the prefix check: Claude Fable 5.2 and 5.1, Claude Mythos 5.2 and 5.1, Claude
+				Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5. The setting rides on an adaptive
+				thinking object, so a request without NFKParameterReasoningEffort gains
+				thinking: {type: adaptive}, which is what those models run when a request names none.
+				Every other model is sent neither the setting nor the header.
+
+				- NFKAnthropicPrefixMismatchBehaviorDropBlock → the API drops the failing blocks, keeps
+				  the valid ones, answers, and names each dropped block under
+				  NFKAnthropicBackendInputTransformationsKey. The setting acts on the one request, so
+				  it stays set for the rest of a conversation whose history holds the change.
+				- NFKAnthropicPrefixMismatchBehaviorError → a failing block is a 400 on every one of
+				  those models, which recoversFromPrefixMismatch then recovers from.
+
+				A proxy or platform that drops the header leaves the setting refused with a 400 whose
+				text ends "block_binding: Extra inputs are not permitted". Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, assign) NFKAnthropicPrefixMismatchBehavior prefixMismatchBehavior;
 
 + (instancetype)backendWithEndpointURL:(nullable NSURL *)endpointURL;
 
