@@ -808,9 +808,8 @@ arithmetic as before.
   mask and latents as diffusers'), read beside the noised latent. Measured (`wan_lora_diffsynth_experts`,
   DiffSynth's own I2V `WanModel` at 12 input channels under its LoRA, the low-noise range): the four ranges
   equal ([0, 417), [417, 1000), [0, 358), [358, 1000)); prediction 1.0000000; loss 2.027656 against
-  2.0276527; lowest of 40 adapter gradients 0.99999985. Not yet covered: the Animate transformer
-  (DiffSynth trains Animate 2 in one pass with the reference latent noised in the sequence), and a
-  measured training step on released weights.
+  2.0276527; lowest of 40 adapter gradients 0.99999985. The Animate transformer's recipe is in
+  `mlx-models-video.md`.
   `NFKMLXWanTransformerNet.recomputesBlocksInBackward` (on by default in `fineTune`, as the trainers enable
   `gradient_checkpointing`) runs each block as a custom function whose backward reruns it, so a step holds
   one block's activations; the gradients equal the plain backward's within 1e-5 relative
