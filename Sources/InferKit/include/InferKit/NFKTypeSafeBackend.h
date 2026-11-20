@@ -51,6 +51,13 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The model name sent in the request body, for example jev-latest. Required by the API. */
 @property (nonatomic, copy, nullable) NSString *modelName;
 
+/*! The header that carries each request's session, or nil to send none (the default). The session is
+	ses_ and a digest of the request's NFKParameterConversationKey, else of its messages through the
+	first user message, else an identifier this backend keeps, which a follow-up request (a poll, a
+	cancel, a lookup) also carries. The provider factories set it from NFKRemoteProvider's
+	sessionHeaderName: x-opencode-session for the OpenCode presets. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, nullable) NSString *sessionHeaderName;
+
 /*! Seconds before the request times out. Defaults to 30. */
 @property (nonatomic, assign) NSTimeInterval timeout;
 

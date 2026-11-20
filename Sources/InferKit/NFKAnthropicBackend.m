@@ -216,6 +216,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
+	backend.sessionHeaderName = provider.sessionHeaderName;
 	return backend;
 }
 
@@ -524,6 +525,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		lookup.timeoutInterval = MIN(self.timeout, NFKAnthropicModelLookupTimeout);
 		[lookup setValue:@"application/json" forHTTPHeaderField:@"Accept"];
 		[self authorizeURLRequest:lookup];
+		NFKRemoteApplySessionHeader(lookup, self.sessionHeaderName, nil, self);
 		NSHTTPURLResponse *response = nil;
 		NSData *data = [self sendRequest:lookup response:&response error:NULL];
 		if (data == nil || response.statusCode != 200) {
@@ -669,6 +671,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		[urlRequest setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
 	}
 	[self authorizeURLRequest:urlRequest];
+	NFKRemoteApplySessionHeader(urlRequest, self.sessionHeaderName, request, self);
 	NSMutableArray<NSString *> *betas = [NSMutableArray array];
 	if ([body[@"mcp_servers"] count] > 0) {
 		[betas addObject:NFKAnthropicMCPConnectorBeta];

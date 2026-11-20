@@ -105,6 +105,12 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	API this way. Empty for every other preset. Introduced in InferKit 0.4.0. */
 @property (nonatomic, copy, readonly) NSDictionary<NSString *, NSNumber *> *modelPrefixAPIStyles;
 
+/*! The header that names a request's conversation, for a provider that routes and caches by it:
+	x-opencode-session for openCodeZen and openCodeGo (Go refuses a request without it), nil for every
+	other preset. backendForProvider:apiKey:modelName: and each backend's own provider factory copy it
+	to the backend's sessionHeaderName. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, readonly, nullable) NSString *sessionHeaderName;
+
 /*! Whether a key is required. A local server does not need one. */
 @property (nonatomic, assign, readonly) BOOL requiresAPIKey;
 

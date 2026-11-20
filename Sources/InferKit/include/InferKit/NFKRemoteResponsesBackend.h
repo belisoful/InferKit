@@ -79,6 +79,13 @@ typedef NS_ENUM(NSInteger, NFKRemoteResponsesDialect) {
 /*! The model name sent in the request body. */
 @property (nonatomic, copy, nullable) NSString *modelName;
 
+/*! The header that carries each request's session, or nil to send none (the default). The session is
+	ses_ and a digest of the request's NFKParameterConversationKey, else of its messages through the
+	first user message, else an identifier this backend keeps, which a follow-up request (a poll, a
+	cancel, a lookup) also carries. The provider factories set it from NFKRemoteProvider's
+	sessionHeaderName: x-opencode-session for the OpenCode presets. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, nullable) NSString *sessionHeaderName;
+
 /*! The service's spelling. Defaults to NFKRemoteResponsesDialectStandard;
 	backendForProvider:apiKey:modelName: sets it for the perplexity preset. Introduced in InferKit
 	0.4.0. */

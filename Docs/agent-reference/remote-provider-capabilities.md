@@ -203,7 +203,7 @@ The subscription gateway, same key as Zen. Its routes differ from Zen's for some
 | text + image → text, tools, reasoning (GPT Luna, Grok 4.7, Muse Spark Contributor) | `/responses` | covered (`NFKRemoteResponsesBackend`) |
 | text + image → text, tools (Claude Haiku 5.5, MiniMax M3, Qwen3.7 Plus, Qwen3.8, Qwen4 Max) | `/messages` | covered (`NFKAnthropicBackend`) |
 | text + image → text (Gemini 4 Argon) | `/models/{id}:generateContent` | covered (`NFKGeminiGenerateContentBackend`, 2026-11-20) |
-| the `x-opencode-session` header every request must carry (2026-11-20) | every route | gap: without it Go answers `MissingSessionID`, so no Go request succeeds |
+| the `x-opencode-session` header every request must carry | every route | covered (2026-11-20): `sessionHeaderName` on the preset and every routed backend; without it Go answers `MissingSessionID` |
 | model list | `/models` | covered (ids only) |
 
 ### Alibaba Model Studio (`modelstudio`)

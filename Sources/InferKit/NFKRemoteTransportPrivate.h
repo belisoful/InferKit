@@ -52,6 +52,26 @@ NSDictionary<NSString *, id> *NFKRemotePromptCacheFields(NSDictionary<NSString *
 /*! The inverse, for a served route: the contract parameters a body's prompt-cache fields name. */
 NSDictionary<NSString *, id> *NFKRemotePromptCacheParameters(NSDictionary *body);
 
+@class NFKInferenceRequest;
+
+/*! A new session identifier: ses_ and 32 lowercase hexadecimal digits from a random UUID. */
+NSString *NFKRemoteNewSessionIdentifier(void);
+
+/*! The session a request belongs to, as ses_ and 32 lowercase hexadecimal digits of a SHA-256 digest:
+	of its NFKParameterConversationKey, else of its NFKInputMessages through the first user message,
+	which stay the same as the conversation grows. fallback when the request has neither, or its
+	messages are not JSON. The digest keeps the caller's key and text off the wire. */
+NSString *NFKRemoteSessionIdentifier(NFKInferenceRequest * _Nullable request, NSString *fallback);
+
+/*! A session identifier made once for owner and kept for its life: the session of a request that names
+	no conversation, and of the follow-up requests (a poll, a cancel, a lookup) that carry no request. */
+NSString *NFKRemoteOwnerSessionIdentifier(id owner);
+
+/*! Writes the session of request under headerName, with owner's identifier as the fallback. Does
+	nothing when headerName is nil or empty. */
+void NFKRemoteApplySessionHeader(NSMutableURLRequest *urlRequest, NSString * _Nullable headerName,
+								 NFKInferenceRequest * _Nullable request, id owner);
+
 @interface NFKRemoteTransport (NFKPrivate)
 
 /*! One attempt, with no retry, for a caller that answers a busy server by going elsewhere. A failure

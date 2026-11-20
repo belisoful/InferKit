@@ -19,6 +19,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   OpenCode's table of 2026-11-20. Names OpenCode no longer serves fall back to chat completions.
 - `NFKRemoteProvider.openCodeGo` routes `qwen4-max` to Messages and `gemini-4-argon` to
   generateContent, so `NFKGeminiGenerateContentBackend` now answers for the Go preset.
+- OpenCode Go refuses a request without an `x-opencode-session` header, and now gets one. The
+  OpenCode presets name it in the new `NFKRemoteProvider.sessionHeaderName`, and the provider
+  factories copy it to the new `sessionHeaderName` on `NFKRemoteBackend`, `NFKRemoteResponsesBackend`,
+  `NFKAnthropicBackend`, `NFKGeminiGenerateContentBackend`, and `NFKTypeSafeBackend`. Each request
+  carries `ses_` and a digest of its `NFKParameterConversationKey`, or of its messages through the
+  first user message, or an identifier the backend keeps.
 
 #### Typed decisions from Gemini's Decisions API
 

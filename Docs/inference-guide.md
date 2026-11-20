@@ -698,6 +698,9 @@ name the provider does not know, so it is the cheap check before a request carri
   - Claude models, and on Zen most Qwen models → `NFKAnthropicBackend` (`/messages`)
   - Jev and the GPT and Gemini decision models (Zen) → `NFKTypeSafeBackend` (`/systemone`)
   - Gemini models → `NFKGeminiGenerateContentBackend` (`/models/{id}:generateContent`)
+  - Every request carries the `x-opencode-session` header, which Go requires. Its value is a digest
+    of `NFKParameterConversationKey`, or of the messages through the first user message, so set the
+    key to keep a conversation on one session.
   - every other model → `NFKRemoteBackend` (`/chat/completions`)
 
   The two gateways route some names differently (Qwen3.8 Max and the MiniMax models are on

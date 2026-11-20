@@ -1610,9 +1610,21 @@ live at `opencode.ai/docs/console/models` and `opencode.ai/docs/console/go` (Mar
   still return nil for both presets.
 - Go refuses a request without an `x-opencode-session` header: every route answers
   `{"type":"error","error":{"type":"MissingSessionID",…}}` before it reads the key (probed
-  2026-11-20). The docs ask for a stable session id per conversation, and for a client's own user
-  agent. The backends send neither, so no Go request succeeds until the header is sent. Zen takes the
-  header for routing and prompt caching and does not require it.
+  2026-11-20). Any value passes that check (`abc`, `x y`, and `ses_` plus hex were all taken). The
+  docs ask for a stable session id per conversation, which Go and Zen use for routing and prompt
+  caching; Zen does not require it.
+- Both presets name the header in `sessionHeaderName`, and every factory copies it to the backend's
+  `sessionHeaderName` (chat, Responses, Messages, generateContent, System One; 2026-11-20). The value
+  is `ses_` and 32 hex digits of a SHA-256 digest, so neither the caller's key nor its text leaves
+  the machine:
+  - `NFKParameterConversationKey` → a digest of the key
+  - no key, `NFKInputMessages` with a user message → a digest of the messages through the first user
+    message, which stays the same as the conversation grows
+  - neither (a bare prompt, or messages that are not JSON) → an identifier the backend instance keeps
+  - a follow-up request (a Responses poll or cancel, the Messages route's model lookup) → the
+    backend's own identifier
+- The docs also ask a client to send its own user agent rather than a library's. The backends send
+  `NSURLSession`'s default, which names the host app.
 - Gemini models use `@ai-sdk/google`, which posts to `{base}/models/{id}:generateContent` with an
   `x-goog-api-key` header. The factory builds an `NFKGeminiGenerateContentBackend` on `{base}/models`.
   Whether OpenCode takes the key in that header is unknown without a key.

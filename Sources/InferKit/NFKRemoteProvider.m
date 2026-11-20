@@ -38,6 +38,7 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 @property (nonatomic, assign, readwrite) NFKRemoteAPIStyle apiStyle;
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSNumber *> *modelAPIStyles;
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSNumber *> *modelPrefixAPIStyles;
+@property (nonatomic, copy, readwrite, nullable) NSString *sessionHeaderName;
 @property (nonatomic, assign, readwrite) BOOL requiresAPIKey;
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSString *> *advertisedProperties;
 @property (nonatomic, copy, readwrite, nullable) NSString *pinnedCertificateSHA256;
@@ -91,6 +92,7 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 	provider.apiStyle = self.apiStyle;
 	provider.modelAPIStyles = self.modelAPIStyles;
 	provider.modelPrefixAPIStyles = self.modelPrefixAPIStyles;
+	provider.sessionHeaderName = self.sessionHeaderName;
 	provider.requiresAPIKey = self.requiresAPIKey;
 	return provider;
 }
@@ -142,6 +144,7 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 		   self.apiStyle == other.apiStyle &&
 		   [self.modelAPIStyles isEqualToDictionary:other.modelAPIStyles] &&
 		   [self.modelPrefixAPIStyles isEqualToDictionary:other.modelPrefixAPIStyles] &&
+		   (self.sessionHeaderName == other.sessionHeaderName || [self.sessionHeaderName isEqualToString:other.sessionHeaderName]) &&
 		   self.requiresAPIKey == other.requiresAPIKey &&
 		   (self.comparablePin == other.comparablePin || [self.comparablePin isEqualToString:other.comparablePin]);
 }
@@ -297,6 +300,8 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
+static NSString * const NFKOpenCodeSessionHeader = @"x-opencode-session";
+
 // OpenCode's published endpoint table (opencode.ai/docs/console/models, read 2026-11-20) and each
 // gateway's GET /models, whose recommended_api names a model's route; the two agreed on every model
 // both listed. Every model whose route is chat completions is left out, since that is the presets'
@@ -328,6 +333,7 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 			@"gemini-3.8-flash", @"gemini-4-argon", @"gemini-4-carbon", @"gemini-4-hydrogen",
 			@"gemini-4-neon" ],
 	});
+	provider.sessionHeaderName = NFKOpenCodeSessionHeader;
 	return provider;
 }
 
@@ -346,6 +352,7 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 		@(NFKRemoteAPIStyleGeminiGenerateContent): @[
 			@"gemini-4-argon" ],
 	});
+	provider.sessionHeaderName = NFKOpenCodeSessionHeader;
 	return provider;
 }
 
@@ -583,6 +590,9 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
 	if (pinned != nil) {
 		[(id)backend setSession:pinned];
+	}
+	if (provider.sessionHeaderName != nil && [(id)backend respondsToSelector:@selector(setSessionHeaderName:)]) {
+		[(id)backend setSessionHeaderName:provider.sessionHeaderName];
 	}
 	return backend;
 }

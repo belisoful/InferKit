@@ -299,6 +299,7 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		[urlRequest setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
 	}
 	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
+	NFKRemoteApplySessionHeader(urlRequest, self.sessionHeaderName, request, self);
 	return urlRequest;
 }
 

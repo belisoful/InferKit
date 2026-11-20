@@ -147,6 +147,7 @@ static const NSUInteger NFKGenerateContentHopLimit = 64;
 	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
+	backend.sessionHeaderName = provider.sessionHeaderName;
 	return backend;
 }
 
@@ -397,6 +398,7 @@ static const NSUInteger NFKGenerateContentHopLimit = 64;
 	if (self.apiKey.length > 0) {
 		[urlRequest setValue:self.apiKey forHTTPHeaderField:@"x-goog-api-key"];
 	}
+	NFKRemoteApplySessionHeader(urlRequest, self.sessionHeaderName, request, self);
 	return urlRequest;
 }
 

@@ -74,6 +74,7 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
+	backend.sessionHeaderName = provider.sessionHeaderName;
 	return backend;
 }
 
@@ -236,6 +237,7 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 																				URLByAppendingPathComponent:@"cancel"]];
 			cancel.HTTPMethod = @"POST";
 			[NFKRemoteTransport authorizeRequest:cancel apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
+			NFKRemoteApplySessionHeader(cancel, self.sessionHeaderName, nil, self);
 			[self sendRequest:cancel response:NULL error:NULL];
 		};
 	}
@@ -301,6 +303,7 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 		[urlRequest setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
 	}
 	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
+	NFKRemoteApplySessionHeader(urlRequest, self.sessionHeaderName, request, self);
 	return urlRequest;
 }
 
@@ -600,6 +603,7 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 	request.HTTPMethod = @"GET";
 	request.timeoutInterval = self.timeout;
 	[NFKRemoteTransport authorizeRequest:request apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
+	NFKRemoteApplySessionHeader(request, self.sessionHeaderName, nil, self);
 	return request;
 }
 

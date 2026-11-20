@@ -12,6 +12,8 @@
 #import <os/log.h>
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
+#import <InferKit/NFKInferenceRequest.h>
+#import <CommonCrypto/CommonDigest.h>
 
 NSString * const NFKAnthropicAPIVersion = @"2023-06-01";
 NSString * const NFKRemoteErrorStatusCodeKey = @"NFKRemoteErrorStatusCode";
@@ -375,6 +377,89 @@ NSString *NFKFinishReasonForProviderValue(id value)
 		};
 	});
 	return reasons[value];
+}
+
+static NSString *NFKRemoteSessionIdentifierFromDigest(const unsigned char *digest)
+{
+	NSMutableString *identifier = [NSMutableString stringWithString:@"ses_"];
+	for (NSUInteger index = 0; index < 16; index++) {
+		[identifier appendFormat:@"%02x", digest[index]];
+	}
+	return identifier;
+}
+
+NSString *NFKRemoteNewSessionIdentifier(void)
+{
+	uuid_t bytes;
+	[[NSUUID UUID] getUUIDBytes:bytes];
+	return NFKRemoteSessionIdentifierFromDigest(bytes);
+}
+
+static NSString * _Nullable NFKRemoteSessionIdentifierOfData(NSString *kind, NSData * _Nullable data)
+{
+	if (data == nil) {
+		return nil;
+	}
+	NSMutableData *named = [[kind dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+	[named appendData:data];
+	unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+	CC_SHA256(named.bytes, (CC_LONG)named.length, digest);
+	return NFKRemoteSessionIdentifierFromDigest(digest);
+}
+
+/*! The request's messages through the first user message, or nil when it has no user message. */
+static NSArray * _Nullable NFKRemoteOpeningMessages(NFKInferenceRequest *request)
+{
+	id messages = request.inputs[NFKInputMessages];
+	if (![messages isKindOfClass:NSArray.class]) {
+		return nil;
+	}
+	NSMutableArray *opening = [NSMutableArray array];
+	for (id message in messages) {
+		[opening addObject:message];
+		if ([message isKindOfClass:NSDictionary.class] && [message[@"role"] isEqual:@"user"]) {
+			return opening;
+		}
+	}
+	return nil;
+}
+
+NSString *NFKRemoteSessionIdentifier(NFKInferenceRequest * _Nullable request, NSString *fallback)
+{
+	id key = request.parameters[NFKParameterConversationKey];
+	if ([key isKindOfClass:NSString.class] && [(NSString *)key length] > 0) {
+		return NFKRemoteSessionIdentifierOfData(@"key:", [(NSString *)key dataUsingEncoding:NSUTF8StringEncoding]) ?: fallback;
+	}
+	NSArray *opening = request != nil ? NFKRemoteOpeningMessages(request) : nil;
+	if (opening == nil || ![NSJSONSerialization isValidJSONObject:opening]) {
+		return fallback;
+	}
+	NSData *data = [NSJSONSerialization dataWithJSONObject:opening options:NSJSONWritingSortedKeys error:NULL];
+	return NFKRemoteSessionIdentifierOfData(@"messages:", data) ?: fallback;
+}
+
+static const void * const NFKRemoteOwnerSessionKey = &NFKRemoteOwnerSessionKey;
+
+NSString *NFKRemoteOwnerSessionIdentifier(id owner)
+{
+	@synchronized (owner) {
+		NSString *identifier = objc_getAssociatedObject(owner, NFKRemoteOwnerSessionKey);
+		if (identifier == nil) {
+			identifier = NFKRemoteNewSessionIdentifier();
+			objc_setAssociatedObject(owner, NFKRemoteOwnerSessionKey, identifier, OBJC_ASSOCIATION_COPY_NONATOMIC);
+		}
+		return identifier;
+	}
+}
+
+void NFKRemoteApplySessionHeader(NSMutableURLRequest *urlRequest, NSString * _Nullable headerName,
+								 NFKInferenceRequest * _Nullable request, id owner)
+{
+	if (headerName.length == 0) {
+		return;
+	}
+	NSString *fallback = NFKRemoteOwnerSessionIdentifier(owner);
+	[urlRequest setValue:NFKRemoteSessionIdentifier(request, fallback) forHTTPHeaderField:headerName];
 }
 
 NSString *NFKRemoteTextBeforeStops(NSString *text, NSArray<NSString *> *stops)

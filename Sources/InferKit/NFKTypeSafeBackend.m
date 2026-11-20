@@ -6,6 +6,7 @@
 #import <InferKit/NFKTypeSafeBackend.h>
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
+#import "NFKRemoteTransportPrivate.h"
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
@@ -138,6 +139,7 @@ static NSSet<NSString *> *NFKTypeSafeReservedFields(void)
 	urlRequest.HTTPBody = payload;
 	[urlRequest setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
 	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleSystemOne];
+	NFKRemoteApplySessionHeader(urlRequest, self.sessionHeaderName, request, self);
 
 	NSHTTPURLResponse *response = nil;
 	NSError *sendError = nil;
