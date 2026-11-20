@@ -194,7 +194,7 @@ public final class NFKMLXRIFEv4Objective {
     /// 0.01² and 0.03², averaged over the map.
     func ssim(_ x: MLXArray, _ y: MLXArray) -> MLXArray {
         let channels = x.dim(3)
-        let taps = (0 ..< 3).map { exp(-Double(($0 - 1) * ($0 - 1)) / (2 * 1.5 * 1.5)) }
+        let taps: [Double] = (0 ..< 3).map { (tap: Int) -> Double in exp(-Double((tap - 1) * (tap - 1)) / (2 * 1.5 * 1.5)) }
         let sum = taps.reduce(0, +)
         let gauss = taps.map { Float($0 / sum) }
         let window2D = (0 ..< 3).flatMap { i in (0 ..< 3).map { j in gauss[i] * gauss[j] } }

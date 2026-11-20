@@ -61,8 +61,8 @@ final class NFKMLXDenoiserTrainingTests: XCTestCase {
 
     /// Two short clips of a harmonic tone under noise, `[2, length]` each.
     private func pair(length: Int) -> (noisy: MLXArray, clean: MLXArray) {
-        let clean = (0 ..< 2).flatMap { row in
-            (0 ..< length).map { index in 0.3 * sinf(2 * .pi * Float(150 + 40 * row) * Float(index) / 16_000) }
+        let clean: [Float] = (0 ..< 2).flatMap { (row: Int) -> [Float] in
+            (0 ..< length).map { (index: Int) -> Float in 0.3 * sinf(2 * .pi * Float(150 + 40 * row) * Float(index) / 16_000) }
         }
         let noise = MLXRandom.normal([2, length], key: MLXRandom.key(3)) * 0.05
         let cleanArray = MLXArray(clean, [2, length])

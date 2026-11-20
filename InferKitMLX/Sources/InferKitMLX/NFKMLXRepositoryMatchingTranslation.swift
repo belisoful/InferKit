@@ -17,7 +17,7 @@ extension NFKMLXFamilyJudge {
 
     /// Marian (`marian`), read by ``NFKMLXSeq2SeqConfiguration``, its tokenizer from `source.spm`,
     /// `target.spm`, and the one `vocab.json` both sides share.
-    static let marian = NFKMLXFamilyJudge(
+    static let marian: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "marian" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             try verifySeq2SeqRepository(repository, template: template,
@@ -34,7 +34,7 @@ extension NFKMLXFamilyJudge {
     /// M2M-100 and SMaLL-100 (`m2m_100` with a `vocab.json` and the M2M-100 tokenizer), read by
     /// ``NFKMLXSeq2SeqConfiguration``. A repository shipping SMaLL-100's tokenizer code takes the SMaLL-100
     /// entry, whose loader puts the target language on the source, and any other takes M2M-100's.
-    static let m2m100 = NFKMLXFamilyJudge(
+    static let m2m100: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "m2m100" && !$0.modelTypes.isEmpty },
         template: { repository, template in
             let small100 = repository.file(atPath: "tokenization_small100.py") != nil
@@ -49,7 +49,7 @@ extension NFKMLXFamilyJudge {
 
     /// NLLB-200 (`m2m_100` with the NLLB tokenizer), read by ``NFKMLXSeq2SeqConfiguration``, its tokenizer
     /// from `sentencepiece.bpe.model` and the language codes `special_tokens_map.json` lists.
-    static let nllb = NFKMLXFamilyJudge(
+    static let nllb: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "nllb" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             try verifySeq2SeqRepository(repository, template: template,
@@ -63,7 +63,7 @@ extension NFKMLXFamilyJudge {
     /// added tokens. A dense repository reads through Hy-MT2's entry, whose instruction is the current
     /// generation's, and a mixture of experts through Hy-MT2-30B-A3B's, which pages its experts; the
     /// generations share their tokenizers and templates.
-    static let hymt = NFKMLXFamilyJudge(
+    static let hymt: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "hy-mt" && !$0.modelTypes.isEmpty },
         template: { repository, template in
             let name = repository.configuration["model_type"] as? String == NFKMLXHunyuanMoE.modelType

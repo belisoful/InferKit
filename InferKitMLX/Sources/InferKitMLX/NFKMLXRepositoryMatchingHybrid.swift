@@ -19,7 +19,7 @@ extension NFKMLXFamilyJudge {
     /// and rotate their positions, which the network does not, so a stated position embedding other than
     /// `nope` is refused. The reader reads an unknown layer kind as Mamba, so one is refused. A repository
     /// with routed experts takes the mixture release.
-    static let graniteH = NFKMLXFamilyJudge(
+    static let graniteH: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "granite-4.0-h" && !$0.modelTypes.isEmpty },
         template: { repository, template in
             let mixture = ((repository.configuration["num_local_experts"] as? NSNumber)?.intValue ?? 0) > 0
@@ -53,7 +53,7 @@ extension NFKMLXFamilyJudge {
     /// Nemotron-H (`nemotron_h`), read by ``NFKMLXNemotronHConfiguration``. The network builds Mamba-2,
     /// attention, and squared-ReLU MLP layers, and the reader reads an unknown kind as an MLP, so a layer of
     /// another kind (the routed experts of a mixture release) is refused.
-    static let nemotronH = NFKMLXFamilyJudge(
+    static let nemotronH: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "nemotron-h" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             let configuration = repository.configuration

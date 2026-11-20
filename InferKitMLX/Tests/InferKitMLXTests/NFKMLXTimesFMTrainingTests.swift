@@ -146,7 +146,7 @@ final class NFKMLXTimesFMTrainingTests: XCTestCase {
         c.numLayers = 2
         c.numHeads = 4
         let net = NFKMLXTimesFMNet(c)
-        let series = (0 ..< 400).map { Float(sin(Double($0) * 0.3) * 2 + Double($0) * 0.01) }
+        let series: [Float] = (0 ..< 400).map { (step: Int) -> Float in Float(sin(Double(step) * 0.3) * 2 + Double(step) * 0.01) }
         let windows = (0 ..< 4).map { start in (context: Array(series[(start * 40) ..< (start * 40 + 64)]),
                                                 target: Array(series[(start * 40 + 64) ..< (start * 40 + 77)])) }
         let before = NFKMLXWav2Vec2TrainingTests.snapshot(net)
@@ -177,7 +177,7 @@ final class NFKMLXTimesFMTrainingTests: XCTestCase {
         c.numLayers = 2
         c.numHeads = 4
         let net = NFKMLXTimesFMNet(c)
-        let series = (0 ..< 400).map { Float(sin(Double($0) * 0.3) * 2 + Double($0) * 0.01) }
+        let series: [Float] = (0 ..< 400).map { (step: Int) -> Float in Float(sin(Double(step) * 0.3) * 2 + Double(step) * 0.01) }
         let windows = (0 ..< 4).map { start in (context: Array(series[(start * 40) ..< (start * 40 + 64)]),
                                                 target: Array(series[(start * 40 + 64) ..< (start * 40 + 77)])) }
         let losses = try NFKMLXTimesFM.fineTune(net, windows: { _ in windows }, loraDropout: 0.05,

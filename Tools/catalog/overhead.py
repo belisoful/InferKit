@@ -328,9 +328,9 @@ def table(arguments):
         if key in measured:
             row = measured[key]
             basis_counts["measured"] += 1
-            lines.append(f'        "{key}": NFKMLXLoadOverhead(bytes: {row["bytes"]}, basis: .measured, '
+            lines.append(f'"{key}": NFKMLXLoadOverhead(bytes: {row["bytes"]}, basis: .measured, '
                          f'loadBytes: {row["load"]}, requestBytes: {row["request"]}, '
-                         f'weights: .{row["weights"]}),')
+                         f'weights: .{row["weights"]})')
             continue
         sources = by_family.get(entry["family"], [])
         if not sources or key in exceeds or key in remeasure:
@@ -347,11 +347,8 @@ def table(arguments):
             elif vocabulary and source_vocabulary:
                 bytes_ = round_up(bytes_ * vocabulary / source_vocabulary)
         basis_counts["family"] += 1
-        lines.append(f'        "{key}": NFKMLXLoadOverhead(bytes: {bytes_}, basis: .family, source: "{source}"),')
-    output = arguments.output or TABLE
-    body = "\n".join(lines) + "\n    ]" if lines else "    :]"
-    with open(output, "w") as handle:
-        handle.write(HEADER + body + "\n}\n")
+        lines.append(f'"{key}": NFKMLXLoadOverhead(bytes: {bytes_}, basis: .family, source: "{source}")')
+    write_table(lines, arguments.output or TABLE)
     print(f"{len(variants)} variants: {basis_counts}; {len(failures)} records without a figure")
     for title, rows in (("default request exceeds a Mac (no figure)", exceeds),
                         ("stored release past the cap (remeasure at a higher cap)", remeasure),
@@ -374,8 +371,31 @@ HEADER = """//
 //
 
 extension NFKMLXCatalogMeasurements {
-    static let loadOverheads: [String: NFKMLXLoadOverhead] = [
 """
+
+# The rows a single dictionary literal holds. The type checker's time on one literal grows faster than its
+# length: one literal of 344 rows took 0.4 s, past the 200 ms every expression is held to.
+SWIFT_CHUNK_ROWS = 25
+
+
+def write_table(rows, output):
+    """Writes the rows, each a `"model/variant": NFKMLXLoadOverhead(...)` entry, as typed literals of
+    `SWIFT_CHUNK_ROWS` rows that one dictionary joins."""
+    declaration = "    static let loadOverheads: [String: NFKMLXLoadOverhead] = "
+    if not rows:
+        lines = [declaration + "[:]"]
+    else:
+        chunks = [rows[start:start + SWIFT_CHUNK_ROWS] for start in range(0, len(rows), SWIFT_CHUNK_ROWS)]
+        names = [f"loadOverheads{index}" for index in range(len(chunks))]
+        lines = [declaration + "Dictionary(uniqueKeysWithValues: ([",
+                 *(f"        {name}," for name in names),
+                 "    ] as [[String: NFKMLXLoadOverhead]]).joined().map { ($0.key, $0.value) })"]
+        for name, chunk in zip(names, chunks):
+            lines += ["", f"    private static let {name}: [String: NFKMLXLoadOverhead] = ["]
+            lines += [f"        {row}," for row in chunk]
+            lines.append("    ]")
+    with open(output, "w") as handle:
+        handle.write(HEADER + "\n".join(lines) + "\n}\n")
 
 
 def main():

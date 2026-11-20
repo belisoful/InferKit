@@ -225,7 +225,9 @@ final class NFKMLXWav2Vec2TrainingTests: XCTestCase {
     func testAFineTuneLowersTheLossAndHoldsTheFrozenGroups() throws {
         try requireMLXRuntime()
         MLXRandom.seed(3)
-        let samples = (0 ..< 4000).map { Float(sin(Double($0) * 0.05) * 0.3 + sin(Double($0) * 0.31) * 0.2) }
+        let samples: [Float] = (0 ..< 4000).map { (index: Int) -> Float in
+            Float(sin(Double(index) * 0.05) * 0.3 + sin(Double(index) * 0.31) * 0.2)
+        }
         for trainable in [NFKMLXWav2Vec2Trainable.encoder, .head] {
             let net = NFKMLXWav2Vec2Net(Self.tiny)
             let before = Self.snapshot(net)

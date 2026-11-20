@@ -36,8 +36,8 @@ final class NFKMLXFRCRNTrainingTests: XCTestCase {
 
     /// Two one-second clips of a tone under noise, `[2, 16000]` each.
     private func pair() -> (noisy: MLXArray, clean: MLXArray) {
-        let clean = (0 ..< 2).flatMap { row in
-            (0 ..< 16_000).map { index in 0.1 * sinf(2 * .pi * Float(180 + 70 * row) * Float(index) / 16_000) }
+        let clean: [Float] = (0 ..< 2).flatMap { (row: Int) -> [Float] in
+            (0 ..< 16_000).map { (index: Int) -> Float in 0.1 * sinf(2 * .pi * Float(180 + 70 * row) * Float(index) / 16_000) }
         }
         let cleanArray = MLXArray(clean, [2, 16_000])
         return (cleanArray + MLXRandom.normal([2, 16_000], key: MLXRandom.key(3)) * 0.02, cleanArray)

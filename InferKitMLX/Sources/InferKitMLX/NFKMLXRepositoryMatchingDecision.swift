@@ -19,7 +19,7 @@ extension NFKMLXFamilyJudge {
     /// readout, so a repository whose architecture is not the bare `Qwen3_5Model`, or that lacks the
     /// protocol files and the readout, is refused. The reader drops a layer kind it does not know, so one
     /// is refused, and the readout must hold one row per answer code at the decoder's width.
-    static let pplxDecider = NFKMLXFamilyJudge(
+    static let pplxDecider: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "pplx-decider" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             let configuration = repository.configuration

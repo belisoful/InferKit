@@ -61,7 +61,7 @@ final class NFKMLXStyleTransferTrainingTests: XCTestCase {
 
     func testTheGramMatrixIsDividedByChannelsAndPositions() throws {
         try requireMLXRuntime()
-        let features = MLXArray((0 ..< 2 * 3 * 2 * 4).map { Float($0 % 7) - 3 }, [2, 3, 2, 4])
+        let features = MLXArray((0 ..< 2 * 3 * 2 * 4).map { (index: Int) -> Float in Float(index % 7) - 3 }, [2, 3, 2, 4])
         let gram = NFKMLXStyleTransferObjective.gram(features)
         XCTAssertEqual(gram.shape, [2, 4, 4])
         let flat = features.asArray(Float.self)

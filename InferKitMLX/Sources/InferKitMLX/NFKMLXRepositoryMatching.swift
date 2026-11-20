@@ -105,7 +105,7 @@ struct NFKMLXFamilyJudge {
     }
 
     /// The dense and mixture decoders ``NFKMLXLanguage`` loads.
-    static let language = NFKMLXFamilyJudge(
+    static let language: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: NFKMLXCatalogLanguage.readsReleases(of:),
         verify: { repository, template in
             let configuration = repository.configuration

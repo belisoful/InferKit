@@ -108,9 +108,9 @@ final class NFKMLXPplxDeciderTests: XCTestCase {
     // MARK: - A tiny checkpoint on disk
 
     /// A tokenizer for the tiny vocabulary: the marker is id 7 and each word between markers is a hash.
-    private static let tinyTokenizer = NFKMLXDecisionTokenizer { text in
-        text.components(separatedBy: NFKMLXPplxDeciderPrompt.marker).enumerated().flatMap { index, piece in
-            (index > 0 ? [7] : []) + piece.split(whereSeparator: \.isWhitespace).map { word in
+    private static let tinyTokenizer = NFKMLXDecisionTokenizer { (text: String) -> [Int] in
+        text.components(separatedBy: NFKMLXPplxDeciderPrompt.marker).enumerated().flatMap { (index: Int, piece: String) -> [Int] in
+            (index > 0 ? [7] : []) + piece.split(whereSeparator: \.isWhitespace).map { (word: Substring) -> Int in
                 word.unicodeScalars.reduce(7) { ($0 * 31 + Int($1.value)) % 490 } + 10
             }
         }

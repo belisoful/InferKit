@@ -69,7 +69,7 @@ final class NFKMLXAdaINTrainingTests: XCTestCase {
 
     func testTheCropTakesEachImagesOwnDraws() throws {
         try requireMLXRuntime()
-        let content = MLXArray((0 ..< 2 * 6 * 7 * 3).map { Float($0) }, [2, 6, 7, 3])
+        let content = MLXArray((0 ..< 2 * 6 * 7 * 3).map { (index: Int) -> Float in Float(index) }, [2, 6, 7, 3])
         let style = content + 1000
         // Content image 0 at (1, 2), content 1 at (0, 3), style 0 at (2, 0), style 1 at (1, 1).
         var draws = NFKDenoiserReplayedDraws(values: [1, 2, 0, 3, 2, 0, 1, 1], permutationValues: [], offsetValues: [])

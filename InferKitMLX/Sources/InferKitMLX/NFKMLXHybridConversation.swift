@@ -277,11 +277,10 @@ extension NFKMLXConversationKeeper where State: NFKMLXSpillableConversation {
             chosen = name
         } else {
             let prefix = NFKMLXConversation.unnamedPrefix
-            let inMemory = states.held
+            let candidates: [NFKMLXConversation.Resumable] = states.held
                 .filter { $0.name.hasPrefix(prefix) && usable($0.state) }
-                .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.promptLength) }
-                .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
-                .max { $0.kept < $1.kept }
+                .map { entry in (name: entry.name, kept: entry.state.resumablePosition(for: prompt), held: entry.state.promptLength) }
+            let inMemory = NFKMLXConversation.furthest(candidates)
             let onDisk = spill?.resumable(for: prompt, prefix: prefix, options: signature)
             if let onDisk, onDisk.kept > inMemory?.kept ?? 0 {
                 chosen = onDisk.name
@@ -467,12 +466,10 @@ final class NFKMLXConversationSpill {
     /// among those built for `options` whose resumed prefix is at least what a rollback discards of its last
     /// prompt.
     func resumable(for prompt: [Int], prefix: String, options: String) -> (name: String, kept: Int)? {
-        records()
+        let candidates: [NFKMLXConversation.Resumable] = records()
             .filter { $0.name.hasPrefix(prefix) && $0.options == options }
-            .map { (name: $0.name, kept: $0.resumablePosition(for: prompt), held: $0.promptLength) }
-            .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
-            .max { $0.kept < $1.kept }
-            .map { ($0.name, $0.kept) }
+            .map { entry in (name: entry.name, kept: entry.resumablePosition(for: prompt), held: entry.promptLength) }
+        return NFKMLXConversation.furthest(candidates).map { ($0.name, $0.kept) }
     }
 
     /// The conversation written under `name`, read by `read` from the arrays file and the record, its files

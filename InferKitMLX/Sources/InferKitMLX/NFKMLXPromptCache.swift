@@ -212,6 +212,18 @@ enum NFKMLXConversation {
     /// key starts with.
     static let unnamedPrefix = "\u{0}unnamed."
 
+    /// A conversation a prompt could continue: its name, the prompt positions it keeps, and the length of
+    /// its last prompt.
+    typealias Resumable = (name: String, kept: Int, held: Int)
+
+    /// The candidate a prompt resumes furthest into, among those whose kept prefix is at least what a
+    /// rollback discards of their last prompt; the first of equals.
+    static func furthest(_ candidates: [Resumable]) -> Resumable? {
+        candidates
+            .filter { (candidate: Resumable) -> Bool in candidate.kept > 0 && candidate.kept >= candidate.held - candidate.kept }
+            .max { (first: Resumable, second: Resumable) -> Bool in first.kept < second.kept }
+    }
+
     static func name(of request: NFKInferenceRequest) -> String? {
         guard let conversation = request.parameter(forKey: NFKParameterConversationKey) as? String,
               !conversation.isEmpty else {

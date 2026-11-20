@@ -224,7 +224,7 @@ final class NFKMLXOpenJevDeBERTaTests: XCTestCase {
         let encoder = NFKMLXDeBERTaV2Net(.tiny)
         XCTAssertFalse(encoder.training, "built in evaluation mode")
         XCTAssertEqual(encoder.dropout, .none)
-        let tokens = MLXArray((0 ..< 12).map { Int32(($0 * 37) % 500 + 5) }, [1, 12])
+        let tokens = MLXArray((0 ..< 12).map { (index: Int) -> Int32 in Int32((index * 37) % 500 + 5) }, [1, 12])
         let mask = MLXArray([Int32](repeating: 1, count: 10) + [0, 0], [1, 12])
         let plain = encoder(tokens, attentionMask: mask)
         encoder.dropout = NFKMLXDeBERTaV2Dropout(hidden: 0.5, attention: 0.5)

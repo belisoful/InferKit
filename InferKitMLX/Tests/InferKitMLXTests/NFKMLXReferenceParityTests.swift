@@ -4915,7 +4915,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let classes = referenceOutput.shape[2]
         let ourLabels = ours.reshaped([-1, classes]).argMax(axis: -1).asArray(Int32.self)
         let referenceLabels = referenceOutput.reshaped([-1, classes]).argMax(axis: -1).asArray(Int32.self)
-        let agreement = Double(zip(ourLabels, referenceLabels).filter(==).count) / Double(ourLabels.count)
+        let matching: Int = zip(ourLabels, referenceLabels).filter { (ours: Int32, reference: Int32) -> Bool in ours == reference }.count
+        let agreement = Double(matching) / Double(ourLabels.count)
         print("VALIDATION PARITY deeplab: logit cosine \(similarity), label agreement \(agreement)")
         XCTAssertGreaterThan(similarity, 0.99, "the class logits match the reference implementation")
         XCTAssertGreaterThan(agreement, 0.99, "and the predicted labels agree")
@@ -4994,7 +4995,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                          referenceLogits.reshaped([-1]).asArray(Float.self).map(Double.init))
             let ourIndices = logits.argMax(axis: -1).asArray(Int32.self)
             let referenceIndices = referenceLogits.argMax(axis: -1).asArray(Int32.self)
-            let agreement = Double(zip(ourIndices, referenceIndices).filter(==).count) / Double(ourIndices.count)
+            let matching: Int = zip(ourIndices, referenceIndices).filter { (ours: Int32, reference: Int32) -> Bool in ours == reference }.count
+            let agreement = Double(matching) / Double(ourIndices.count)
             print("VALIDATION PARITY codeformer: logit cosine \(logitSimilarity), code agreement \(agreement)")
             XCTAssertGreaterThan(logitSimilarity, 0.99, "the code logits match the reference implementation")
             XCTAssertGreaterThan(agreement, 0.99, "and the predicted codes agree")
@@ -6126,7 +6128,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let classes = referenceOutput.shape[2]
         let ourLabels = ours.reshaped([-1, classes]).argMax(axis: -1).asArray(Int32.self)
         let referenceLabels = referenceOutput.reshaped([-1, classes]).argMax(axis: -1).asArray(Int32.self)
-        let agreement = Double(zip(ourLabels, referenceLabels).filter(==).count) / Double(ourLabels.count)
+        let matching: Int = zip(ourLabels, referenceLabels).filter { (ours: Int32, reference: Int32) -> Bool in ours == reference }.count
+        let agreement = Double(matching) / Double(ourLabels.count)
         print("VALIDATION PARITY bisenetv2: logit cosine \(similarity), label agreement \(agreement)")
         XCTAssertGreaterThan(similarity, 0.99, "the class logits match the reference implementation")
         XCTAssertGreaterThan(agreement, 0.99, "and the predicted labels agree")
@@ -6514,7 +6517,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let classes = referenceOutput.shape[2]
         let ourLabels = ours.reshaped([-1, classes]).argMax(axis: -1).asArray(Int32.self)
         let referenceLabels = referenceOutput.reshaped([-1, classes]).argMax(axis: -1).asArray(Int32.self)
-        let agreement = Double(zip(ourLabels, referenceLabels).filter(==).count) / Double(ourLabels.count)
+        let matching: Int = zip(ourLabels, referenceLabels).filter { (ours: Int32, reference: Int32) -> Bool in ours == reference }.count
+        let agreement = Double(matching) / Double(ourLabels.count)
         print("VALIDATION PARITY bisenet: logit cosine \(similarity), label agreement \(agreement)")
         XCTAssertGreaterThan(similarity, 0.99, "the class logits match the reference implementation")
         XCTAssertGreaterThan(agreement, 0.99, "and the predicted labels agree")

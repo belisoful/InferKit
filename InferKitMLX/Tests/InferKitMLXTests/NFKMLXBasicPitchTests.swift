@@ -67,7 +67,7 @@ final class NFKMLXBasicPitchTests: XCTestCase {
         // With the identity normalization the released model folds in, the log is normalized to 0...1.
         net.update(parameters: ModuleParameters.unflattened([("norm_scale", MLXArray([Float(1)])),
                                                              ("norm_bias", MLXArray([Float(0)]))]))
-        let magnitude = MLXArray((0 ..< (172 * 309)).map { Float($0 % 97) + 0.5 }).reshaped([1, 172, 309])
+        let magnitude = MLXArray((0 ..< (172 * 309)).map { (index: Int) -> Float in Float(index % 97) + 0.5 }).reshaped([1, 172, 309])
         let normalized = net.normalizedLog(magnitude)
         eval(normalized)
         let values = normalized.asArray(Float.self)

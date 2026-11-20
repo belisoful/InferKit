@@ -1209,11 +1209,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// prompt never discards most of another's conversation; otherwise a new name. Runs under `generationLock`.
     private func unnamedConversation(for prompt: [Int], net: NFKMLXLanguageNet, options: NFKMLXGenerationOptions) -> String {
         let prefix = NFKMLXConversation.unnamedPrefix
-        let inMemory = conversationCaches.held
+        let candidates: [NFKMLXConversation.Resumable] = conversationCaches.held
             .filter { $0.name.hasPrefix(prefix) && $0.state.matches(layerCount: net.configuration.layerCount, options: options) }
-            .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.promptLength) }
-            .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
-            .max { $0.kept < $1.kept }
+            .map { entry in (name: entry.name, kept: entry.state.resumablePosition(for: prompt), held: entry.state.promptLength) }
+        let inMemory = NFKMLXConversation.furthest(candidates)
         let signature = NFKMLXHybridConversation.optionsSignature(window: options.contextWindow,
                                                                   quantization: options.cacheQuantization,
                                                                   adapterStrengths: options.adapterStrengths)

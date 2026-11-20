@@ -352,8 +352,12 @@ public final class NFKMLXModernBERTReranker: NSObject {
     func tokens(query: String, document: String) -> [Int]? {
         guard let tokenizer = holder.tokenizer else { return nil }
         let c = holder.configuration
-        return [c.clsToken] + tokenizer.encode(query).map(\.intValue) + [c.sepToken]
-            + tokenizer.encode(document).map(\.intValue) + [c.sepToken]
+        var ids: [Int] = [c.clsToken]
+        ids += tokenizer.encode(query).map(\.intValue)
+        ids.append(c.sepToken)
+        ids += tokenizer.encode(document).map(\.intValue)
+        ids.append(c.sepToken)
+        return ids
     }
 
     private func scoreValue(query: String, document: String) -> Float {

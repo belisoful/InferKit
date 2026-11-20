@@ -595,7 +595,45 @@ def swift_structure(m):
     return "".join(", " + part for part in parts)
 
 
+# The rows a single array literal holds. The type checker's time on one literal grows faster than its
+# length: one literal of every variant took over 10 s, which times out a hosted CI runner.
+SWIFT_CHUNK_ROWS = 25
+
+
+def swift_table(name, element_type, elements):
+    """A static table split into typed literals of `SWIFT_CHUNK_ROWS` rows, joined in order."""
+    chunks = [elements[start:start + SWIFT_CHUNK_ROWS] for start in range(0, len(elements), SWIFT_CHUNK_ROWS)]
+    names = [f"{name}{index}" for index in range(len(chunks))]
+    lines = [f"    static let {name}: [{element_type}] = Array(([",
+             *(f"        {chunk_name}," for chunk_name in names),
+             f"    ] as [[{element_type}]]).joined())"]
+    for chunk_name, chunk in zip(names, chunks):
+        lines += ["", f"    private static let {chunk_name}: [{element_type}] = ["]
+        lines += [f"        {element}," for element in chunk]
+        lines.append("    ]")
+    return lines
+
+
 def write_swift(rows, measurements, path):
+    files = []
+    for (location, revision, file_path) in sorted(rows, key=lambda key: (key[0], key[1] or "", key[2])):
+        size, sha = rows[(location, revision, file_path)]
+        files.append(f"NFKMLXMeasuredFile(location: {swift_string(location)}, revision: {swift_string(revision)}, "
+                     f"path: {swift_string(file_path)}, bytes: {size}, sha256: {swift_string(sha)})")
+    variants = []
+    for m in sorted(measurements, key=lambda m: (m.model, m.variant)):
+        variants.append(f"NFKMLXMeasuredVariant(model: {swift_string(m.model)}, variant: {swift_string(m.variant)}, "
+                        f"status: .{m.status}, note: {swift_string(m.note)}, commit: {swift_string(m.commit)}, "
+                        f"downloadBytes: {swift_optional_int(m.download_bytes)}, "
+                        f"parameterCount: {swift_optional_int(m.parameter_count)}, "
+                        f"tensorBytes: {swift_nested_dictionary(m.tensor_bytes)}, "
+                        f"opaqueBytes: {swift_int_dictionary(m.opaque_bytes)}"
+                        f"{swift_structure(m)})")
+    write_swift_tables(files, variants, path)
+
+
+def write_swift_tables(files, variants, path):
+    """Writes the file and variant rows, each a Swift initializer expression, as the generated tables."""
     lines = [
         "//",
         "//  NFKMLXCatalogMeasurements.swift",
@@ -606,22 +644,11 @@ def write_swift(rows, measurements, path):
         "//",
         "",
         "extension NFKMLXCatalogMeasurements {",
-        "    static let measuredFiles: [NFKMLXMeasuredFile] = [",
     ]
-    for (location, revision, file_path) in sorted(rows, key=lambda key: (key[0], key[1] or "", key[2])):
-        size, sha = rows[(location, revision, file_path)]
-        lines.append(f"        NFKMLXMeasuredFile(location: {swift_string(location)}, revision: {swift_string(revision)}, "
-                     f"path: {swift_string(file_path)}, bytes: {size}, sha256: {swift_string(sha)}),")
-    lines += ["    ]", "", "    static let measuredVariants: [NFKMLXMeasuredVariant] = ["]
-    for m in sorted(measurements, key=lambda m: (m.model, m.variant)):
-        lines.append(f"        NFKMLXMeasuredVariant(model: {swift_string(m.model)}, variant: {swift_string(m.variant)}, "
-                     f"status: .{m.status}, note: {swift_string(m.note)}, commit: {swift_string(m.commit)}, "
-                     f"downloadBytes: {swift_optional_int(m.download_bytes)}, "
-                     f"parameterCount: {swift_optional_int(m.parameter_count)}, "
-                     f"tensorBytes: {swift_nested_dictionary(m.tensor_bytes)}, "
-                     f"opaqueBytes: {swift_int_dictionary(m.opaque_bytes)}"
-                     f"{swift_structure(m)}),")
-    lines += ["    ]", "}", ""]
+    lines += swift_table("measuredFiles", "NFKMLXMeasuredFile", files)
+    lines.append("")
+    lines += swift_table("measuredVariants", "NFKMLXMeasuredVariant", variants)
+    lines += ["}", ""]
     path.write_text("\n".join(lines))
 
 

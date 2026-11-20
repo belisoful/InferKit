@@ -16,7 +16,7 @@ extension NFKMLXFamilyJudge {
     /// Wav2Vec2 and HuBERT (`wav2vec2`, `hubert`), read by ``NFKMLXWav2Vec2Configuration``, a CTC release's
     /// vocabulary by ``NFKMLXWav2Vec2Tokenizer``. The loader refuses a missing or an extra parameter, so the
     /// judgment refuses the heads it does not build, and a CTC vocabulary its head cannot index.
-    static let wav2Vec2 = NFKMLXFamilyJudge(
+    static let wav2Vec2: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { ["wav2vec2", "hubert"].contains($0.family) && !$0.modelTypes.isEmpty },
         template: { repository, template in
             NFKMLXFamilyJudge.speechTemplate(of: repository, among: NFKMLXModelDescriptors.entries
@@ -36,7 +36,7 @@ extension NFKMLXFamilyJudge {
 
     /// W2V-BERT 2.0 (`wav2vec2-bert`), read by ``NFKMLXWav2Vec2BertConfiguration``, a fine-tuned CTC head's
     /// vocabulary by ``NFKMLXWav2Vec2Tokenizer``.
-    static let w2vBert = NFKMLXFamilyJudge(
+    static let w2vBert: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "w2v-bert" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             try verifySpeechRepository(repository, suffixes: ["ForCTC", "Model"])
@@ -57,7 +57,7 @@ extension NFKMLXFamilyJudge {
     /// causal subsampler, and a plain transducer, so the judgment refuses another activation, kernel, or
     /// stride, grouped key/value heads, a token-and-duration head, and a tokenizer model the reader does
     /// not decode.
-    static let nemotronASR = NFKMLXFamilyJudge(
+    static let nemotronASR: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "nemotron-asr" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             try verifySpeechRepository(repository, suffixes: ["ForRNNT"])

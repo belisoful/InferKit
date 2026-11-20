@@ -165,7 +165,7 @@ final class NFKMLXTrellisTests: XCTestCase {
         let shuffled = NFKTrellisUpsample3d.shuffle(MLXArray(0 ..< 16).asType(.float32).reshaped([1, 1, 1, 1, 16]), channels: 2)
         // Output voxel (a, b, d), channel c, reads input channel c·8 + a·4 + b·2 + d.
         let values = shuffled.reshaped([-1]).asArray(Float.self)
-        XCTAssertEqual(values, (0 ..< 8).flatMap { voxel in [Float(voxel), Float(8 + voxel)] })
+        XCTAssertEqual(values, (0 ..< 8).flatMap { (voxel: Int) -> [Float] in [Float(voxel), Float(8 + voxel)] })
         XCTAssertEqual(upsample(MLXArray.zeros([1, 3, 3, 3, 1])).shape, [1, 6, 6, 6, 1])
     }
 

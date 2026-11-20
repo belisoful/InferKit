@@ -36,7 +36,9 @@ final class NFKMLXColorizerTrainingTests: XCTestCase {
 
     /// Bin centers on a 10-unit grid, the layout of `pts_in_hull`.
     private func grid() -> MLXArray {
-        let values = (-5 ..< 5).flatMap { a in (-5 ..< 5).flatMap { b in [Float(a * 10), Float(b * 10)] } }
+        let values: [Float] = (-5 ..< 5).flatMap { (a: Int) -> [Float] in
+            (-5 ..< 5).flatMap { (b: Int) -> [Float] in [Float(a * 10), Float(b * 10)] }
+        }
         return MLXArray(values, [100, 2])
     }
 

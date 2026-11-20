@@ -320,7 +320,9 @@ enum NFKCLIPInit {
     /// debug build `swift test` runs, and a CLIP tower holds tens of millions.
     static func parameter(_ shape: [Int]) -> MLXArray {
         let count = shape.reduce(1, *)
-        let period = (0 ..< 2003).map { (Float(($0 * 733) % 2003) / 2003.0 - 0.5) * 0.04 }   // roughly ±0.02
+        let period: [Float] = (0 ..< 2003).map { (index: Int) -> Float in
+            (Float((index * 733) % 2003) / 2003.0 - 0.5) * 0.04   // roughly ±0.02
+        }
         let values = [Float](unsafeUninitializedCapacity: count) { buffer, initialized in
             period.withUnsafeBufferPointer { period in
                 var start = 0

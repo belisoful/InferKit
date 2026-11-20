@@ -138,6 +138,30 @@ platform's `Developer/Library/Frameworks` for a test file). A block fills a `__b
 method assigns the out-parameter after the block has run. A sweep of every `.m` under `Sources/`,
 `Tests/`, and `Examples/` found that one instance.
 
+The runner's type checker is slower than this machine's, and an expression it cannot solve in its
+time limit fails the build ("unable to type-check this expression in reasonable time"; run
+44325304900, in `NFKMLXPrecompiledCharsmap.swift`). Every InferKitMLX expression stays under 200 ms
+here, which the timing build reports:
+
+```bash
+cd InferKitMLX && swift build --build-tests -Xswiftc -Xfrontend -Xswiftc -warn-long-expression-type-checking=200
+```
+
+A sweep on 2026-11-20 found 47 expressions over 100 ms, the slowest 14.7 s, and left none over 87 ms.
+The causes and their fixes:
+
+- A closure over a range whose bound is literal arithmetic (`(0 ..< 2 * 48 * 48 * 3).map { Float($0 % 53) / 53 }`,
+  up to 3.5 s) → a typed parameter and result: `{ (index: Int) -> Float in … }`.
+- A chain of single-expression closures (`filter`, `map` to a tuple, `filter`, `max`) → a typed
+  local between the stages.
+- `filter(==)` and an array literal of `static let`s declared without a type → a typed closure, and a
+  type annotation on each `static let` the literal names.
+- One long array literal (`NFKMLXCatalogMeasurements.swift`: 1565 and 410 rows, 14.7 s and 11.5 s;
+  the time grows faster than the row count) → `Tools/catalog/measure.py` writes each table as typed
+  literals of `SWIFT_CHUNK_ROWS` (25) rows joined in order, each under 60 ms.
+  `Tools/catalog/overhead.py` writes `NFKMLXCatalogLoadOverheads.swift` (344 rows, 0.4 s as one
+  dictionary literal) the same way, as 25-row dictionaries one `Dictionary(uniqueKeysWithValues:)` joins.
+
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
    `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 2180 tests
    (2026-11-20): the Objective-C `- (void)test` methods under `Tests/` (2049) and in

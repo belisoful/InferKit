@@ -16,7 +16,7 @@ extension NFKMLXFamilyJudge {
 
     /// Gemma 3 (`gemma3_text`, and `gemma3` with a SigLIP vision tower), read by
     /// `NFKMLXGemma3Language.configuration(fromJSON:)`.
-    static let gemma3 = NFKMLXFamilyJudge(
+    static let gemma3: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "gemma3" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             let configuration = repository.configuration
@@ -31,7 +31,7 @@ extension NFKMLXFamilyJudge {
     /// Gemma 3n (`gemma3n`), read by `NFKMLXGemma3nLanguage.configuration(fromJSON:)` and its audio
     /// encoder's reader. The vision tower is built at the released MobileNet-V5 geometry, so another
     /// tower is refused.
-    static let gemma3n = NFKMLXFamilyJudge(
+    static let gemma3n: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "gemma3n" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             let configuration = repository.configuration
@@ -56,7 +56,7 @@ extension NFKMLXFamilyJudge {
     /// Gemma 4 (`gemma4`), read by `NFKMLXGemmaLanguage.configuration(fromHuggingFace:)`. The reader takes
     /// each attention kind's rotary base and the full attention's partial factor and builds the released
     /// kinds, so another kind is refused. The loader reads the decoder under `model.language_model.`.
-    static let gemma4 = NFKMLXFamilyJudge(
+    static let gemma4: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "gemma4" && !$0.modelTypes.isEmpty },
         template: { repository, template in
             let text = (repository.configuration["text_config"] as? [String: Any]) ?? repository.configuration

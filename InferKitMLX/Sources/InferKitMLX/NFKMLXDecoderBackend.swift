@@ -490,11 +490,10 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             let held = conversations.states.held.contains { $0.name == name }
             return (name, conversations.states.state(for: name, isUsable: usable) { (held ? nil : spilled(name)) ?? make() })
         }
-        let inMemory = conversations.states.held
+        let candidates: [NFKMLXConversation.Resumable] = conversations.states.held
             .filter { $0.name.hasPrefix(Self.unnamedPrefix) && usable($0.state) }
-            .map { (name: $0.name, kept: $0.state.resumablePosition(for: prompt), held: $0.state.promptLength) }
-            .filter { $0.kept > 0 && $0.kept >= $0.held - $0.kept }
-            .max { $0.kept < $1.kept }
+            .map { entry in (name: entry.name, kept: entry.state.resumablePosition(for: prompt), held: entry.state.promptLength) }
+        let inMemory = NFKMLXConversation.furthest(candidates)
         let signature = NFKMLXHybridConversation.optionsSignature(window: options.contextWindow,
                                                                   quantization: options.cacheQuantization,
                                                                   adapterStrengths: strengths)

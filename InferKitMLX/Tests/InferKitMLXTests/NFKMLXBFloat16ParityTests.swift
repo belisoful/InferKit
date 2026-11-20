@@ -3399,7 +3399,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                                   "float16: the domain tells MLX's softplus from torch's")
             }
         }
-        let grid = MLXArray((0 ..< 4096).map { Float(-30 + 60 * Double($0) / 4096) })
+        let grid = MLXArray((0 ..< 4096).map { (index: Int) -> Float in Float(-30 + 60 * Double(index) / 4096) })
         func digest(_ y: MLXArray) -> String {
             SHA256.hash(data: y.asArray(Float.self).withUnsafeBufferPointer { Data(buffer: $0) })
                 .map { String(format: "%02x", $0) }.joined()

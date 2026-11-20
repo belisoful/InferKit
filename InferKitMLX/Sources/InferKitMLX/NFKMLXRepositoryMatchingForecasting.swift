@@ -18,7 +18,7 @@ extension NFKMLXFamilyJudge {
     /// network, so the judgment requires the 2.5 quantile head and refuses their frequency embedding. The
     /// network fixes its activation, biases, key-value heads, and rotary base, so a configuration stating
     /// another value for one is refused.
-    static let timesFM = NFKMLXFamilyJudge(
+    static let timesFM: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "timesfm" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             let configuration = repository.configuration

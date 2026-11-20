@@ -528,7 +528,7 @@ final class MLXModelGalleryExamples: XCTestCase {
         // batch), and a tiny partial-rotary LongRoPE decoder fuses the image and the clips into one
         // prompt, as the vision-with-speech mode does.
         NFKMLXRandom.seed(1)
-        let rgb = (0 ..< 500 * 300 * 3).map { UInt8(($0 * 37) % 256) }
+        let rgb: [UInt8] = (0 ..< 500 * 300 * 3).map { (index: Int) -> UInt8 in UInt8((index * 37) % 256) }
         let image = NFKMLXPhi4MMImageProcessor.process(rgb: rgb, width: 500, height: 300)
         XCTAssertEqual(image.pixels.dim(0), 3, "a global view and a 1×2 crop grid")
         let imageNet = NFKMLXPhi4MMImageNet(NFKMLXSigLIPConfiguration(
@@ -625,10 +625,10 @@ final class MLXModelGalleryExamples: XCTestCase {
         //   NFKMLXPplxDecider.decider(variant: .flash, revision: nil, cacheDirectoryURL: nil, quantizationBits: 0)
         // The 27B release packs to 4 bits as it loads: quantizationBits: 4. A tiny random net stands in.
         NFKMLXRandom.seed(5)
-        let words = NFKMLXDecisionTokenizer { text in
-            text.components(separatedBy: NFKMLXPplxDeciderPrompt.marker).enumerated().flatMap { index, piece in
+        let words = NFKMLXDecisionTokenizer { (text: String) -> [Int] in
+            text.components(separatedBy: NFKMLXPplxDeciderPrompt.marker).enumerated().flatMap { (index: Int, piece: String) -> [Int] in
                 (index > 0 ? [7] : []) + piece.split(whereSeparator: \.isWhitespace)
-                    .map { $0.unicodeScalars.reduce(7) { ($0 * 31 + Int($1.value)) % 490 } + 10 }
+                    .map { (word: Substring) -> Int in word.unicodeScalars.reduce(7) { ($0 * 31 + Int($1.value)) % 490 } + 10 }
             }
         }
         let decider = NFKMLXPplxDecider(net: NFKMLXPplxDeciderNet(.tiny), tokenizer: words)

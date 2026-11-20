@@ -19,7 +19,7 @@ extension NFKMLXFamilyJudge {
     /// `NFKMLXQwen3VLVisionConfiguration.configuration(fromJSON:)`, and its tokenizer by the release reader.
     /// The integration fixes the image token, the merge size, the interleaved M-RoPE sections, and three
     /// DeepStack layers, so a configuration stating other values is refused.
-    static let qwen3VL = NFKMLXFamilyJudge(
+    static let qwen3VL: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "qwen3-vl" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             let configuration = repository.configuration
@@ -58,7 +58,7 @@ extension NFKMLXFamilyJudge {
     /// ``NFKMLXTrOCRVisionConfiguration`` and ``NFKMLXSeq2SeqConfiguration``, its tokenizer from RoBERTa's `vocab.json` and `merges.txt` or
     /// XLM-R's `sentencepiece.bpe.model`. The model type is the generic vision-encoder-decoder's, so the
     /// judgment requires the two halves the loader builds.
-    static let trocr = NFKMLXFamilyJudge(
+    static let trocr: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "trocr" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             let configuration = repository.configuration
@@ -93,7 +93,7 @@ extension NFKMLXFamilyJudge {
     /// dense decoder's refusals, its SigLIP tower by the tower reader, and its tokenizer by the release
     /// reader (`NFKMLXLanguage.tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)`), which the loader
     /// reads it through. The tower runs the tanh GELU, so a stated tower activation other than it is refused.
-    static let smolVLM = NFKMLXFamilyJudge(
+    static let smolVLM: NFKMLXFamilyJudge = NFKMLXFamilyJudge(
         reads: { $0.family == "smolvlm" && !$0.modelTypes.isEmpty },
         verify: { repository, template in
             let configuration = repository.configuration

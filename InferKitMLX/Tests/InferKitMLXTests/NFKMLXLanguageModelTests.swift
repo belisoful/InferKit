@@ -200,7 +200,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
                                                  keyValueHeadCount: 1, headDimensions: 64,
                                                  intermediateSize: 128, vocabularySize: 512, ropeTheta: 10_000)
         let net = NFKMLXLanguage.makeNet(config)
-        let prompt = (0 ..< 20).map { Int32(($0 * 7 + 3) % 512) }
+        let prompt: [Int32] = (0 ..< 20).map { (index: Int) -> Int32 in Int32((index * 7 + 3) % 512) }
 
         func decode(_ cache: NFKMLXKeyValueCache) -> [Float] {
             var last: [Float] = []
@@ -1299,7 +1299,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertEqual(errors, errors.sorted(), "each narrower width reconstructs further from the weights: \(errors)")
         XCTAssertEqual(Set(errors).count, widths.count)
 
-        let prompt = (0 ..< 70).map { Int32(($0 * 7 + 3) % 512) }
+        let prompt: [Int32] = (0 ..< 70).map { (index: Int) -> Int32 in Int32((index * 7 + 3) % 512) }
         MLXRandom.seed(9)
         let reference = wideHeadNet()
         let float = stepped(reference, prompt, cache: NFKMLXKeyValueCache(layerCount: reference.configuration.layerCount))
@@ -1324,7 +1324,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
     // mixture quantized at 3 and at 5 bits in groups of 32 routes and decodes, 5 bits closer to float.
     func testAMixturesExpertsPackAtTheOddWidths() throws {
         try requireMLXRuntime()
-        let tokens = MLXArray((0 ..< 12).map { Int32(($0 * 11 + 5) % 512) }).reshaped([1, 12])
+        let tokens = MLXArray((0 ..< 12).map { (index: Int) -> Int32 in Int32((index * 11 + 5) % 512) }).reshaped([1, 12])
         MLXRandom.seed(13)
         let float = NFKMLXLanguage.makeNet(.tinyMixture)
         let reference = float(tokens)[0, -1].asArray(Float.self)
@@ -1394,7 +1394,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
     func testAPerChannelKeyCacheTracksTheFloatLogits() throws {
         try requireMLXRuntime()
         let net = wideHeadNet()
-        let prompt = (0 ..< 50).map { Int32(($0 * 7 + 3) % 512) }
+        let prompt: [Int32] = (0 ..< 50).map { (index: Int) -> Int32 in Int32((index * 7 + 3) % 512) }
         let float = stepped(net, prompt, cache: NFKMLXKeyValueCache(layerCount: 2))
         let packed = NFKMLXKeyValueCache(layerCount: 2, quantization: perChannel)
         let decoded = stepped(net, prompt, cache: packed)
@@ -1424,7 +1424,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
     func testAPerChannelKeyCacheRollsBackIntoAPackedGroup() throws {
         try requireMLXRuntime()
         let net = wideHeadNet()
-        let prompt = (0 ..< 40).map { Int32(($0 * 11 + 5) % 512) }
+        let prompt: [Int32] = (0 ..< 40).map { (index: Int) -> Int32 in Int32((index * 11 + 5) % 512) }
         let fresh = NFKMLXKeyValueCache(layerCount: 2, quantization: perChannel)
         _ = stepped(net, prompt, cache: fresh)
         let expected = stepped(net, [60], cache: fresh)
@@ -1453,7 +1453,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
     func testAPerChannelWindowedCacheTracksTheFloatWindow() throws {
         try requireMLXRuntime()
         let net = wideHeadNet()
-        let prompt = (0 ..< 60).map { Int32(($0 * 13 + 7) % 512) }
+        let prompt: [Int32] = (0 ..< 60).map { (index: Int) -> Int32 in Int32((index * 13 + 7) % 512) }
         let float = stepped(net, prompt, cache: NFKMLXKeyValueCache(layerCount: 2, window: 40))
         let windowed = NFKMLXKeyValueCache(layerCount: 2, window: 40, quantization: perChannel)
         let decoded = stepped(net, prompt, cache: windowed)
@@ -1482,7 +1482,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         try requireMLXRuntime()
         let net = wideHeadNet()
         let saved = NFKMLXPromptCache(layerCount: 2, quantization: perChannel)
-        let system = (0 ..< 40).map { Int(($0 * 3 + 1) % 512) }
+        let system: [Int] = (0 ..< 40).map { (index: Int) -> Int in Int((index * 3 + 1) % 512) }
         _ = net.generate(prompt: system, options: greedy(2), promptCache: saved)
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("prompt-cache-\(UUID().uuidString).safetensors")

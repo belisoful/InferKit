@@ -410,8 +410,9 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         let layers = try XCTUnwrap(structure.layers())
         XCTAssertEqual(layers.count, 2)
         XCTAssertEqual(layers.largestBytes, ["BF16": 37_056 * 2 + 1024])
-        XCTAssertEqual(layers.totalBytes, ["BF16": Int64(Self.tensors.filter { $0.0.contains(".layers.") }
-            .reduce(0) { $0 + $1.1.reduce(1, *) * 2 }) + 1024])
+        let layerTensorBytes: Int = Self.tensors.filter { (tensor: (String, [Int])) -> Bool in tensor.0.contains(".layers.") }
+            .reduce(0) { (sum: Int, tensor: (String, [Int])) -> Int in sum + tensor.1.reduce(1, *) * 2 }
+        XCTAssertEqual(layers.totalBytes, ["BF16": Int64(layerTensorBytes) + 1024])
     }
 
     func testTheGeometryReadsANestedDecoderConfiguration() throws {

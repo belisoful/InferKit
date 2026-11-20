@@ -710,10 +710,10 @@ final class MLXCustomizationExamples: XCTestCase {
         // A real run loads the release at .float32:
         //   NFKMLXPplxDecider.decider(directoryURL: release, precision: .float32)
         // The example adapts a tiny random decoder with a word-level stand-in tokenizer (the marker is id 7).
-        let tokenizer = NFKMLXDecisionTokenizer { text in
-            text.components(separatedBy: NFKMLXPplxDeciderPrompt.marker).enumerated().flatMap { index, piece in
+        let tokenizer = NFKMLXDecisionTokenizer { (text: String) -> [Int] in
+            text.components(separatedBy: NFKMLXPplxDeciderPrompt.marker).enumerated().flatMap { (index: Int, piece: String) -> [Int] in
                 (index > 0 ? [7] : []) + piece.split(whereSeparator: \.isWhitespace)
-                    .map { $0.unicodeScalars.reduce(7) { ($0 * 31 + Int($1.value)) % 490 } + 10 }
+                    .map { (word: Substring) -> Int in word.unicodeScalars.reduce(7) { ($0 * 31 + Int($1.value)) % 490 } + 10 }
             }
         }
         let model = NFKMLXPplxDecider(net: NFKMLXPplxDeciderNet(.tiny), tokenizer: tokenizer)
@@ -1055,7 +1055,7 @@ final class MLXCustomizationExamples: XCTestCase {
 
         // A real run loads the release: NFKMLXRetinaFace.network(weightsURL: releasedWeights).
         let net = try NFKMLXRetinaFace.network(weightsURL: nil)
-        let images = MLXArray((0 ..< 2 * 96 * 96 * 3).map { Float($0 % 97) / 97 }, [2, 96, 96, 3])
+        let images = MLXArray((0 ..< 2 * 96 * 96 * 3).map { (index: Int) -> Float in Float(index % 97) / 97 }, [2, 96, 96, 3])
         let faces = [[NFKMLXRetinaFaceAnnotation(x1: 0.2, y1: 0.2, x2: 0.6, y2: 0.7,
                                                  landmarks: [0.3, 0.35, 0.5, 0.35, 0.4, 0.45, 0.32, 0.55, 0.48, 0.55])],
                      [NFKMLXRetinaFaceAnnotation(x1: 0.4, y1: 0.3, x2: 0.9, y2: 0.8)]]
@@ -1077,7 +1077,7 @@ final class MLXCustomizationExamples: XCTestCase {
 
         // A real run loads the release and VGG-19's ImageNet weights at 448 pixels; randomly initialized
         // networks on 64-pixel frames stand in.
-        let pixels: [Float] = (0 ..< 64 * 64 * 3).map { index -> Float in Float(index % 83) / 83 }
+        let pixels: [Float] = (0 ..< 64 * 64 * 3).map { (index: Int) -> Float in Float(index % 83) / 83 }
         let frame = MLXArray(pixels, [1, 64, 64, 3])
         let net = try NFKMLXRIFEv4.network(weightsURL: nil)
         let objective = try NFKMLXRIFEv4Objective(vggWeightsURL: nil, net: net)
@@ -1100,7 +1100,7 @@ final class MLXCustomizationExamples: XCTestCase {
 
         // A real run loads the release and trains on 512-pixel photos; a randomly initialized network on
         // 48-pixel photos stands in.
-        let pixels: [Float] = (0 ..< 48 * 48 * 3).map { index -> Float in Float(index % 61) / 255 }
+        let pixels: [Float] = (0 ..< 48 * 48 * 3).map { (index: Int) -> Float in Float(index % 61) / 255 }
         let myPhotos = [MLXArray(pixels, [1, 48, 48, 3])]
         let net = try NFKMLXZeroDCEPlus.network(weightsURL: nil)
         var objective = NFKMLXZeroDCEPlusObjective()
@@ -1177,7 +1177,7 @@ final class MLXCustomizationExamples: XCTestCase {
 
         // A real run loads the release and trains on 256-pixel crops of full-size pairs; a randomly
         // initialized network on 48-pixel pairs and 32-pixel crops stands in.
-        let clean: [Float] = (0 ..< 2 * 48 * 48 * 3).map { Float($0 % 53) / 53 }
+        let clean: [Float] = (0 ..< 2 * 48 * 48 * 3).map { (index: Int) -> Float in Float(index % 53) / 53 }
         let noisy: [Float] = clean.enumerated().map { $0.element + 0.05 * Float(($0.offset * 7) % 11) / 11 }
         let myPairs = [(degraded: MLXArray(noisy, [2, 48, 48, 3]), clean: MLXArray(clean, [2, 48, 48, 3]))]
         let net = try NFKMLXNAFNet.network(weightsURL: nil, configuration: .sidd)
@@ -1203,8 +1203,8 @@ final class MLXCustomizationExamples: XCTestCase {
         // A real run reads torchvision's VGG-16 weights and 256-pixel photos; a randomly initialized
         // trunk and 32-pixel images stand in.
         let vgg16Weights: URL? = nil
-        let styleValues: [Float] = (0 ..< 40 * 40 * 3).map { Float(($0 * 7) % 31) / 31 }
-        let photoValues: [Float] = (0 ..< 2 * 32 * 32 * 3).map { Float($0 % 53) / 53 }
+        let styleValues: [Float] = (0 ..< 40 * 40 * 3).map { (index: Int) -> Float in Float((index * 7) % 31) / 31 }
+        let photoValues: [Float] = (0 ..< 2 * 32 * 32 * 3).map { (index: Int) -> Float in Float(index % 53) / 53 }
         let myStyle = MLXArray(styleValues, [40, 40, 3])
         let myPhotos = [MLXArray(photoValues, [2, 32, 32, 3])]
         let objective = try NFKMLXStyleTransferObjective(vggWeightsURL: vgg16Weights, styleImage: myStyle)
@@ -1229,8 +1229,8 @@ final class MLXCustomizationExamples: XCTestCase {
         // A real run loads the released encoder and decoder and crops 512-pixel images to 256; random
         // networks and 48-pixel images cropped to 32 stand in.
         let releasedEncoder: URL? = nil, releasedDecoder: URL? = nil
-        let photoValues: [Float] = (0 ..< 2 * 48 * 48 * 3).map { Float($0 % 53) / 53 }
-        let styleValues: [Float] = (0 ..< 2 * 48 * 48 * 3).map { Float(($0 * 7) % 31) / 31 }
+        let photoValues: [Float] = (0 ..< 2 * 48 * 48 * 3).map { (index: Int) -> Float in Float(index % 53) / 53 }
+        let styleValues: [Float] = (0 ..< 2 * 48 * 48 * 3).map { (index: Int) -> Float in Float((index * 7) % 31) / 31 }
         let myPhotos = [MLXArray(photoValues, [2, 48, 48, 3])]
         let myStyles = [MLXArray(styleValues, [2, 48, 48, 3])]
         let net = try NFKMLXAdaIN.network(encoderURL: releasedEncoder, decoderURL: releasedDecoder)
@@ -1258,7 +1258,7 @@ final class MLXCustomizationExamples: XCTestCase {
         }
 
         // A real run loads the releases at 176 pixels; randomly initialized networks on 32-pixel images stand in.
-        let pixels: [Float] = (0 ..< 2 * 32 * 32 * 3).map { index -> Float in Float(index % 89) / 89 }
+        let pixels: [Float] = (0 ..< 2 * 32 * 32 * 3).map { (index: Int) -> Float in Float(index % 89) / 89 }
         let batch = MLXArray(pixels, [2, 32, 32, 3])
         let eccv16 = try NFKMLXColorizer.network(weightsURL: nil)
         XCTAssertEqual(try NFKMLXColorizer.fineTune(eccv16, examples: { _ in batch }, steps: 1).count, 1)
@@ -1285,8 +1285,8 @@ final class MLXCustomizationExamples: XCTestCase {
         metric.maxDepth = 20
         metric.inputSize = 112
         let net = try NFKMLXDepthAnything.network(weightsURL: nil, configuration: metric)
-        let pixels: [Float] = (0 ..< 2 * 112 * 112 * 3).map { index -> Float in Float(index % 101) / 101 }
-        let meters: [Float] = (0 ..< 2 * 112 * 112).map { index -> Float in 2 + Float(index % 97) / 10 }
+        let pixels: [Float] = (0 ..< 2 * 112 * 112 * 3).map { (index: Int) -> Float in Float(index % 101) / 101 }
+        let meters: [Float] = (0 ..< 2 * 112 * 112).map { (index: Int) -> Float in 2 + Float(index % 97) / 10 }
         let images = MLXArray(pixels, [2, 112, 112, 3])
         let depth = MLXArray(meters, [2, 112, 112])
         let valid = MLXArray.ones([2, 112, 112])
@@ -1460,7 +1460,7 @@ final class MLXCustomizationExamples: XCTestCase {
 
         // A real run transfers a release: NFKMLXYOLO.network(classCount: 3, weightsURL: releasedWeights).
         let net = try NFKMLXYOLO.network(classCount: 3, weightsURL: nil)
-        let images = MLXArray((0 ..< 64 * 64 * 3).map { Float($0 % 97) / 97 }).reshaped([1, 64, 64, 3])
+        let images = MLXArray((0 ..< 64 * 64 * 3).map { (index: Int) -> Float in Float(index % 97) / 97 }).reshaped([1, 64, 64, 3])
         let boxes = [[NFKMLXYOLOBox(classIndex: 1, x1: 8, y1: 10, x2: 40, y2: 50)]]
         let history = try NFKMLXYOLO.fineTune(net, examples: { _ in (images, boxes) }, steps: 2, stepsPerEpoch: 2)
         XCTAssertEqual(history.count, 2)
@@ -1482,7 +1482,7 @@ final class MLXCustomizationExamples: XCTestCase {
         // A real run transfers a release: NFKMLXRTDetr.network(variant: .r18vd, classCount: 3, weightsURL: releasedWeights).
         let net = try NFKMLXRTDetr.network(variant: .r18vd, classCount: 3, weightsURL: nil)
         // 160 pixels give 525 anchors, enough for the release's 300 queries; the reference trains at 640.
-        let images = MLXArray((0 ..< 160 * 160 * 3).map { Float($0 % 97) / 97 }).reshaped([1, 160, 160, 3])
+        let images = MLXArray((0 ..< 160 * 160 * 3).map { (index: Int) -> Float in Float(index % 97) / 97 }).reshaped([1, 160, 160, 3])
         let targets = [NFKMLXRTDetrTarget(classes: [1], boxes: MLXArray([0.4, 0.5, 0.3, 0.4] as [Float], [1, 4]))]
         let history = try NFKMLXRTDetr.fineTune(net, variant: .r18vd, examples: { _ in (images, targets) }, steps: 2)
         XCTAssertEqual(history.count, 2)
