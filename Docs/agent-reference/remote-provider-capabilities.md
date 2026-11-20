@@ -87,6 +87,8 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 | live avatar video | Live `avatarConfig` | Vertex AI only; frames reach `mediaHandler` |
 | 3D or document output | — | not offered (2026-10-13: no model; `document` is a usage-breakdown modality) |
 | Imagen | — | shut down |
+| text (+ one 16:9 image) → a world driven live by key and camera actions and new prompts, 720p 24 fps frames and 48 kHz stereo audio (`genie-4`, GA 2026-11-19) | Interactions create, then `interactions.connect` over WebSocket or WebRTC (`world_setup`, `user_action`, `input` → `step.delta`) | gap (2026-11-20): the raw WebSocket URL is not published; Google's SDKs hold it |
+| tool retrieval: deferred tools found by a `tool_search` tool (Preview, 2026-11-19; Gemini 3.6 onward) | Interactions `defer_loading: true`, `{type: tool_search}` | gap (2026-11-20): the backends send neither |
 | batches of generateContent requests | `/v1beta/models/{id}:batchGenerateContent` (inline, under 20 MB) | covered (`NFKRemoteBatch`, Gemini style, 2026-10-23); file input past 19 MB and embedding batches (`:asyncBatchEmbedContent`) 2026-10-24 |
 
 ### xAI (`xai`)
@@ -176,16 +178,20 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 ### OpenCode Zen (`opencode`)
 
 A gateway that serves each model on its maker's protocol; the route per model is in the preset's
-`modelAPIStyles` (2026-10-13). Detail in `remote-providers.md` ("OpenCode gateways").
+`modelAPIStyles` (refreshed 2026-11-20). Since then OpenCode also translates every text model onto
+every text API. Detail in `remote-providers.md` ("OpenCode gateways").
 
 | Mode | Endpoint | Status |
 |---|---|---|
 | text + image → text, tools (GLM, Kimi, DeepSeek, MiniMax, Mistral, Qwen3.8 Max, the free models) | `/chat/completions` | covered (`NFKRemoteBackend`) |
-| text + image → text, tools, reasoning (GPT, Grok, Muse Spark) | `/responses` | covered (`NFKRemoteResponsesBackend`) |
+| text + image → text, tools, reasoning (GPT, Grok, Muse) | `/responses` | covered (`NFKRemoteResponsesBackend`) |
 | text + image → text, tools, thinking (Claude, most Qwen) | `/messages` | covered (`NFKAnthropicBackend`) |
-| state → typed decisions (Jev) | `/systemone` | covered (`NFKTypeSafeBackend`) |
-| text + image → text, tools, thinking (Gemini) | `/models/{id}:generateContent` | covered (`NFKGeminiGenerateContentBackend`) |
-| model list | `/models` | covered (ids only) |
+| state → typed decisions (Jev, `gpt-6-luna-decision`, `gemini-decision-1`) | `/systemone` | covered (`NFKTypeSafeBackend`) |
+| text + image → text, tools, thinking (Gemini) | `/models/{id}:generateContent` | covered (`NFKGeminiGenerateContentBackend`); OpenCode recommends Interactions |
+| text → embedding (12 models: OpenAI, Gemini, Cohere, Voyage, Mistral, BGE, Qwen3) | `/openai/v1/embeddings` | gap (2026-11-20): `NFKRemoteEmbeddingBackend` returns nil for the preset |
+| text → image (`gpt-image-2.5-sunburst`, `grok-imagine-image-2.0`, `gemini-nano-banana-2.1`) | `/openai/v1/images/generations`, `/xai/v1/images/generations`, generateContent | gap (2026-11-20) |
+| realtime (`gpt-live-1`) | `live` at `/openai/v1` | gap (2026-11-20) |
+| model list | `/models` | covered (ids; the reply's per-model `api` and `recommended_api` are not read) |
 
 ### OpenCode Go (`opencode-go`)
 
@@ -194,8 +200,10 @@ The subscription gateway, same key as Zen. Its routes differ from Zen's for some
 | Mode | Endpoint | Status |
 |---|---|---|
 | text + image → text, tools (GLM, Kimi, DeepSeek, MiMo, LongCat, Hy, the free models) | `/chat/completions` | covered (`NFKRemoteBackend`) |
-| text + image → text, tools, reasoning (GPT Luna, Grok, Muse Spark Contributor) | `/responses` | covered (`NFKRemoteResponsesBackend`) |
-| text + image → text, tools (Claude Haiku 5.5, MiniMax, Qwen3.7 Plus and Qwen3.8) | `/messages` | covered (`NFKAnthropicBackend`) |
+| text + image → text, tools, reasoning (GPT Luna, Grok 4.7, Muse Spark Contributor) | `/responses` | covered (`NFKRemoteResponsesBackend`) |
+| text + image → text, tools (Claude Haiku 5.5, MiniMax M3, Qwen3.7 Plus, Qwen3.8, Qwen4 Max) | `/messages` | covered (`NFKAnthropicBackend`) |
+| text + image → text (Gemini 4 Argon) | `/models/{id}:generateContent` | covered (`NFKGeminiGenerateContentBackend`, 2026-11-20) |
+| the `x-opencode-session` header every request must carry (2026-11-20) | every route | gap: without it Go answers `MissingSessionID`, so no Go request succeeds |
 | model list | `/models` | covered (ids only) |
 
 ### Alibaba Model Studio (`modelstudio`)

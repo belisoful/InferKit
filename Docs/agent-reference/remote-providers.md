@@ -350,6 +350,22 @@ shapes:
   Completions and Responses and no Batch or Realtime, with a 1,050,000-token context, 128,000 output
   tokens, text and image input, and access limited to organizations approved for Daybreak Red. The
   `gpt-6` prefix rules cover it.
+- **GPT-6.2 Astra and Sol (`gpt-6.2-astra`, `gpt-6.2-sol`, model pages and "Using GPT-6.2" read
+  2026-11-20):** the `gpt-6` prefix rules cover both. The model pages state:
+  - Chat Completions, Responses, and Batch; no Realtime, Assistants, or fine-tuning, and no Flex
+    processing (`service_tier: flex`). "Tool calling requires Responses", so a tool request belongs on
+    `NFKRemoteResponsesBackend`; the chat backend sends it and the service's error passes through.
+  - Context 1,050,000 tokens, input up to 922,000, output up to 128,000; text and image in, text out.
+  - Efforts `low`, `medium`, `high`, `xhigh`, and `max`. The API rejects `none`; the guide says to send
+    `low` where `none` or `minimal` was sent. The guide tells callers to omit `temperature`, `top_p`,
+    `logprobs`, and `top_logprobs`, which the backends already drop for a reasoning model.
+  - Pro is a request mode, `reasoning.mode: pro` on Responses, not a model name. The mode passes by
+    name. OpenRouter lists `openai/gpt-6.2-astra-pro` and `openai/gpt-6.2-sol-pro` as names of its own.
+  - From GPT-6.2 on, Responses drops reasoning items after an edit to the earlier conversation (a
+    prefix edit) or a model downgrade, and appends top-level `instructions` after `input`, billed at
+    the uncached rate.
+  - Per million tokens: Astra $8 input, $0.40 cached, $40 output; Sol $2, $0.10, $10. Input past
+    272K tokens doubles the input rate and raises output 1.5 times for the whole request.
 - **xAI:** "presencePenalty, frequencyPenalty, and stop cannot be used with reasoning models"
   (grok-4.5 / 4.6 / 4.7, the 4.20 reasoning models). `NFKRemoteModelRefusesStopSequences` covers
   `grok-4…` and `grok-3-mini…` except names containing `non-reasoning`; the backend drops `stop` and cuts
@@ -401,8 +417,36 @@ shapes:
     source_text}` and returns the whole edited text; the Interactions backend maps a `source_text`
     parameter to it (2026-11-18). `gemini-3.5-transcribe-live` takes `inputAudioTranscription {mode:
     SMART, sourceText}` at setup, reachable through `extraConfiguration` and not built into the session.
+  - 2026-11-18: `gemini-4-neon` GA ("Gemini 4 Carbon, Hydrogen, and Neon" above).
+  - 2026-11-19: `genie-4` GA, a world model on Interactions (changelog, `docs/genie.md`, and
+    `docs/models/genie-4.md` read 2026-11-20). A `POST /v1beta/interactions` with `{model: genie-4}`
+    creates the session; `interactions.connect` drives it over WebSocket (the SDKs) or WebRTC
+    (browsers, token from `POST …/interactions/{id}/auth_tokens`). The client sends `world_setup`
+    once (`world_prompt {text}`, an optional 16:9 `reference_image {mime_type, data}`), then
+    `user_action` (`key_down`, `key_up`, or `key_click` on `key_w`/`a`/`s`/`d` and the arrow keys)
+    and `input` events with new text. The server streams `step.delta` events (`video`: one base64
+    JPEG at 1280×720, 24 fps; `audio`: base64 16-bit stereo PCM at 48 kHz) and ends with
+    `interaction.completed`. A session runs up to 120 s and cannot be resumed; `complete()` stops
+    billing and a detach does not. Paid tier only: $1.50 per million input tokens and $17.50 per
+    million video output tokens (240 tokens a frame, about $0.10 a second). Not built: the raw
+    WebSocket URL and subprotocol are not published.
+  - 2026-11-19: tool retrieval (Preview) on Interactions for Gemini 3.6 onward: a tool marked
+    `defer_loading: true` stays out of the context until a `{type: tool_search}` tool finds it. Not
+    built.
   - 2026-12-18: `gemini-3.1-flash-tts-preview`, `gemini-2.5-flash-preview-tts`, and
     `gemini-2.5-pro-preview-tts` shut down.
+- **Microsoft MAI (no preset; announcements and model pages read 2026-11-20):** nothing is reachable
+  with a published wire contract yet.
+  - `MAI Code 2` and `MAI Code 2 Flash`: GitHub Copilot, and Code 2 Flash in a limited-access
+    Microsoft Foundry preview. OpenRouter, Vercel, Hermes, OpenCode, and Kilo are announced as
+    "soon". Neither gateway listed them on 2026-11-20.
+  - `MAI Image 2.7` and `2.7 Flash`: public preview on Foundry and through fal, Genspark, OpenRouter,
+    and Vercel, about $35 and $10 per 1,000 images. OpenRouter did not list them on 2026-11-20.
+  - `MAI Realtime 1`: speech to speech in a limited-access Foundry preview, described as
+    "compatible with the OpenAI Realtime API", $0.01 per audio minute plus $1 / $5 per million
+    reasoning tokens.
+  - No page names a model id, an endpoint, or an auth header. When one does, `NFKRealtimeSession`'s
+    OpenAI style is the first candidate for Realtime 1.
 - **DeepSeek:** `deepseek-flash` (V4.1-Flash) and `deepseek-v4-pro`; effort `none|low|high|max`
   (`medium` is not listed), and thinking mode ignores `temperature`. Only `json_object` is documented,
   so a `json_schema` response format may be refused (unverified).
@@ -1526,40 +1570,60 @@ type omits. So a `speakers` array parameter goes out as `{speakers}` without `mo
 checked against a live call. The live test (`testALiveListingNamesThePrebuiltVoices`) is
 gated on `INFERKIT_GEMINI_API_KEY`.
 
-**OpenCode gateways (`opencode`, `opencode-go`, 2026-10-13).** OpenCode runs two inference gateways
-behind one console key: Zen (pay-as-you-go, `https://opencode.ai/inference/v1`) and Go (subscription,
-`https://opencode.ai/inference/go/v1`). The earlier "deliberately absent" note probed
-`opencode.ai/api/…`, which is the site and answers 404; the gateways were never under `/api`. The
-older `opencode.ai/zen/v1` and `opencode.ai/zen/go/v1` bases still answer the same model lists, and
-the presets use the documented `/inference/` bases.
+**OpenCode gateways (`opencode`, `opencode-go`, 2026-10-13; refreshed 2026-11-20).** OpenCode runs
+two inference gateways behind one console key: Zen (pay-as-you-go) and Go (subscription). The docs now
+live at `opencode.ai/docs/console/models` and `opencode.ai/docs/console/go` (Markdown twins at
+`<page>.md`; `docs/zen` and `docs/go` redirect there), with the base URLs in
+`docs/console/harnesses.md` ("Base URLs").
 
-- Each model is served on its maker's protocol. OpenCode's docs (`opencode.ai/docs/zen`,
-  `opencode.ai/docs/go`) publish a table of model → endpoint → AI SDK package. The presets carry the
-  routes that are not chat completions in `modelAPIStyles`; every other model goes to
-  `/chat/completions`.
-- The tables differ between the gateways for the same name: `qwen3.8-max`, `minimax-m3`, and
-  `minimax-m2.7` are chat on Zen and Messages on Go. Model-family prefixes do not predict a route.
-- `GET /models` returns ids only (`id`, `object`, `created`, `owned_by`), so the route cannot be read
-  from the service. models.dev (`https://models.dev/api.json`, providers `opencode` and `opencode-go`)
-  carries the same routes as a per-model `provider.npm` and agreed with the docs on every model both
-  listed on 2026-10-13. models.dev also lists about 37 retired Zen models, so the docs table is the
-  source and models.dev the cross-check. `muse-spark-1.2-contributor-free` is live and absent from
-  the docs table; models.dev routes it to Responses, and the preset follows.
-  `claude-opus-5-5-backup` is live and in neither source, so it has no route.
-- Gemini models (Zen only) use `@ai-sdk/google`, which posts to `{base}/models/{id}:generateContent`
-  with an `x-goog-api-key` header. The factory builds an `NFKGeminiGenerateContentBackend` on
-  `{base}/models` for them. Whether OpenCode takes the key in that header, and whether Zen's
-  `/chat/completions` also answers a Gemini id, is unknown without a key.
+- The documented bases are `https://opencode.ai/inference` (Zen) and `https://opencode.ai/inference/go`
+  (Go), each followed by the maker's path: `/openai/v1/responses`, `/openai/v1/chat/completions`,
+  `/anthropic/v1/messages`, `/google/v1beta/models/<model>:generateContent`, and
+  `/systemone/v1/systemone`. The presets keep the earlier `…/inference/v1` and `…/inference/go/v1`
+  bases with the maker's last path segment: on 2026-11-20 every such path answered an unauthenticated
+  request the way its documented twin did (`AuthError` on Zen, the Gemini-shaped 401 on
+  generateContent), and an unknown path answered with an empty body. The model list stays at
+  `https://opencode.ai/inference/v1/models`.
+- "Every API serves every paid and Go text model": the gateway sends a request to the model's own
+  endpoint when it speaks that API and translates it otherwise. The presets still route each model to
+  its own API, which needs no translation. Free chat models answer only OpenCode's own client.
+- `GET /models` now carries each model's `type` (`chat`, `decision`, `embedding`, `image`,
+  `realtime`), an `api` object keyed by API (`responses`, `chat-completions`, `messages`,
+  `generate-content`, `interactions`, `systemone`, `embeddings`, `images`, `live`) with each
+  `base_url` and tool capabilities, and `recommended_api`. The tables in `openCodeZen` / `openCodeGo`
+  follow `recommended_api`, which matched the docs table on every model both listed, except that
+  OpenCode recommends Interactions for the Gemini models and also serves them on generateContent,
+  which the presets use. `NFKRemoteModel` reads the ids only.
+- The tables differ between the gateways for the same name: `qwen3.8-max` is chat on Zen and
+  Messages on Go, and `minimax-m3` likewise. Model-family prefixes do not predict a route.
+- Changes in the 2026-11-20 refresh. Zen added `gpt-6.2-astra`, `gpt-6.2-sol`, `muse-ember-1.0`,
+  `muse-wonder-1.0` (Responses), `claude-fable-5-2` (Messages), `gpt-6-luna-decision` and
+  `gemini-decision-1` (System One, the request Jev takes; images, audio, video, and PDFs ride in
+  `state` as chat-style parts), and `gemini-4-argon` / `-carbon` / `-hydrogen` / `-neon`. Zen dropped
+  `gemini-3-flash`, `gemini-3.1-pro`, `qwen3.7-max`, `qwen3.7-plus`, and the two
+  `muse-spark-*-contributor-free` names. Go added `qwen4-max` (Messages) and `gemini-4-argon`
+  (generateContent) and dropped `grok-4.6` and `minimax-m2.7`. A dropped name falls back to chat
+  completions.
+- Zen also lists 12 embedding models, three image models (`gpt-image-2.5-sunburst`,
+  `grok-imagine-image-2.0`, `gemini-nano-banana-2.1`), and the realtime model `gpt-live-1`. The
+  per-capability factories other than `NFKRemoteResponsesBackend` and `NFKGeminiGenerateContentBackend`
+  still return nil for both presets.
+- Go refuses a request without an `x-opencode-session` header: every route answers
+  `{"type":"error","error":{"type":"MissingSessionID",…}}` before it reads the key (probed
+  2026-11-20). The docs ask for a stable session id per conversation, and for a client's own user
+  agent. The backends send neither, so no Go request succeeds until the header is sent. Zen takes the
+  header for routing and prompt caching and does not require it.
+- Gemini models use `@ai-sdk/google`, which posts to `{base}/models/{id}:generateContent` with an
+  `x-goog-api-key` header. The factory builds an `NFKGeminiGenerateContentBackend` on `{base}/models`.
+  Whether OpenCode takes the key in that header is unknown without a key.
 - Authentication: the docs show a Bearer token for chat and System One. `NFKAnthropicBackend` sends
   `x-api-key` on the Messages route, which is what `@ai-sdk/anthropic` sends. No request has been
   made with a key; `testOpenCodeAnswersOnEachRoutedProtocol` (gated on `INFERKIT_OPENCODE_API_KEY`)
-  lists both gateways and asks one free model per text protocol on Zen.
-- Every per-capability factory except `NFKRemoteResponsesBackend` returns nil for both presets:
-  OpenCode documents no embeddings, audio, image, file, or usage routes.
-- Refreshing the table: extract the endpoint tables from both docs pages, diff them against the live
-  `/models` lists and models.dev, and update `openCodeZen` / `openCodeGo` in `NFKRemoteProvider.m`
-  with the date. A caller reaches a newer model before a release through
-  `providerWithAPIStyle:forModelName:`.
+  lists both gateways and asks one free model per text protocol on Zen. Free models now answer only
+  OpenCode's own client, so that test needs a paid model before it can pass.
+- Refreshing the tables: read `GET /models` on both gateways (`recommended_api` per id) and the docs
+  table, and update `openCodeZen` / `openCodeGo` in `NFKRemoteProvider.m` with the date. A caller
+  reaches a newer model before a release through `providerWithAPIStyle:forModelName:`.
 
 **Meta's Model API (the `meta` preset, 2026-11-18).** Meta serves the Muse models at
 `https://api.meta.ai/v1` with a Bearer key (`LLM_{id}_{secret}`). The facts come from the docs at

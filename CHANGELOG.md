@@ -11,6 +11,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKit (core)
 
+#### OpenCode's routes for GPT-6.2, Claude Fable 5.2, Gemini 4, and the decision models
+
+- `NFKRemoteProvider.openCodeZen` routes `gpt-6.2-astra`, `gpt-6.2-sol`, `muse-ember-1.0`, and
+  `muse-wonder-1.0` to Responses, `claude-fable-5-2` to Messages, `gpt-6-luna-decision` and
+  `gemini-decision-1` to System One, and the four Gemini 4 models to generateContent, from
+  OpenCode's table of 2026-11-20. Names OpenCode no longer serves fall back to chat completions.
+- `NFKRemoteProvider.openCodeGo` routes `qwen4-max` to Messages and `gemini-4-argon` to
+  generateContent, so `NFKGeminiGenerateContentBackend` now answers for the Go preset.
+
 #### Typed decisions from Gemini's Decisions API
 
 - `NFKGeminiDecisionsBackend` calls Gemini's Decisions API (`POST /v1beta/decisions`, beside the

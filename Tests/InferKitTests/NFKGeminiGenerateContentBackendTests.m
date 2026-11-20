@@ -515,8 +515,8 @@
 	NFKGeminiGenerateContentBackend *zen = [NFKGeminiGenerateContentBackend backendForProvider:NFKRemoteProvider.openCodeZen apiKey:@"k" modelName:@"gemini-3.5-flash"];
 	XCTAssertEqualObjects(zen.endpointURL.absoluteString, @"https://opencode.ai/inference/v1/models");
 	XCTAssertNil([NFKGeminiGenerateContentBackend backendForProvider:NFKRemoteProvider.openAI apiKey:@"k" modelName:@"m"]);
-	XCTAssertNil([NFKGeminiGenerateContentBackend backendForProvider:NFKRemoteProvider.openCodeGo apiKey:@"k" modelName:@"m"],
-				 @"Go routes no model to generateContent");
+	NFKGeminiGenerateContentBackend *go = [NFKGeminiGenerateContentBackend backendForProvider:NFKRemoteProvider.openCodeGo apiKey:@"k" modelName:@"gemini-4-argon"];
+	XCTAssertEqualObjects(go.endpointURL.absoluteString, @"https://opencode.ai/inference/go/v1/models");
 }
 
 #pragma mark Live

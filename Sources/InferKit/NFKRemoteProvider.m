@@ -297,9 +297,10 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 }
 
-// OpenCode's published endpoint tables (opencode.ai/docs/zen and opencode.ai/docs/go, read
-// 2026-10-13), with muse-spark-1.2-contributor-free from models.dev, which OpenCode's own client reads.
-// Every model the tables send to chat completions is left out, since that is the presets' apiStyle.
+// OpenCode's published endpoint table (opencode.ai/docs/console/models, read 2026-11-20) and each
+// gateway's GET /models, whose recommended_api names a model's route; the two agreed on every model
+// both listed. Every model whose route is chat completions is left out, since that is the presets'
+// apiStyle. OpenCode recommends Interactions for the Gemini models and serves generateContent too.
 + (NFKRemoteProvider *)openCodeZen
 {
 	NFKRemoteProvider *provider = [self providerWithIdentifier:@"opencode" displayName:@"OpenCode Zen"
@@ -312,20 +313,20 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 			@"gpt-5.3-codex", @"gpt-5.3-codex-spark", @"gpt-5.4", @"gpt-5.4-mini", @"gpt-5.4-nano",
 			@"gpt-5.4-pro", @"gpt-5.5", @"gpt-5.5-pro", @"gpt-5.6-luna", @"gpt-5.6-sol",
 			@"gpt-5.6-terra", @"gpt-6-astra", @"gpt-6-luna", @"gpt-6-sol", @"gpt-6.1-sol",
-			@"grok-4.5", @"grok-4.6", @"grok-4.7", @"grok-build-0.1", @"muse-spark-1.2",
-			@"muse-spark-1.2-contributor-free", @"muse-spark-1.3",
-			@"muse-spark-1.3-contributor-free" ],
+			@"gpt-6.2-astra", @"gpt-6.2-sol", @"grok-4.5", @"grok-4.6", @"grok-4.7", @"grok-build-0.1",
+			@"muse-ember-1.0", @"muse-spark-1.2", @"muse-spark-1.3", @"muse-wonder-1.0" ],
 		@(NFKRemoteAPIStyleAnthropicMessages): @[
-			@"claude-fable-5", @"claude-fable-5-1", @"claude-haiku-4-5", @"claude-haiku-5-5",
-			@"claude-opus-4-5", @"claude-opus-4-6", @"claude-opus-4-7", @"claude-opus-4-8",
-			@"claude-opus-5", @"claude-opus-5-5", @"claude-sonnet-4-5", @"claude-sonnet-4-6",
-			@"claude-sonnet-5", @"claude-sonnet-5-5", @"qwen3.5-plus", @"qwen3.6-plus",
-			@"qwen3.7-max", @"qwen3.7-plus", @"qwen3.8-flash" ],
+			@"claude-fable-5", @"claude-fable-5-1", @"claude-fable-5-2", @"claude-haiku-4-5",
+			@"claude-haiku-5-5", @"claude-opus-4-5", @"claude-opus-4-6", @"claude-opus-4-7",
+			@"claude-opus-4-8", @"claude-opus-5", @"claude-opus-5-5", @"claude-sonnet-4-5",
+			@"claude-sonnet-4-6", @"claude-sonnet-5", @"claude-sonnet-5-5", @"qwen3.5-plus",
+			@"qwen3.6-plus", @"qwen3.8-flash" ],
 		@(NFKRemoteAPIStyleSystemOne): @[
-			@"jev-1.13", @"jev-1.13-free" ],
+			@"gemini-decision-1", @"gpt-6-luna-decision", @"jev-1.13", @"jev-1.13-free" ],
 		@(NFKRemoteAPIStyleGeminiGenerateContent): @[
-			@"gemini-3-flash", @"gemini-3.1-pro", @"gemini-3.5-flash", @"gemini-3.5-flash-lite",
-			@"gemini-3.6-flash", @"gemini-3.7-flash", @"gemini-3.8-flash" ],
+			@"gemini-3.5-flash", @"gemini-3.5-flash-lite", @"gemini-3.6-flash", @"gemini-3.7-flash",
+			@"gemini-3.8-flash", @"gemini-4-argon", @"gemini-4-carbon", @"gemini-4-hydrogen",
+			@"gemini-4-neon" ],
 	});
 	return provider;
 }
@@ -337,11 +338,13 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 														 style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
 	provider.modelAPIStyles = NFKModelAPIStyles(@{
 		@(NFKRemoteAPIStyleOpenAIResponses): @[
-			@"gpt-5.6-luna", @"gpt-6-luna", @"grok-4.6", @"grok-4.7",
-			@"muse-spark-1.2-contributor", @"muse-spark-1.3-contributor" ],
+			@"gpt-5.6-luna", @"gpt-6-luna", @"grok-4.7", @"muse-spark-1.2-contributor",
+			@"muse-spark-1.3-contributor" ],
 		@(NFKRemoteAPIStyleAnthropicMessages): @[
-			@"claude-haiku-5-5", @"minimax-m2.7", @"minimax-m3", @"qwen3.7-plus", @"qwen3.8-flash",
-			@"qwen3.8-max" ],
+			@"claude-haiku-5-5", @"minimax-m3", @"qwen3.7-plus", @"qwen3.8-flash", @"qwen3.8-max",
+			@"qwen4-max" ],
+		@(NFKRemoteAPIStyleGeminiGenerateContent): @[
+			@"gemini-4-argon" ],
 	});
 	return provider;
 }

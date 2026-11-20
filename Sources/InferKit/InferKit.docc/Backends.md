@@ -71,7 +71,7 @@ Pure Apple frameworks, always available:
 - ``NFKRemoteResponsesBackend`` — the Responses API: service-run tools, reasoning summaries, background
   jobs, and continuation by response id.
 - ``NFKGeminiGenerateContentBackend`` — Gemini's generateContent API, the native chat surface Google
-  serves beside Interactions and OpenCode Zen serves its Gemini models on.
+  serves beside Interactions and the OpenCode gateways serve their Gemini models on.
 - ``NFKGeminiInteractionsBackend`` — Gemini's native Interactions API: text, images, speech, music,
   transcription, and video from one endpoint, and Google's Deep Research and Antigravity agents.
 - ``NFKGeminiVoiceLibrary`` — Gemini's voice library: list, design, remix, replicate, and delete the

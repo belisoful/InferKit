@@ -384,6 +384,11 @@ static const uint16_t NFKDeadPort = 9;
 		@[ @"gpt-5.5", @"https://opencode.ai/inference/v1/responses", NFKRemoteResponsesBackend.class ],
 		@[ @"grok-4.7", @"https://opencode.ai/inference/v1/responses", NFKRemoteResponsesBackend.class ],
 		@[ @"jev-1.13", @"https://opencode.ai/inference/v1/systemone", NFKTypeSafeBackend.class ],
+		@[ @"gemini-decision-1", @"https://opencode.ai/inference/v1/systemone", NFKTypeSafeBackend.class ],
+		@[ @"gpt-6-luna-decision", @"https://opencode.ai/inference/v1/systemone", NFKTypeSafeBackend.class ],
+		@[ @"gpt-6.2-sol", @"https://opencode.ai/inference/v1/responses", NFKRemoteResponsesBackend.class ],
+		@[ @"muse-wonder-1.0", @"https://opencode.ai/inference/v1/responses", NFKRemoteResponsesBackend.class ],
+		@[ @"claude-fable-5-2", @"https://opencode.ai/inference/v1/messages", NFKAnthropicBackend.class ],
 		@[ @"glm-5.3", @"https://opencode.ai/inference/v1/chat/completions", NFKRemoteBackend.class ],
 		@[ @"qwen3.8-max", @"https://opencode.ai/inference/v1/chat/completions", NFKRemoteBackend.class ],
 		@[ @"a-model-added-later", @"https://opencode.ai/inference/v1/chat/completions", NFKRemoteBackend.class ],
@@ -407,6 +412,7 @@ static const uint16_t NFKDeadPort = 9;
 	XCTAssertEqual([NFKRemoteProvider.openCodeZen apiStyleForModelName:@"minimax-m3"], NFKRemoteAPIStyleOpenAIChat);
 	XCTAssertEqual([go apiStyleForModelName:@"gpt-6-luna"], NFKRemoteAPIStyleOpenAIResponses);
 	XCTAssertEqual([go apiStyleForModelName:@"kimi-k3"], NFKRemoteAPIStyleOpenAIChat);
+	XCTAssertEqual([go apiStyleForModelName:@"qwen4-max"], NFKRemoteAPIStyleAnthropicMessages);
 	XCTAssertEqualObjects([go endpointURLForModelName:@"claude-haiku-5-5"].absoluteString,
 						  @"https://opencode.ai/inference/go/v1/messages");
 }
@@ -417,6 +423,10 @@ static const uint16_t NFKDeadPort = 9;
 	XCTAssertEqual([zen apiStyleForModelName:@"gemini-3.5-flash"], NFKRemoteAPIStyleGeminiGenerateContent);
 	XCTAssertEqualObjects([zen endpointURLForModelName:@"gemini-3.5-flash"].absoluteString,
 						  @"https://opencode.ai/inference/v1/models/gemini-3.5-flash:generateContent");
+	XCTAssertEqualObjects([zen endpointURLForModelName:@"gemini-4-neon"].absoluteString,
+						  @"https://opencode.ai/inference/v1/models/gemini-4-neon:generateContent");
+	XCTAssertEqualObjects([NFKRemoteProvider.openCodeGo endpointURLForModelName:@"gemini-4-argon"].absoluteString,
+						  @"https://opencode.ai/inference/go/v1/models/gemini-4-argon:generateContent");
 
 	id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:zen apiKey:@"k" modelName:@"gemini-3.5-flash"];
 	XCTAssertTrue([backend isKindOfClass:NFKGeminiGenerateContentBackend.class]);

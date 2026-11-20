@@ -347,13 +347,14 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*! OpenCode Zen, the pay-as-you-go gateway of the OpenCode console, at
 	https://opencode.ai/inference/v1. One key (OPENCODE_API_KEY in OpenCode's own tools) reaches models
 	from many makers, each on its maker's protocol: modelAPIStyles routes the GPT, Grok, and Muse
-	Spark models to Responses, Claude and most Qwen models to Messages, Jev to System One, and Gemini
-	to generateContent. A model without a route goes to chat completions. The routes are OpenCode's
-	published table of 2026-10-13. Introduced in InferKit 0.4.0. */
+	models to Responses, Claude and most Qwen models to Messages, Jev and the GPT and Gemini decision
+	models to System One, and Gemini to generateContent. A model without a route goes to chat
+	completions. The routes are OpenCode's published table of 2026-11-20. Introduced in InferKit 0.4.0. */
 @property (class, nonatomic, readonly) NFKRemoteProvider *openCodeZen;
 /*! OpenCode Go, the subscription gateway, at https://opencode.ai/inference/go/v1, with the same key
-	as Zen. Go routes some model names differently from Zen (Qwen3.8 Max and the MiniMax models are on
-	Messages here), so each preset carries its own table. Introduced in InferKit 0.4.0. */
+	as Zen. Go routes some model names differently from Zen (Qwen3.8 Max and MiniMax M3 are on Messages
+	here), so each preset carries its own table. Go refuses a request that carries no
+	x-opencode-session header. Introduced in InferKit 0.4.0. */
 @property (class, nonatomic, readonly) NFKRemoteProvider *openCodeGo;
 /*! Alibaba Model Studio (DashScope) in its Singapore region, at the OpenAI-compatible base
 	https://dashscope-intl.aliyuncs.com/compatible-mode/v1, which serves chat completions. Its native

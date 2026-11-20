@@ -4256,7 +4256,7 @@ NFKAudioAsset *spoken = [[gemini runInferenceForRequest:
                                 parameters:@{} outputModality:NFKModalityAudio] error:&error] outputForKey:NFKOutputAudio];
 
 // Gemini's generateContent API: the native chat surface Google serves beside Interactions, and the
-// one OpenCode Zen serves its Gemini models on.
+// one the OpenCode gateways serve their Gemini models on.
 NFKGeminiGenerateContentBackend *flash = [NFKGeminiGenerateContentBackend backendForProvider:NFKRemoteProvider.googleGemini
                                                                                       apiKey:key modelName:@"gemini-3.8-flash"];
 NFKInferenceResult *plan = [flash runInferenceForRequest:
