@@ -168,15 +168,14 @@ private struct NFKMLXOverheadRecord {
         }
     }
 
-    /// Runs the reference request, taking the language a translator's refusal names or the next language
-    /// to try, at most four times.
+    /// Runs the reference request, adapting it to what a translator's refusal names, at most four times.
     private static func run(_ reference: inout NFKMLXReferenceRequest, on backend: any NFKInferenceBackend) throws {
         for attempt in 0 ..< 4 {
             do {
                 _ = try backend.runInference(for: reference.request)
                 return
             } catch {
-                guard attempt < 3, reference.adoptLanguage(after: error) else {
+                guard attempt < 3, reference.adapt(after: error) else {
                     throw error
                 }
             }
@@ -365,6 +364,9 @@ private struct NFKMLXReferenceRequest {
     private(set) var request: NFKInferenceRequest
     private(set) var summary: [String: Any]
     private let files: [URL]
+    /// The input that holds the reference prompt, and its words.
+    private var promptKey: String?
+    private var promptWords = 0
 
     /// `repeats` is true for a request run twice, which reads no kept prompt cache.
     init(descriptor: NFKModelDescriptor, variant: NFKModelVariant, backend: any NFKInferenceBackend,
@@ -469,6 +471,8 @@ private struct NFKMLXReferenceRequest {
             }
             summary["promptTokensTarget"] = promptTokens
             summary["promptWords"] = words
+            promptKey = key
+            promptWords = words
             if let counted = Self.tokenCount(of: request, by: backend) {
                 summary["promptTokens"] = counted
             }
@@ -496,12 +500,39 @@ private struct NFKMLXReferenceRequest {
         return []
     }
 
-    /// The request with the language a translator's refusal names ("… translates into eng, not fr" or
-    /// "… translates from vie, not en"), or, where it refuses a target without naming one ("… does not
-    /// translate into fr"), the next of ``targetLanguages``. False where neither applies.
-    mutating func adoptLanguage(after error: Error) -> Bool {
+    /// The request adapted to a translator's refusal. False where the refusal names nothing to adapt to.
+    ///
+    /// @discussion
+    /// - "… reads 512 source tokens, and this paragraph holds 521" → the prompt shortened in proportion,
+    ///   with a twentieth to spare
+    /// - "… does not translate into es; it translates into nan, …, zh, …" → a listed target, `zh` where
+    ///   the list holds it, else the first
+    /// - "… translates into eng, not fr" or "… translates from vie, not en" → the language it names
+    /// - "… does not translate into fr" with no list → the next of ``targetLanguages``
+    mutating func adapt(after error: Error) -> Bool {
         let message = error.localizedDescription
         var parameters = request.parameters
+        if let limit = Self.integers(in: message, after: "reads ", before: " source tokens"),
+           let held = Self.integers(in: message, after: "this paragraph holds ", before: nil),
+           let key = promptKey, held > limit {
+            promptWords = max(1, promptWords * limit * 19 / (held * 20))
+            var inputs = request.inputs
+            inputs[key] = Self.text(words: promptWords, offset: 0)
+            request = NFKInferenceRequest(inputs: inputs, parameters: parameters)
+            summary["promptWords"] = promptWords
+            summary["promptTokensLimit"] = limit
+            return true
+        }
+        if let range = message.range(of: "; it translates into ") {
+            let listed = message[range.upperBound...].split(separator: ",").map {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+            }
+            if let language = listed.contains("zh") ? "zh" : listed.first, !language.isEmpty,
+               parameters[NFKParameterTargetLanguage] as? String != language {
+                parameters[NFKParameterTargetLanguage] = language
+                return adopt(parameters, key: NFKParameterTargetLanguage, language: language)
+            }
+        }
         for (phrase, key) in [("translates into ", NFKParameterTargetLanguage), ("translates from ", NFKParameterSourceLanguage)] {
             guard !message.contains("does not " + phrase.replacingOccurrences(of: "translates", with: "translate")),
                   let range = message.range(of: phrase),
@@ -523,6 +554,16 @@ private struct NFKMLXReferenceRequest {
             parameters[NFKParameterSourceLanguage] = Self.targetLanguages.first { $0 != language }
         }
         return adopt(parameters, key: NFKParameterTargetLanguage, language: language)
+    }
+
+    /// The integer between `prefix` and `suffix` (or the next non-digit) in `message`.
+    private static func integers(in message: String, after prefix: String, before suffix: String?) -> Int? {
+        guard let start = message.range(of: prefix)?.upperBound else {
+            return nil
+        }
+        let rest = message[start...]
+        let digits = suffix.flatMap { rest.range(of: $0) }.map { rest[..<$0.lowerBound] } ?? rest.prefix { $0.isNumber }
+        return Int(digits)
     }
 
     private mutating func adopt(_ parameters: [String: Any], key: String, language: String) -> Bool {
