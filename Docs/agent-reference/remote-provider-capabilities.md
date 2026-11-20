@@ -230,7 +230,7 @@ Meta's Model API at `https://api.meta.ai/v1`, added 2026-11-18 with Muse Ember's
 | text → image, image(s) → image (`muse-image-1.0`) | `/images/generations`, `/images/edits` | covered (`NFKRemoteImageAPIStyleMeta`, JSON edits, streamed completed events); no mask; unverified live |
 | token count | `/responses/input_tokens` | covered (`NFKRemoteTokenCounter`, Responses style) |
 | token count | `/messages/count_tokens` | covered (`-[NFKAnthropicBackend tokenCountForRequest:error:]`); `NFKRemoteTokenCounter` does not reach it |
-| text + image + PDF → text, tools, reasoning effort, structured output (Anthropic format) | `/messages` | covered (`NFKAnthropicBackend`, Bearer key, 2026-11-18); stop sequences applied to the reply; a video goes as sampled frames, and the route's `video` block is a gap |
+| text + image + video + PDF → text, tools, reasoning effort, structured output (Anthropic format) | `/messages` | covered (`NFKAnthropicBackend`, Bearer key, 2026-11-18); stop sequences applied to the reply; a video goes whole as the route's `video` block |
 | image or video → boxes and masks (`sam-3.1`) | `/responses` | gap (the reply is text) |
 | batches, video | `/batches`, `/videos` | registered by probe, undocumented |
 

@@ -1607,8 +1607,11 @@ writes images, `muse-voice-transcribe-1.0` transcribes, and `sam-3.1` answers on
   Usage adds `output_tokens_details.thinking_tokens`, read into
   `NFKUsageReasoningTokens`. `GET /v1/models/{id}` states no output limit, so a run that names no
   limit sends 1024; set `maxTokens`. Skills and MCP servers pass through as `container` and
-  `mcp_servers`, which the route refuses. A video is sent as sampled frames; the route's own
-  `video` block is not used.
+  `mcp_servers`, which the route refuses. `NFKInputVideo` goes whole as the route's `video` block
+  (`{type: video, source: {type: base64, media_type, data}}`), which the route reads with its
+  soundtrack, unless the request names `NFKParameterVideoFrameCount`, which asks for sampled
+  frames. An `NFKRemoteFile` of a video type under `NFKInputDocument` is a `video` block with a
+  `file` source that names the upload. The block's `fps` is not sent.
 - Token count on the Messages route (`POST /v1/messages/count_tokens`,
   `-[NFKAnthropicBackend tokenCountForRequest:error:]`). The body is the run's, reduced to the
   fields the route names, and the reply is `{input_tokens}`. `NFKRemoteTokenCounter` reaches the
@@ -1713,7 +1716,6 @@ writes images, `muse-voice-transcribe-1.0` transcribes, and `sam-3.1` answers on
   to another preset: `openai` still returns nil.
 
 *Not built.*
-- The Messages route's `video` block (`{type: video, source, fps}`) for a whole clip.
 - `sam-3.1`'s boxes and masks, which come back as text on Responses.
 
 *Errors and probes.* The body is `{error: {message, type, param, code}}`; the transcription route

@@ -42,7 +42,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - For a `muse-` model `NFKAnthropicBackend` keeps `stop_sequences` and `top_k` off the wire and
   applies the stop sequences to the reply, sends `temperature` and `top_p`, asks for a JSON schema
   through `output_config.format`, and reads the thinking token count into `NFKUsageReasoningTokens`.
-  `tokenCountForRequest:error:` reaches `POST /v1/messages/count_tokens` on the same key.
+  `tokenCountForRequest:error:` reaches `POST /v1/messages/count_tokens` on the same key. A video
+  goes whole as the route's `video` block, soundtrack included, unless the request asks for sampled
+  frames.
 - `NFKRemoteTranscriptionBackend` streams Meta's speech-to-text route when `streams` is set: the
   transcript grows on the job's `partialResult`, each turn comes back under `NFKOutputSegments` with
   its speaker when the request diarizes, and an `error` event fails the job with the service's message.
