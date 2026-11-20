@@ -230,6 +230,7 @@ landmarks by up to 5.7 px; that is measured so the order stays pinned.
 | --- | --- | --- | --- | --- |
 | CLIP ViT-B/32 image tower | `NFKMLXCLIP` | transformers `CLIPModel` | OpenAI ViT-B/32 | image 0.9999965 |
 | CLIP ViT-B/32 text tower | `NFKMLXCLIP` | same | same | text 0.99999999999876 |
+| CLIP ViT-B/32 prompt through the registered backend | `clip-vit-b-32` built from a release directory (OpenAI's `ViT-B-32.pt` beside `vocab.json` and `merges.txt`) | transformers `CLIPTokenizer` and `CLIPModel` | OpenAI ViT-B/32, FLUX.1's CLIP-L tokenizer files (CLIP's vocabulary) | the prompt's 77 ids equal the reference's; the embedding equals the text tower's from those ids bit for bit; cosine 0.99999999999882 |
 | CLIP ViT-B/16, ViT-L/14 | `NFKMLXCLIP` (`.vitB16`, `.vitL14`) | the released OpenAI checkpoints | ViT-B-16.pt, ViT-L-14.pt | strict load of every tensor, unit-length image embedding (0.99999994); the towers are the ViT-B/32 blocks at another width and depth, so the numeric parity above carries |
 | MetaCLIP ViT-B/32 | `NFKMLXCLIP` (`.vitB32`) | transformers `CLIPModel` on facebook/metaclip-b32-400m | b32_400m.pt | image 0.9999031286241951, through the 8-bit backend bridge |
 | SigLIP 2 base-patch16-224 | `NFKMLXSigLIP2` | transformers SigLIP 2 | google/siglip2-base-patch16-224 | image 0.99999999999892, worst text 0.99999999999861, max logit diff 9.5e-6 |
