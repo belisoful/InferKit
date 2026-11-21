@@ -337,9 +337,15 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     `log1p(exp(x))` with Sleef's `expf` and `log1pf`, formed in float32 and rounded once. The `log1pf` port
     matches torch's `log1p` below 10³⁸. The kernel matches torch over every float16 and bfloat16 input whose
     result is a normal float32 value and runs in 1.4 ms against 2.9 ms for
-    MLX's float32 `softplus` over 2 × 4,096 × 5,120 bfloat16 values. A float32 softplus takes it in
-    `.reference`: a Mamba-2 step, the gated-delta decay of Qwen3.5 and Qwen4-Exp, DeepSeek V4's router, and
-    TimesFM's query scale. Gemma 3n's and Gemma 4's audio query scales take `NFKReferenceRounding.softplus`.
+    MLX's float32 `softplus` over 2 × 4,096 × 5,120 bfloat16 values. A float32 softplus through
+    `NFKReferenceRounding.softplus` takes it in `.reference` and MLX's `softplus` in `.fast`: a Mamba-2 step,
+    the gated-delta decay of Qwen3.5 and Qwen4-Exp, DeepSeek V4's router, TimesFM's query scale, and Gemma 3n's
+    and Gemma 4's audio query scales. In float32 the kernel runs at the memory floor: ten batched calls over
+    2 × 4,096 × 5,120 values take 0.96 ms each on an M1 Max, as MLX's `softplus` and a copy kernel do. A single call in a debug build costs 15 to 45 µs more than
+    MLX's `softplus`. That cost is the graph construction and evaluation of an `MLXFast.metalKernel` call and
+    its custom gradient, and a copy kernel launched the same way pays it too, so the timing test's float32 row
+    reads 1.03x to 1.06x. The `log1pf` port leaves out Sleef's cases that `exp(x) ≥ 0` cannot reach, which
+    takes about 7% off a bfloat16 call and leaves every result unchanged over all 2³² float32 inputs.
   - MLX's own float32 `softplus` (`logAddExp(x, 0)`) is inexact on the GPU where `exp(x)` is small. Its
     Goldberg `log1p` divides `metal::log(1 + e)` by `(1 + e) − 1`, and Metal's precise `log` holds only an
     absolute error of 2⁻²¹ on [0.5, 2], so the relative error grows as `e` shrinks: up to 0.386 over TRELLIS's

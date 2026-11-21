@@ -461,19 +461,18 @@ extension NFKReferenceRounding {
         }
         """
 
-    /// Sleef's `log1pf` in Metal: `1 + d` scaled by a power of two `2ᵉ` into [0.75, 1.5), the logarithm of the
-    /// scaled value formed from `m / (2 + m)` in double-float arithmetic with a short odd polynomial, and `e · ln 2`
-    /// added in two parts. It matches torch's `log1p` below 10³⁸; softplus reads it up to `exp(20)`.
+    /// Sleef's `log1pf` in Metal over softplus's argument `d = exp(x) ≥ 0`: `1 + d` scaled by a power of two `2ᵉ`
+    /// into [0.75, 1.5), the logarithm of the scaled value formed from `m / (2 + m)` in double-float arithmetic with
+    /// a short odd polynomial, and `e · ln 2` added in two parts. It matches torch's `log1p` from 0 to 10³⁸; softplus
+    /// reads it up to `exp(20)`. Sleef's cases for `1 + d` below the least normal value, for `d ≤ −1`, and for −0 are
+    /// unreachable from `d ≥ 0` and left out.
     private static let torchLog1pHeader = """
         inline float nfk_torch_log1pf(const float d) {
-            float dp1 = d + 1.0f;
-            const bool tiny = dp1 < 1.17549435e-38f;
-            if (tiny) { dp1 = dp1 * 18446744073709551616.0f; }
+            const float dp1 = d + 1.0f;
             const float scaled = dp1 * (1.0f / 0.75f);
-            int e = ((as_type<int>(scaled) >> 23) & 0xff) - 0x7f;
+            const int e = ((as_type<int>(scaled) >> 23) & 0xff) - 0x7f;
             const float t = as_type<float>(as_type<int>(1.0f) + ((-e) << 23));
             const float m = fma(d, t, t - 1.0f);
-            if (tiny) { e = e - 64; }
             const float fe = float(e);
             const float sh = 0.69314718246459960938f * fe;
             const float sl = fma(-1.904654323148236017e-09f, fe, fma(0.69314718246459960938f, fe, -sh));
@@ -483,7 +482,7 @@ extension NFKReferenceRounding {
             const float qs = m * rt;
             const float qu = fma(rt, m, -qs);
             const float qv = -fma(al, rt, fma(ah, rt, -1.0f));
-            const float xl = fma(qs, qv, fma(0.0f, rt, qu));
+            const float xl = fma(qs, qv, qu);
             const float x2 = qs * qs;
             float p = 0.3027294874f;
             p = fma(p, x2, 0.3996108174f);
@@ -495,11 +494,7 @@ extension NFKReferenceRounding {
             const float w = (x2 * qs) * p;
             const float s2 = s1 + w;
             const float s2l = ((s1 - s2) + w) + s1l;
-            float r = s2 + s2l;
-            if (-1.0f > d) { r = NAN; }
-            if (d == -1.0f) { r = -INFINITY; }
-            if (as_type<uint>(d) == 0x80000000u) { r = -0.0f; }
-            return r;
+            return s2 + s2l;
         }
         """
 

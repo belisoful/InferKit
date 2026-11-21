@@ -25,13 +25,16 @@ final class NFKMLXMambaTests: XCTestCase {
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
-    private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {
+    private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Double {
         eval(mine)
         let a = mine.reshaped([-1]).asArray(Float.self), b = reference.reshaped([-1]).asArray(Float.self)
         let n = min(a.count, b.count)
-        var dot: Float = 0, na: Float = 0, nb: Float = 0
-        for i in 0 ..< n { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
-        return dot / (sqrtf(na) * sqrtf(nb) + 1e-20)
+        var dot = 0.0, na = 0.0, nb = 0.0
+        for i in 0 ..< n {
+            let x = Double(a[i]), y = Double(b[i])
+            dot += x * y; na += x * x; nb += y * y
+        }
+        return dot / ((na * nb).squareRoot() + 1e-300)
     }
 
     /// The tiny geometry `run_reference.py mamba2` records.
