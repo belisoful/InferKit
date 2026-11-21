@@ -232,14 +232,7 @@ public struct NFKMLXSDReleaseFiles: Sendable {
     /// half-precision weights names them `.fp16.safetensors`, so both spellings are tried.
     public init(directoryURL: URL) throws {
         func weights(_ folder: String, _ base: String) throws -> URL {
-            let directory = directoryURL.appendingPathComponent(folder)
-            for name in ["\(base).safetensors", "\(base).fp16.safetensors"] {
-                let candidate = directory.appendingPathComponent(name)
-                if FileManager.default.fileExists(atPath: candidate.path) {
-                    return candidate
-                }
-            }
-            throw NFKMLXError.weightsMismatch("the release carries no \(folder)/\(base).safetensors")
+            try Self.weightsURL(in: directoryURL, folder: folder, base: base)
         }
         unet = try weights("unet", "diffusion_pytorch_model")
         vae = try weights("vae", "diffusion_pytorch_model")
@@ -250,6 +243,18 @@ public struct NFKMLXSDReleaseFiles: Sendable {
             secondaryTextEncoder = try weights("text_encoder_2", "model")
             secondaryTokenizer = directoryURL.appendingPathComponent("tokenizer_2")
         }
+    }
+
+    /// The component folder's `<base>.safetensors`, else its `<base>.fp16.safetensors`.
+    static func weightsURL(in directoryURL: URL, folder: String, base: String) throws -> URL {
+        let directory = directoryURL.appendingPathComponent(folder)
+        for name in ["\(base).safetensors", "\(base).fp16.safetensors"] {
+            let candidate = directory.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+        }
+        throw NFKMLXError.weightsMismatch("the release carries no \(folder)/\(base).safetensors")
     }
 }
 

@@ -18991,6 +18991,310 @@
       ]
     },
     {
+      "displayName" : "Hi3DGen",
+      "engine" : "mlx",
+      "family" : "hi3dgen",
+      "id" : "hi3dgen",
+      "inputModalities" : [
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "The object. An image with alpha is cropped to its alpha's box; an opaque one is cut out by BiRefNet first.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "MIT",
+        "name" : "MIT License",
+        "note" : "StableNormal-turbo (Stable-X/yoso-normal-v1-8-1) is under Apache-2.0; DINOv2 ViT-L/14 with registers is Meta's, under Apache-2.0; BiRefNet (ZhengPeng7/BiRefNet) is under MIT.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/Stable-X/trellis-normal-v0-1"
+      },
+      "memoryModel" : {
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "model" : "float32"
+        }
+      },
+      "options" : [
+        {
+          "default" : 50,
+          "help" : "The sparse-structure stage's sampling steps.",
+          "key" : "trellisStructureSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Structure steps"
+        },
+        {
+          "default" : 6,
+          "help" : "The structured-latent stage's sampling steps.",
+          "key" : "trellisLatentSteps",
+          "kind" : "integer",
+          "maximum" : 100,
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Latent steps"
+        },
+        {
+          "default" : 3,
+          "help" : "The sparse-structure stage's classifier-free guidance strength.",
+          "key" : "trellisStructureGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Structure guidance"
+        },
+        {
+          "default" : 3,
+          "help" : "The structured-latent stage's classifier-free guidance strength.",
+          "key" : "trellisLatentGuidance",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Latent guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12656643709,
+                "residentBytes" : 12656643709
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12656643709,
+                "residentBytes" : 12656643709
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        }
+      ],
+      "outputModalities" : [
+        "mesh",
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The object as a marching-cubes mesh with a color per vertex, y up, facing +z.",
+          "key" : "mesh",
+          "required" : true,
+          "title" : "Mesh",
+          "valueType" : "mesh"
+        },
+        {
+          "help" : "The normal map the 3D stages are conditioned on, 1024 × 1024.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Normals",
+          "valueType" : "image"
+        }
+      ],
+      "registryName" : "hi3dgen",
+      "requirements" : {
+        "minimumMemoryBytes" : 19943071771,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged"
+      ],
+      "standIn" : false,
+      "summary" : "A generator of a 3D object's geometry from one image, through its estimated normal map.",
+      "tasks" : [
+        "image-to-3d"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hi3DGen",
+          "downloadBytes" : 6939765482,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 6939116343,
+                  "checkpoint" : 6939397763,
+                  "float32" : 12656643709
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 19943071771,
+          "peakBytes" : 12656643709,
+          "precision" : "float16",
+          "registryName" : "hi3dgen",
+          "residentBytes" : 12656643709,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1847,
+                "optional" : false,
+                "path" : "pipeline.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 245,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 147591972,
+                "optional" : false,
+                "path" : "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "1c76d4a40519aa2d711cc263a8404105231ac26db31d946bed48b84fee79009a"
+              },
+              {
+                "bytes" : 385,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_normal_dit_L_16l8_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 1119525912,
+                "optional" : false,
+                "path" : "ckpts/ss_flow_normal_dit_L_16l8_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "b5f9f3aafead23fe5ee49ca01e57fcc0c3e0345635c05a0d83b39a7e5ccaf281"
+              },
+              {
+                "bytes" : 442,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_normal_dit_L_64l8p2_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 1200919136,
+                "optional" : false,
+                "path" : "ckpts/slat_flow_normal_dit_L_64l8p2_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "f9a5896bba3b876e0560fc4a19c335d171b97502e7358b026260b76e0c4557dc"
+              },
+              {
+                "bytes" : 372,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.json",
+                "role" : "other"
+              },
+              {
+                "bytes" : 181903412,
+                "optional" : false,
+                "path" : "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "3e87aba94b5786407eb06d0502c1ed0885a0027a3f2b8537bfe15b0a92c01859"
+              },
+              {
+                "bytes" : 1867,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "repository" : "Stable-X/yoso-normal-v1-8-1",
+                "revision" : "4dd7d000d76febb68254ebe27251c2cb79dc1c2a",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1731904736,
+                "optional" : false,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "repository" : "Stable-X/yoso-normal-v1-8-1",
+                "revision" : "4dd7d000d76febb68254ebe27251c2cb79dc1c2a",
+                "role" : "weights",
+                "sha256" : "ac542d8fe8e94768c005445c75fd1105b33a1d4064c90b63fb39f4770396bdf1"
+              },
+              {
+                "bytes" : 1355,
+                "optional" : false,
+                "path" : "controlnet/config.json",
+                "repository" : "Stable-X/yoso-normal-v1-8-1",
+                "revision" : "4dd7d000d76febb68254ebe27251c2cb79dc1c2a",
+                "role" : "config"
+              },
+              {
+                "bytes" : 728496840,
+                "optional" : false,
+                "path" : "controlnet/diffusion_pytorch_model.fp16.safetensors",
+                "repository" : "Stable-X/yoso-normal-v1-8-1",
+                "revision" : "4dd7d000d76febb68254ebe27251c2cb79dc1c2a",
+                "role" : "weights",
+                "sha256" : "21480dc74282a13d663da0afaf4b454d03b469045742560cf3f5e9527cd98361"
+              },
+              {
+                "bytes" : 702,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "repository" : "Stable-X/yoso-normal-v1-8-1",
+                "revision" : "4dd7d000d76febb68254ebe27251c2cb79dc1c2a",
+                "role" : "config"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "repository" : "Stable-X/yoso-normal-v1-8-1",
+                "revision" : "4dd7d000d76febb68254ebe27251c2cb79dc1c2a",
+                "role" : "weights",
+                "sha256" : "3e4c08995484ee61270175e9e7a072b66a6e4eeb5f0c266667fe1f45b90daf9a"
+              },
+              {
+                "bytes" : 1217607321,
+                "optional" : false,
+                "path" : "dinov2_vitl14_reg4_pretrain.pth",
+                "role" : "weights",
+                "url" : "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_pretrain.pth"
+              },
+              {
+                "bytes" : 444473596,
+                "optional" : false,
+                "path" : "model.safetensors",
+                "repository" : "ZhengPeng7/BiRefNet",
+                "role" : "weights",
+                "sha256" : "9ab37426bf4de0567af6b5d21b16151357149139362e6e8992021b8ce356a154"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "Stable-X/trellis-normal-v0-1",
+            "requiresConversion" : false,
+            "revision" : "fdfac1d0e0cb3f86adcac69239c1abdd82228e17"
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "HT Demucs",
       "engine" : "mlx",
       "family" : "htdemucs",
@@ -68931,6 +69235,146 @@
             "repository" : "stabilityai/stable-fast-3d",
             "requiresConversion" : false,
             "revision" : "f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778"
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "StableNormal-turbo",
+      "engine" : "mlx",
+      "family" : "stablenormal",
+      "id" : "stablenormal-turbo",
+      "inputModalities" : [
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "The image to estimate normals for. Pixels under an alpha of 128 or less read as background.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/Stable-X/yoso-normal-v1-8-1"
+      },
+      "memoryModel" : {
+        "stagePrecisions" : {
+          "model" : "float32"
+        }
+      },
+      "options" : [
+
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The normal map, each channel (n + 1) / 2, the background white.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Normals",
+          "valueType" : "image"
+        }
+      ],
+      "registryName" : "stablenormal-turbo",
+      "requirements" : {
+        "minimumMemoryBytes" : 11235457182,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "A one-step estimator of a surface normal map from Stable Diffusion 2's geometry.",
+      "tasks" : [
+        "normal-estimation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "StableNormal-turbo",
+          "downloadBytes" : 2627740842,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2627585654,
+                  "checkpoint" : 2627585654,
+                  "float32" : 5255171308
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 11235457182,
+          "parameterCount" : 1313792827,
+          "peakBytes" : 5255171308,
+          "precision" : "float16",
+          "registryName" : "stablenormal-turbo",
+          "residentBytes" : 5255171308,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1867,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1731904736,
+                "optional" : false,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "ac542d8fe8e94768c005445c75fd1105b33a1d4064c90b63fb39f4770396bdf1"
+              },
+              {
+                "bytes" : 1355,
+                "optional" : false,
+                "path" : "controlnet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 728496840,
+                "optional" : false,
+                "path" : "controlnet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "21480dc74282a13d663da0afaf4b454d03b469045742560cf3f5e9527cd98361"
+              },
+              {
+                "bytes" : 702,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "3e4c08995484ee61270175e9e7a072b66a6e4eeb5f0c266667fe1f45b90daf9a"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "Stable-X/yoso-normal-v1-8-1",
+            "requiresConversion" : false,
+            "revision" : "4dd7d000d76febb68254ebe27251c2cb79dc1c2a"
           }
         }
       ]

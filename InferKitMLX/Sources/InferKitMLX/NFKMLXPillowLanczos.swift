@@ -7,9 +7,9 @@
 
 import Foundation
 
-// Pillow's Lanczos resize of an 8-bit RGB or RGBA image (`Image.resize(…, Image.Resampling.LANCZOS)`), to the
-// integer: a reference that stretches decoded frames through PIL hands the next stage those exact bytes.
-// Each axis is a separable pass of a three-lobe Lanczos window whose support widens with the downscale
+// Pillow's resize of an 8-bit image (`Image.resize(…, Image.Resampling.LANCZOS)`, and its BILINEAR and BICUBIC
+// filters), to the integer: a reference that stretches images through PIL hands the next stage those exact
+// bytes. Each axis is a separable pass of the filter's window, whose support widens with the downscale
 // factor; the taps are normalized in double precision, then quantized to 22-bit fixed point, and every
 // pass rounds its sum back to 8 bits. Width resamples first, then height.
 
@@ -17,6 +17,35 @@ enum NFKMLXPillowLanczos {
 
     /// Bits of fixed-point precision Pillow keeps for an 8-bit image's taps.
     static let precisionBits = 32 - 8 - 2
+
+    /// A Pillow resampling filter: its window and the half-width it covers at unit scale.
+    enum Filter {
+        case lanczos, bilinear, bicubic
+
+        var support: Double {
+            switch self {
+            case .lanczos: return 3
+            case .bilinear: return 1
+            case .bicubic: return 2
+            }
+        }
+
+        func weight(_ x: Double) -> Double {
+            switch self {
+            case .lanczos: return NFKMLXPillowLanczos.lanczos(x)
+            case .bilinear: return max(1 - abs(x), 0)
+            case .bicubic: return NFKMLXPillowLanczos.cubic(x)
+            }
+        }
+    }
+
+    /// Pillow's cubic convolution with `a = -0.5`.
+    static func cubic(_ x: Double) -> Double {
+        let a = -0.5, t = abs(x)
+        if t < 1 { return ((a + 2) * t - (a + 3)) * t * t + 1 }
+        if t < 2 { return (((t - 5) * t + 8) * t - 4) * a }
+        return 0
+    }
 
     /// The truncated sinc of three lobes.
     static func lanczos(_ x: Double) -> Double {
@@ -30,17 +59,17 @@ enum NFKMLXPillowLanczos {
     }
 
     /// Each output position's first input index and tap count, and its fixed-point taps.
-    static func coefficients(inSize: Int, outSize: Int) -> (bounds: [(Int, Int)], taps: [[Int32]]) {
+    static func coefficients(inSize: Int, outSize: Int, filter: Filter = .lanczos) -> (bounds: [(Int, Int)], taps: [[Int32]]) {
         let scale = Double(Float(inSize) - Float(0)) / Double(outSize)
         let filterScale = max(scale, 1)
-        let support = 3 * filterScale
+        let support = filter.support * filterScale
         var bounds = [(Int, Int)](), taps = [[Int32]]()
         for xx in 0 ..< outSize {
             let center = (Double(xx) + 0.5) * scale
             let ss = 1 / filterScale
             let xmin = max(Int(center - support + 0.5), 0)
             let xmax = min(Int(center + support + 0.5), inSize) - xmin
-            var weights = (0 ..< xmax).map { lanczos((Double($0 + xmin) - center + 0.5) * ss) }
+            var weights = (0 ..< xmax).map { filter.weight((Double($0 + xmin) - center + 0.5) * ss) }
             let total = weights.reduce(0, +)
             if total != 0 { weights = weights.map { $0 / total } }
             let unit = Double(1 << precisionBits)
@@ -53,11 +82,12 @@ enum NFKMLXPillowLanczos {
     static func clip8(_ value: Int32) -> UInt8 { UInt8(min(max(value >> Int32(precisionBits), 0), 255)) }
 
     /// `pixels` (`height × width × channels`, row-major) resized to `outWidth × outHeight`, every channel alike.
-    static func resize(_ pixels: [UInt8], width: Int, height: Int, outWidth: Int, outHeight: Int, channels: Int = 3) -> [UInt8] {
+    static func resize(_ pixels: [UInt8], width: Int, height: Int, outWidth: Int, outHeight: Int, channels: Int = 3,
+                       filter: Filter = .lanczos) -> [UInt8] {
         let half = Int32(1 << (precisionBits - 1))
         var current = pixels, w = width
         if outWidth != width {
-            let (bounds, taps) = coefficients(inSize: width, outSize: outWidth)
+            let (bounds, taps) = coefficients(inSize: width, outSize: outWidth, filter: filter)
             var next = [UInt8](repeating: 0, count: height * outWidth * channels)
             for y in 0 ..< height {
                 for xx in 0 ..< outWidth {
@@ -75,7 +105,7 @@ enum NFKMLXPillowLanczos {
             w = outWidth
         }
         if outHeight != height {
-            let (bounds, taps) = coefficients(inSize: height, outSize: outHeight)
+            let (bounds, taps) = coefficients(inSize: height, outSize: outHeight, filter: filter)
             var next = [UInt8](repeating: 0, count: outHeight * w * channels)
             for yy in 0 ..< outHeight {
                 let (ymin, count) = bounds[yy]

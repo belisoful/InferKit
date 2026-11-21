@@ -55,6 +55,7 @@ NSString * const NFKModelTaskFrameInterpolation		= @"frame-interpolation";
 NSString * const NFKModelTaskUpscaling				= @"upscaling";
 NSString * const NFKModelTaskImageRestoration		= @"image-restoration";
 NSString * const NFKModelTaskDepthEstimation		= @"depth-estimation";
+NSString * const NFKModelTaskNormalEstimation		= @"normal-estimation";
 NSString * const NFKModelTaskSegmentation			= @"segmentation";
 NSString * const NFKModelTaskMatting				= @"matting";
 NSString * const NFKModelTaskObjectDetection		= @"object-detection";

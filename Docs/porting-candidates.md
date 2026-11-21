@@ -516,7 +516,7 @@ networks, and TRELLIS.2 loads TRELLIS's sparse-structure decoder unchanged.
 | **Pixal3D** | Tencent ARC | 46.05 GB repo; 5.4–5.5 GB a stage, single-view and multi-view sets | MIT | TRELLIS.2's networks with pixel-aligned projection conditioning and view-aligned latents; DINOv3 |
 | **Arbor** | Stability AI | 0.63 GB denoiser, plus TRELLIS text weights and the TRELLIS mesh decoder | Stability Community | Text-to-3D under hull, avoidance, and touch constraint meshes. A TRELLIS text fine-tune with a constraint encoder |
 | **SAM 3D Objects** | Meta | 13.17 GB; gated=manual | `other` on the card; the MLX conversion's card names the SAM License | TRELLIS's two stages conditioned on a MoGe point map; reconstructs an object from a masked photograph |
-| **Hi3DGen** (`Stable-X/trellis-normal-v0-1`) | Stable-X | 2.65 GB | MIT | TRELLIS conditioned on a normal map |
+| **Hi3DGen** (`Stable-X/trellis-normal-v0-1`) — **SHIPPED** (`NFKMLXHi3DGenFactory`, 2026-11-20, at reference parity, with StableNormal-turbo as `NFKMLXStableNormal`) | Stable-X | 2.65 GB, plus StableNormal-turbo (`Stable-X/yoso-normal-v1-8-1`, about 2.6 GB at float16, Apache-2.0), DINOv2 ViT-L/14 with registers, and BiRefNet | MIT | TRELLIS conditioned on a normal map that StableNormal-turbo estimates in one step; marching cubes extracts the mesh | `fdfac1d0` |
 | **Step1X-3D** | StepFun | 19.64 GB repo; 7.25 GB for geometry | Apache-2.0 | A vector-set VAE and a 1.3B flow transformer for geometry; an SDXL-based multi-view model for texture |
 | **MIDI-3D** | VAST | 5.07 GB | Apache-2.0 | TripoSG extended to several objects in one scene |
 | **Direct3D-S2** | DreamTech | 8.51 GB | MIT | A sparse signed-distance VAE with spatial sparse attention, up to 1024³ |

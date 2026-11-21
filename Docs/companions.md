@@ -434,6 +434,11 @@ models.
   with registers conditions the image release and CLIP ViT-L/14's text tower the text ones; the stages load
   together or one at a time (`NFKMLXResidency`). `NFKMLXTrellisTraining` fine-tunes either flow with LoRA or
   in full on the release's objective.
+- **`NFKMLXHi3DGenFactory`** — Hi3DGen (`hi3dgen`), a generator of a 3D object from one image through its
+  normal map. BiRefNet cuts out an opaque image, StableNormal-turbo estimates the normals at 768, and
+  TRELLIS's two stages run on the normal map with Hi3DGen's normal-conditioned flows. Marching cubes over
+  the mesh decoder's 256³ signed distances extracts the surface. The backend returns an `NFKMesh` with a
+  color per vertex under `NFKOutputMesh` and the 1024² normal map under `NFKOutputImage`.
 - **`NFKMLXU2Net`** — a real single-forward background remover: the U²-Net nested-U saliency network
   in MLXNN, run through the matting backend (plate → foreground + alpha cutout). Full `u2net` + light `u2netp`.
 - **`NFKMLXBiRefNet`** — high-resolution background removal (MIT): a Swin-v1-L backbone, a neck that
@@ -476,6 +481,10 @@ models.
   diffusion backend: VAE-encode the plate, denoise a 9-channel input over the DDIM loop, VAE-decode.
 - **`NFKMLXMarigold`** / **`NFKMLXSDUpscaler`** — image-conditioned latent-diffusion models on the
   diffusion backend: Marigold depth (image → depth) and the SD ×4 latent upscaler (image → ×4 image).
+- **`NFKMLXStableNormal`** — StableNormal-turbo (`stablenormal-turbo`), a one-step surface-normal estimator
+  over Stable Diffusion 2's networks: the image's latent, a ControlNet-VAE's residuals over it, one UNet
+  evaluation at timestep 0, and the decode renormalized per pixel. An image in, its normal map at the
+  image's size out under `NFKOutputImage`; an image with alpha reads (1, 1, 1) outside its object.
 - **`NFKMLXStyleTransfer`** — real fast neural style transfer: Johnson et al.'s `TransformerNet` in
   MLXNN, run through the module backend (image → stylized image). The style is baked into the weights.
 - **`NFKMLXAdaIN`** — arbitrary style transfer: a normalized VGG-19 encodes the content and the style

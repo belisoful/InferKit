@@ -115,10 +115,17 @@ enum NFKMLXImageBridge {
             return image
         }
         let read = rgbaBytes(from: image, colorSpace: CGColorSpaceCreateDeviceRGB())
-        var bytes = read.bytes
-        guard !allOpaque(bytes) else {
+        guard !allOpaque(read.bytes) else {
             return image
         }
+        let bytes = compositedOnWhite(rgba: read.bytes)
+        return (try? cgImage(rgba: bytes, width: read.width, height: read.height, options: NFKMLXImageOptions())) ?? image
+    }
+
+    /// Straight RGBA8 bytes composited onto white as ``compositedOnWhite(_:)`` composites them, every alpha
+    /// set to 255.
+    static func compositedOnWhite(rgba: [UInt8]) -> [UInt8] {
+        var bytes = rgba
         var index = 0
         while index < bytes.count {
             let alpha = UInt32(bytes[index + 3])
@@ -129,7 +136,7 @@ enum NFKMLXImageBridge {
             bytes[index + 3] = 255
             index += 4
         }
-        return (try? cgImage(rgba: bytes, width: read.width, height: read.height, options: NFKMLXImageOptions())) ?? image
+        return bytes
     }
 
     static func hasAlpha(_ image: CGImage) -> Bool {

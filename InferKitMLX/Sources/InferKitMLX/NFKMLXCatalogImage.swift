@@ -744,7 +744,20 @@ enum NFKMLXCatalogImage {
     // MARK: - Depth
 
     static var depthEstimators: [NFKMLXCatalogEntry] {
-        depthAnythingEntries + depth3Entries + depth3EstimatorEntries + [marigold]
+        depthAnythingEntries + depth3Entries + depth3EstimatorEntries + [marigold, stableNormal]
+    }
+
+    /// StableNormal-turbo: the one-step YOSO normal estimator Hi3DGen runs before its 3D stages.
+    static var stableNormal: NFKMLXCatalogEntry {
+        let files = ["unet", "controlnet", "vae"].flatMap { [file("\($0)/config.json"), file("\($0)/diffusion_pytorch_model.fp16.safetensors")] }
+        return model(NFKMLXStableNormal.modelName, "StableNormal-turbo", family: "stablenormal",
+                     summary: "A one-step estimator of a surface normal map from Stable Diffusion 2's geometry.",
+                     tasks: [NFKModelTaskNormalEstimation],
+                     inputs: [imageInput("The image to estimate normals for. Pixels under an alpha of 128 or less read as background.")],
+                     outputs: [imageOutput("The normal map, each channel (n + 1) / 2, the background white.", title: "Normals")],
+                     license: .license("Apache-2.0", name: "Apache License 2.0", url: "https://huggingface.co/Stable-X/yoso-normal-v1-8-1"),
+                     source: .hub(NFKMLXStableNormal.repo, revision: NFKMLXStableNormal.revision,
+                                  layout: NFKModelSourceLayoutDirectory, files: files))
     }
 
     static var depthAnythingEntries: [NFKMLXCatalogEntry] {
@@ -1695,7 +1708,46 @@ enum NFKMLXCatalogImage {
          trellis(.imageLarge, "TRELLIS (image)", summary: "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from one image."),
          trellis(.textBase, "TRELLIS text (base)", summary: "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 768-wide flows."),
          trellis(.textLarge, "TRELLIS text (large)", summary: "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 1024-wide flows."),
-         trellis(.textXLarge, "TRELLIS text (xlarge)", summary: "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 1280-wide flows.")]
+         trellis(.textXLarge, "TRELLIS text (xlarge)", summary: "A generator of a 3D object, as a vertex-colored mesh and Gaussians, from a prompt; 1280-wide flows."),
+         hi3dgen]
+    }
+
+    /// Hi3DGen: its own flows and decoders, StableNormal-turbo, DINOv2, and BiRefNet.
+    static var hi3dgen: NFKMLXCatalogEntry {
+        let release = [file("pipeline.json")] + NFKMLXHi3DGenFactory.checkpoints.flatMap {
+            [file("ckpts/\($0).json"), file("ckpts/\($0).safetensors")]
+        }
+        let normals = ["unet", "controlnet", "vae"].flatMap {
+            ["\($0)/config.json", "\($0)/diffusion_pytorch_model.fp16.safetensors"]
+        }
+        let files = release
+            + normals.map { NFKModelFile.file($0, role: role(of: $0), repository: NFKMLXStableNormal.repo,
+                                               revision: NFKMLXStableNormal.revision) }
+            + [NFKModelFile(path: NFKMLXTrellisFactory.encoderFileName, byteCount: nil, sha256: nil, role: NFKModelFileRoleWeights,
+                            optional: false, repository: nil, revision: nil, url: NFKMLXTrellisFactory.encoderURL, extensions: nil),
+               .file("model.safetensors", role: NFKModelFileRoleWeights, repository: NFKMLXHi3DGenFactory.birefnetRepo)]
+        return model(NFKMLXHi3DGenFactory.modelName, "Hi3DGen", family: "hi3dgen",
+                     summary: "A generator of a 3D object's geometry from one image, through its estimated normal map.",
+                     tasks: [NFKModelTaskImageTo3D],
+                     inputs: [imageInput("The object. An image with alpha is cropped to its alpha's box; an opaque one is cut out by BiRefNet first.")],
+                     outputs: [.output(NFKOutputMesh, required: true, title: "Mesh",
+                                       help: "The object as a marching-cubes mesh with a color per vertex, y up, facing +z."),
+                               imageOutput("The normal map the 3D stages are conditioned on, 1024 × 1024.", title: "Normals")],
+                     parameters: [
+                         .option(NFKMLXTrellisParameterKey.structureSteps, kind: NFKModelOptionKindInteger, title: "Structure steps",
+                                 help: "The sparse-structure stage's sampling steps.", defaultValue: 50, minimum: 1, maximum: 100),
+                         .option(NFKMLXTrellisParameterKey.latentSteps, kind: NFKModelOptionKindInteger, title: "Latent steps",
+                                 help: "The structured-latent stage's sampling steps.", defaultValue: 6, minimum: 1, maximum: 100),
+                         .option(NFKMLXTrellisParameterKey.structureGuidance, kind: NFKModelOptionKindNumber, title: "Structure guidance",
+                                 help: "The sparse-structure stage's classifier-free guidance strength.", defaultValue: 3, minimum: 0),
+                         .option(NFKMLXTrellisParameterKey.latentGuidance, kind: NFKModelOptionKindNumber, title: "Latent guidance",
+                                 help: "The structured-latent stage's classifier-free guidance strength.", defaultValue: 3, minimum: 0),
+                     ],
+                     license: .mit(url: "https://huggingface.co/\(NFKMLXHi3DGenFactory.repo)",
+                                   note: "StableNormal-turbo (Stable-X/yoso-normal-v1-8-1) is under Apache-2.0; DINOv2 ViT-L/14 with registers is Meta's, under Apache-2.0; BiRefNet (ZhengPeng7/BiRefNet) is under MIT."),
+                     source: .hub(NFKMLXHi3DGenFactory.repo, revision: NFKMLXHi3DGenFactory.revision,
+                                  layout: NFKModelSourceLayoutDirectory, files: files),
+                     residencies: stagedResidencies)
     }
 
     /// A TRELLIS release: its own flows, the image release's decoders, and its conditioner (DINOv2's

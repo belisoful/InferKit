@@ -282,6 +282,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKModelTaskUpscaling,
 	(const void *)&NFKModelTaskImageRestoration,
 	(const void *)&NFKModelTaskDepthEstimation,
+	(const void *)&NFKModelTaskNormalEstimation,
 	(const void *)&NFKModelTaskSegmentation,
 	(const void *)&NFKModelTaskMatting,
 	(const void *)&NFKModelTaskObjectDetection,

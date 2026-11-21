@@ -121,6 +121,7 @@ let backend = try NFKMLXStableDiffusionInpaint.backend(unetWeightsURL: unetURL, 
 | Depth Anything V2 | ``NFKMLXDepthAnything`` | ``NFKMLXDepthAnythingNet`` (a metric head with `maxDepth`) | ``NFKMLXDepthVariant`` `.small` / `.base` / `.large` (`NFKMLXDepthConfiguration.small` …) | `depth-anything-v2-small` · `-base` · `-large` | ``NFKMLXModuleBackend`` |
 | Depth Anything 3 | ``NFKMLXDepthAnything3``; ``NFKMLXDepth3Estimator`` for the camera and the ray map | `NFKMLXDepthAnything3Net` | ``NFKMLXDepth3Variant`` `.small` / `.base` / `.large` (`NFKMLXDepth3Configuration.small` …) | `depth-anything-3-small` · `-base` · `-large` | ``NFKMLXModuleBackend``; ``NFKMLXGenerationBackend`` for the estimator (depth, camera, and rays) |
 | Marigold depth | ``NFKMLXMarigold`` | ``NFKMLXSDUNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSDUNetConfiguration.marigold` | `marigold-depth` | ``NFKMLXDiffusionBackend`` |
+| StableNormal-turbo | ``NFKMLXStableNormal`` | ``NFKMLXStableNormalNet`` (``NFKMLXSDUNet``, ``NFKMLXSDControlNetVAE``, ``NFKMLXSDAutoencoder``) | `NFKMLXSDUNetConfiguration.yoso`, the autoencoder read from the release's `vae/config.json` | `stablenormal-turbo` | ``NFKMLXStableNormalBackend`` |
 | SegFormer | ``NFKMLXSegFormer`` | ``NFKMLXSegFormerNet`` | `NFKMLXSegFormerConfiguration.mitB0`; `network(weightsURL:classCount:)` for a custom head | `segformer-b0` | ``NFKMLXModuleBackend`` |
 | DeepLabV3 | ``NFKMLXDeepLab`` | ``NFKMLXDeepLabNet`` over `NFKMLXResNetBackbone` | `NFKMLXDeepLabConfiguration.base` (`NFKMLXResNetConfiguration.deepLab`); `network(weightsURL:configuration:)` for a custom head | `deeplabv3` | ``NFKMLXModuleBackend`` |
 | BiSeNet V1 | ``NFKMLXBiSeNet`` | ``NFKMLXBiSeNetNet`` | `NFKMLXBiSeNetConfiguration.base` (ResNet-18 context path); `network(weightsURL:configuration:)` for a custom head | `bisenet` | ``NFKMLXModuleBackend`` |
@@ -137,6 +138,8 @@ let backend = try NFKMLXDepthAnything3.backend(variant: .small, weightsURL: url)
 let estimatorBackend = try NFKMLXDepth3Estimator.estimator(variant: .small, weightsURL: url).inferenceBackend()
 // Marigold depth
 let backend = try NFKMLXMarigold.backend(unetWeightsURL: unetURL, vaeWeightsURL: vaeURL, textContextURL: contextURL)
+// StableNormal-turbo (the normal map under NFKOutputImage)
+let backend = try NFKMLXStableNormal.backend(directoryURL: releaseURL)
 // SegFormer
 let backend = try NFKMLXSegFormer.backend(weightsURL: url)
 // custom classes: try NFKMLXSegFormer.network(weightsURL: url, classCount: 4)
@@ -160,6 +163,8 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 [[NFKMLXDepth3Estimator estimatorWithVariant:NFKMLXDepth3VariantSmall weightsURL:url error:&error] inferenceBackend]
 // Marigold depth
 [NFKMLXMarigold backendWithUNetWeightsURL:unetURL vaeWeightsURL:vaeURL textContextURL:contextURL error:&error]
+// StableNormal-turbo
+[NFKMLXStableNormal backendWithDirectoryURL:releaseURL error:&error]
 // SegFormer
 [NFKMLXSegFormer backendWithWeightsURL:url error:&error]
 // DeepLabV3
@@ -178,6 +183,7 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 | TripoSR | ``NFKMLXTripoSR`` | ``NFKMLXTripoSRNet`` | `NFKMLXTripoSRConfiguration.released`; `network(weightsURL:configuration:)` builds it | `triposr` | ``NFKMLXTripoSRBackend`` |
 | TRELLIS | ``NFKMLXTrellisFactory`` | ``NFKMLXTrellisPipeline`` | `NFKMLXTrellisConfiguration.released` / `.textBase` / `.textLarge` / `.textXLarge`, read from `pipeline.json`; `NFKMLXTrellis.structureFlow(weightsURL:configuration:)` builds the trainable flow | `trellis-image-large`, `trellis-text-base`, `trellis-text-large`, `trellis-text-xlarge` | ``NFKMLXTrellisBackend`` |
 | Stable Fast 3D | ``NFKMLXStableFast3D`` | ``NFKMLXStableFast3DNet`` | `NFKMLXStableFast3DConfiguration.released`; `network(weightsURL:configuration:)` builds it | `stable-fast-3d` | ``NFKMLXStableFast3DBackend`` |
+| Hi3DGen | ``NFKMLXHi3DGenFactory`` | ``NFKMLXHi3DGenPipeline`` (BiRefNet, StableNormal-turbo, ``NFKMLXTrellisPipeline`` with marching-cubes extraction) | ``NFKMLXTrellisConfiguration`` read from the release's `pipeline.json`; the app's sampler settings (50 and 6 steps, guidance 3); `condition(rgba:width:height:)` makes a training condition for ``NFKMLXTrellisTraining`` | `hi3dgen` | ``NFKMLXHi3DGenBackend`` |
 
 ```swift
 let backend = try NFKMLXTripoSR.backend(weightsURL: url)
@@ -207,6 +213,20 @@ let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInput
 ```objc
 [NFKMLXTrellisFactory backendWithDirectoryURL:releaseDirectory encoderWeightsURL:dinov2 residency:NFKMLXResidencyAutomatic error:&error]
 // NFKMLXTrellisParameterKey.structureSteps / .latentSteps / .structureGuidance / .latentGuidance / .outputs
+```
+
+```swift
+let backend = try NFKMLXHi3DGenFactory.backend(directoryURL: releaseDirectory, normalDirectoryURL: normals,
+                                               encoderWeightsURL: dinov2, birefnetWeightsURL: birefnet, residency: .automatic)
+let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: image]))   // result.mesh; the normal map under NFKOutputImage
+```
+
+```objc
+[NFKMLXHi3DGenFactory backendWithDirectoryURL:releaseDirectory normalDirectoryURL:normals encoderWeightsURL:dinov2
+                               birefnetWeightsURL:birefnet residency:NFKMLXResidencyAutomatic error:&error]
+// the download: [NFKMLXHi3DGenFactory backendWithRevision:nil cacheDirectoryURL:nil residency:NFKMLXResidencyAutomatic error:&error]
+// fine-tuned flows: [NFKMLXHi3DGenFactory backendWithDirectoryURL:… birefnetWeightsURL:birefnet structureFlowWeightsURL:tuned
+//                    latentFlowWeightsURL:nil residency:NFKMLXResidencyAutomatic error:&error]
 ```
 
 ### Matting, segmentation, and faces

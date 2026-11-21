@@ -156,6 +156,8 @@ The figures have three limits:
 - ``NFKMLXTrellisLatentFlow``
 - ``NFKMLXTrellisMeshDecoder``
 - ``NFKMLXTrellisGaussianDecoder``
+- ``NFKMLXHi3DGenFactory``
+- ``NFKMLXHi3DGenBackend``
 
 ### Image → map (depth & segmentation)
 
@@ -164,6 +166,11 @@ The figures have three limits:
 - ``NFKMLXDepth3Estimator``
 - ``NFKMLXDepth3Camera``
 - ``NFKMLXMarigold``
+- ``NFKMLXStableNormal``
+- ``NFKMLXStableNormalBackend``
+- ``NFKMLXStableNormalNet``
+- ``NFKMLXSDControlNetVAE``
+- ``NFKSDControlResiduals``
 - ``NFKMLXSegFormer``
 - ``NFKMLXDeepLab``
 - ``NFKMLXBiSeNet``
@@ -847,6 +854,7 @@ The figures have three limits:
 - ``NFKMLXTrellisStructureExample``
 - ``NFKMLXTrellisLatentExample``
 - ``NFKMLXTrellisStructureEncoder``
+- ``NFKMLXHi3DGenPipeline``
 
 ### Chat templates
 

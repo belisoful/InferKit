@@ -21,7 +21,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Text → image and image → image](#text--image-and-image--image) — MLX Stable Diffusion
 - [Image → image](#image--image) — bring-your-own MLX, Core ML
 - [Image → image + mask](#image--image--mask) — matting
-- [Image → 3D object](#image--3d-object) — TripoSR, Stable Fast 3D, TRELLIS, `NFKMesh`, `NFKMeshMaterial`,
+- [Image → 3D object](#image--3d-object) — TripoSR, Stable Fast 3D, TRELLIS, Hi3DGen, `NFKMesh`, `NFKMeshMaterial`,
   `NFKGaussianSplats`
 - [Many tensors in and out](#many-tensors-in-and-out)
 - [Diffusion: upscale, depth, inpaint](#diffusion-upscale-depth-inpaint) — bring-your-own MLX diffusion
@@ -60,9 +60,9 @@ the following cells; each links to its example.
 | text | structured | `NFKFoundationModelsBackend`, `NFKRemoteBackend` | [Structured output](#structured-output-and-tools) |
 | text | image | `NFKMLXBackend` (text-to-image) | [Text → image](#text--image-and-image--image) |
 | text + image | image | `NFKMLXBackend` (image-to-image) | [Image → image](#text--image-and-image--image) |
-| image | image | `NFKMLXModuleBackend`, `NFKMLXRealESRGAN` (upscale), `NFKMLXDepthAnything` (depth), `NFKMLXNAFNet` (restore), `NFKCoreMLBackend` | [Image → image](#image--image) |
+| image | image | `NFKMLXModuleBackend`, `NFKMLXRealESRGAN` (upscale), `NFKMLXDepthAnything` (depth), `NFKMLXStableNormal` (normals), `NFKMLXNAFNet` (restore), `NFKCoreMLBackend` | [Image → image](#image--image) |
 | image (+ hint) | image + mask | `NFKMLXMattingBackend`, `NFKMLXU2Net` (bg removal), `NFKMLXSAM` (segment) | [Image → image + mask](#image--image--mask) |
-| image | mesh | `NFKMLXTripoSR` (one image to a 3D object), `NFKMLXStableFast3D` (one image to a textured 3D object), `NFKMLXTrellisFactory` (one image or a prompt to a mesh and Gaussians) | [Image → 3D object](#image--3d-object) |
+| image | mesh | `NFKMLXTripoSR` (one image to a 3D object), `NFKMLXStableFast3D` (one image to a textured 3D object), `NFKMLXTrellisFactory` (one image or a prompt to a mesh and Gaussians), `NFKMLXHi3DGenFactory` (one image to a normal map and a mesh) | [Image → 3D object](#image--3d-object) |
 | image + mask | image | `NFKMLXLaMa` (inpaint) | [LaMa inpainting](#lama-inpainting-mtimlxlama-a-shipped-mlx-model) |
 | image(s) | image(s) | `NFKMLXTensorBackend`, `NFKMLXRIFE` (frame interpolation), `NFKMLXRAFT` (optical flow) | [Many tensors](#many-tensors-in-and-out) |
 | image (+ mask) | image | `NFKMLXDiffusionBackend` (upscale, depth, inpaint) | [Diffusion](#diffusion-upscale-depth-inpaint) |
@@ -2199,6 +2199,29 @@ let known = try estimator.camera(for: frame, knownRotation: rotation, translatio
                                  focalLengthX: 320, focalLengthY: 300)
 ```
 
+### StableNormal-turbo (`NFKMLXStableNormal`, a shipped MLX model)
+
+`NFKMLXStableNormal` estimates surface normals in one deterministic step over Stable Diffusion 2's
+networks. An image in, its normal map out under `NFKOutputImage` at the image's size, each component of the
+unit normal mapped from [−1, 1] to 8 bits. An image with alpha is composited on white and its alpha above
+128 is the object; outside the object the normals read (1, 1, 1). The release directory holds `unet/`,
+`controlnet/`, and `vae/`.
+
+```swift
+let normals = try NFKMLXStableNormal.backend(directoryURL: releaseDirectoryURL)
+let map = try normals.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: frame])).output(forKey: NFKOutputImage)
+```
+
+<!-- objc-check: given NSURL *releaseDirectoryURL; -->
+```objc
+id<NFKInferenceBackend> normals = [NFKMLXStableNormal backendWithDirectoryURL:releaseDirectoryURL error:&error];
+id map = [[normals runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputImage: frame }] error:&error]
+          outputForKey:NFKOutputImage];
+```
+
+The step runs at 768 on the longer side and resizes back. `backendWithRepo:revision:cacheDirectoryURL:error:`
+downloads the release.
+
 ### NAFNet restoration (`NFKMLXNAFNet`, a shipped MLX model)
 
 `NFKMLXNAFNet` is a real single-forward restoration network (denoise / deblur) — a U-shaped stack of
@@ -2400,6 +2423,35 @@ takes its directory, the image release's (whose decoders it shares), and CLIP Vi
 (`openai/clip-vit-large-patch14`). `NFKMLXTrellisParameterKey` sets each stage's steps (25) and guidance
 (5 for the image release, 7.5 for text), and `.outputs` limits the decoding to one of the two keys. The
 Gaussians' PLY is the layout 3D Gaussian splatting viewers read, in their frame.
+
+Hi3DGen (`NFKMLXHi3DGenFactory`) generates the object from the image's normal map. BiRefNet cuts out an
+opaque image, StableNormal-turbo estimates the normals, and TRELLIS's two stages run on the normal map with
+Hi3DGen's own flows. The result holds the vertex-colored `NFKMesh` under `NFKOutputMesh` and the 1024² normal
+map under `NFKOutputImage`. The directory factory reads the Hi3DGen release (`Stable-X/trellis-normal-v0-1`),
+StableNormal-turbo's (`Stable-X/yoso-normal-v1-8-1`), DINOv2 ViT-L/14 with registers, and BiRefNet's
+`model.safetensors`; the download factory fetches all four.
+
+```swift
+let hi3dgen = try NFKMLXHi3DGenFactory.backend(directoryURL: releaseDirectoryURL, normalDirectoryURL: normalsDirectoryURL,
+                                               encoderWeightsURL: dinov2URL, birefnetWeightsURL: birefnetURL,
+                                               residency: .automatic)
+let object = try hi3dgen.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: photo]))
+try object.mesh!.write(to: outputDirectory.appendingPathComponent("object.glb"))
+```
+
+<!-- objc-check: given NSURL *outputDirectory; NSURL *releaseDirectoryURL; NSURL *normalsDirectoryURL; NSURL *dinov2URL; NSURL *birefnetURL; -->
+```objc
+id<NFKInferenceBackend> hi3dgen = [NFKMLXHi3DGenFactory backendWithDirectoryURL:releaseDirectoryURL
+                                                              normalDirectoryURL:normalsDirectoryURL
+                                                               encoderWeightsURL:dinov2URL
+                                                              birefnetWeightsURL:birefnetURL
+                                                                       residency:NFKMLXResidencyAutomatic error:&error];
+NFKInferenceResult *object = [hi3dgen runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)photo }] error:&error];
+[object.mesh writeToURL:[outputDirectory URLByAppendingPathComponent:@"object.glb"] error:&error];
+```
+
+The sampler runs the release app's settings: 50 structure steps and 6 latent steps, both at guidance 3.
+`NFKMLXTrellisParameterKey` overrides them, and `NFKParameterSeed` sets the noise (42).
 
 ## Image → image + mask
 
@@ -4767,9 +4819,14 @@ let faceRestore = try NFKMLXCodeFormer.backend(weightsURL: nil)                /
 // Depth (image → grayscale depth)
 let depth = try NFKMLXDepthAnything.backend(variant: .small, weightsURL: nil)  // "depth-anything-v2-small"
 
+// Surface normals (image → normal map), from the release directory
+let normals = try NFKMLXStableNormal.backend(directoryURL: yosoDir)           // "stablenormal-turbo"
+
 // 3D reconstruction (image → NFKMesh under NFKOutputMesh)
 let triposr = try NFKMLXTripoSR.backend(weightsURL: nil)                      // "triposr"; .resolution / .threshold / .foregroundRatio / .vertexColors under NFKMLXTripoSRParameterKey
 let stableFast3D = try NFKMLXStableFast3D.backend(weightsURL: nil, grid: .lattice(divisions: 8))  // "stable-fast-3d"; a textured mesh with an NFKMeshMaterial
+let hi3dgen = try NFKMLXHi3DGenFactory.backend(directoryURL: hi3dgenDir, normalDirectoryURL: yosoDir, encoderWeightsURL: dinov2URL,
+                                               birefnetWeightsURL: birefnetURL, residency: .staged)  // "hi3dgen"; the mesh and the normal map it conditions on
 
 // Matting (plate → foreground image + alpha under NFKOutputMask)
 let cutout   = try NFKMLXU2Net.backend(variant: .full, weightsURL: nil)        // "u2net"
@@ -6236,6 +6293,34 @@ The defaults are the release trainers': AdamW at 1e-4, the condition dropped to 
 drawn logit-normal around 1, and the gradient clipped to norm 1. `fineTuneLatentFlow` trains the
 appearance stage the same way on structured latents, which the release's toolkit encodes offline from
 rendered views.
+
+### Fine-tuning Hi3DGen on your own objects
+
+Hi3DGen's flows train through the same recipes. Its structure and mesh decoders are TRELLIS-image-large's, so
+TRELLIS-image-large's structure encoder makes each mesh's latent, and the pipeline makes each image's
+condition from its normal map.
+
+```swift
+let hi3dgen = try NFKMLXHi3DGenPipeline(directoryURL: releaseDirectory, normalDirectoryURL: normalsDirectory,
+                                        encoderWeightsURL: dinov2URL, birefnetWeightsURL: birefnetURL)
+let encoder = try NFKMLXTrellis.structureEncoder(weightsURL: trellisDirectory.appendingPathComponent("ckpts/ss_enc_conv3d_16l8_fp16.safetensors"))
+let examples = try myObjects.map { object in
+    NFKMLXTrellisStructureExample(
+        condition: try hi3dgen.condition(rgba: object.rgba, width: object.width, height: object.height).condition,
+        latent: NFKMLXTrellisTraining.structureLatent(of: object.mesh, encoder: encoder))
+}
+let flow = try NFKMLXTrellis.structureFlow(weightsURL: releaseDirectory.appendingPathComponent("ckpts/ss_flow_normal_dit_L_16l8_fp16.safetensors"))
+try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: examples, steps: 500)
+try NFKMLXLoRA.merge(into: flow)
+try NFKMLXWeights.save(flow, to: tunedFlowURL)
+let tuned = try NFKMLXHi3DGenFactory.backend(directoryURL: releaseDirectory, normalDirectoryURL: normalsDirectory,
+                                             encoderWeightsURL: dinov2URL, birefnetWeightsURL: birefnetURL,
+                                             structureFlowWeightsURL: tunedFlowURL, latentFlowWeightsURL: nil,
+                                             residency: .automatic)
+```
+
+Stable3DGen publishes no training code, so the objective and its defaults are TRELLIS's trainers'. A step on
+the released structure flow needs more memory than a 32 GB machine holds, as for TRELLIS.
 
 ## Dynamic backend discovery (optional engines)
 

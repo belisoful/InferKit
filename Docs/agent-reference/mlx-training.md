@@ -251,15 +251,15 @@ transfer, AdaIN) lists nothing for it.
 carries one row per model entry with its outcome, its level, whether the path is reachable, and the
 reference file that decides it. A session picking up a model reads its row first. A session shipping
 a recipe updates that row along with the model's entry and the parity checklist's listings. The
-counts below are the ledger's, over its 165 rows.
+counts below are the ledger's, over its 169 rows.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 65 |
+| `ships` | 67 |
 | `trainable`, no recipe yet | 42 |
 | `offline` | 40 |
 | `uncertain`, a reference is unread | 0 |
-| `untrainable` | 18 |
+| `untrainable` | 19 |
 | Shared infrastructure, no objective of its own | 1 |
 
 **Gaps against this rule.** These are package-level rather than per-model:

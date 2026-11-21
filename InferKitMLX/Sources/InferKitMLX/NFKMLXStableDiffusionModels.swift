@@ -73,6 +73,15 @@ public struct NFKMLXSDUNetConfiguration: Sendable {
         return c
     }()
 
+    /// StableNormal's YOSO estimator (`Stable-X/yoso-normal-v1-8-1`): Stable Diffusion 2 geometry over the
+    /// four-channel image latent alone. Its ControlNet-VAE (``NFKMLXSDControlNetVAE``) runs the same
+    /// encoder half. Introduced in InferKit 0.4.0.
+    public static let yoso: NFKMLXSDUNetConfiguration = {
+        var c = NFKMLXSDUNetConfiguration.marigold
+        c.inputChannels = 4
+        return c
+    }()
+
     /// SDXL: three levels rather than four, ten transformer blocks deep at the coarsest, cross-attending
     /// to two towers concatenated, and conditioned on a pooled embedding and a size descriptor.
     public static let sdxl: NFKMLXSDUNetConfiguration = {
@@ -129,6 +138,21 @@ public struct NFKSDAddedConditioning {
     public init(pooled: MLXArray, timeIds: MLXArray) {
         self.pooled = pooled
         self.timeIds = timeIds
+    }
+}
+
+/// What a ControlNet adds to a UNet forward, as diffusers' `down_block_additional_residuals` and
+/// `mid_block_additional_residual` carry it. Introduced in InferKit 0.4.0.
+public struct NFKSDControlResiduals {
+    /// One residual per skip, `[batch, height, width, channels]`, in the order the down path produces the
+    /// skips: the input convolution's output first.
+    public let down: [MLXArray]
+    /// The residual added to the mid block's output.
+    public let mid: MLXArray
+
+    public init(down: [MLXArray], mid: MLXArray) {
+        self.down = down
+        self.mid = mid
     }
 }
 
@@ -708,6 +732,70 @@ final class NFKSDMidBlock: Module {
     }
 }
 
+// MARK: The encoder half
+
+/// What `UNet2DConditionModel` and diffusers' `ControlNetModel` build alike from one configuration: the
+/// time embedding, the input convolution, the down path, and the mid block, under the same key names.
+enum NFKSDEncoderHalf {
+    static func timeChannels(_ c: NFKMLXSDUNetConfiguration) -> Int { c.blockChannels[0] * 4 }
+
+    static func timeEmbedding(_ c: NFKMLXSDUNetConfiguration, conditionChannels: Int?) -> NFKSDTimestepEmbedding {
+        NFKSDTimestepEmbedding(inputChannels: c.blockChannels[0], timeChannels: timeChannels(c),
+                               conditionChannels: conditionChannels)
+    }
+
+    static func inputConvolution(_ c: NFKMLXSDUNetConfiguration) -> Conv2d {
+        NFKConv2d(inputChannels: c.inputChannels, outputChannels: c.blockChannels[0], kernelSize: 3, padding: 1)
+    }
+
+    static func downBlocks(_ c: NFKMLXSDUNetConfiguration) -> [NFKSDDownBlock] {
+        let levels = c.blockChannels.count
+        return (0 ..< levels).map { level in
+            NFKSDDownBlock(
+                inputChannels: level == 0 ? c.blockChannels[0] : c.blockChannels[level - 1],
+                outputChannels: c.blockChannels[level], timeChannels: timeChannels(c),
+                layers: c.layersPerBlock, groups: c.normalizationGroups,
+                attention: c.attends[level]
+                    ? (c.crossAttentionDimensions, c.attentionHeads[level], c.onlyCrossAttention[level],
+                       c.transformerLayers[level])
+                    : nil,
+                downsamples: level < levels - 1, usesLinearProjection: c.usesLinearProjection)
+        }
+    }
+
+    static func midBlock(_ c: NFKMLXSDUNetConfiguration) -> NFKSDMidBlock {
+        let levels = c.blockChannels.count
+        return NFKSDMidBlock(
+            channels: c.blockChannels[levels - 1], timeChannels: timeChannels(c),
+            groups: c.normalizationGroups, context: c.crossAttentionDimensions,
+            heads: c.attentionHeads[levels - 1], depth: c.transformerLayers[levels - 1],
+            usesLinearProjection: c.usesLinearProjection)
+    }
+
+    /// The down path's output and every skip it produces, `x` (the input convolution's output) first.
+    static func down(_ x: MLXArray, blocks: [NFKSDDownBlock], time: MLXArray, context: MLXArray?,
+                     ip: NFKSDImageConditioning?) -> (MLXArray, [MLXArray]) {
+        var h = x
+        var skips = [h]
+        for block in blocks {
+            let (out, produced) = block(h, time: time, context: context, ip: ip)
+            h = out
+            skips += produced
+        }
+        return (h, skips)
+    }
+
+    static func upcastsAttention(in module: Module) -> Bool {
+        module.modules().contains { ($0 as? NFKSDAttention)?.upcasts == true }
+    }
+
+    static func setUpcastsAttention(_ upcasts: Bool, in module: Module) {
+        for case let attention as NFKSDAttention in module.modules() {
+            attention.upcasts = upcasts
+        }
+    }
+}
+
 // MARK: The UNet
 
 /// `UNet2DConditionModel` — the denoising network every latent-diffusion model here runs.
@@ -728,40 +816,19 @@ public final class NFKMLXSDUNet: Module {
         self.configuration = configuration
         let c = configuration
         let levels = c.blockChannels.count
-        let timeChannels = c.blockChannels[0] * 4
+        let timeChannels = NFKSDEncoderHalf.timeChannels(c)
 
-        self._timeEmbedding.wrappedValue = NFKSDTimestepEmbedding(
-            inputChannels: c.blockChannels[0], timeChannels: timeChannels,
-            conditionChannels: c.timeConditionProjectionDimensions)
+        self._timeEmbedding.wrappedValue = NFKSDEncoderHalf.timeEmbedding(
+            c, conditionChannels: c.timeConditionProjectionDimensions)
         self._classEmbedding.wrappedValue = c.classEmbeddingCount.map {
             Embedding(embeddingCount: $0, dimensions: timeChannels)
         }
         self._addEmbedding.wrappedValue = c.additionEmbedding.map {
             NFKSDTimestepEmbedding(inputChannels: $0.projectionInputDimensions, timeChannels: timeChannels)
         }
-        self._convIn.wrappedValue = NFKConv2d(inputChannels: c.inputChannels,
-                                              outputChannels: c.blockChannels[0],
-                                              kernelSize: 3, padding: 1)
-
-        var down = [NFKSDDownBlock]()
-        for level in 0 ..< levels {
-            down.append(NFKSDDownBlock(
-                inputChannels: level == 0 ? c.blockChannels[0] : c.blockChannels[level - 1],
-                outputChannels: c.blockChannels[level], timeChannels: timeChannels,
-                layers: c.layersPerBlock, groups: c.normalizationGroups,
-                attention: c.attends[level]
-                    ? (c.crossAttentionDimensions, c.attentionHeads[level], c.onlyCrossAttention[level],
-                       c.transformerLayers[level])
-                    : nil,
-                downsamples: level < levels - 1, usesLinearProjection: c.usesLinearProjection))
-        }
-        self._downBlocks.wrappedValue = down
-
-        self._midBlock.wrappedValue = NFKSDMidBlock(
-            channels: c.blockChannels[levels - 1], timeChannels: timeChannels,
-            groups: c.normalizationGroups, context: c.crossAttentionDimensions,
-            heads: c.attentionHeads[levels - 1], depth: c.transformerLayers[levels - 1],
-            usesLinearProjection: c.usesLinearProjection)
+        self._convIn.wrappedValue = NFKSDEncoderHalf.inputConvolution(c)
+        self._downBlocks.wrappedValue = NFKSDEncoderHalf.downBlocks(c)
+        self._midBlock.wrappedValue = NFKSDEncoderHalf.midBlock(c)
 
         let reversedChannels = c.blockChannels.reversed().map { $0 }
         let reversedAttends = c.attends.reversed().map { $0 }
@@ -795,12 +862,8 @@ public final class NFKMLXSDUNet: Module {
     /// Whether every attention computes its scores in float32, as a release that sets `upcast_attention`
     /// asks. ``NFKMLXStableDiffusionModels/loadUNetWeights(into:from:precision:)`` reads it from the release.
     var upcastsAttention: Bool {
-        get { modules().contains { ($0 as? NFKSDAttention)?.upcasts == true } }
-        set {
-            for case let attention as NFKSDAttention in modules() {
-                attention.upcasts = newValue
-            }
-        }
+        get { NFKSDEncoderHalf.upcastsAttention(in: self) }
+        set { NFKSDEncoderHalf.setUpcastsAttention(newValue, in: self) }
     }
 
     /// The cross-attention layers, in the diffusers `attn_processors` order — down blocks, then up
@@ -837,11 +900,15 @@ public final class NFKMLXSDUNet: Module {
     ///   - guidanceEmbedding: the guidance-scale embedding `[batch, timeConditionProjectionDimensions]`
     ///     (``guidanceEmbedding(scale:channels:)``), for a latent consistency model that conditions on
     ///     its guidance scale. A model without the projection ignores it.
+    ///   - controlResiduals: a ControlNet's residuals. Each down residual adds to its skip, and the mid
+    ///     residual adds to the mid block's output; the mid block reads the down path's output unchanged.
+    ///     The down residuals number the skips exactly. Introduced in InferKit 0.4.0.
     public func callAsFunction(_ x: MLXArray, timestep: MLXArray, context: MLXArray?,
                                classLabel: MLXArray? = nil,
                                added: NFKSDAddedConditioning? = nil,
                                imageConditioning: NFKSDImageConditioning? = nil,
-                               guidanceEmbedding: MLXArray? = nil) -> MLXArray {
+                               guidanceEmbedding: MLXArray? = nil,
+                               controlResiduals: NFKSDControlResiduals? = nil) -> MLXArray {
         // The float32 sinusoids take the sample's type before the embedding, as diffusers casts them; a
         // float32 table would promote the time path, and through every resnet the whole network.
         var time = timeEmbedding(NFKSDTimesteps.embedding(timestep, channels: configuration.blockChannels[0])
@@ -860,18 +927,69 @@ public final class NFKMLXSDUNet: Module {
             time = time + addEmbedding(joined)
         }
 
-        var h = convIn(x)
-        var skips = [h]
-        for block in downBlocks {
-            let (out, produced) = block(h, time: time, context: context, ip: imageConditioning)
-            h = out
-            skips += produced
+        var (h, skips) = NFKSDEncoderHalf.down(convIn(x), blocks: downBlocks, time: time, context: context,
+                                               ip: imageConditioning)
+        if let controlResiduals {
+            precondition(controlResiduals.down.count == skips.count,
+                         "\(controlResiduals.down.count) ControlNet residuals for \(skips.count) skips")
+            skips = zip(skips, controlResiduals.down).map { $0 + $1 }
         }
         h = midBlock(h, time: time, context: context, ip: imageConditioning)
+        if let controlResiduals {
+            h = h + controlResiduals.mid
+        }
         for block in upBlocks {
             h = block(h, skips: &skips, time: time, context: context, ip: imageConditioning)
         }
         return convOut(NFKReferenceRounding.silu(normOut(h)))
+    }
+}
+
+// MARK: The ControlNet-VAE
+
+/// StableNormal's `ControlNetVAEModel`: diffusers' `ControlNetModel` run on the image latent itself. Its
+/// forward is the UNet's encoder half (time embedding, input convolution, down path, mid block), and the
+/// residuals it returns are the raw skips and the mid block's output.
+///
+/// @discussion The release keeps `ControlNetModel`'s conditioning embedding and zero convolutions in its
+/// checkpoint, and the forward reads none of them, so the module holds none and the loader drops their
+/// keys. A configuration's class, addition, and guidance embeddings are not built: the reference's
+/// ControlNet-VAE configures none. Introduced in InferKit 0.4.0.
+public final class NFKMLXSDControlNetVAE: Module {
+    @ModuleInfo(key: "time_embedding") var timeEmbedding: NFKSDTimestepEmbedding
+    @ModuleInfo(key: "conv_in") var convIn: Conv2d
+    @ModuleInfo(key: "down_blocks") var downBlocks: [NFKSDDownBlock]
+    @ModuleInfo(key: "mid_block") var midBlock: NFKSDMidBlock
+
+    public let configuration: NFKMLXSDUNetConfiguration
+
+    public init(configuration: NFKMLXSDUNetConfiguration = .yoso) {
+        self.configuration = configuration
+        self._timeEmbedding.wrappedValue = NFKSDEncoderHalf.timeEmbedding(configuration, conditionChannels: nil)
+        self._convIn.wrappedValue = NFKSDEncoderHalf.inputConvolution(configuration)
+        self._downBlocks.wrappedValue = NFKSDEncoderHalf.downBlocks(configuration)
+        self._midBlock.wrappedValue = NFKSDEncoderHalf.midBlock(configuration)
+    }
+
+    var upcastsAttention: Bool {
+        get { NFKSDEncoderHalf.upcastsAttention(in: self) }
+        set { NFKSDEncoderHalf.setUpcastsAttention(newValue, in: self) }
+    }
+
+    /// - Parameters:
+    ///   - x: the sample, `[batch, height, width, inputChannels]`.
+    ///   - timestep: the diffusion step.
+    ///   - context: the cross-attention conditioning, `[batch, tokens, crossAttentionDimensions]`.
+    ///   - scale: the weight every residual carries (`conditioning_scale`).
+    /// - Returns: the residuals ``NFKMLXSDUNet`` adds to its skips and its mid block's output.
+    public func callAsFunction(_ x: MLXArray, timestep: MLXArray, context: MLXArray?,
+                               scale: Float = 1) -> NFKSDControlResiduals {
+        let time = timeEmbedding(NFKSDTimesteps.embedding(timestep, channels: configuration.blockChannels[0])
+            .asType(x.dtype))
+        let (h, skips) = NFKSDEncoderHalf.down(convIn(x), blocks: downBlocks, time: time, context: context, ip: nil)
+        let mid = midBlock(h, time: time, context: context)
+        guard scale != 1 else { return NFKSDControlResiduals(down: skips, mid: mid) }
+        return NFKSDControlResiduals(down: skips.map { $0 * scale }, mid: mid * scale)
     }
 }
 
@@ -1176,16 +1294,33 @@ public final class NFKMLXStableDiffusionModels: NSObject {
     static func loadUNetWeights(into net: NFKMLXSDUNet, from url: URL, precision: NFKMLXWeightPrecision,
                                 castingTo dtype: DType?) throws {
         let checkpoint = try checkpointArrays(url: url, precision: precision, castingTo: dtype)
-        let linear = net.configuration.usesLinearProjection
-        let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
+        try NFKMLXWeights.apply(mappedUNetArrays(checkpoint, linearProjection: net.configuration.usesLinearProjection),
+                                to: net)
+        net.upcastsAttention = upcastsAttention(unetWeightsURL: url)
+    }
+
+    /// A diffusers UNet checkpoint's arrays under this module's keys, 4-D weights channels last.
+    static func mappedUNetArrays(_ checkpoint: (arrays: [(String, MLXArray)], needsConvTranspose: Bool),
+                                 linearProjection: Bool) -> [(String, MLXArray)] {
+        checkpoint.arrays.map { key, value -> (String, MLXArray) in
             var name = remapUNetKey(key)
-            if linear {
+            if linearProjection {
                 name = name.replacingOccurrences(of: ".proj_in_conv.", with: ".proj_in_linear.")
                 name = name.replacingOccurrences(of: ".proj_out_conv.", with: ".proj_out_linear.")
             }
             return (name, checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+    }
+
+    /// Loads a diffusers `ControlNetModel` checkpoint into `net`: its UNet-named tensors, without the
+    /// conditioning embedding and zero convolutions (`controlnet_*`) a ControlNet-VAE's forward never reads.
+    /// `upcast_attention` comes from the `config.json` beside the checkpoint. Introduced in InferKit 0.4.0.
+    public static func loadControlNetVAEWeights(into net: NFKMLXSDControlNetVAE, from url: URL,
+                                                precision: NFKMLXWeightPrecision = .float32) throws {
+        let checkpoint = try checkpointArrays(url: url, precision: precision, castingTo: nil)
+        let read = (arrays: checkpoint.arrays.filter { !$0.0.hasPrefix("controlnet_") },
+                    needsConvTranspose: checkpoint.needsConvTranspose)
+        try NFKMLXWeights.apply(mappedUNetArrays(read, linearProjection: net.configuration.usesLinearProjection), to: net)
         net.upcastsAttention = upcastsAttention(unetWeightsURL: url)
     }
 

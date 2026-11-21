@@ -137,6 +137,32 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertNotNil(generated.gaussianSplats, "Gaussians under NFKOutputGaussianSplats")
     }
 
+    // MARK: Normals and 3D through a normal map (release directories)
+
+    // StableNormal-turbo and Hi3DGen load released networks only; the validation store supplies them.
+    func testNormalEstimationAndHi3DGen() throws {
+        try requireMLXRuntime()
+        guard let yoso = validationPath("IK_VAL_YOSO_NORMAL") else {
+            throw XCTSkip("set IK_VAL_YOSO_NORMAL to the StableNormal-turbo release")
+        }
+        let normals = try NFKMLXStableNormal.backend(directoryURL: URL(fileURLWithPath: yoso))
+        XCTAssertEqual(normals.backendIdentifier, "stablenormal-turbo")
+        let result = try normals.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)]))
+        XCTAssertNotNil(result.output(forKey: NFKOutputImage), "the normal map at the input's size")
+
+        // Hi3DGen builds staged, so construction reads no network; a run loads each stage for its turn.
+        guard let release = validationPath("IK_VAL_HI3DGEN"), let dinov2 = validationPath("IK_VAL_DINOV2_VITL14_REG"),
+              let birefnet = validationPath("IK_VAL_BIREFNET") else {
+            throw XCTSkip("set IK_VAL_HI3DGEN, IK_VAL_DINOV2_VITL14_REG, and IK_VAL_BIREFNET")
+        }
+        let hi3dgen = try NFKMLXHi3DGenFactory.backend(directoryURL: URL(fileURLWithPath: release),
+                                                       normalDirectoryURL: URL(fileURLWithPath: yoso),
+                                                       encoderWeightsURL: URL(fileURLWithPath: dinov2),
+                                                       birefnetWeightsURL: URL(fileURLWithPath: birefnet), residency: .staged)
+        XCTAssertEqual(hi3dgen.backendIdentifier, "hi3dgen")
+        XCTAssertEqual(hi3dgen.supportedOutputKeys, [NFKOutputMesh, NFKOutputImage])
+    }
+
     // MARK: Depth (image → grayscale depth)
 
     func testDepthModels() throws {

@@ -60,7 +60,9 @@ positions, triangles, and a color per vertex, written as OBJ, PLY, or GLB. `NFKM
 UV-textured `NFKMesh` with an `NFKMeshMaterial` (a base color texture, a tangent-space normal texture,
 roughness, and metalness), written as GLB with the textures embedded. ``NFKMLXTrellisFactory`` generates an
 object from one image or a prompt as a vertex-colored `NFKMesh` and an `NFKGaussianSplats` under
-`NFKOutputGaussianSplats`, written as GLB and a splatting PLY.
+`NFKOutputGaussianSplats`, written as GLB and a splatting PLY. ``NFKMLXHi3DGenFactory`` estimates an
+image's normal map with StableNormal-turbo and generates a vertex-colored `NFKMesh` from it with TRELLIS's
+stages, returning the normal map under `NFKOutputImage` beside the mesh.
 
 | Model | Name | Task |
 | --- | --- | --- |
@@ -68,11 +70,13 @@ object from one image or a prompt as a vertex-colored `NFKMesh` and an `NFKGauss
 | ``NFKMLXStableFast3D`` | `stable-fast-3d` | single-image 3D reconstruction (UV-textured mesh with a PBR material) |
 | ``NFKMLXTrellisFactory`` | `trellis-image-large` | image-to-3D generation (vertex-colored mesh and 3D Gaussians) |
 | ``NFKMLXTrellisFactory`` | `trellis-text-base`, `trellis-text-large`, `trellis-text-xlarge` | text-to-3D generation (vertex-colored mesh and 3D Gaussians) |
+| ``NFKMLXHi3DGenFactory`` | `hi3dgen` | image-to-3D generation through a normal map (vertex-colored mesh) |
 
 ### Image → map
 
 `NFKMLXDepthAnything`, `NFKMLXDepthAnything3`, and `NFKMLXMarigold` emit a grayscale depth map, and
-`NFKMLXDepth3Estimator` reads Depth Anything 3's camera and ray map beside that depth; the segmenters
+`NFKMLXDepth3Estimator` reads Depth Anything 3's camera and ray map beside that depth; `NFKMLXStableNormal`
+emits a normal map, each normal's components mapped from [−1, 1] to 8-bit RGB; the segmenters
 (`NFKMLXSegFormer`, `NFKMLXDeepLab`, `NFKMLXBiSeNet`, `NFKMLXBiSeNetV2`) emit a grayscale class-label
 map under `NFKOutputImage` — recover the class index as `round(gray · (classCount − 1))`.
 
@@ -81,6 +85,7 @@ map under `NFKOutputImage` — recover the class index as `round(gray · (classC
 | ``NFKMLXDepthAnything`` | `depth-anything-v2-small` · `-base` · `-large` | monocular depth |
 | ``NFKMLXDepthAnything3`` | `depth-anything-3-small` · `-base` · `-large` | monocular depth, rays, and camera (DA3) |
 | ``NFKMLXMarigold`` | `marigold-depth` | diffusion depth |
+| ``NFKMLXStableNormal`` | `stablenormal-turbo` | one-step diffusion surface normals |
 | ``NFKMLXSegFormer`` | `segformer-b0` | transformer segmentation |
 | ``NFKMLXDeepLab`` | `deeplabv3` | CNN segmentation |
 | ``NFKMLXBiSeNet`` | `bisenet` | real-time segmentation (ResNet-18 context path) |

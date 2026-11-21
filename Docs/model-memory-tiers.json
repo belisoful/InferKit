@@ -541,6 +541,12 @@
       "24" : "resident 1863936877 fits",
       "32" : "resident 1863936877 fits"
     },
+    "hi3dgen/default" : {
+      "8" : "staged 12656643709 refused",
+      "16" : "staged 12656643709 refused",
+      "24" : "staged 12656643709 refused",
+      "32" : "resident 12656643709 fits"
+    },
     "htdemucs-6s/htdemucs_6s" : {
       "8" : "resident 10647711079 refused",
       "16" : "resident 10647711079 refused",
@@ -1788,6 +1794,12 @@
       "16" : "resident 9952438602 refused",
       "24" : "resident 9952438602 fits",
       "32" : "resident 9952438602 fits"
+    },
+    "stablenormal-turbo/default" : {
+      "8" : "resident 5255171308 refused",
+      "16" : "resident 5255171308 fits",
+      "24" : "resident 5255171308 fits",
+      "32" : "resident 5255171308 fits"
     },
     "swinir-classical-x2/default" : {
       "8" : "resident 59019939 fits",

@@ -6047,6 +6047,51 @@
       "note": "TRELLIS text-xlarge (microsoft/TRELLIS-text-xlarge, MIT): the two flows; its decoders are TRELLIS_IMAGE_LARGE's and its conditioner CLIP_L14_HF. The parity record comes from `run_reference.py trellis_text --plate subject --size 512 --checkpoint <this directory>` under the `trellis` oracle environment."
     },
     {
+      "key": "HI3DGEN",
+      "repo": "Stable-X/trellis-normal-v0-1",
+      "revision": "fdfac1d0e0cb3f86adcac69239c1abdd82228e17",
+      "directory": "trellis-normal-v0-1",
+      "files": [
+        "README.md",
+        "pipeline.json",
+        "ckpts/ss_flow_normal_dit_L_16l8_fp16.json",
+        "ckpts/ss_flow_normal_dit_L_16l8_fp16.safetensors",
+        "ckpts/slat_flow_normal_dit_L_64l8p2_fp16.json",
+        "ckpts/slat_flow_normal_dit_L_64l8p2_fp16.safetensors",
+        "ckpts/ss_dec_conv3d_16l8_fp16.json",
+        "ckpts/ss_dec_conv3d_16l8_fp16.safetensors",
+        "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.json",
+        "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.safetensors"
+      ],
+      "config": {
+        "IK_VAL_HI3DGEN": "",
+        "IK_PARITY_HI3DGEN": "hi3dgen/hi3dgen-reference.safetensors",
+        "IK_PARITY_HI3DGEN_FLOOR_NORMAL": "hi3dgen/hi3dgen-floor-normal.safetensors"
+      },
+      "note": "Hi3DGen (Stable-X/trellis-normal-v0-1, MIT), float16 checkpoints the port reads at float32: TRELLIS's structure decoder and mesh decoder and two flows conditioned on a normal map. The release carries no structure encoder and no Gaussian decoder. Its normal maps come from YOSO_NORMAL, its condition from DINOV2_VITL14_REG4, and its cut-out from BIREFNET. The parity record comes from `run_reference.py hi3dgen --plate subject --size 512 --checkpoint unused` under the `hi3dgen` oracle environment, which reads IK_HI3DGEN_SRC, IK_STABLENORMAL_SRC, and IK_DINOV2_SRC. The floor record comes from `hi3dgen_floor_normal` with the same arguments: StableNormal-turbo's step rerun in float64 on the parity record's inputs."
+    },
+    {
+      "key": "YOSO_NORMAL",
+      "repo": "Stable-X/yoso-normal-v1-8-1",
+      "revision": "4dd7d000d76febb68254ebe27251c2cb79dc1c2a",
+      "directory": "yoso-normal-v1-8-1",
+      "files": [
+        "README.md",
+        "model_index.json",
+        "unet/config.json",
+        "unet/diffusion_pytorch_model.fp16.safetensors",
+        "controlnet/config.json",
+        "controlnet/controlnetvae.py",
+        "controlnet/diffusion_pytorch_model.fp16.safetensors",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.fp16.safetensors"
+      ],
+      "config": {
+        "IK_VAL_YOSO_NORMAL": ""
+      },
+      "note": "StableNormal-turbo (Stable-X/yoso-normal-v1-8-1, Apache-2.0), float16 networks the port reads at float32: the UNet, the ControlNet-VAE (`controlnet/controlnetvae.py`, which the reference loads with trust_remote_code), and the autoencoder. Hi3DGen's normal stage; its parity records are HI3DGEN's."
+    },
+    {
       "key": "CLIP_L14_HF",
       "repo": "openai/clip-vit-large-patch14",
       "revision": "32bd64288804d66eefd0ccbe215aa642df71cc41",
@@ -6688,6 +6733,15 @@
         "trellis_floor_structure_sampling",
         "trellis_floor_latent_sampling",
         "trellis_floor_mesh"
+      ]
+    },
+    "hi3dgen": {
+      "interpreter": "~/.inferkit-validation/hi3dgenvenv/bin/python3",
+      "why": "Hi3DGen (IK_HI3DGEN_SRC, Stable-X/Stable3DGen at c29f668) and StableNormal-turbo (IK_STABLENORMAL_SRC, hugoycj/StableNormal at 1b7203c) run on the sf3d environment's pins plus diffusers 0.31.0 (pipeline_yoso_normal.py and the release's controlnet/controlnetvae.py import diffusers.models.controlnet and diffusers.pipelines.marigold, which later releases moved), scikit-image (the mesh step's skimage.measure.marching_cubes), and opencv-python-headless (cv2). SF3D's texture_baker and uv_unwrapper extensions are not installed. The oracle reuses trellis_shims for spconv and flash_attn and the vendored HF BiRefNet for both background masks.",
+      "rebuild": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/hi3dgenvenv && ~/.inferkit-validation/hi3dgenvenv/bin/pip install -r <(~/.inferkit-validation/sf3dvenv/bin/pip freeze | grep -v '@ file:') diffusers==0.31.0 scikit-image==0.26.0 opencv-python-headless==5.1.0.95",
+      "modes": [
+        "hi3dgen",
+        "hi3dgen_floor_normal"
       ]
     },
     "ltxtrain": {

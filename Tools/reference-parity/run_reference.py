@@ -30945,6 +30945,376 @@ CHECKPOINT_MODELS["trellis_floor_latent_sampling"] = run_trellis_floor_latent_sa
 CHECKPOINT_MODELS["trellis_floor_mesh"] = run_trellis_floor_mesh
 
 
+def _hi3dgen_pipeline():
+    """`Hi3DGenPipeline.from_pretrained` on IK_VAL_HI3DGEN and StableNormal-turbo's predictor on
+    IK_VAL_YOSO_NORMAL, both on the CPU at float32, with BiRefNet for the background.
+
+    The `hi3dgen` package comes from IK_HI3DGEN_SRC (Stable-X/Stable3DGen at c29f668) and `hubconf` with
+    `stablenormal` from IK_STABLENORMAL_SRC (hugoycj/StableNormal at 1b7203c). `trellis_shims/` stands in
+    for spconv and flash_attn as it does for TRELLIS. Every checkpoint's `use_fp16` is forced off, and the
+    YOSO pipeline loads its fp16 variant at float32. DINOv2 builds from IK_DINOV2_SRC and loads
+    IK_VAL_DINOV2_VITL14_REG. Both BiRefNet calls (Hi3DGen's preprocessing and the predictor's object
+    mask) take the vendored HF BiRefNet on IK_VAL_BIREFNET. Returns the pipeline, the predictor, and the
+    `hi3dgen.modules.sparse` module."""
+    shims = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trellis_shims")
+    refsrc = os.path.join(os.path.dirname(os.path.abspath(__file__)), "refsrc")
+    for path in (shims, refsrc, _trellis_setting("IK_HI3DGEN_SRC"), _trellis_setting("IK_STABLENORMAL_SRC")):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    os.environ["ATTN_BACKEND"] = "sdpa"
+    os.environ["SPARSE_BACKEND"] = "spconv"
+    os.environ["SPARSE_ATTN_BACKEND"] = "flash_attn"
+
+    from safetensors.torch import load_file
+    from birefnet_hf.birefnet import BiRefNet
+    import spconv.pytorch as spconv_shim
+    import hi3dgen.models as hi3dgen_models
+    from hi3dgen.representations.mesh import cube2mesh
+    from hi3dgen.pipelines import Hi3DGenPipeline
+    from hi3dgen.modules import sparse
+    import hubconf
+    from stablenormal.pipeline_yoso_normal import YOSONormalsPipeline
+
+    cube2mesh.SparseFeatures2Mesh.__init__.__defaults__ = ("cpu", 128, True)
+    # A normal map fills more of the grid than TRELLIS's photographs: 24,672 occupied voxels subdivide to
+    # 1.58 million at the mesh decoder's 256³ stage, whose whole gather would hold 11 GB.
+    spconv_shim.ROW_CHUNK = 65536
+
+    def from_pretrained(path, **kwargs):
+        with open(f"{path}.json") as handle:
+            config = json.load(handle)
+        config["args"]["use_fp16"] = False
+        model = getattr(hi3dgen_models, config["name"])(**config["args"], **kwargs)
+        model.load_state_dict(load_file(f"{path}.safetensors"))
+        return model.float().eval()
+
+    hi3dgen_models.from_pretrained = from_pretrained
+    hub_load = torch.hub.load
+
+    def local_hub_load(repo, name, pretrained=True, **kwargs):
+        model = hub_load(_trellis_setting("IK_DINOV2_SRC"), name, source="local", pretrained=False)
+        weights = torch.load(_trellis_setting("IK_VAL_DINOV2_VITL14_REG"), map_location="cpu", weights_only=True)
+        model.load_state_dict(weights)
+        return model.float().eval()
+
+    torch.hub.load = local_hub_load
+    birefnet = BiRefNet(bb_pretrained=False)
+    birefnet.float()
+    birefnet.eval()
+    birefnet.load_state_dict({k: v.float() for k, v in load_file(_trellis_setting("IK_VAL_BIREFNET")).items()},
+                             strict=True)
+
+    pipeline = Hi3DGenPipeline.from_pretrained(_trellis_setting("IK_VAL_HI3DGEN"))
+    pipeline.to(torch.device("cpu"))
+    pipeline.birefnet_model = birefnet
+
+    yoso = YOSONormalsPipeline.from_pretrained(_trellis_setting("IK_VAL_YOSO_NORMAL"), trust_remote_code=True,
+                                               safety_checker=None, variant="fp16", torch_dtype=torch.float32,
+                                               t_start=0).to("cpu")
+    predictor = hubconf.Predictor(yoso)
+    predictor.segmentation_handler.device = "cpu"
+    predictor.segmentation_handler.birefnet_model = birefnet
+    return pipeline, predictor, sparse
+
+
+def run_hi3dgen(image, checkpoint):
+    """Hi3DGen image to 3D end to end, seam by seam, following the release's `app.py` `generate_3d`:
+    `preprocess_image(resolution=1024)` with BiRefNet's mask, StableNormal-turbo's normal map at
+    `resolution=768, match_input_resolution=True, data_type='object'`, and `Hi3DGenPipeline.run` on that
+    map with the app's sampler settings (structure 50 steps at guidance 3, latent 6 steps at guidance 3,
+    the pipeline's own guidance interval and rescale) and seed 1. `checkpoint` is unused: the releases come
+    from IK_VAL_HI3DGEN and IK_VAL_YOSO_NORMAL.
+
+    The plate goes in as RGB, so the BiRefNet path runs. With IK_HI3DGEN_ALPHA=1 it goes in as RGBA with
+    the TRELLIS oracle's elliptical alpha instead, and the preprocessing keeps that alpha.
+
+    The record holds:
+      - the input, BiRefNet's binary mask, and the prepared 1024² RGBA image;
+      - the normal stage: the predictor's white composite and alpha mask at 768, the pipeline's
+        preprocessed pixels, the VAE latent (mode × scaling factor), every ControlNet residual, the UNet's
+        output latent, the decoded and renormalized prediction, the masked prediction, and the normal
+        image before and after the LANCZOS resize back to 1024²;
+      - the 3D stage as `run_trellis` records it (condition, the first four and the last forward of both
+        flows, noises, latents, occupancy logits and coordinates, the structured latent);
+      - the mesh: the decoder's output-layer features, the averaged corner attributes at the unique corner
+        vertices, marching cubes' raw vertices and faces, and the deformed vertices and colors.
+    The output is the denormalized structured latent's features.
+    """
+    import gc
+    from PIL import Image
+
+    pipeline, predictor, sparse = _hi3dgen_pipeline()
+    models = pipeline.models
+    yoso = predictor.model
+    extra = {}
+
+    def put(name, value):
+        if isinstance(value, sparse.SparseTensor):
+            extra[f"{name}.coords"] = value.coords.int()
+            value = value.feats
+        if isinstance(value, np.ndarray):
+            value = torch.from_numpy(np.ascontiguousarray(value))
+        extra[name] = value.detach()
+
+    def release(name):
+        del models[name]
+        gc.collect()
+
+    def record_forwards(model, prefix):
+        calls = {"count": 0, "last": None}
+        original = model.forward
+
+        def forward(x, t, cond, **kwargs):
+            out = original(x, t, cond, **kwargs)
+            if calls["count"] < 4:
+                for field, value in (("x", x), ("t", t), ("cond", cond), ("out", out)):
+                    put(f"{prefix}.call{calls['count']}.{field}", value)
+            calls["count"] += 1
+            calls["last"] = (x, t, cond, out)
+            return out
+
+        model.forward = forward
+        return calls
+
+    rgb = (image * 255.0).astype(np.uint8)
+    if os.environ.get("IK_HI3DGEN_ALPHA") == "1":
+        height, width = image.shape[:2]
+        y, x = np.mgrid[0:height, 0:width].astype(np.float32)
+        inside = (((y - height / 2) / (height * 0.3)) ** 2 + ((x - width / 2) / (width * 0.22)) ** 2) <= 1.0
+        source = Image.fromarray(np.concatenate([rgb, (inside * 255).astype(np.uint8)[..., None]], axis=-1))
+    else:
+        source = Image.fromarray(rgb)
+    put("input", np.array(source))
+
+    mask_call = pipeline._get_birefnet_mask
+
+    def recorded_mask(picture):
+        mask = mask_call(picture)
+        put("birefnet_resized_input", np.array(picture.convert("RGB")))
+        put("birefnet_mask", mask)
+        return mask
+
+    pipeline._get_birefnet_mask = recorded_mask
+
+    yoso_encode, yoso_controlnet, yoso_unet = yoso.vae.encode, yoso.controlnet.forward, yoso.unet.forward
+    yoso_preprocess, yoso_decode = yoso.image_processor.preprocess, yoso.decode_prediction
+
+    def preprocess(*args, **kwargs):
+        pixels, padding, resolution = yoso_preprocess(*args, **kwargs)
+        put("normal.pixels", pixels)
+        return pixels, padding, resolution
+
+    def controlnet(sample, timestep, **kwargs):
+        down, mid = yoso_controlnet(sample, timestep, **kwargs)
+        put("normal.image_latent", sample)
+        for index, residual in enumerate(down):
+            put(f"normal.controlnet.down{index}", residual)
+        put("normal.controlnet.mid", mid)
+        return down, mid
+
+    def unet(sample, timestep, **kwargs):
+        out = yoso_unet(sample, timestep, **kwargs)
+        put("normal.unet_out", out[0])
+        return out
+
+    def decode(latent):
+        prediction = yoso_decode(latent)
+        put("normal.decoded", prediction)
+        return prediction
+
+    yoso.image_processor.preprocess = preprocess
+    yoso.controlnet.forward = controlnet
+    yoso.unet.forward = unet
+    yoso.decode_prediction = decode
+
+    apply_mask, process_rgba = predictor._apply_mask, predictor._process_rgba_image
+
+    def recorded_rgba(picture):
+        composite, alpha = process_rgba(picture)
+        put("normal.composite", np.array(composite))
+        return composite, alpha
+
+    def recorded_apply(prediction, mask):
+        put("normal.prediction", prediction)
+        if mask is not None:
+            put("normal.mask", mask)
+        masked = apply_mask(prediction, mask)
+        put("normal.masked", masked)
+        return masked
+
+    predictor._process_rgba_image = recorded_rgba
+    predictor._apply_mask = recorded_apply
+
+    to_pil = Image.fromarray
+
+    with torch.no_grad():
+        prepared = pipeline.preprocess_image(source, resolution=1024)
+        put("prepared_image", np.array(prepared))
+        resized = {}
+
+        def recorded_fromarray(array, *args, **kwargs):
+            if not resized and array.dtype == np.uint8 and array.ndim == 3 and array.shape[-1] == 3:
+                resized["map"] = array
+            return to_pil(array, *args, **kwargs)
+
+        Image.fromarray = recorded_fromarray
+        normal_image = predictor(prepared, resolution=768, match_input_resolution=True, data_type="object")
+        Image.fromarray = to_pil
+        put("normal.map", resized["map"])
+        put("normal_image", np.array(normal_image))
+        yoso.image_processor.preprocess, yoso.controlnet.forward, yoso.unet.forward = (
+            yoso_preprocess, yoso_controlnet, yoso_unet)
+        del yoso.decode_prediction, predictor._process_rgba_image, predictor._apply_mask
+        pipeline.birefnet_model = None
+        del predictor, yoso, yoso_preprocess, yoso_controlnet, yoso_unet, yoso_decode, yoso_encode
+        del apply_mask, process_rgba, mask_call
+        gc.collect()
+
+        cond = pipeline.get_cond([normal_image])
+        put("cond", cond["cond"])
+        release("image_cond_model")
+
+        torch.manual_seed(1)
+        structure_params = {**pipeline.sparse_structure_sampler_params, "steps": 50, "cfg_strength": 3}
+        flow = models["sparse_structure_flow_model"]
+        calls = record_forwards(flow, "ss_flow")
+        noise = torch.randn(1, flow.in_channels, flow.resolution, flow.resolution, flow.resolution)
+        put("ss_noise", noise)
+        latent = pipeline.sparse_structure_sampler.sample(flow, noise, **cond, **structure_params, verbose=False)["samples"]
+        for field, value in zip(("x", "t", "cond", "out"), calls["last"]):
+            put(f"ss_flow.last.{field}", value)
+        put("ss_latent", latent)
+        del flow
+        calls.clear()
+        release("sparse_structure_flow_model")
+        logits = models["sparse_structure_decoder"](latent)
+        put("ss_logits", logits)
+        coords = torch.argwhere(logits > 0)[:, [0, 2, 3, 4]].int()
+        put("coords", coords)
+        print(f"hi3dgen: {coords.shape[0]} occupied voxels")
+        release("sparse_structure_decoder")
+
+        latent_params = {**pipeline.slat_sampler_params, "steps": 6, "cfg_strength": 3}
+        flow = models["slat_flow_model"]
+        calls = record_forwards(flow, "slat_flow")
+        noise = sparse.SparseTensor(feats=torch.randn(coords.shape[0], flow.in_channels), coords=coords)
+        put("slat_noise", noise)
+        slat = pipeline.slat_sampler.sample(flow, noise, **cond, **latent_params, verbose=False)["samples"]
+        for field, value in zip(("x", "t", "cond", "out"), calls["last"]):
+            put(f"slat_flow.last.{field}", value)
+        put("slat_normalized", slat)
+        del flow
+        calls.clear()
+        release("slat_flow_model")
+        std = torch.tensor(pipeline.slat_normalization["std"])[None]
+        mean = torch.tensor(pipeline.slat_normalization["mean"])[None]
+        slat = slat * std + mean
+        put("slat", slat)
+
+        from hi3dgen.representations.mesh import cube2mesh
+        decoder = models["slat_decoder_mesh"]
+        extractor = decoder.mesh_extractor
+        cube2verts, marching = cube2mesh.sparse_cube2verts, extractor.mesh_extractor.__class__.__call__
+
+        def recorded_cube2verts(coords, feats, training=True):
+            v_pos, v_attrs, loss = cube2verts(coords, feats, training=training)
+            put("mesh.corner_coords", v_pos.int())
+            put("mesh.corner_attrs", v_attrs)
+            return v_pos, v_attrs, loss
+
+        def recorded_marching(self, voxelgrid_vertices, scalar_field, voxelgrid_colors=None, training=False):
+            from skimage import measure
+            grid = scalar_field.reshape([round(scalar_field.shape[0] ** (1 / 3))] * 3).cpu().numpy()
+            raw, raw_faces, _, _ = measure.marching_cubes(grid, level=0.0, gradient_direction="ascent")
+            put("mesh.marching_vertices", raw.astype(np.float32))
+            put("mesh.marching_faces", raw_faces.astype(np.int32))
+            return marching(self, voxelgrid_vertices, scalar_field, voxelgrid_colors, training)
+
+        cube2mesh.sparse_cube2verts = recorded_cube2verts
+        extractor.mesh_extractor.__class__.__call__ = recorded_marching
+        features = {}
+        hook = decoder.out_layer.register_forward_hook(lambda module, inputs, output: features.setdefault("out", output))
+        mesh = decoder(slat)[0]
+        hook.remove()
+        put("mesh_decoder_out", features["out"])
+        put("mesh_vertices", mesh.vertices)
+        put("mesh_faces", mesh.faces.int())
+        put("mesh_vertex_attrs", mesh.vertex_attrs)
+        print(f"hi3dgen: {mesh.vertices.shape[0]} vertices, {mesh.faces.shape[0]} faces")
+
+    globals()["_extra"] = {k: v.contiguous().clone() for k, v in extra.items()}
+    return slat.feats
+
+
+CHECKPOINT_MODELS["hi3dgen"] = run_hi3dgen
+
+
+def run_hi3dgen_floor_normal(image, checkpoint):
+    """The reference's own float32-against-float64 spread at the StableNormal seams the tests compare: YOSO's
+    single step rerun in float64 (its autoencoder, ControlNet-VAE, and UNet widened) on the inputs the
+    IK_PARITY_HI3DGEN record holds. Two sets of seams, each stored as its float32 rounding under its name and
+    the float32 residual under `<name>.residual`, with its floor (`_trellis_separation` of the float32 record
+    against the float64 result) printed:
+      - teacher-forced, under the record's names: the latent encoded from `normal.pixels`, the residuals from
+        `normal.image_latent`, the UNet's output from that latent and the recorded residuals, and the decode of
+        `normal.unet_out`;
+      - chained, under `normal.chained.<seam>`: the step run end to end in float64 from `normal.pixels`.
+    Timestep 0's sinusoid is exact in float32, so the embedding needs no widening. `image` and `checkpoint`
+    unused."""
+    import gc
+    from safetensors.torch import load_file
+    record = {k: v.double() for k, v in load_file(_trellis_setting("IK_PARITY_HI3DGEN")).items()
+              if k.startswith("normal.") and v.is_floating_point()}
+    pipeline, predictor, _ = _hi3dgen_pipeline()
+    yoso = predictor.model
+    pipeline.birefnet_model = None
+    del pipeline, predictor
+    gc.collect()
+    vae, controlnet, unet = yoso.vae.double(), yoso.controlnet.double(), yoso.unet.double()
+    scale = yoso.vae.config.scaling_factor
+    text = torch.zeros(1, 257, 1024, dtype=torch.float64)
+    extra = {}
+
+    def put(seam, value, recorded):
+        exact = value.detach().double()
+        extra[seam] = exact.float()
+        extra[seam + ".residual"] = (exact - exact.float().double()).float()
+        print(f"hi3dgen floor {seam}: {_trellis_separation(record[recorded], exact):.4e}")
+
+    def step(latent, residuals=None):
+        down, mid = controlnet(latent, yoso.t_start, encoder_hidden_states=text, conditioning_scale=1.0,
+                               guess_mode=False, return_dict=False)
+        used_down, used_mid = residuals if residuals is not None else (down, mid)
+        predicted = unet(latent, yoso.t_start, encoder_hidden_states=text,
+                         down_block_additional_residuals=used_down, mid_block_additional_residual=used_mid,
+                         return_dict=False)[0]
+        return down, mid, predicted
+
+    def seams(prefix, latent, down, mid, predicted, decoded):
+        put(f"{prefix}image_latent", latent, "normal.image_latent")
+        for index, residual in enumerate(down):
+            put(f"{prefix}controlnet.down{index}", residual, f"normal.controlnet.down{index}")
+        put(f"{prefix}controlnet.mid", mid, "normal.controlnet.mid")
+        put(f"{prefix}unet_out", predicted, "normal.unet_out")
+        put(f"{prefix}decoded", decoded, "normal.decoded")
+
+    with torch.no_grad():
+        latent = vae.encode(record["normal.pixels"]).latent_dist.mode() * scale
+        recorded_down = [record[f"normal.controlnet.down{index}"] for index in range(12)]
+        down, mid, _ = step(record["normal.image_latent"])
+        _, _, predicted = step(record["normal.image_latent"], (recorded_down, record["normal.controlnet.mid"]))
+        decoded = yoso.decode_prediction(record["normal.unet_out"])
+        seams("normal.", latent, down, mid, predicted, decoded)
+        down, mid, predicted = step(latent)
+        seams("normal.chained.", latent, down, mid, predicted, yoso.decode_prediction(predicted))
+
+    globals()["_extra"] = {k: v.contiguous().clone() for k, v in extra.items()}
+    return extra["normal.image_latent"].clone()
+
+
+CHECKPOINT_MODELS["hi3dgen_floor_normal"] = run_hi3dgen_floor_normal
+
+
 def _ltx2_diffusion_decoder_tiny(**over):
     from diffusers import LTX2VideoDiffusionDecoderModel
 

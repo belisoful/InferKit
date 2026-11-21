@@ -352,6 +352,53 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   was read from a mirror whose commit could not be pinned, which makes this the weakest reading behind
   the ruling; its launcher and degradation pipeline are not published, so a recipe supplies the
   degradation.
+- `NFKMLXStableNormal` (`@objc`) — StableNormal-turbo (Stable-X, Apache-2.0), a one-step surface-normal
+  estimator: `Stable-X/yoso-normal-v1-8-1` at `4dd7d000`, run as hugoycj/StableNormal at `1b7203c` runs it
+  (`hubconf.Predictor` with `data_type="object"` over `YOSONormalsPipeline`, diffusers 0.31.0). Hi3DGen's normal
+  stage. `+register` under `stablenormal-turbo`; the factories `backendWithDirectoryURL:error:` and the download
+  `backendWithRepo:revision:cacheDirectoryURL:error:` with its `completionHandler:` peer (the three networks, about
+  2.6 GB at float16). Input `NFKInputImage`; the normal map under `NFKOutputImage` at the input's size, each
+  component of the unit normal as `((clip(n, −1, 1) + 1) / 2 · 255)` truncated. The sources:
+  `NFKMLXStableNormal.swift` and the shared networks in `NFKMLXStableDiffusionModels.swift`.
+  - Networks (`NFKMLXStableNormalNet`): the UNet is Marigold's geometry over the four-channel image latent
+    (`NFKMLXSDUNetConfiguration.yoso`); the autoencoder reads its `vae/config.json`. The ControlNet-VAE
+    (`NFKMLXSDControlNetVAE`, the release's `controlnet/controlnetvae.py`) is the UNet's encoder half on the
+    latent: time embedding, input convolution, down path, mid block. Its residuals are the raw skips and the
+    mid block's output; the checkpoint's conditioning embedding and zero convolutions are unread, and the loader
+    drops their keys. The UNet adds the residuals to its skips and mid block (`NFKSDControlResiduals`,
+    `controlResiduals:`); zero residuals leave it unchanged.
+  - The step is deterministic: the autoencoder's mean latent times 0.18215, the ControlNet-VAE's residuals
+    over it at timestep 0, one UNet forward at timestep 0 on the same latent with those residuals and an
+    all-zero text embedding (1 × 257 × 1024), and the decode renormalized per pixel. The pipeline's own
+    resizes are identities, since the predictor lands the longer side on 768.
+  - The predictor's byte stages, each to the integer: an RGBA image composites on white
+    (`NFKMLXImageBridge.compositedOnWhite`) and its alpha above 128, resized with Pillow's `NEAREST`, is the
+    object mask; `resize_image` scales the longer side to 768 and rounds each side to a multiple of 64 with
+    NumPy's half-to-even rounding; the processor maps each byte to b / 255 · 2 − 1; outside the mask every
+    channel reads 1; the 8-bit map resizes back with Pillow's Lanczos. Pillow's `NEAREST` starts each axis half a
+    step in and advances by the scale in double precision, which at 1024 → 768 picks a different pixel from
+    (x + 0.5) · scale at 99 of 768 positions. An opaque image masks nothing.
+  - Oracle: `run_reference.py hi3dgen` records the normal stage's seams from the release's code on the CPU at
+    float32 (the fp16 variant loaded at float32), and `hi3dgen_floor_normal` reruns the step in float64 on those
+    inputs (the autoencoder, ControlNet-VAE, and UNet widened; timestep 0's sinusoid is exact in float32), both in
+    the `hi3dgen` environment. The floor record holds each seam's float64 result as its float32 rounding plus the
+    float32 residual, teacher-forced under the record's names and chained under `normal.chained.*`.
+  - Parity (`NFKMLXStableNormalTests`, hi3dgen-run1 and hi3dgen-floor1, 2026-11-20): the composite, the mask, and
+    the pixels byte for byte. Each seam is held to twice the reference's own float32-against-float64 floor. The
+    latent stands at 0.0007 of its floor: the reference's float32 encoder sits 1.41e-8 (one minus the cosine)
+    from float64 and the port 9.89e-12, so against the float32 record the latent reads 0.99999998598. Fed the
+    record's inputs, every residual, the mid block, the UNet output (1.13), and the decode (1.28) stand within 1.44
+    of their floors. Chained from the pixels, every seam stands within 0.0079 of its floor; against the float32
+    record the UNet output reads 0.99999999721 and the decode 0.99999999986. The renormalization of the recorded
+    decode reads 0.99999999999996. The 768² map differs in 692 of 1,769,472 bytes and the 1024² image in 1,376 of
+    3,145,728, each by one level.
+  - Limits: the step runs only at 768. An RGB image with no alpha takes the predictor's no-mask path.
+  - **Customization: untrainable here.** hugoycj/StableNormal at `1b7203c` publishes inference scripts only
+    (`scripts/inference_{indoor,object,outdoor}.py`) and no YOSO training code, so no objective exists to
+    measure against. `NFKMLXStableNormalNet` stays a public network builder.
+  - Runtime: one stage, resident (5.25 GB at float32). The release is published at float16 for CUDA;
+    float16 and bfloat16 are not offered until a measured floor holds them. No weight quantization, streaming, or
+    paging is offered.
 - `NFKMLXIPAdapterImageProjection` / `NFKMLXIPAdapterAttention` — IP-Adapter, lightweight image
   conditioning for a diffusion model (steer a Stable Diffusion generation with a reference image, not
   only text). Two pieces: the image projection maps a CLIP image embedding to a short sequence of

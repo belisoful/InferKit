@@ -148,7 +148,7 @@ public struct NFKMLXTrellisResult {
 
 /// One network of a staged pipeline: built from its checkpoint on first use, then kept while the pipeline
 /// holds its stages resident, or released when its stage ends.
-final class NFKTrellisStage<Network: Module>: @unchecked Sendable {
+final class NFKTrellisStage<Network>: @unchecked Sendable {
     private let build: () throws -> Network
     private var network: Network?
     private let lock = NSLock()
@@ -197,7 +197,10 @@ public final class NFKMLXTrellisPipeline: @unchecked Sendable {
     let structureDecoder: NFKTrellisStage<NFKMLXTrellisStructureDecoder>
     let latentFlow: NFKTrellisStage<NFKMLXTrellisLatentFlow>
     let meshDecoder: NFKTrellisStage<NFKMLXTrellisMeshDecoder>
-    let gaussianDecoder: NFKTrellisStage<NFKMLXTrellisGaussianDecoder>
+    let gaussianDecoder: NFKTrellisStage<NFKMLXTrellisGaussianDecoder>?
+    /// How the mesh decoder's features become a surface: FlexiCubes for the TRELLIS releases, marching
+    /// cubes over the averaged corner SDF for Hi3DGen.
+    let surfaceExtraction: NFKTrellisSurfaceExtraction
     let latentMean: MLXArray
     let latentDeviation: MLXArray
 
@@ -226,12 +229,15 @@ public final class NFKMLXTrellisPipeline: @unchecked Sendable {
         }
         latentMean = MLXArray.zeros([1, configuration.latentChannels])
         latentDeviation = MLXArray.ones([1, configuration.latentChannels])
+        surfaceExtraction = .flexiCubes
     }
 
     init(release: NFKMLXTrellisRelease, encoderWeightsURL: URL?, textEncoderDirectoryURL: URL?, quantizationBits: Int?,
-         residency: NFKMLXResidency, overrides: NFKMLXTrellisFlowWeights = NFKMLXTrellisFlowWeights()) throws {
+         residency: NFKMLXResidency, overrides: NFKMLXTrellisFlowWeights = NFKMLXTrellisFlowWeights(),
+         surfaceExtraction: NFKTrellisSurfaceExtraction = .flexiCubes) throws {
         let configuration = release.configuration
         self.configuration = configuration
+        self.surfaceExtraction = surfaceExtraction
         structureSampling = release.structureSampling
         latentSampling = release.latentSampling
         let resident = try NFKMLXResidencyBudget.holdsResident(release.residentBytes(textEncoderDirectoryURL: textEncoderDirectoryURL,
@@ -262,7 +268,7 @@ public final class NFKMLXTrellisPipeline: @unchecked Sendable {
         let structureDecoderURL = try release.checkpoint("sparse_structure_decoder")
         let latentFlowURL = try overrides.latent ?? release.checkpoint("slat_flow_model")
         let meshDecoderURL = try release.checkpoint("slat_decoder_mesh")
-        let gaussianDecoderURL = try release.checkpoint("slat_decoder_gs")
+        let gaussianDecoderURL = release.hasCheckpoint("slat_decoder_gs") ? try release.checkpoint("slat_decoder_gs") : nil
         structureFlow = NFKTrellisStage(keepsResident: resident) {
             try quantized(NFKMLXTrellis.structureFlow(weightsURL: structureFlowURL, configuration: configuration))
         }
@@ -275,8 +281,10 @@ public final class NFKMLXTrellisPipeline: @unchecked Sendable {
         meshDecoder = NFKTrellisStage(keepsResident: resident) {
             try NFKMLXTrellis.meshDecoder(weightsURL: meshDecoderURL, configuration: configuration)
         }
-        gaussianDecoder = NFKTrellisStage(keepsResident: resident) {
-            try NFKMLXTrellis.gaussianDecoder(weightsURL: gaussianDecoderURL, configuration: configuration)
+        gaussianDecoder = gaussianDecoderURL.map { url in
+            NFKTrellisStage(keepsResident: resident) {
+                try NFKMLXTrellis.gaussianDecoder(weightsURL: url, configuration: configuration)
+            }
         }
         latentMean = MLXArray(release.latentMean).reshaped([1, -1])
         latentDeviation = MLXArray(release.latentDeviation).reshaped([1, -1])
@@ -412,19 +420,40 @@ public final class NFKMLXTrellisPipeline: @unchecked Sendable {
         var gaussians: NFKGaussianSplats?
         var mesh: NFKMesh?
         if outputs.contains(.gaussians) {
+            guard let gaussianDecoder else {
+                throw NFKMLXError.unsupportedConfiguration("the release carries no Gaussian decoder")
+            }
             gaussians = try gaussianDecoder.use { decoder in
                 try NFKTrellisExport.splats(decoder.gaussians(decoder.features(latent, grid: grid), grid: grid))
             }
         }
         if outputs.contains(.mesh) {
+            let extraction = surfaceExtraction
             let surface = try meshDecoder.use { decoder -> NFKTrellisSurface in
                 let (features, fine) = decoder.features(latent, grid: grid)
-                return NFKTrellisFlexiCubes.surface(coordinates: fine.coordinates, features: features.asArray(Float.self),
-                                                   resolution: fine.resolution)
+                return extraction.surface(coordinates: fine.coordinates, features: features.asArray(Float.self),
+                                          resolution: fine.resolution)
             }
             mesh = try NFKTrellisExport.mesh(surface)
         }
         return NFKMLXTrellisResult(voxels: voxels, latent: latent, mesh: mesh, gaussians: gaussians)
+    }
+}
+
+/// The surface extraction a release's mesh decoder feeds.
+enum NFKTrellisSurfaceExtraction: Sendable {
+    /// TRELLIS: FlexiCubes over the corner SDFs, deformations, and weights.
+    case flexiCubes
+    /// Hi3DGen: marching cubes over the averaged corner SDF, each vertex moved by the deformed grid.
+    case marchingCubes
+
+    func surface(coordinates: [Int32], features: [Float], resolution: Int) -> NFKTrellisSurface {
+        switch self {
+        case .flexiCubes:
+            return NFKTrellisFlexiCubes.surface(coordinates: coordinates, features: features, resolution: resolution)
+        case .marchingCubes:
+            return NFKHi3DGenSurface.surface(coordinates: coordinates, features: features, resolution: resolution)
+        }
     }
 }
 
@@ -560,6 +589,8 @@ struct NFKMLXTrellisRelease {
         return networks.reduce(0) { $0 + 2 * size(try? checkpoint($1)) } + size(encoderWeightsURL)
             + size(textEncoderDirectoryURL?.appendingPathComponent("model.safetensors")) / 4
     }
+
+    func hasCheckpoint(_ name: String) -> Bool { checkpoints[name] != nil }
 
     func checkpoint(_ name: String) throws -> URL {
         guard let base = checkpoints[name] else {

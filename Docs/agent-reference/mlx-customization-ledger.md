@@ -44,18 +44,18 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 65 |
+| `ships` | 67 |
 | `trainable`, no recipe yet | 42 |
 | `offline` | 40 |
 | `uncertain` | 0 |
-| `untrainable` | 18 |
+| `untrainable` | 19 |
 | Shared infrastructure, no objective of its own | 1 |
-| Total rows | 165 |
+| Total rows | 169 |
 
 A row that rules on two parts or sizes of one model, such as `trainable (T3) / offline (HiFT)` or
 `ships at 2B and 4B, offline at 27B`, counts under its first outcome.
 
-The model entries become 165 rows because a few entries take one ruling for several symbols: the
+The model entries become 169 rows because a few entries take one ruling for several symbols: the
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
@@ -93,7 +93,8 @@ Demucs, and HT Demucs ship.
 | `NFKMLXDepthAnything3` | untrainable | — | internal | The repository at 3d835ec carries inference, benchmark, and streaming code only, with no loss and no training script. |
 | `NFKMLXTripoSR` | untrainable | — | public | The repository at 107cefd carries inference code only; the paper's rendering loss has no published training script to measure against. `network(weightsURL:configuration:)` is public for an offline recipe. |
 | `NFKMLXStableFast3D` | untrainable | — | public | The repository at ff21fc4 carries inference code only; the paper's multi-stage objective (rendering, material, and illumination losses through a differentiable rasterizer) has no published training script to measure against. `network(weightsURL:configuration:)` is public for an offline recipe. |
-| `NFKMLXTrellisTraining` | ships | LoRA | public | The release's `FlowMatchingCFGTrainer` and `SparseFlowMatchingCFGTrainer` objectives on both flows; the structure stage trains on device from images and meshes (the release's structure encoder, `ss_enc_conv3d_16l8_fp16`), the latent stage from structured latents the release's offline toolkit encodes from 150 rendered views. `.all` is the reference's full fine-tune. |
+| `NFKMLXTrellisTraining` | ships | LoRA | public | The release's `FlowMatchingCFGTrainer` and `SparseFlowMatchingCFGTrainer` objectives on both flows; the structure stage trains from images and meshes (the release's structure encoder, `ss_enc_conv3d_16l8_fp16`), and a step on the released structure flow needs more memory than a 32 GB machine holds; the latent stage from structured latents the release's offline toolkit encodes from 150 rendered views. `.all` is the reference's full fine-tune. |
+| `NFKMLXHi3DGenPipeline` | ships | LoRA | public | Reuses `NFKMLXTrellisTraining`: Stable3DGen at c29f668 carries inference code only, so the objective is TRELLIS's trainers' rectified flow, measured in TRELLIS's objectives record. The structure latents come from TRELLIS-image-large's structure encoder, since the release's structure and mesh decoders are byte-identical to TRELLIS's; the condition comes from `condition(rgba:width:height:)`. The latent flow trains from latents the release's offline toolkit encodes, as for TRELLIS. A step on the released structure flow needs more memory than a 32 GB machine holds, as for TRELLIS: its backward keeps each block's attention over 4,096 tokens, and the flows have no activation checkpointing. The round trip is split by that limit. The customization example (`testExampleFineTuningHi3DGen`) trains a small flow of the release's geometry on an image's condition and a mesh's latent, saves it, and reloads it. `testAStructureFlowWithMergedAdaptersReloadsThroughThePipeline` merges LoRA adapters into the released flow, saves it, and reloads it through `NFKMLXHi3DGenPipeline(flows:)` with the velocity identical. `.all` is the full fine-tune. |
 | `NFKMLXResNetBackbone` | n/a | — | internal | A shared backbone with no objective of its own. |
 
 ## Detection and pose
@@ -200,6 +201,7 @@ Demucs, and HT Demucs ship.
 | `NFKMLXIPAdapter` | trainable | LoRA (adapter) | public | The entry already names the trained set: the projection and `to_k_ip` / `to_v_ip` over a frozen UNet. |
 | `NFKMLXSDTextEncoderNet` | offline | — | public | Its reference objective is CLIP's contrastive loss, which needs the large batch of negatives. |
 | `NFKMLXMarigold` / `NFKMLXSDUpscaler` | trainable | LoRA | internal | Marigold's trainer runs a latent MSE on v over the whole UNet at Adam 3e-5, no teacher. The upscaler's `ddpm.py` objective (read from a mirror at an unpinned commit; the original repository is deleted) needs a caller-supplied degradation. LoRA on the UNet fits a device. |
+| `NFKMLXStableNormal` | untrainable | — | public | hugoycj/StableNormal at 1b7203c publishes inference scripts only and no YOSO training code, so no objective exists to measure against. `NFKMLXStableNormalNet` stays a public network builder. |
 | `NFKMLXTAESD` | untrainable | — | internal | madebyollin/taesd publishes the network and its weights only. |
 | `NFKMLXSDPromptTokenizer` | untrainable | — | n/a | A tokenizer carries no parameters. |
 | `NFKMLXDiffusionBackend` | untrainable | — | n/a | The seam holds no weights. The model arrives as the consumer's closures. |

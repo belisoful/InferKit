@@ -1014,6 +1014,7 @@ resolves through `+[NFKDynamicBackend backendForCapability:error:]` as it is.
 | `upscaling` | `NFKModelTaskUpscaling` | Enlarging an image or a frame. |
 | `image-restoration` | `NFKModelTaskImageRestoration` | Removing noise, blur, or damage from an image. |
 | `depth-estimation` | `NFKModelTaskDepthEstimation` | Estimating the distance of each pixel. |
+| `normal-estimation` | `NFKModelTaskNormalEstimation` | Estimating the surface normal at each pixel. |
 | `segmentation` | `NFKModelTaskSegmentation` | A mask over a region or a subject of an image. |
 | `matting` | `NFKModelTaskMatting` | A soft alpha matte that separates a subject from its background. |
 | `object-detection` | `NFKModelTaskObjectDetection` | Boxes around the objects in an image. |

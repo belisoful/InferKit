@@ -126,6 +126,8 @@ extern NSString * const NFKModelTaskUpscaling;
 extern NSString * const NFKModelTaskImageRestoration;
 /*! Estimating the distance of each pixel. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelTaskDepthEstimation;
+/*! Estimating the surface normal at each pixel. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelTaskNormalEstimation;
 /*! A mask over a region or a subject of an image. Equal to NFKCapabilitySegmentation. Introduced in
 	InferKit 0.4.0. */
 extern NSString * const NFKModelTaskSegmentation;

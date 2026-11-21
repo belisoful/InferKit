@@ -385,13 +385,112 @@ the mesh type, the surface extraction, and the writers every later port uses.
     x_t = (1 − t) x₀ + (1e-5 + (1 − 1e-5) t) ε, the target (1 − 1e-5) ε − x₀, mean squared error, times σ of a
     normal draw around 1 (`logitNormal`, mean 1, std 1), the condition replaced by zeros with probability 0.1, AdamW
     at 1e-4 without decay, the gradient clipped to norm 1 (the release's adaptive clipper at its ceiling). The
-    release's EMA is not kept. `NFKMLXTrellisTraining.fineTuneStructureFlow` trains on device from image–mesh pairs:
+    release's EMA is not kept. `NFKMLXTrellisTraining.fineTuneStructureFlow` trains from image–mesh pairs:
     `occupancy(of:resolution:)` voxelizes a mesh's surface in the release's normalized cube and
     `structureLatent(of:encoder:)` encodes it with `ss_enc_conv3d_16l8_fp16` to the posterior's mean, as
-    `encode_ss_latent.py` does. `fineTuneLatentFlow` trains on structured latents the release's toolkit encodes
-    offline from 150 rendered views of DINOv2 features. Measured against `trellis_objectives`: the structure encoder's mean 0.99999999999696 and log-variance 0.99999999999837; the dense loss 0.05751151 against the trainer's 0.057511486 and 0.062691584 against 0.06269159 (x_t and the target at cosine 1.0); the sparse loss 5.9853306 against 5.985331 and 1.4090514 against 1.4090514, over 17,111 voxels.
+    `encode_ss_latent.py` does. A step on the released structure flow needs more memory than a 32 GB machine
+    holds: the backward keeps each of its blocks' attention over the 4,096 structure tokens, and with no
+    activation checkpointing the first LoRA step reached 33.8 GB with 19 GB of swap before the watchdog stopped
+    it (Hi3DGen's flow, the same geometry, 2026-11-20). The tests train a small flow. `fineTuneLatentFlow`
+    trains on structured latents the release's toolkit encodes offline from 150 rendered views of DINOv2
+    features. Measured against `trellis_objectives`: the structure encoder's mean 0.99999999999696 and log-variance 0.99999999999837; the dense loss 0.05751151 against the trainer's 0.057511486 and 0.062691584 against 0.06269159 (x_t and the target at cosine 1.0); the sparse loss 5.9853306 against 5.985331 and 1.4090514 against 1.4090514, over 17,111 voxels.
   - Runtime: five stages (conditioner, structure flow, structure decoder, latent flow, decoders) staged or held
     resident (`NFKMLXResidency`; the image release holds 6.86 GB at float32); the two flows quantize to 2–8 bits
     (`NFKModelLoadOptionQuantizationBits`). The release is published at float16 and runs it on CUDA; float16 and
     bfloat16 are not offered until a measured floor holds them. Streaming and paging do not apply: no stage
     exceeds a tier that holds the next.
+- `NFKMLXHi3DGenFactory` (`@objc`) — Hi3DGen (Stable-X, MIT), a generator of a 3D object from one image through
+  its normal map, returned as a vertex-colored mesh. The release is `Stable-X/trellis-normal-v0-1` at `fdfac1d0`:
+  TRELLIS's structure decoder and mesh decoder, and two flows conditioned on a normal map
+  (`ss_flow_normal_dit_L_16l8_fp16`, `slat_flow_normal_dit_L_64l8p2_fp16`). It carries no structure encoder and no
+  Gaussian decoder. The code is Stable-X/Stable3DGen at `c29f668` (`Hi3DGenPipeline` and the app's `generate_3d`).
+  Three more releases feed it: StableNormal-turbo (`Stable-X/yoso-normal-v1-8-1` at `4dd7d000`, Apache-2.0, the
+  `NFKMLXStableNormal` entry in `mlx-models-diffusion.md`), DINOv2 ViT-L/14 with registers (TRELLIS's), and
+  BiRefNet (`ZhengPeng7/BiRefNet`, MIT). `+register` under `hi3dgen`. The factories:
+  `backendWithDirectoryURL:normalDirectoryURL:encoderWeightsURL:birefnetWeightsURL:residency:error:` and the
+  download `backendWithRevision:cacheDirectoryURL:residency:error:` with its `completionHandler:` peer, which fetch
+  all four. Input `NFKInputImage`; outputs `NFKOutputMesh` and the 1024² normal map under `NFKOutputImage`;
+  parameters `NFKMLXTrellisParameterKey`'s steps and guidance and `NFKParameterSeed` (42). The sources:
+  `NFKMLXHi3DGen.swift` (preparation, pipeline, backend, factory), `NFKMLXHi3DGenMesh.swift` (surface extraction),
+  and TRELLIS's networks through `NFKMLXTrellisPipeline` with `NFKTrellisSurfaceExtraction.marchingCubes`.
+  - Image preparation (`preprocess_image(resolution=1024)`): an opaque image longer than 1024 is resized to
+    1024 with Pillow's Lanczos, and BiRefNet's mask becomes its alpha. The mask is Pillow's bilinear resize to
+    1024², ImageNet normalization, the sigmoid truncated to 8 bits, Pillow's bicubic resize back, and the pixels
+    above 128. The alpha's box over alpha > 0.8 · 255 widens by a fifth about its center (Python's truncating
+    `int`), clamps to the image, and pads to a square with transparent black. Pillow's Lanczos over premultiplied
+    RGBA resizes it to 1024², and each channel is multiplied by the alpha in float32 and truncated
+    (`NFKHi3DGenImagePreparation`). `NFKMLXPillowLanczos` gains the bilinear and bicubic filters for the mask.
+  - Normals: StableNormal-turbo's predictor at `resolution=768, match_input_resolution=True`, its map resized
+    back to 1024² with Pillow's Lanczos. The condition is that map resized to 518 with Pillow's Lanczos through
+    TRELLIS's DINOv2 encoder.
+  - Sampling: the app's settings, 50 structure steps and 6 latent steps at guidance 3, inside the release's
+    guidance interval ([0.5, 1]) and rescale (3) (`NFKMLXTrellisSampling.hi3dgen`). The networks, the sampler,
+    and the frame turn are TRELLIS's above; `gaussianDecoder` is nil and a Gaussian request throws.
+  - Surface extraction (`NFKHi3DGenSurface` in `NFKMLXHi3DGenMesh.swift`, the CPU, float32) replaces FlexiCubes
+    for the mesh decoder (`SparseFeatures2Mesh` with `EnhancedMarchingCubes`). The 101 channels are eight SDFs,
+    eight deformations, 21 unread weights, and eight 6-channel colors.
+  - Corners (`NFKHi3DGenCorners.averaged`): the SDF takes −1/256, and each grid point's attributes are the
+    float32 sum over its voxels in voxel order divided by their count (`scatter_reduce` mean with
+    `include_self=False`; TRELLIS counts the zero). The sweep runs one x plane at a time, merging the voxels at
+    x − 1 and x by index, and emits each plane in (y, z) order, which is `torch.unique`'s order.
+  - Marching cubes (`NFKHi3DGenMarchingCubes`) reproduces scikit-image 0.26's `marching_cubes(level=0,
+    gradient_direction='ascent')` in order, probed as a black box (its source was not read). A value ≤ 0 is
+    inside and exactly 0 reads −ε (double). An edge vertex is lower + v₀/(v₀ − v₁) in double, rounded to float32.
+    A vertex inside a cube is the corners' mean weighted by 1/|v| in double. Cubes run x-major, vertices are
+    numbered at first use, and edge vertices are shared. A face with diagonal corners of one sign joins its
+    inside pair where the inside product exceeds the outside product (a tie keeps them apart). Only two
+    families split on the interior, both decided on the slice where a·c − b·d is stationary: two isolated
+    diagonal corners (along x) and two opposite ambiguous faces that both join (across them). For two inside
+    corners the reference's test reads inverted (`interiorJoins`). The triangulations follow the reference's
+    table, which no rule derives, so `Tools/reference-parity/generate_marching_cubes_table.py` records them
+    from single cubes: 632 decided cases, 36 face combinations of case 13 unreachable, and 300 random grids
+    identical in order. The table is clean room: the script runs the reference on single cubes as a black
+    box and prints the triangles it returns, and no scikit-image source is read or copied. Every recorded triangulation meets the cube faces along the segments the face
+    decisions give (`testTheTableCoversEveryCaseWithBoundariesFromTheFaceDecisions`).
+  - Vertices move by the trilinear blend (x, then y, then z, torch's operation order) of g/256 − 0.5 +
+    (1 − 1e-8)/512 · tanh(deformation) at ⌊p⌋ and its clamped neighbors, and the colors are σ of the same
+    blend of the raw colors. A point the set lacks reads SDF 1, no deformation, and color 0. The triangles
+    reverse.
+  - Parity on `IK_PARITY_HI3DGEN` (1,579,008 voxels at 256³; CPU harness and the Swift path, 2026-11-20): the
+    1,789,006 corners bit for bit; marching cubes 486,325 vertices bit for bit and 963,780 faces identical in
+    order (the record holds 860,340 inside points, 636 cubes with ambiguous faces, and 19 with isolated
+    diagonal corners); final faces identical, positions within 2⁻²⁴ (1,458,461 of 1,458,975 coordinates exact),
+    colors within 2 ulp (95.9% exact). The residual is torch's vectorized tanh and exp against libm's: with
+    torch's tanh the positions are exact, and torch's sigmoid of the port's blend is exact.
+  - Memory: about 200 MB above the caller's 638 MB of features (measured with `phys_footprint`, release build):
+    the corner attributes (72 MB), the per-plane maps, and the output. No 257³ grid is held.
+  - Oracle: `run_reference.py hi3dgen` (the subject plate as RGB, so BiRefNet's path runs, at the app's settings
+    and seed 1: every seam above, the normal stage's seams, four flow forwards of each stage plus the last,
+    24,672 voxels, 1,579,008 voxels at 256³, 486,325 vertices, 963,780 faces) and `hi3dgen_floor_normal`, in the
+    `hi3dgen` environment. The release's code runs on the CPU at float32 (`use_fp16` forced off) with TRELLIS's
+    `trellis_shims`; the shim's sparse convolution gathers in 65,536-row chunks (`ROW_CHUNK`), which holds the
+    256³ stage within this machine. The reference's `skimage.measure.marching_cubes` runs as released.
+  - Parity of the pipeline (float32 on the GPU against the reference's float32 CPU run, `NFKMLXHi3DGenTests`,
+    hi3dgen-run1, 2026-11-20): BiRefNet's mask 0 of 262,144 pixels apart; the prepared image byte for byte
+    (4,194,304 bytes); the condition 0.99999999978; the structure flow 0.99999999999814 to 0.99999999999858 at
+    its first four forwards and 0.99999999999324 at its last; the occupancy logits 0.99999999999967 with the
+    24,672 voxels identical; the latent flow ≥ 0.99999999999960 at its first four forwards and 0.99999999999924
+    at its last; both samplers from the recorded noise 0.99999999999865 (the structure, its 24,672 voxels
+    identical) and 0.99999999999952 (the structured latent; 0.99999999999948 denormalized); the mesh decoder's
+    1,579,008 × 101 features 0.99999999998712. The backend at 4 and 2 steps returns 166,731 vertices and 330,700
+    faces. The bars sit at about three times each measured gap.
+  - **Customization: LoRA (or full), both flows, through `NFKMLXTrellisTraining`.** Stable3DGen at `c29f668`
+    publishes inference code only, so the objective is TRELLIS's trainers' rectified flow, measured in TRELLIS's
+    `trellis_objectives` record. The release's structure and mesh decoders are byte-identical to
+    TRELLIS-image-large's, so the two share both latent spaces, and TRELLIS-image-large's structure encoder
+    (`ss_enc_conv3d_16l8_fp16`) encodes Hi3DGen's structure latents from a mesh
+    (`NFKMLXTrellisTraining.structureLatent(of:encoder:)`). `NFKMLXHi3DGenPipeline.condition(rgba:width:height:)`
+    gives an image's training condition: the preparation, StableNormal-turbo's map, Pillow's Lanczos to 518, and
+    DINOv2. `fineTuneStructureFlow` trains the structure flow with TRELLIS's memory need (more than a 32 GB
+    machine holds for the released flow); `fineTuneLatentFlow` trains from structured latents the release's
+    offline toolkit encodes, as for TRELLIS. `.all` is the full fine-tune. A trained flow reloads through
+    `NFKMLXHi3DGenPipeline(…flows:)` and
+    `backendWithDirectoryURL:normalDirectoryURL:encoderWeightsURL:birefnetWeightsURL:structureFlowWeightsURL:latentFlowWeightsURL:residency:error:`
+    (`testAStructureFlowWithMergedAdaptersReloadsThroughThePipeline`: the released flow with drawn LoRA adapters,
+    merged, saved, and reloaded with the velocity identical on an image's condition from the public method). The
+    trained half of the round trip runs at a small flow of the release's geometry (`testExampleFineTuningHi3DGen`:
+    one LoRA step, merged, saved, reloaded), since a step on the released flow outgrows a 32 GB machine.
+  - Runtime: seven stages (BiRefNet, StableNormal-turbo, the conditioner, two flows, two decoders) staged or held
+    resident (`NFKMLXResidency`). The networks run at float32; the release is published at float16 for CUDA,
+    and float16 and bfloat16 are not offered until a measured floor holds them. The factory takes no weight
+    quantization. Streaming and paging are not offered, as for TRELLIS.

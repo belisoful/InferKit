@@ -1616,6 +1616,55 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(reloaded.configuration.flowWidth, 32)
     }
 
+    // Docs/examples.md: Fine-tuning Hi3DGen on your own objects
+    func testExampleFineTuningHi3DGen() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let keys = ["IK_VAL_HI3DGEN", "IK_VAL_YOSO_NORMAL", "IK_VAL_DINOV2_VITL14_REG", "IK_VAL_BIREFNET",
+                    "IK_VAL_TRELLIS_IMAGE_LARGE"]
+        let paths = keys.compactMap { ProcessInfo.processInfo.environment[$0] }.map { URL(fileURLWithPath: $0) }
+        guard paths.count == keys.count else {
+            throw XCTSkip("set \(keys.joined(separator: ", "))")
+        }
+        let (release, normals, dinov2, birefnet, trellis) = (paths[0], paths[1], paths[2], paths[3], paths[4])
+        let tuned = FileManager.default.temporaryDirectory.appendingPathComponent("hi3dgen-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // One object stands in for a set: a gray image and a thin box.
+        let hi3dgen = try NFKMLXHi3DGenPipeline(directoryURL: release, normalDirectoryURL: normals, encoderWeightsURL: dinov2,
+                                                birefnetWeightsURL: birefnet, residency: .staged)
+        let rgba = [UInt8](repeating: 128, count: 64 * 64 * 4)
+        var positions = [Float]()
+        for (x, y, z) in [(0, 0, 0), (1, 0, 0), (0, 2, 0), (1, 2, 0)] as [(Float, Float, Float)] {
+            positions += [x, y, z]
+        }
+        let mesh = try NFKMesh(positions: positions.withUnsafeBufferPointer { Data(buffer: $0) },
+                               normals: nil, colors: nil, textureCoordinates: nil,
+                               indices: [UInt32(0), 1, 2, 1, 3, 2].withUnsafeBufferPointer { Data(buffer: $0) })
+        let encoder = try NFKMLXTrellis.structureEncoder(weightsURL: trellis.appendingPathComponent("ckpts/ss_enc_conv3d_16l8_fp16.safetensors"))
+        let example = NFKMLXTrellisStructureExample(
+            condition: try hi3dgen.condition(rgba: rgba, width: 64, height: 64).condition,
+            latent: NFKMLXTrellisTraining.structureLatent(of: mesh, encoder: encoder))
+        // A real run trains the release's structure flow, which needs more memory than a 32 GB machine holds;
+        // a small random flow of the release's geometry stands in, and the fine-tuned-flows factory
+        // (structureFlowWeightsURL:) reads the real flow's file.
+        var geometry = NFKMLXTrellisConfiguration()
+        geometry.flowWidth = 32
+        geometry.flowBlocks = 1
+        geometry.flowHeads = 2
+        geometry.flowHidden = 64
+        geometry.frequencyWidth = 16
+        let flow = try NFKMLXTrellis.structureFlow(weightsURL: nil, configuration: geometry)
+        let history = try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: [example],
+                                                                      trainable: .attentionLoRA(rank: 4, alpha: 4), steps: 1)
+        XCTAssertEqual(history.count, 1)
+
+        try NFKMLXLoRA.merge(into: flow)
+        try NFKMLXWeights.save(flow, to: tuned)
+        let reloaded = try NFKMLXTrellis.structureFlow(weightsURL: tuned, configuration: geometry)
+        XCTAssertEqual(reloaded.configuration.flowWidth, 32)
+    }
+
     func testAFullyFrozenModelReportsThatNothingWouldTrain() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")

@@ -9,6 +9,10 @@ import enum
 import torch
 import torch.nn as nn
 
+# Rows a float32 convolution gathers at a time, or None for all at once. A caller whose 256³ stage would
+# gather more than memory holds sets it; every float32 TRELLIS record was made with all rows at once.
+ROW_CHUNK = None
+
 
 class ConvAlgo(enum.Enum):
     Native = 0
@@ -100,9 +104,10 @@ class SubMConv3d(nn.Module):
             return torch.addmm(self.bias, gathered, weight.t()) if self.bias is not None else gathered @ weight.t()
 
         # A float64 run (the floor oracle) gathers 65,536 rows at a time: the whole gather of the 256³ stage
-        # holds 23 GB at float64. A float32 run gathers all rows at once, as every float32 record was made.
-        if feats.dtype == torch.float64:
-            out = torch.cat([product(slice(start, start + 65536)) for start in range(0, feats.shape[0], 65536)])
+        # holds 23 GB at float64. A float32 run gathers ROW_CHUNK rows at a time when it is set.
+        chunk = 65536 if feats.dtype == torch.float64 else ROW_CHUNK
+        if chunk:
+            out = torch.cat([product(slice(start, start + chunk)) for start in range(0, feats.shape[0], chunk)])
         else:
             out = product(slice(0, feats.shape[0]))
         return x.replace_feature(out)
