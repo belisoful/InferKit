@@ -154,12 +154,11 @@ final class NFKMLXWanTrainingTests: XCTestCase {
     }
 
     // Three LoRA steps of the finetrainers recipe (rank 32 on the attention projections) on Wan 2.1 T2V 1.3B's
-    // released transformer at its stored float32, from an example the generator's own stages build of a 9-frame
-    // 480 × 832 clip (4,680 tokens), with each block recomputed in the backward. The fused attention has no fused
-    // backward, so a step holds whole [heads, N, N] score matrices: 1.05 GB each here, 2.9 GB at 17 frames. Each stage is released before
-    // the next loads: umT5 once the prompt is encoded, the transformer and autoencoder once the clip's latents
-    // exist. Prints the process footprint and MLX's memory after each stage and step. Loads the release: run it
-    // under LMC.
+    // released transformer at its stored float32, from an example the generator's own stages build of a 17-frame
+    // 480 × 832 clip (7,800 tokens), with each block recomputed in the backward and its attention in query blocks.
+    // Each stage is released before the next loads: umT5 once the prompt is encoded, the transformer and
+    // autoencoder once the clip's latents exist. Prints the process footprint and MLX's memory after each stage
+    // and step. Loads the release: run it under LMC.
     func testA13BLoRAStepOnReleasedWeights() throws {
         try requireMLXRuntime()
         guard let path = NFKMLXValidationConfig.environment["IK_VAL_WAN21_T2V_1_3B"] else {
@@ -187,7 +186,7 @@ final class NFKMLXWanTrainingTests: XCTestCase {
             NFKMLXGPU.resetPeakMemory()
         }
         let directory = URL(fileURLWithPath: path)
-        let clip = MLXRandom.uniform(low: 0, high: 1, [9, 480, 832, 3], key: MLXRandom.key(8))
+        let clip = MLXRandom.uniform(low: 0, high: 1, [17, 480, 832, 3], key: MLXRandom.key(8))
         let example: NFKMLXWanTrainingExample
         do {
             // An 18 GiB budget holds umT5 at bfloat16 (11.4 GB), the reference pipeline's precision, over its
@@ -217,7 +216,7 @@ final class NFKMLXWanTrainingTests: XCTestCase {
             example = NFKMLXWanTrainingExample(latent: moments[0], logVariance: moments[1], text: text)
         }
         NFKMLXGPU.clearCache()
-        XCTAssertEqual(example.latent.shape, [16, 3, 60, 104])
+        XCTAssertEqual(example.latent.shape, [16, 5, 60, 104])
         var start = Date()
         let net = try NFKMLXWanVideoGenerator.network(directoryURL: directory)
         memory("build", since: start)

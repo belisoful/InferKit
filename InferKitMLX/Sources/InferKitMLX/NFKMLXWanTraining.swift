@@ -440,9 +440,13 @@ extension NFKMLXWanVideoGenerator {
         observer: NFKMLXTrainer.Observer? = nil,
         recomputesBlocksInBackward: Bool = true
     ) throws -> [Float] {
-        let recomputed = net.recomputesBlocksInBackward
+        let recomputed = net.recomputesBlocksInBackward, blocked = net.blocksAttentionQueries
         net.recomputesBlocksInBackward = recomputesBlocksInBackward
-        defer { net.recomputesBlocksInBackward = recomputed }
+        net.blocksAttentionQueries = true
+        defer {
+            net.recomputesBlocksInBackward = recomputed
+            net.blocksAttentionQueries = blocked
+        }
         var key = MLXRandom.key(seed)
         var batch = [NFKMLXWanTrainingExample]()
         var draws = [NFKMLXWanTrainingDraw]()

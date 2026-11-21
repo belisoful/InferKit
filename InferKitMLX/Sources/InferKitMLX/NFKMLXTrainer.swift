@@ -570,6 +570,13 @@ public enum NFKMLXTrainer {
             guard precision != .float16 || lossScale.record(finite: allFinite(gradients)) else {
                 return false
             }
+            if clipGradientNorm != nil {
+                // The norm reads the gradients one parameter at a time. Evaluated from the norm, the backward
+                // runs to the first parameter's gradient first and holds every later one's activations until
+                // the norm reaches it: 0.53 GB a block in Wan 2.1 1.3B's 4,680-token step. Evaluated together,
+                // each block's activations go once its gradients exist.
+                eval(Array(gradients.flattened().map(\.1)))
+            }
             let update = clipGradientNorm.map { bounded(gradients, maxNorm: $0) } ?? gradients
             optimizer.update(model: model, gradients: update)
             constraint?(model)

@@ -815,17 +815,16 @@ arithmetic as before.
   `NFKMLXWanTransformerNet.recomputesBlocksInBackward` (on by default in `fineTune`, as the trainers enable
   `gradient_checkpointing`) runs each block as a custom function whose backward reruns it, so a step holds
   one block's activations; the gradients equal the plain backward's within 1e-5 relative
-  (`testRecomputingBlocksInTheBackwardKeepsTheGradients`). `testA13BLoRAStepOnReleasedWeights` runs three
-  finetrainers steps on Wan 2.1 T2V 1.3B's released float32 transformer from a 9-frame 480 × 832 example
-  (4,680 tokens) the generator's stages build, umT5 at bfloat16 and each stage released before the next
-  loads, under `NFKMLXGPU.applyStandingLimits()`, and prints the footprint and memory after each stage and
-  step (an LMC leg). Measured on a 32 GB M1 Max: umT5 encode 12.6 GB footprint, example build 11.6 GB MLX
-  peak, network build 5.8 GB, each step about 38 s with a 25.1 GB MLX peak over 6.1 GB held. The step's
-  19 GB transient is one block's backward: making each recompute depend on its cotangents, as MLX's
-  `checkpoint` does, left the peak unchanged. `MLXFast.scaledDotProductAttention` has no fused backward, so
-  the backward holds whole `[heads, N, N]` float32 score matrices; at 17 × 480 × 832 (7,800 tokens) each is
-  2.9 GB and the first step pushed 12 GB to swap on a loaded machine. A 17-frame 480p step needs an
-  attention backward that recomputes per query block.
+  (`testRecomputingBlocksInTheBackwardKeepsTheGradients`); each recompute depends on its cotangents, as MLX's
+  `checkpoint` does, which took 0.67 GB off a step. `fineTune` runs float32 attentions longer than 512 tokens
+  through `NFKMLXBlockedAttention` (`mlx-training.md`, "A long attention trains in query blocks").
+  `testA13BLoRAStepOnReleasedWeights` runs three finetrainers steps on Wan 2.1 T2V 1.3B's released float32
+  transformer from a 17-frame 480 × 832 example (7,800 tokens) the generator's stages build, umT5 at bfloat16
+  and each stage released before the next loads, under `NFKMLXGPU.applyStandingLimits()`, and prints the
+  footprint and memory after each stage and step (an LMC leg). Measured on a 32 GB M1 Max: umT5 encode 12.4 GB
+  footprint, example build 11.6 GB MLX peak, network build 5.8 GB, each step 36–37 s with a 12.8 GB MLX peak
+  over 6.1 GB held. Before the clip evaluated its gradients first and the attention ran in blocks, a 9-frame
+  step peaked at 25.1 GB and a 17-frame step pushed 12 GB to swap.
 - `NFKMLXQwenImageNet` / `NFKMLXQwenImage` (`@objc`) — the Qwen-Image 2.1 DiT
   (`QwenImage21Transformer2DModel`, Qwen), the denoising transformer of a 7.1B text-to-image model.
   Single-stream like Z-Image: one sequence carries the caption and the image latents. Two things

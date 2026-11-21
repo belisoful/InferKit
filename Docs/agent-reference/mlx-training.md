@@ -147,6 +147,24 @@ within a tolerance of zero for a large network), and the parity test reruns its 
 What is left is the backward: RetinaFace's twelve gradients and FRCRN's release and control then land at
 the float32 floor. The unpinned comparison keeps a bound that admits the measured ties.
 
+**A clipped step evaluates its gradients before their norm (2026-11-21).** `NFKMLXTrainer`'s
+`clipGradientNorm` reads the gradients one parameter at a time. Built lazily from the norm, the
+backward ran to the first parameter's gradient and held each later block's recomputed activations until
+the norm reached its gradients: 0.53 GB a block in Wan 2.1 1.3B's 4,680-token LoRA step, so 2 blocks took
+5.15 GB above the weights and 8 blocks 8.33 GB. The trainer now evaluates every gradient in one pass,
+then clips: 4.81 and 5.14 GB, the values bit-identical. An unclipped step was already flat (4.58 and 4.84 GB).
+
+**A long attention trains in query blocks (2026-11-21).** Under a gradient, MLX 0.31.6's Metal backend runs
+`MLXFast.scaledDotProductAttention` unfused in both directions (`use_fallback` is true whenever
+`is_training`; `ScaledDotProductAttentionVJP` is not implemented), so a step holds whole `[B, H, N, N]`
+score matrices. `NFKMLXBlockedAttention` is a custom function with MLX's values: its forward attends one
+512-query block at a time, and its backward recomputes each block's softmax over the full key row and forms
+that block's query, key, and value gradients from it. Each block reads the key and value sums the block
+before it wrote (`depends`), or MLX forms every block's probabilities before the first sum: without that,
+the 17-frame Wan 2.1 1.3B step peaked at 17.5 GB, with it at 12.8 GB. Its gradients match MLX's within 1e-5
+relative (`NFKMLXBlockedAttentionTests`). Wan's `fineTune` turns it on for float32 attentions longer than one
+block, so a geometry under 512 tokens trains on MLX's own path.
+
 **The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
 group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the
 run ends. A `MultiOptimizer`'s groups keep their ratios. The schedules are the references' own formulas,
