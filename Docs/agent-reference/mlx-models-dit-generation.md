@@ -816,13 +816,13 @@ arithmetic as before.
   `gradient_checkpointing`) runs each block as a custom function whose backward reruns it, so a step holds
   one block's activations; the gradients equal the plain backward's within 1e-5 relative
   (`testRecomputingBlocksInTheBackwardKeepsTheGradients`); each recompute depends on its cotangents, as MLX's
-  `checkpoint` does, which took 0.67 GB off a step. `fineTune` runs float32 attentions longer than 512 tokens
+  `checkpoint` does, which took 0.67 GB off a step. `fineTune` runs float32 attentions longer than 1,024 tokens
   through `NFKMLXBlockedAttention` (`mlx-training.md`, "A long attention trains in query blocks").
   `testA13BLoRAStepOnReleasedWeights` runs three finetrainers steps on Wan 2.1 T2V 1.3B's released float32
   transformer from a 17-frame 480 × 832 example (7,800 tokens) the generator's stages build, umT5 at bfloat16
   and each stage released before the next loads, under `NFKMLXGPU.applyStandingLimits()`, and prints the
   footprint and memory after each stage and step (an LMC leg). Measured on a 32 GB M1 Max: umT5 encode 12.4 GB
-  footprint, example build 11.6 GB MLX peak, network build 5.8 GB, each step 36–37 s with a 12.8 GB MLX peak
+  footprint, example build 11.6 GB MLX peak, network build 5.8 GB, each step 33–35 s with an 11.6 GB MLX peak
   over 6.1 GB held. Before the clip evaluated its gradients first and the attention ran in blocks, a 9-frame
   step peaked at 25.1 GB and a 17-frame step pushed 12 GB to swap.
 - `NFKMLXQwenImageNet` / `NFKMLXQwenImage` (`@objc`) — the Qwen-Image 2.1 DiT

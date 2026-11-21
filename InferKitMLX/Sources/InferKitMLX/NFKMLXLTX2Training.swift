@@ -324,42 +324,44 @@ extension NFKMLXLTX2Generator {
         let recomputed = net.recomputesBlocksInBackward
         net.recomputesBlocksInBackward = recomputesBlocksInBackward
         defer { net.recomputesBlocksInBackward = recomputed }
-        return try NFKMLXFineTune.run(
-            net,
-            freezing: {
-                switch trainable {
-                case .lora(let rank, let alpha):
-                    try NFKMLXLoRA.apply(to: net, rank: rank, alpha: alpha) { path, _ in
-                        NFKMLXLTX2Trainable.targets(path)
+        return try NFKMLXBlockedAttention.training {
+            try NFKMLXFineTune.run(
+                net,
+                freezing: {
+                    switch trainable {
+                    case .lora(let rank, let alpha):
+                        try NFKMLXLoRA.apply(to: net, rank: rank, alpha: alpha) { path, _ in
+                            NFKMLXLTX2Trainable.targets(path)
+                        }
                     }
-                }
-            },
-            optimizer: optimizer,
-            reference: { NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, weightDecay: weightDecay) },
-            referenceSchedule: { .linearFactor(steps: steps, start: 1, end: 0.1) },
-            steps: steps,
-            arrays: { step in
-                let batch = examples(step)
-                guard let first = batch.first else { return [] }
-                grid = (first.frames, first.height, first.width, first.frameRate)
-                let video = MLX.stacked(batch.map(\.video)), audio = MLX.stacked(batch.map(\.audio))
-                let keys = MLXRandom.split(key: key, into: 4)
-                key = keys[0]
-                let draws = objective.draws(count: batch.count, tokens: video.dim(1), audioTokens: audio.dim(1),
-                                            key: keys[1])
-                return [video, audio, MLX.stacked(batch.map(\.text)), MLX.stacked(batch.map(\.audioText)),
-                        draws.sigma, draws.audioSigma, MLXRandom.normal(video.shape, key: keys[2]),
-                        MLXRandom.normal(audio.shape, key: keys[3]), draws.conditioned]
-            },
-            loss: { net, arrays in
-                NFKMLXLTX2Objective.score(net, video: arrays[0], audio: arrays[1], text: arrays[2],
-                                          audioText: arrays[3], sigma: arrays[4], audioSigma: arrays[5],
-                                          noise: arrays[6], audioNoise: arrays[7], conditioned: arrays[8],
-                                          frames: grid.frames, height: grid.height, width: grid.width,
-                                          frameRate: grid.frameRate)
-            },
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
-            learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
+                },
+                optimizer: optimizer,
+                reference: { NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, weightDecay: weightDecay) },
+                referenceSchedule: { .linearFactor(steps: steps, start: 1, end: 0.1) },
+                steps: steps,
+                arrays: { step in
+                    let batch = examples(step)
+                    guard let first = batch.first else { return [] }
+                    grid = (first.frames, first.height, first.width, first.frameRate)
+                    let video = MLX.stacked(batch.map(\.video)), audio = MLX.stacked(batch.map(\.audio))
+                    let keys = MLXRandom.split(key: key, into: 4)
+                    key = keys[0]
+                    let draws = objective.draws(count: batch.count, tokens: video.dim(1), audioTokens: audio.dim(1),
+                                                key: keys[1])
+                    return [video, audio, MLX.stacked(batch.map(\.text)), MLX.stacked(batch.map(\.audioText)),
+                            draws.sigma, draws.audioSigma, MLXRandom.normal(video.shape, key: keys[2]),
+                            MLXRandom.normal(audio.shape, key: keys[3]), draws.conditioned]
+                },
+                loss: { net, arrays in
+                    NFKMLXLTX2Objective.score(net, video: arrays[0], audio: arrays[1], text: arrays[2],
+                                              audioText: arrays[3], sigma: arrays[4], audioSigma: arrays[5],
+                                              noise: arrays[6], audioNoise: arrays[7], conditioned: arrays[8],
+                                              frames: grid.frames, height: grid.height, width: grid.width,
+                                              frameRate: grid.frameRate)
+                },
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+                learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
+        }
     }
 
     /// Encodes one clip as the trainer's preprocessing does: the frames through the video encoder, the

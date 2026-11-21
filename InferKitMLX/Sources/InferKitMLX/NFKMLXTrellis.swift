@@ -121,9 +121,11 @@ enum NFKTrellisAttention {
     /// returned as `[N, L, H · D]`.
     static func attend(_ q: MLXArray, _ k: MLXArray, _ v: MLXArray) -> MLXArray {
         let (batch, length, heads, width) = (q.dim(0), q.dim(1), q.dim(2), q.dim(3))
-        let out = MLXFast.scaledDotProductAttention(
-            queries: q.transposed(0, 2, 1, 3), keys: k.transposed(0, 2, 1, 3), values: v.transposed(0, 2, 1, 3),
-            scale: 1 / Float(width).squareRoot(), mask: nil)
+        let (queries, keys, values) = (q.transposed(0, 2, 1, 3), k.transposed(0, 2, 1, 3), v.transposed(0, 2, 1, 3))
+        let scale = 1 / Float(width).squareRoot()
+        let out = NFKMLXBlockedAttention.applies(to: queries, mask: nil)
+            ? NFKMLXBlockedAttention.attention(queries: queries, keys: keys, values: values, scale: scale)
+            : MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale, mask: nil)
         return out.transposed(0, 2, 1, 3).reshaped([batch, length, heads * width])
     }
 

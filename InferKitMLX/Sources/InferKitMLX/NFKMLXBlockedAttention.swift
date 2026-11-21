@@ -14,17 +14,46 @@ enum NFKMLXBlockedAttention {
     /// The queries a block holds: a `[1, 12, 512, 7800]` float32 block of Wan 2.1 1.3B's scores is 192 MB.
     static let queryBlock = 512
 
+    /// Whether the float32 attentions ``NFKReferenceRounding/flashAttention(queries:keys:values:scale:mask:keyBlock:queryBlock:)``
+    /// runs, and the ones a model routes here itself, take this function when they are longer than two
+    /// blocks. A training recipe sets it for its run with ``training(_:)``; it is scoped to the task, so an
+    /// inference on another task keeps MLX's attention.
+    @TaskLocal static var isTraining = false
+
+    /// Runs `body` with ``isTraining`` set.
+    static func training<T>(_ body: () throws -> T) rethrows -> T {
+        try $isTraining.withValue(true, operation: body)
+    }
+
+    /// Whether a call over `queries` takes this function: training, float32, and longer than two blocks.
+    /// Over two blocks the split costs more than it saves: Stable Audio's 1,024 tokens at 24 heads peak at
+    /// 0.45 GB blocked against MLX's 0.32 GB.
+    static func applies(to queries: MLXArray, mask: MLXArray?) -> Bool {
+        isTraining && queries.dtype == .float32 && queries.dim(-2) > 2 * queryBlock && mask?.dtype != .bool
+    }
+
     /// `queries` `[B, H, N, D]`, `keys` and `values` `[B, H, M, D]` → `[B, H, N, D]`, softmax attention at
-    /// `scale` with no mask, in blocks of `queryBlock` queries.
+    /// `scale` in blocks of `queryBlock` queries. `mask`, additive and broadcast against `[B, H, N, M]`,
+    /// enters as a constant: it takes no gradient.
     static func attention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
-                          queryBlock: Int = queryBlock) -> MLXArray {
-        let blocks = stride(from: 0, to: queries.dim(-2), by: queryBlock).map { $0 ..< min($0 + queryBlock, queries.dim(-2)) }
+                          mask: MLXArray? = nil, queryBlock: Int = queryBlock) -> MLXArray {
+        let rows = queries.dim(-2)
+        let blocks = stride(from: 0, to: rows, by: queryBlock).map { $0 ..< min($0 + queryBlock, rows) }
+        func blockMask(_ block: Range<Int>) -> MLXArray? {
+            guard let mask else { return nil }
+            return mask.ndim >= 2 && mask.dim(-2) == rows ? mask[.ellipsis, block, 0...] : mask
+        }
         let function = NFKMLXCustomFunction.make {
             Forward { arrays in
                 let (q, k, v) = (arrays[0], arrays[1], arrays[2])
-                let attended = blocks.map { block in
-                    MLXFast.scaledDotProductAttention(queries: q[.ellipsis, block, 0...], keys: k, values: v,
-                                                      scale: scale, mask: nil)
+                var attended = [MLXArray]()
+                for block in blocks {
+                    // Under a gradient MLX attends unfused; each block waits on the one before it, so only one
+                    // block's scores exist at a time.
+                    let queries = attended.last.map { depends(inputs: [q[.ellipsis, block, 0...]], dependencies: [$0])[0] }
+                        ?? q[.ellipsis, block, 0...]
+                    attended.append(MLXFast.scaledDotProductAttention(queries: queries, keys: k, values: v,
+                                                                      scale: scale, mask: blockMask(block)))
                 }
                 return [blocks.count == 1 ? attended[0] : concatenated(attended, axis: -2)]
             }
@@ -35,14 +64,17 @@ enum NFKMLXBlockedAttention {
                 var keyGradient = MLXArray.zeros(k.shape, dtype: .float32)
                 var valueGradient = MLXArray.zeros(v.shape, dtype: .float32)
                 for block in blocks {
-                    // Each block reads the sums the one before it wrote, so MLX forms one block's
-                    // probabilities at a time rather than every block's before the first sum.
+                    // Each block waits on the one before it, its key and value sums and its query gradient, so
+                    // MLX forms one block's probabilities and score gradients at a time and frees them with it.
                     let ordered = depends(inputs: [q[.ellipsis, block, 0...], upstream[.ellipsis, block, 0...]],
-                                          dependencies: [keyGradient, valueGradient])
+                                          dependencies: [keyGradient, valueGradient] + queryGradients.suffix(1))
                     let blockQueries = ordered[0].asType(.float32)
                     let blockUpstream = ordered[1].asType(.float32)
-                    let probabilities = softmax(matmul(blockQueries, wideKeys.swappedAxes(-1, -2)) * scale,
-                                                axis: -1, precise: true)
+                    var scores = matmul(blockQueries, wideKeys.swappedAxes(-1, -2)) * scale
+                    if let added = blockMask(block) {
+                        scores = scores + added.asType(.float32)
+                    }
+                    let probabilities = softmax(scores, axis: -1, precise: true)
                     let probabilityGradient = matmul(blockUpstream, wideValues.swappedAxes(-1, -2))
                     let rowTerm = (probabilityGradient * probabilities).sum(axis: -1, keepDims: true)
                     let scoreGradient = probabilities * (probabilityGradient - rowTerm) * scale

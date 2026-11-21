@@ -204,7 +204,8 @@ enum NFKReferenceRounding {
     /// rescaled when the max moves, each exponential as ``softmaxExponential(_:)`` takes it; the output
     /// divides by the sum and rounds once. At float16 the kernel's matrix products round as well: each
     /// block's raw scores, before the scale, and each block's product with the values, before it joins the
-    /// accumulator. A float32 input takes the fused kernel.
+    /// accumulator. A float32 input takes the fused kernel, or under ``NFKMLXBlockedAttention/isTraining``
+    /// and past two query blocks ``NFKMLXBlockedAttention/attention(queries:keys:values:scale:mask:queryBlock:)``.
     /// `queryBlock` attends that many query rows at a time, each row computed as before, and evaluates each
     /// block before the next: MLX schedules one lazy graph as a whole and holds every block's float32
     /// scores at once, which over a long sequence is the whole score matrix. Without a `queryBlock`, a call
@@ -212,6 +213,10 @@ enum NFKReferenceRounding {
     static func flashAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
                                mask: MLXArray?, keyBlock: Int = 512, queryBlock: Int? = nil) -> MLXArray {
         guard isReduced(queries) else {
+            if NFKMLXBlockedAttention.applies(to: queries, mask: mask) {
+                return NFKMLXBlockedAttention.attention(queries: queries, keys: keys, values: values, scale: scale,
+                                                        mask: mask)
+            }
             return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values,
                                                      scale: scale, mask: mask)
         }

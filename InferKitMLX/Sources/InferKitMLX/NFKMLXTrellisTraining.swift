@@ -233,19 +233,21 @@ public enum NFKMLXTrellisTraining {
         let recomputed = flow.recomputesBlocksInBackward
         flow.recomputesBlocksInBackward = recomputesBlocksInBackward
         defer { flow.recomputesBlocksInBackward = recomputed }
-        return try NFKMLXFineTune.run(
-            flow, freezing: { try freeze(flow, trainable) }, optimizer: optimizer, reference: referenceOptimizer,
-            referenceSchedule: { .constant }, steps: steps,
-            arrays: { step in
-                let example = examples[step % examples.count]
-                let keys = MLXRandom.split(key: MLXRandom.key(seed &+ UInt64(step)), into: 3)
-                return [example.latent, dropped(example.condition, key: keys[0]),
-                        MLXRandom.normal(example.latent.shape, key: keys[1]), NFKMLXTrellisObjective.sampleTimes(1, key: keys[2])]
-            },
-            loss: { flow, arrays in
-                NFKMLXTrellisObjective.structureLoss(flow, x0: arrays[0], condition: arrays[1], noise: arrays[2], t: arrays[3])
-            },
-            clipGradientNorm: clipGradientNorm, observer: observer)
+        return try NFKMLXBlockedAttention.training {
+            try NFKMLXFineTune.run(
+                flow, freezing: { try freeze(flow, trainable) }, optimizer: optimizer, reference: referenceOptimizer,
+                referenceSchedule: { .constant }, steps: steps,
+                arrays: { step in
+                    let example = examples[step % examples.count]
+                    let keys = MLXRandom.split(key: MLXRandom.key(seed &+ UInt64(step)), into: 3)
+                    return [example.latent, dropped(example.condition, key: keys[0]),
+                            MLXRandom.normal(example.latent.shape, key: keys[1]), NFKMLXTrellisObjective.sampleTimes(1, key: keys[2])]
+                },
+                loss: { flow, arrays in
+                    NFKMLXTrellisObjective.structureLoss(flow, x0: arrays[0], condition: arrays[1], noise: arrays[2], t: arrays[3])
+                },
+                clipGradientNorm: clipGradientNorm, observer: observer)
+        }
     }
 
     /// Fine-tunes the latent flow on examples, one structure per step (cycling). The structured latents
@@ -264,20 +266,22 @@ public enum NFKMLXTrellisTraining {
         let recomputed = flow.recomputesBlocksInBackward
         flow.recomputesBlocksInBackward = recomputesBlocksInBackward
         defer { flow.recomputesBlocksInBackward = recomputed }
-        return try NFKMLXFineTune.run(
-            flow, freezing: { try freeze(flow, trainable) }, optimizer: optimizer, reference: referenceOptimizer,
-            referenceSchedule: { .constant }, steps: steps,
-            arrays: { step in
-                let example = examples[step % examples.count]
-                let keys = MLXRandom.split(key: MLXRandom.key(seed &+ UInt64(step)), into: 3)
-                return [example.latent, example.voxels, dropped(example.condition, key: keys[0]),
-                        MLXRandom.normal(example.latent.shape, key: keys[1]), NFKMLXTrellisObjective.sampleTimes(1, key: keys[2])]
-            },
-            loss: { flow, arrays in
-                NFKMLXTrellisObjective.latentLoss(flow, x0: arrays[0], voxels: arrays[1], condition: arrays[2], noise: arrays[3],
-                                                  t: arrays[4])
-            },
-            clipGradientNorm: clipGradientNorm, observer: observer)
+        return try NFKMLXBlockedAttention.training {
+            try NFKMLXFineTune.run(
+                flow, freezing: { try freeze(flow, trainable) }, optimizer: optimizer, reference: referenceOptimizer,
+                referenceSchedule: { .constant }, steps: steps,
+                arrays: { step in
+                    let example = examples[step % examples.count]
+                    let keys = MLXRandom.split(key: MLXRandom.key(seed &+ UInt64(step)), into: 3)
+                    return [example.latent, example.voxels, dropped(example.condition, key: keys[0]),
+                            MLXRandom.normal(example.latent.shape, key: keys[1]), NFKMLXTrellisObjective.sampleTimes(1, key: keys[2])]
+                },
+                loss: { flow, arrays in
+                    NFKMLXTrellisObjective.latentLoss(flow, x0: arrays[0], voxels: arrays[1], condition: arrays[2], noise: arrays[3],
+                                                      t: arrays[4])
+                },
+                clipGradientNorm: clipGradientNorm, observer: observer)
+        }
     }
 
     // MARK: Data

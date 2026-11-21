@@ -159,11 +159,25 @@ then clips: 4.81 and 5.14 GB, the values bit-identical. An unclipped step was al
 `is_training`; `ScaledDotProductAttentionVJP` is not implemented), so a step holds whole `[B, H, N, N]`
 score matrices. `NFKMLXBlockedAttention` is a custom function with MLX's values: its forward attends one
 512-query block at a time, and its backward recomputes each block's softmax over the full key row and forms
-that block's query, key, and value gradients from it. Each block reads the key and value sums the block
-before it wrote (`depends`), or MLX forms every block's probabilities before the first sum: without that,
-the 17-frame Wan 2.1 1.3B step peaked at 17.5 GB, with it at 12.8 GB. Its gradients match MLX's within 1e-5
-relative (`NFKMLXBlockedAttentionTests`). Wan's `fineTune` turns it on for float32 attentions longer than one
-block, so a geometry under 512 tokens trains on MLX's own path.
+that block's query, key, and value gradients from it. An additive mask enters as a constant. Each block
+waits (`depends`) on the block before it: in the forward on its output, in the backward on its key and
+value sums and its query gradient. Left lazy, MLX forms every block's scores before the first sum, or holds
+every block's score gradient until the queries' gradients join; with the query gradient unchained, Wan
+Animate 14B's geometry (40 heads, 9,360 tokens, one score matrix 14.0 GB) peaked at 17.28 GB above its
+inputs, and chained at 4.97 GB. Its gradients match MLX's within 1e-5 relative, masked or not
+(`NFKMLXBlockedAttentionTests`).
+
+`NFKMLXBlockedAttention.isTraining`, a task-local, routes `NFKReferenceRounding.flashAttention`'s float32
+path, and TRELLIS's dense attention, through it for an attention longer than two blocks; an inference on
+another task keeps MLX's attention. The recipes that set it for their run: Wan, Wan Animate, LTX-2, TRELLIS
+(both flows), and Stable Audio. A backward's peak above its inputs, measured at each release's geometry:
+
+| Geometry | One score matrix | MLX | Blocked |
+|---|---|---|---|
+| Stable Audio, 24 heads × 64, 1,024 tokens | 0.10 GB | 0.32 GB | 0.45 GB (so two blocks stay on MLX's path) |
+| TRELLIS structure flow, 16 × 64, 4,096 | 1.07 GB | 3.27 GB | 1.47 GB |
+| LTX-2 video, 32 × 128, 6,144 | 4.83 GB | not run | 3.01 GB |
+| Wan Animate 14B, 40 × 128, 9,360 | 14.02 GB | not run | 4.97 GB |
 
 **The schedule is the reference's too.** `NFKMLXTrainer.train(…learningRateSchedule:)` multiplies every
 group's base rate by an `NFKMLXLearningRateSchedule` before each step and restores the rates when the

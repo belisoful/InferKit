@@ -440,57 +440,55 @@ extension NFKMLXWanVideoGenerator {
         observer: NFKMLXTrainer.Observer? = nil,
         recomputesBlocksInBackward: Bool = true
     ) throws -> [Float] {
-        let recomputed = net.recomputesBlocksInBackward, blocked = net.blocksAttentionQueries
+        let recomputed = net.recomputesBlocksInBackward
         net.recomputesBlocksInBackward = recomputesBlocksInBackward
-        net.blocksAttentionQueries = true
-        defer {
-            net.recomputesBlocksInBackward = recomputed
-            net.blocksAttentionQueries = blocked
-        }
+        defer { net.recomputesBlocksInBackward = recomputed }
         var key = MLXRandom.key(seed)
         var batch = [NFKMLXWanTrainingExample]()
         var draws = [NFKMLXWanTrainingDraw]()
         let objective = preset.objective
         let dtype = NFKReferenceRounding.parameterType(of: net)
-        return try NFKMLXFineTune.run(
-            net,
-            freezing: {
-                try NFKMLXLoRA.apply(to: net, rank: preset.rank, alpha: preset.alpha) { path, _ in
-                    preset.targets.contains(path)
-                }
-            },
-            optimizer: optimizer,
-            reference: {
-                NFKMLXReferenceOptimizers.adamW(learningRate: preset.learningRate, betas: preset.betas,
-                                                weightDecay: preset.weightDecay)
-            },
-            referenceSchedule: { preset.schedule },
-            steps: steps,
-            arrays: { step in
-                batch = examples(step)
-                let keys = MLXRandom.split(key: key, into: 4)
-                key = keys[0]
-                draws = objective.sampler.raw(count: batch.count, key: keys[1]).map {
-                    objective.sampler.draw($0, weighting: objective.weighting, dtype: dtype)
-                }
-                let noise = batch.enumerated().map { index, example in
-                    MLXRandom.normal(example.latent.shape, key: MLXRandom.split(key: keys[2], into: batch.count)[index])
-                }
-                let epsilon = batch.enumerated().map { index, example in
-                    MLXRandom.normal(example.latent.shape, key: MLXRandom.split(key: keys[3], into: batch.count)[index])
-                }
-                return noise + epsilon
-            },
-            loss: { net, arrays in
-                let count = batch.count
-                let losses = (0 ..< count).map { index in
-                    objective.score(net, example: batch[index], draw: draws[index], noise: arrays[index],
-                                    epsilon: arrays[count + index])
-                }
-                return MLX.stacked(losses).mean()
-            },
-            clipGradientNorm: preset.clipGradientNorm, accumulationSteps: accumulationSteps,
-            learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
+        return try NFKMLXBlockedAttention.training {
+            try NFKMLXFineTune.run(
+                net,
+                freezing: {
+                    try NFKMLXLoRA.apply(to: net, rank: preset.rank, alpha: preset.alpha) { path, _ in
+                        preset.targets.contains(path)
+                    }
+                },
+                optimizer: optimizer,
+                reference: {
+                    NFKMLXReferenceOptimizers.adamW(learningRate: preset.learningRate, betas: preset.betas,
+                                                    weightDecay: preset.weightDecay)
+                },
+                referenceSchedule: { preset.schedule },
+                steps: steps,
+                arrays: { step in
+                    batch = examples(step)
+                    let keys = MLXRandom.split(key: key, into: 4)
+                    key = keys[0]
+                    draws = objective.sampler.raw(count: batch.count, key: keys[1]).map {
+                        objective.sampler.draw($0, weighting: objective.weighting, dtype: dtype)
+                    }
+                    let noise = batch.enumerated().map { index, example in
+                        MLXRandom.normal(example.latent.shape, key: MLXRandom.split(key: keys[2], into: batch.count)[index])
+                    }
+                    let epsilon = batch.enumerated().map { index, example in
+                        MLXRandom.normal(example.latent.shape, key: MLXRandom.split(key: keys[3], into: batch.count)[index])
+                    }
+                    return noise + epsilon
+                },
+                loss: { net, arrays in
+                    let count = batch.count
+                    let losses = (0 ..< count).map { index in
+                        objective.score(net, example: batch[index], draw: draws[index], noise: arrays[index],
+                                        epsilon: arrays[count + index])
+                    }
+                    return MLX.stacked(losses).mean()
+                },
+                clipGradientNorm: preset.clipGradientNorm, accumulationSteps: accumulationSteps,
+                learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
+        }
     }
 
     /// Writes the adapters `net` carries in `preset`'s trainer's layout.

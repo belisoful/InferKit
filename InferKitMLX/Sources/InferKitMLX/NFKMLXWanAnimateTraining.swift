@@ -171,42 +171,44 @@ extension NFKMLXWanAnimate {
         let objective = preset.objective
         let dtype = NFKReferenceRounding.parameterType(of: net)
         var failure: Error?
-        let losses = try NFKMLXFineTune.run(
-            net,
-            freezing: {
-                try NFKMLXLoRA.apply(to: net, rank: preset.rank, alpha: preset.alpha) { path, _ in preset.adapts(path) }
-            },
-            optimizer: optimizer,
-            reference: {
-                NFKMLXReferenceOptimizers.adamW(learningRate: preset.learningRate, betas: (0.9, 0.999),
-                                                weightDecay: preset.weightDecay)
-            },
-            referenceSchedule: { preset.schedule },
-            steps: steps,
-            arrays: { step in
-                batch = examples(step)
-                let keys = MLXRandom.split(key: key, into: 3)
-                key = keys[0]
-                draws = objective.sampler.raw(count: batch.count, key: keys[1]).map {
-                    objective.sampler.draw($0, weighting: objective.weighting, dtype: dtype)
-                }
-                let noiseKeys = MLXRandom.split(key: keys[2], into: batch.count)
-                return batch.indices.map { MLXRandom.normal(batch[$0].latent.shape, key: noiseKeys[$0]) }
-            },
-            loss: { net, arrays in
-                let losses = batch.indices.map { index -> MLXArray in
-                    do {
-                        return try score(net, example: batch[index], objective: objective, draw: draws[index],
-                                         noise: arrays[index])
-                    } catch {
-                        failure = failure ?? error
-                        return MLXArray(Float(0))
+        let losses = try NFKMLXBlockedAttention.training {
+            try NFKMLXFineTune.run(
+                net,
+                freezing: {
+                    try NFKMLXLoRA.apply(to: net, rank: preset.rank, alpha: preset.alpha) { path, _ in preset.adapts(path) }
+                },
+                optimizer: optimizer,
+                reference: {
+                    NFKMLXReferenceOptimizers.adamW(learningRate: preset.learningRate, betas: (0.9, 0.999),
+                                                    weightDecay: preset.weightDecay)
+                },
+                referenceSchedule: { preset.schedule },
+                steps: steps,
+                arrays: { step in
+                    batch = examples(step)
+                    let keys = MLXRandom.split(key: key, into: 3)
+                    key = keys[0]
+                    draws = objective.sampler.raw(count: batch.count, key: keys[1]).map {
+                        objective.sampler.draw($0, weighting: objective.weighting, dtype: dtype)
                     }
-                }
-                return MLX.stacked(losses).mean()
-            },
-            clipGradientNorm: nil, accumulationSteps: accumulationSteps,
-            learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
+                    let noiseKeys = MLXRandom.split(key: keys[2], into: batch.count)
+                    return batch.indices.map { MLXRandom.normal(batch[$0].latent.shape, key: noiseKeys[$0]) }
+                },
+                loss: { net, arrays in
+                    let losses = batch.indices.map { index -> MLXArray in
+                        do {
+                            return try score(net, example: batch[index], objective: objective, draw: draws[index],
+                                             noise: arrays[index])
+                        } catch {
+                            failure = failure ?? error
+                            return MLXArray(Float(0))
+                        }
+                    }
+                    return MLX.stacked(losses).mean()
+                },
+                clipGradientNorm: nil, accumulationSteps: accumulationSteps,
+                learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
+        }
         if let failure {
             throw failure
         }

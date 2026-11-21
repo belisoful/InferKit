@@ -215,36 +215,38 @@ extension NFKMLXStableAudio {
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
         var draws = MLXRandom.key(seed)
-        return try NFKMLXFineTune.run(
-            net,
-            freezing: { try apply(trainable, to: net, loraDropout: loraDropout) },
-            optimizer: optimizer,
-            reference: { NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, weightDecay: weightDecay) },
-            referenceSchedule: { referenceSchedule },
-            steps: steps,
-            arrays: { step in
-                let batch = examples(step)
-                let latents = MLX.stacked(batch.map(\.latents))
-                let frames = latents.dim(1)
-                let mask = MLX.stacked(batch.map { example in
-                    MLXArray((0 ..< frames).map { Float($0 < example.validFrames ? 1 : 0) })
-                })
-                let keys = MLXRandom.split(key: draws, into: 4)
-                draws = keys[0]
-                let count = batch.count
-                return [latents, mask, MLX.stacked(batch.map(\.text)), MLXArray(batch.map(\.startSeconds)),
-                        MLXArray(batch.map(\.totalSeconds)), MLXRandom.normal(latents.shape, key: keys[1]),
-                        MLXRandom.uniform(low: 0, high: 1, [count], key: keys[2]),
-                        (MLXRandom.uniform(low: 0, high: 1, [count], key: keys[3]) .< objective.conditioningDropout)
-                            .asType(.float32)]
-            },
-            loss: { net, arrays in
-                objective(net, latents: arrays[0], mask: arrays[1], text: arrays[2], start: arrays[3],
-                          total: arrays[4], noise: arrays[5], timesteps: arrays[6], dropped: arrays[7])
-            },
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
-            learningRateSchedule: learningRateSchedule,
-            checkpoint: checkpoint, observer: observer)
+        return try NFKMLXBlockedAttention.training {
+            try NFKMLXFineTune.run(
+                net,
+                freezing: { try apply(trainable, to: net, loraDropout: loraDropout) },
+                optimizer: optimizer,
+                reference: { NFKMLXReferenceOptimizers.adamW(learningRate: learningRate, weightDecay: weightDecay) },
+                referenceSchedule: { referenceSchedule },
+                steps: steps,
+                arrays: { step in
+                    let batch = examples(step)
+                    let latents = MLX.stacked(batch.map(\.latents))
+                    let frames = latents.dim(1)
+                    let mask = MLX.stacked(batch.map { example in
+                        MLXArray((0 ..< frames).map { Float($0 < example.validFrames ? 1 : 0) })
+                    })
+                    let keys = MLXRandom.split(key: draws, into: 4)
+                    draws = keys[0]
+                    let count = batch.count
+                    return [latents, mask, MLX.stacked(batch.map(\.text)), MLXArray(batch.map(\.startSeconds)),
+                            MLXArray(batch.map(\.totalSeconds)), MLXRandom.normal(latents.shape, key: keys[1]),
+                            MLXRandom.uniform(low: 0, high: 1, [count], key: keys[2]),
+                            (MLXRandom.uniform(low: 0, high: 1, [count], key: keys[3]) .< objective.conditioningDropout)
+                                .asType(.float32)]
+                },
+                loss: { net, arrays in
+                    objective(net, latents: arrays[0], mask: arrays[1], text: arrays[2], start: arrays[3],
+                              total: arrays[4], noise: arrays[5], timesteps: arrays[6], dropped: arrays[7])
+                },
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
+                learningRateSchedule: learningRateSchedule,
+                checkpoint: checkpoint, observer: observer)
+        }
     }
 
     /// Folds any adapters into their layers and writes `net` as the `transformer/` and `projection_model/`

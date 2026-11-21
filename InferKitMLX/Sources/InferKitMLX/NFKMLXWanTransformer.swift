@@ -79,11 +79,6 @@ final class NFKWanAttention: Module {
 
     let heads: Int
     let headDim: Int
-    /// Whether a float32 attention longer than one query block runs ``NFKMLXBlockedAttention``, whose
-    /// backward holds one block of scores at a time. The training passes set it; the values are those of
-    /// MLX's attention.
-    var blocksQueries = false
-
     init(_ config: NFKMLXWanConfiguration) {
         self.heads = config.heads
         self.headDim = config.headDim
@@ -111,9 +106,7 @@ final class NFKWanAttention: Module {
         let kh = k.transposed(1, 0, 2).expandedDimensions(axis: 0)
         let vh = v.transposed(1, 0, 2).expandedDimensions(axis: 0)
         let scale = 1.0 / sqrt(Float(headDim))
-        let out = blocksQueries && n > NFKMLXBlockedAttention.queryBlock && !NFKReferenceRounding.isReduced(qh)
-            ? NFKMLXBlockedAttention.attention(queries: qh, keys: kh, values: vh, scale: scale)
-            : NFKReferenceRounding.flashAttention(queries: qh, keys: kh, values: vh, scale: scale, mask: nil)
+        let out = NFKReferenceRounding.flashAttention(queries: qh, keys: kh, values: vh, scale: scale, mask: nil)
         let merged = out[0].transposed(1, 0, 2).reshaped([n, heads * headDim])
         return (toOut[0] as! Linear)(merged)
     }
@@ -296,18 +289,6 @@ public final class NFKMLXWanTransformerNet: Module {
     ///
     /// Introduced in InferKit 0.4.0.
     public var recomputesBlocksInBackward = false
-
-    /// Whether the float32 attentions longer than one query block run ``NFKMLXBlockedAttention``, whose
-    /// backward holds one block of scores at a time where MLX's holds whole `[heads, N, N]` matrices. The
-    /// values are those of MLX's attention. `fineTune` sets it for its run.
-    var blocksAttentionQueries = false {
-        didSet {
-            for block in blocks {
-                block.attn1.blocksQueries = blocksAttentionQueries
-                block.attn2.blocksQueries = blocksAttentionQueries
-            }
-        }
-    }
 
     public init(_ config: NFKMLXWanConfiguration) {
         self.config = config
