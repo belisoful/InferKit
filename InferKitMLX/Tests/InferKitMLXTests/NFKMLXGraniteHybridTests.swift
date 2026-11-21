@@ -38,7 +38,7 @@ final class NFKMLXGraniteHybridTests: XCTestCase {
     /// attention layer, dense (no routed experts), with distinctive multipliers.
     private var tinyConfiguration: NFKMLXGraniteHybridConfiguration {
         NFKMLXGraniteHybridConfiguration(
-            hiddenSize: 64, layerCount: 6, vocabularySize: 128, rmsEpsilon: 1e-5,
+            hiddenSize: 64, layerCount: 6, vocabularySize: 128, rmsEpsilon: 1e-6,
             tiesWordEmbeddings: false, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
             mambaHeadCount: 8, mambaHeadDimensions: 16, mambaGroupCount: 1, mambaStateSize: 16,
             mambaConvolutionKernel: 4, mambaExpand: 2, mambaConvolutionBias: true,
@@ -53,7 +53,7 @@ final class NFKMLXGraniteHybridTests: XCTestCase {
     /// (8 experts, 2 per token) beside the shared MLP on every layer, with a mixed layer stack.
     private var tinyMoEConfiguration: NFKMLXGraniteHybridConfiguration {
         NFKMLXGraniteHybridConfiguration(
-            hiddenSize: 64, layerCount: 6, vocabularySize: 128, rmsEpsilon: 1e-5,
+            hiddenSize: 64, layerCount: 6, vocabularySize: 128, rmsEpsilon: 1e-6,
             tiesWordEmbeddings: false, headCount: 4, keyValueHeadCount: 2, headDimensions: 16,
             mambaHeadCount: 8, mambaHeadDimensions: 16, mambaGroupCount: 1, mambaStateSize: 16,
             mambaConvolutionKernel: 4, mambaExpand: 2, mambaConvolutionBias: true,
@@ -99,7 +99,7 @@ final class NFKMLXGraniteHybridTests: XCTestCase {
             let stepped = concatenated(pieces, axis: 1)
             XCTAssertEqual(stepped.shape, whole.shape)
             let difference = abs(stepped - whole).max().item(Float.self)
-            XCTAssertLessThan(difference, 1e-4, "experts: \(configuration.expertCount)")
+            XCTAssertLessThan(difference, 1e-5, "experts: \(configuration.expertCount)")
 
             let forgotten = net(MLXArray(Array(tokens[8...])).reshaped([1, tokens.count - 8]),
                                 cache: NFKMLXGraniteCache(layerTypes: configuration.layerTypes))
@@ -221,20 +221,22 @@ final class NFKMLXGraniteHybridTests: XCTestCase {
         try loadRecordWeights(into: net, from: rec)
 
         let tokens = rec["tokens"]!.asType(.int32).reshaped([1, -1])
+        // Bar: the worst figure measured, the logits' 0.9999999999999933, floored to thirteen nines.
+        let bar = 0.9999999999999
         let blocks = net.blockStates(tokens)
         for index in 0 ..< tinyMoEConfiguration.layerCount {
             let similarity = cosine(blocks[index][0], rec["hidden.\(index)"]!)
             print("SEAM granite-moe hidden.\(index): cosine \(similarity)")
-            XCTAssertGreaterThan(similarity, 0.9999, "seam hidden.\(index) diverges")
+            XCTAssertGreaterThan(similarity, bar, "seam hidden.\(index) diverges")
         }
         let finalSimilarity = cosine(net.hiddenStates(tokens)[0],
                                      rec["hidden.\(tinyMoEConfiguration.layerCount)"]!)
         print("SEAM granite-moe hidden.\(tinyMoEConfiguration.layerCount) (post norm): cosine \(finalSimilarity)")
-        XCTAssertGreaterThan(finalSimilarity, 0.9999, "final normed seam diverges")
+        XCTAssertGreaterThan(finalSimilarity, bar, "final normed seam diverges")
 
         let logitSimilarity = cosine(net(tokens)[0], rec["output"]!)
         print("VALIDATION PARITY granite_hybrid_moe: logit cosine \(logitSimilarity)")
-        XCTAssertGreaterThan(logitSimilarity, 0.9999, "logits diverge")
+        XCTAssertGreaterThan(logitSimilarity, bar, "logits diverge")
     }
 
     func testTinyConfigSeamParityAgainstTheReference() throws {
@@ -248,20 +250,22 @@ final class NFKMLXGraniteHybridTests: XCTestCase {
         try loadRecordWeights(into: net, from: rec)
 
         let tokens = rec["tokens"]!.asType(.int32).reshaped([1, -1])
+        // Bar: the worst figure measured, the logits' 0.9999999999999974, floored to thirteen nines.
+        let bar = 0.9999999999999
         let blocks = net.blockStates(tokens)                                // [embed·mult, L0 … L5]
         for index in 0 ..< tinyConfiguration.layerCount {
             let similarity = cosine(blocks[index][0], rec["hidden.\(index)"]!)
             print("SEAM granite hidden.\(index): cosine \(similarity)")
-            XCTAssertGreaterThan(similarity, 0.9999, "seam hidden.\(index) diverges")
+            XCTAssertGreaterThan(similarity, bar, "seam hidden.\(index) diverges")
         }
         let finalSimilarity = cosine(net.hiddenStates(tokens)[0],
                                      rec["hidden.\(tinyConfiguration.layerCount)"]!)
         print("SEAM granite hidden.\(tinyConfiguration.layerCount) (post norm): cosine \(finalSimilarity)")
-        XCTAssertGreaterThan(finalSimilarity, 0.9999, "final normed seam diverges")
+        XCTAssertGreaterThan(finalSimilarity, bar, "final normed seam diverges")
 
         let logitSimilarity = cosine(net(tokens)[0], rec["output"]!)
         print("VALIDATION PARITY granite_hybrid: logit cosine \(logitSimilarity)")
-        XCTAssertGreaterThan(logitSimilarity, 0.9999, "logits diverge")
+        XCTAssertGreaterThan(logitSimilarity, bar, "logits diverge")
     }
 
     // The released granite-4.0-h-1b (dense hybrid) held to the module by shape: every parameter matches

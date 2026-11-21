@@ -1512,9 +1512,11 @@ attention and feed-forward.
   `C` are per-group and broadcast to the heads. One selective-scan serves the whole SSM class, so
   Granite 4.0-H and Nemotron Nano 2 build their hybrid Mamba-attention layers on this mixer. Cached
   decode and conversations: see "Mamba-2 and Nemotron-H conversations" under Nemotron-H. **Reference parity** against transformers' own
-  `Mamba2ForCausalLM` at a tiny random configuration (`run_reference.py mamba2`): logit cosine 1.0, and
-  every hidden state exact (embedding 0.9999983, block 0 0.9999963, block 1 0.9999994, the final-normed
-  state 0.9999999). **Released Codestral-Mamba-7B**: the checkpoint's 579 tensors all match by name and
+  `Mamba2ForCausalLM` at a tiny random configuration (`run_reference.py mamba2`): logit cosine
+  0.999999999999995, the block outputs 0.999999999999999, 1.0 and 1.0, and the final-normed state
+  0.999999999999997. The record's `hidden.i` is block i's output (below), so the test reads
+  `blockStates` at `i + 1`; read at `i`, each seam compared neighboring states and showed their own
+  distance, 0.9999965 at the worst. **Released Codestral-Mamba-7B**: the checkpoint's 579 tensors all match by name and
   shape (`testEveryParameterMatchesTheReleasedCheckpoint`, 0 missing, 0 mismatched, 0 unaccounted), and
   at bfloat16 (7B does not fit float32 on a 32 GB machine, so both sides run bf16 as the Gemma E4B
   parity does, `run_reference.py mamba2_real`) the prompt logits cosine 0.9999146 with the greedy
@@ -1569,9 +1571,13 @@ attention and feed-forward.
   router's softmax is taken over the top-`k` raw logits. Generation runs through the cache below.
   **Reference parity** against transformers' own `GraniteMoeHybridForCausalLM`. Tiny dense
   config (`run_reference.py granite_hybrid`, the four multipliers set to non-default values so a port that
-  hard-codes them diverges): logit cosine 0.99999577, every hidden state ≥ 0.9999953 (embedding
-  0.99999994, the final-normed state 0.99999565). Tiny MoE config (`run_reference.py granite_hybrid_moe`,
-  8 experts routed 2 at a time): logit cosine 0.99999547, every hidden state ≥ 0.99999577. **Released
+  hard-codes them diverges): logit cosine 0.999999999999997, every hidden state ≥ 0.999999999999999
+  (the final-normed state 0.999999999999999). Tiny MoE config (`run_reference.py granite_hybrid_moe`,
+  8 experts routed 2 at a time): logit cosine 0.999999999999993, every hidden state ≥ 0.999999999999999,
+  the final-normed state 0.999999999999997. Both tiny configs take transformers' `rms_norm_eps` of 1e-6.
+  Built at 1e-5 instead, the port fell from 0.9999987 after the first Mamba layer to 0.9999955: at the oracle's 0.05
+  weight scale the mean square entering a norm is near 0.01, so a 9e-6 change in epsilon shows, while on
+  released weights it vanishes. **Released
   granite-4.0-h-1b** (the dense hybrid, a single `model.safetensors`, tied word embeddings so no
   `lm_head`): the checkpoint's 466 tensors all match by name and shape (0 missing, 0 mismatched, 0
   unaccounted), and at float32 (1B fits) the worst block seam is 0.99999964, the final-normed state 1.0,
@@ -1592,7 +1598,7 @@ attention and feed-forward.
   (`NFKMLXMamba2Cache`), and an attention layer its keys and values, under a causal mask offset by the
   positions cached (NoPE, so nothing else moves). The prompt runs once and each new token alone. On
   the tiny dense and mixture geometries the cached steps give the whole sequence's logits within
-  9.3e-7, and the same steps from an empty cache differ by 0.85
+  1.4e-6, and the same steps from an empty cache differ by 0.84 and 0.70
   (`testCachedGenerationStepsMatchTheWholeSequence`). Before (to 2026-10-28) the backend reran the
   whole sequence each step. Measured on the released 1B (checkpoint precision, greedy, a 1076-token
   tool prompt, 28 tokens out): 14.6 s cached against 352.6 s rerun, the same text. The prefill

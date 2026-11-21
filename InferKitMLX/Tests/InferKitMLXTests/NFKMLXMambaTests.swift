@@ -6,8 +6,8 @@
 //  evaluates MLX arrays, so these skip without a Metal library for MLX (see Tools/mlx-metallib.sh).
 //
 //  Numeric parity is measured at a tiny random configuration against transformers' own
-//  Mamba2ForCausalLM (`run_reference.py mamba2`), seam by seam: the embedding output, each block's
-//  output, the final-normed hidden state, and the logits. The record carries the weights under the
+//  Mamba2ForCausalLM (`run_reference.py mamba2`), seam by seam: each block's output, the final-normed
+//  hidden state, and the logits. The record carries the weights under the
 //  release's own names, so the same record drives the weight load and the comparison
 //  (`IK_PARITY_MAMBA2_TINY`).
 //
@@ -218,20 +218,23 @@ final class NFKMLXMambaTests: XCTestCase {
         let tokens = rec["tokens"]!.asType(.int32).reshaped([1, -1])
 
         // The scan runs in float32; the record is float32, so a matching seam is exact to many digits.
-        let blocks = net.blockStates(tokens)                                // [embed, block0, block1, block2]
-        for index in 0 ..< tinyConfiguration.layerCount {                   // hidden.0 … hidden.{N-1}
-            let similarity = cosine(blocks[index][0], rec["hidden.\(index)"]!)
+        // Bar: the worst figure measured, the logits' 0.999999999999995, floored to thirteen nines.
+        let bar = 0.9999999999999
+        // transformers 4.57's Mamba2Model records each state after its block: `hidden.i` is block i's
+        // output, which `blockStates` holds at i + 1 behind the embedding, and `hidden.N` follows norm_f.
+        let blocks = net.blockStates(tokens)
+        for index in 0 ..< tinyConfiguration.layerCount {
+            let similarity = cosine(blocks[index + 1][0], rec["hidden.\(index)"]!)
             print("SEAM mamba2 hidden.\(index): cosine \(similarity)")
-            XCTAssertGreaterThan(similarity, 0.9999, "seam hidden.\(index) diverges")
+            XCTAssertGreaterThan(similarity, bar, "seam hidden.\(index) diverges")
         }
-        // hidden.N is the FINAL-normed state (transformers applies norm_f to its last hidden entry).
         let finalHidden = net.hiddenStates(tokens)
         let finalSimilarity = cosine(finalHidden[0], rec["hidden.\(tinyConfiguration.layerCount)"]!)
         print("SEAM mamba2 hidden.\(tinyConfiguration.layerCount) (post norm_f): cosine \(finalSimilarity)")
-        XCTAssertGreaterThan(finalSimilarity, 0.9999, "final normed seam diverges")
+        XCTAssertGreaterThan(finalSimilarity, bar, "final normed seam diverges")
 
         let logitSimilarity = cosine(net(tokens)[0], rec["output"]!)
         print("VALIDATION PARITY mamba2: logit cosine \(logitSimilarity)")
-        XCTAssertGreaterThan(logitSimilarity, 0.9999, "logits diverge")
+        XCTAssertGreaterThan(logitSimilarity, bar, "logits diverge")
     }
 }

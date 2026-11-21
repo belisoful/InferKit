@@ -468,9 +468,10 @@ public final class NFKMLXMamba2Net: Module {
         backbone.finalNorm(blockStates(tokens).last!)
     }
 
-    /// The state entering each block, for per-seam parity isolation: `[embedding, block0, … , blockN-1]`,
-    /// each `[B, L, hiddenSize]`, before the final normalization. Matches the oracle's `hidden.{i}`
-    /// record entries, whose first is the embedding output and whose `i+1` is block `i`'s output.
+    /// The embedding output and each block's output, for per-seam parity isolation:
+    /// `[embedding, block0, … , blockN-1]`, each `[B, L, hiddenSize]`, before the final normalization.
+    /// transformers' `Mamba2Model` records no embedding entry: its `hidden.{i}` is block `i`'s output,
+    /// held here at `i + 1`, and its last entry follows `norm_f`.
     public func blockStates(_ tokens: MLXArray) -> [MLXArray] {
         var hidden = backbone.embeddings(tokens)
         var states = [hidden]
