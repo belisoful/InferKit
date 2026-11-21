@@ -388,12 +388,44 @@ the mesh type, the surface extraction, and the writers every later port uses.
     release's EMA is not kept. `NFKMLXTrellisTraining.fineTuneStructureFlow` trains from image–mesh pairs:
     `occupancy(of:resolution:)` voxelizes a mesh's surface in the release's normalized cube and
     `structureLatent(of:encoder:)` encodes it with `ss_enc_conv3d_16l8_fp16` to the posterior's mean, as
-    `encode_ss_latent.py` does. A step on the released structure flow needs more memory than a 32 GB machine
-    holds: the backward keeps each of its blocks' attention over the 4,096 structure tokens, and with no
-    activation checkpointing the first LoRA step reached 33.8 GB with 19 GB of swap before the watchdog stopped
-    it (Hi3DGen's flow, the same geometry, 2026-11-20). The tests train a small flow. `fineTuneLatentFlow`
-    trains on structured latents the release's toolkit encodes offline from 150 rendered views of DINOv2
-    features. Measured against `trellis_objectives`: the structure encoder's mean 0.99999999999696 and log-variance 0.99999999999837; the dense loss 0.05751151 against the trainer's 0.057511486 and 0.062691584 against 0.06269159 (x_t and the target at cosine 1.0); the sparse loss 5.9853306 against 5.985331 and 1.4090514 against 1.4090514, over 17,111 voxels.
+    `encode_ss_latent.py` does. `fineTuneLatentFlow` trains on structured latents the release's toolkit encodes
+    offline from 150 rendered views of DINOv2 features. Both recipes recompute each transformer block in the
+    backward pass (`recomputesBlocksInBackward` on either flow, on by default in the recipes): the block runs as
+    a custom function (`NFKMLXCustomFunction.recomputed(_:_:)`) whose primals are its trainable arrays, its
+    input, its six modulation parts, and the condition, and whose backward reruns it. Training attention on Metal
+    runs MLX's unfused form forward and backward, which holds a `[16, 4096, 4096]` float32 score matrix (1.07 GB)
+    per structure-flow block; the plain backward holds 2.14 GB more peak per block of the release's geometry, so
+    the first LoRA step without recomputation reached 33.8 GB with 19 GB of swap before the watchdog stopped it
+    (Hi3DGen's flow, the same geometry, 2026-11-20). Recomputation alone did not bound the step: two orderings
+    in the custom function's backward do. Its rerun reads its primals through `depends` on the output cotangents,
+    and the input cotangents it returns depend on its parameter gradients. Without the first, MLX reruns blocks
+    ahead of their backward; without the second, it leaves the LoRA parameter gradients, side branches the
+    cotangent chain never reads, until the chain ends, holding each block's backward intermediates for them. One
+    LoRA step on 8 random blocks of the release's geometry (MLX peak, 2026-11-21):
+
+    | Cotangent wait | Parameter gradients first | Peak |
+    |---|---|---|
+    | yes | yes | 6.032 GB |
+    | yes | no | 9.882 GB |
+    | no | yes | 18.226 GB |
+    | no | no | 9.832 GB |
+
+    With both, the step's peak grows 0.262 GB per block (6.03, 6.47, and 7.79 GB at 8, 12, and 24 random
+    blocks), and one block's backward is about 5 GB, so attention in query blocks is not needed. Measured on a
+    32 GB M1 Max (`testALoRAStepOnTheReleasedStructureFlowHoldsOneBlockAtATime`,
+    `testALoRAStepOnTheReleasedLatentFlowHoldsOneBlockAtATime`, LMC legs): one LoRA step at the default rank 16
+    on the released structure flow peaks within 7.8 GB of MLX memory (2.25 GB of it the flow), and one on the
+    released latent flow over the objectives record's 17,111 voxels (2,467 tokens at the blocks' half
+    resolution) within 5.7 GB. The latent flow's residual blocks hold their activations, and their sparse
+    convolutions evaluate nothing mid-forward (`evaluatesEachOffset: false`, each offset's gather ordered by
+    `depends` on the sum before it): an evaluation inside the gradient's trace kept every block's forward, and
+    the first latent step outgrew 30 GB. On a tiny flow of either kind the loss and every gradient equal the
+    plain backward's exactly, under `.all` and under LoRA
+    (`testRecomputingTheStructureFlowsBlocksKeepsItsLossAndGradients`,
+    `testRecomputingTheLatentFlowsBlocksKeepsItsLossAndGradients`; the latent test places its voxels four apart,
+    so no voxel at either resolution has an occupied neighbor; on voxels two apart two plain backwards already
+    differ by up to 4.47e-08, the half-resolution grid's scatter-add summing in a varying order, as
+    `mlx-runtime-gotchas.md` records). The descent test trains a small flow. Measured against `trellis_objectives`: the structure encoder's mean 0.99999999999696 and log-variance 0.99999999999837; the dense loss 0.05751151 against the trainer's 0.057511486 and 0.062691584 against 0.06269159 (x_t and the target at cosine 1.0); the sparse loss 5.9853306 against 5.985331 and 1.4090514 against 1.4090514, over 17,111 voxels.
   - Runtime: five stages (conditioner, structure flow, structure decoder, latent flow, decoders) staged or held
     resident (`NFKMLXResidency`; the image release holds 6.86 GB at float32); the two flows quantize to 2–8 bits
     (`NFKModelLoadOptionQuantizationBits`). The release is published at float16 and runs it on CUDA; float16 and
@@ -481,15 +513,19 @@ the mesh type, the surface extraction, and the writers every later port uses.
     (`ss_enc_conv3d_16l8_fp16`) encodes Hi3DGen's structure latents from a mesh
     (`NFKMLXTrellisTraining.structureLatent(of:encoder:)`). `NFKMLXHi3DGenPipeline.condition(rgba:width:height:)`
     gives an image's training condition: the preparation, StableNormal-turbo's map, Pillow's Lanczos to 518, and
-    DINOv2. `fineTuneStructureFlow` trains the structure flow with TRELLIS's memory need (more than a 32 GB
-    machine holds for the released flow); `fineTuneLatentFlow` trains from structured latents the release's
-    offline toolkit encodes, as for TRELLIS. `.all` is the full fine-tune. A trained flow reloads through
-    `NFKMLXHi3DGenPipeline(…flows:)` and
+    DINOv2. `fineTuneStructureFlow` trains the structure flow and `fineTuneLatentFlow` trains from structured
+    latents the release's offline toolkit encodes, as for TRELLIS, each block recomputed in the backward pass.
+    On a 32 GB M1 Max a LoRA step at the default rank 16 on the released structure flow peaks within
+    7.8 GB of MLX memory, and one on the released latent flow over the record's 24,672 voxels
+    (4,744 tokens at the blocks' half resolution) within 9.4 GB
+    (`testALoRAStepOnTheReleasedLatentFlowHoldsOneBlockAtATime`). `.all` is the full fine-tune. A trained flow
+    reloads through `NFKMLXHi3DGenPipeline(…flows:)` and
     `backendWithDirectoryURL:normalDirectoryURL:encoderWeightsURL:birefnetWeightsURL:structureFlowWeightsURL:latentFlowWeightsURL:residency:error:`
-    (`testAStructureFlowWithMergedAdaptersReloadsThroughThePipeline`: the released flow with drawn LoRA adapters,
-    merged, saved, and reloaded with the velocity identical on an image's condition from the public method). The
-    trained half of the round trip runs at a small flow of the release's geometry (`testExampleFineTuningHi3DGen`:
-    one LoRA step, merged, saved, reloaded), since a step on the released flow outgrows a 32 GB machine.
+    (`testAStructureFlowFineTunedOnAnImagesConditionReloadsThroughThePipeline`: one LoRA step on the released
+    flow from an image's condition through the public method and the record's structure latent, merged, saved,
+    and reloaded with the velocity identical). `testExampleFineTuningHi3DGen` runs the documented sequence on the
+    released flow: one LoRA step on a mesh's latent, merged, saved, and built into a backend through the
+    fine-tuned-flows factory.
   - Runtime: seven stages (BiRefNet, StableNormal-turbo, the conditioner, two flows, two decoders) staged or held
     resident (`NFKMLXResidency`). The networks run at float32; the release is published at float16 for CUDA,
     and float16 and bfloat16 are not offered until a measured floor holds them. The factory takes no weight

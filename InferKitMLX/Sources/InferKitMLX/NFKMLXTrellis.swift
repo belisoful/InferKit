@@ -257,6 +257,20 @@ final class NFKTrellisModulatedCrossBlock: Module {
         h = NFKTrellisAttention.normalized(x, eps: 1e-6) * (1 + parts[4]) + parts[3]
         return x + feedForward(h) * parts[5]
     }
+
+    /// The block at `x` with its activations recomputed from `x`, the modulation, and the context in the
+    /// backward pass (``NFKMLXCustomFunction/recomputed(_:_:)``).
+    func recomputed(_ x: MLXArray, modulation: [MLXArray], context: MLXArray) -> MLXArray {
+        let block = NFKMLXCustomFunction.recomputed(self) { arrays in
+            [self(arrays[0], modulation: Array(arrays[1 ..< arrays.count - 1]), context: arrays[arrays.count - 1])]
+        }
+        return block([x] + modulation + [context])[0]
+    }
+
+    /// The block, recomputed in the backward pass when `recomputing` is set.
+    func callAsFunction(_ x: MLXArray, modulation: [MLXArray], context: MLXArray, recomputing: Bool) -> MLXArray {
+        recomputing ? recomputed(x, modulation: modulation, context: context) : self(x, modulation: modulation, context: context)
+    }
 }
 
 /// `t_embedder`: the sinusoidal embedding of a timestep (cosines then sines over `frequencyWidth / 2`
@@ -474,6 +488,15 @@ public final class NFKMLXTrellisStructureFlow: Module {
 
     public let configuration: NFKMLXTrellisConfiguration
 
+    /// Whether a gradient through the flow recomputes each transformer block's activations from the block's
+    /// inputs in the backward pass (activation checkpointing, MLX's `checkpoint`). A training step then holds one block's attention at a time, at the cost of a second
+    /// forward pass through the blocks; the velocity and the gradients are unchanged. Off by default;
+    /// ``NFKMLXTrellisTraining/fineTuneStructureFlow(_:examples:trainable:optimizer:steps:seed:clipGradientNorm:recomputesBlocksInBackward:observer:)``
+    /// sets it for its run.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var recomputesBlocksInBackward = false
+
     init(_ configuration: NFKMLXTrellisConfiguration) {
         self.configuration = configuration
         let width = configuration.flowWidth
@@ -507,7 +530,7 @@ public final class NFKMLXTrellisStructureFlow: Module {
         let batch = x.dim(0), side = x.dim(1)
         var h = inputLayer(x.reshaped([batch, side * side * side, x.dim(4)])) + positions
         for (block, parts) in zip(blocks, modulation) {
-            h = block(h, modulation: parts, context: condition)
+            h = block(h, modulation: parts, context: condition, recomputing: recomputesBlocksInBackward)
         }
         return outputLayer(NFKTrellisAttention.normalized(h, eps: 1e-5)).reshaped([batch, side, side, side, -1])
     }

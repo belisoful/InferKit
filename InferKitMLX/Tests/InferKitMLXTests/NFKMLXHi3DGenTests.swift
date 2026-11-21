@@ -239,7 +239,23 @@ final class NFKMLXHi3DGenTests: XCTestCase {
 
     // MARK: - Customization
 
-    func testAStructureFlowWithMergedAdaptersReloadsThroughThePipeline() throws {
+    /// MLX's peak since the last reset and the process's lifetime peak footprint, flushed, and MLX's peak reset.
+    private func peak(_ stage: String, since start: Date) -> Int {
+        var info = rusage_info_v4()
+        _ = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) }
+        }
+        let peak = NFKMLXGPU.peakMemory
+        report(String(format: "MEMORY hi3dgen %@: %.1f s, MLX peak %.3f GB, lifetime peak footprint %.3f GB", stage,
+                      Date().timeIntervalSince(start), Double(peak) / 1e9, Double(info.ri_lifetime_max_phys_footprint) / 1e9))
+        NFKMLXGPU.resetPeakMemory()
+        return peak
+    }
+
+    // One LoRA step of the default recipe on the released structure flow, from an image's condition through the
+    // public method and the record's sampled structure latent, then merged, saved, and reloaded through the
+    // pipeline. Loads the release: run it under LMC.
+    func testAStructureFlowFineTunedOnAnImagesConditionReloadsThroughThePipeline() throws {
         let reference = try record()
         let input = reference["input"]!
         let (height, width) = (input.dim(0), input.dim(1))
@@ -249,18 +265,18 @@ final class NFKMLXHi3DGenTests: XCTestCase {
             for c in 0 ..< 3 { rgba[pixel * 4 + c] = rgb[pixel * 3 + c] }
         }
         let condition = try pipeline().condition(rgba: rgba, width: width, height: height).condition
+        eval(condition)
         NFKMLXGPU.clearCache()
 
-        // A training step on the released flow outgrows a 32 GB machine (its backward keeps every block's
-        // attention over 4,096 tokens), so drawn adapters stand in for trained ones; NFKMLXTrellisTests trains.
         let flow = try NFKMLXTrellis.structureFlow(weightsURL: try checkpoint("ss_flow_normal_dit_L_16l8_fp16"))
-        try NFKMLXTrellisTraining.freeze(flow, .attentionLoRA(rank: 4, alpha: 4))
-        MLXRandom.seed(5)
-        var adapters = NFKMLXLoRA.adapterArrays(of: flow)
-        for key in adapters.keys where key.hasSuffix(".lora_b") {
-            adapters[key] = 0.01 * MLXRandom.normal(adapters[key]!.shape)
-        }
-        XCTAssertGreaterThan(try NFKMLXLoRA.loadAdapters(adapters, into: flow), 0)
+        let example = NFKMLXTrellisStructureExample(condition: condition, latent: channelsLast(reference["ss_latent"]!))
+        NFKMLXGPU.resetPeakMemory()
+        let start = Date()
+        let losses = try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: [example], steps: 1, seed: 1)
+        let stepPeak = peak("structure flow LoRA step (loss \(losses[0]))", since: start)
+        XCTAssertTrue(losses[0].isFinite)
+        // Measured 7.793 GB (2026-11-21), as for TRELLIS; the bar leaves 1.87 GB of margin.
+        XCTAssertLessThan(stepPeak, 9 << 30)
         XCTAssertGreaterThan(try NFKMLXLoRA.merge(into: flow), 0)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("hi3dgen-\(UUID().uuidString).safetensors")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -275,9 +291,27 @@ final class NFKMLXHi3DGenTests: XCTestCase {
         let reloaded = try tuned.trellis.structureFlow.use { $0(x, t: t, condition: condition) }
         let release = try NFKMLXTrellis.structureFlow(weightsURL: try checkpoint("ss_flow_normal_dit_L_16l8_fp16"))
         let moved = abs(expected - release(x, t: t, condition: condition)).max().item(Float.self)
-        report("Hi3DGen structure flow with merged adapters: the release's velocity moved by up to \(moved)")
+        report("Hi3DGen structure flow after one LoRA step: the release's velocity moved by up to \(moved)")
         XCTAssertEqual(abs(expected - reloaded).max().item(Float.self), 0)
         XCTAssertGreaterThan(moved, 0)
+    }
+
+    // One LoRA step of the default recipe on the released latent flow, on the record's structured latent (24,672
+    // voxels, 4,744 at the blocks' half resolution) and condition. Loads the release: run it under LMC.
+    func testALoRAStepOnTheReleasedLatentFlowHoldsOneBlockAtATime() throws {
+        let reference = try record()
+        let example = NFKMLXTrellisLatentExample(condition: reference["cond"]!, voxels: reference["coords"]![0..., 1...].asType(.int32),
+                                                 latent: reference["slat_normalized"]!)
+        eval(example.condition, example.voxels, example.latent)
+        let flow = try NFKMLXTrellis.latentFlow(weightsURL: try checkpoint("slat_flow_normal_dit_L_64l8p2_fp16"))
+        eval(flow)
+        _ = peak("latent flow build, before the step", since: Date())
+        let start = Date()
+        let losses = try NFKMLXTrellisTraining.fineTuneLatentFlow(flow, examples: [example], steps: 1, seed: 1)
+        let stepPeak = peak("latent flow LoRA step on \(example.voxels.dim(0)) voxels (loss \(losses[0]))", since: start)
+        XCTAssertTrue(losses[0].isFinite)
+        // Measured 9.381 GB (2026-11-21); the bar leaves 2.43 GB of margin.
+        XCTAssertLessThan(stepPeak, 11 << 30)
     }
 
     func testTheBackendGeneratesAMeshAndItsNormalMapFromItsFactory() throws {

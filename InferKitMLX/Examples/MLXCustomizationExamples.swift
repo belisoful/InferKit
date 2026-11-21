@@ -1645,24 +1645,17 @@ final class MLXCustomizationExamples: XCTestCase {
         let example = NFKMLXTrellisStructureExample(
             condition: try hi3dgen.condition(rgba: rgba, width: 64, height: 64).condition,
             latent: NFKMLXTrellisTraining.structureLatent(of: mesh, encoder: encoder))
-        // A real run trains the release's structure flow, which needs more memory than a 32 GB machine holds;
-        // a small random flow of the release's geometry stands in, and the fine-tuned-flows factory
-        // (structureFlowWeightsURL:) reads the real flow's file.
-        var geometry = NFKMLXTrellisConfiguration()
-        geometry.flowWidth = 32
-        geometry.flowBlocks = 1
-        geometry.flowHeads = 2
-        geometry.flowHidden = 64
-        geometry.frequencyWidth = 16
-        let flow = try NFKMLXTrellis.structureFlow(weightsURL: nil, configuration: geometry)
-        let history = try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: [example],
-                                                                      trainable: .attentionLoRA(rank: 4, alpha: 4), steps: 1)
+        let flow = try NFKMLXTrellis.structureFlow(weightsURL: release.appendingPathComponent("ckpts/ss_flow_normal_dit_L_16l8_fp16.safetensors"))
+        let history = try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: [example], steps: 1)
         XCTAssertEqual(history.count, 1)
 
         try NFKMLXLoRA.merge(into: flow)
         try NFKMLXWeights.save(flow, to: tuned)
-        let reloaded = try NFKMLXTrellis.structureFlow(weightsURL: tuned, configuration: geometry)
-        XCTAssertEqual(reloaded.configuration.flowWidth, 32)
+        let backend = try NFKMLXHi3DGenFactory.backend(directoryURL: release, normalDirectoryURL: normals,
+                                                       encoderWeightsURL: dinov2, birefnetWeightsURL: birefnet,
+                                                       structureFlowWeightsURL: tuned, latentFlowWeightsURL: nil,
+                                                       residency: .staged)
+        XCTAssertEqual(backend.supportedOutputKeys, [NFKOutputMesh, NFKOutputImage])
     }
 
     func testAFullyFrozenModelReportsThatNothingWouldTrain() throws {

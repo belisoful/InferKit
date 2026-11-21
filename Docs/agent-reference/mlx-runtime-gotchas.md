@@ -325,6 +325,13 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     gradient, and the tie trains correctly. A per-path replacement (the convolution swap, LoRA) gives
     each path its own module and unties it for the run. The package ties weights through one path (a
     single `shared` embedding, remapped at load) and holds no module at two paths.
+  - **A recomputed block puts back second handles (2026-11-21).** A custom function whose backward reruns a
+    block places its primals in the block with `update(parameters:)` and then puts the held arrays back.
+    Holding `block.trainableParameters()` for the put-back holds the same objects, which the placement has
+    already overwritten, so the put-back writes the primals over themselves and the block leaves the backward
+    holding the inner function's arrays. `NFKMLXCustomFunction.recomputed(_:_:)` keeps a second handle on
+    each held array (`mlx_array_set`) and puts those back. Wan's and LTX-2's `recomputed` hold the objects;
+    their gradients are unaffected, because the arrays the block keeps carry the held values.
   - **Audit, 2026-09-30.** Every source `update(parameters:)` caller and every test snapshot that
     outlives an update was read; the snapshots copy (`+ 0`, `* 1`, `asArray`) or compare separate
     modules, and none aliased.
@@ -372,6 +379,15 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   learned offsets) and its top-k query selection (`argSort` of the class scores) each pass their
   indices through `stopGradient`.
 
+- **A GPU scatter-add sums colliding updates in an order that changes from run to run (2026-11-21).** The
+  gradient of `take` is a scatter-add, and where several gathered rows read one source row (a sparse
+  convolution's neighbor table, a voxel grid's parents) their contributions add in whatever order the GPU
+  threads reach them. Two plain backwards of a tiny TRELLIS latent flow under `.all` then differ: on voxels two
+  apart, whose parents at half resolution are neighbors, 20 of 84 gradient arrays differed by up to 4.47e-08
+  (the input blocks' convolutions, upstream of the half-resolution grid's scatter); on voxels one apart all 84
+  differed. On voxels four apart, with no occupied neighbor at either resolution, 0 of 84 differed between two
+  plain backwards, two recomputed ones, and the two kinds. A test that holds two backwards bit-equal places
+  its sparse inputs so no scatter collides (`testRecomputingTheLatentFlowsBlocksKeepsItsLossAndGradients`).
 - **A seed fixes the weights; it does not fix the gradients.** `NFKMLXRandom.seed` makes a net's
   initialization exactly reproducible, and a test that reads a training loss looks deterministic
   because of it. It is not. Measured 2026-09-19 on an M1 Max (macOS 26.6.2, Xcode 27), seeding
@@ -948,6 +964,37 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   - **The fix.** `NFKMLXCustomFunction.make` sets the C++ default stream to the caller's stream
     (`StreamOrDevice.default`) for the call and restores the previous one after it. The same chain then takes
     5.4 ms. Every custom function in the package is made through it; a new one is too.
+- **A recomputed block's backward needs two orderings to hold one block at a time (2026-11-21, mlx-swift's mlx
+  0.32).** A block recomputed in the backward pass (MLX's `checkpoint` built as a custom function whose
+  backward reruns it) leaves MLX's scheduler free on two points:
+  - The rerun depends only on the block's saved input, so it can run ahead of the backward of the block after
+    it, and several blocks' attention is held together. Reading the primals through `depends` on the output
+    cotangents makes it wait.
+  - The parameter gradients are side branches the cotangent chain never reads. MLX leaves them until the chain
+    ends and holds every block's backward intermediates for them. Making the input cotangents the backward
+    returns depend on the parameter gradients forms each block's before the block below it starts.
+
+  One LoRA step on 8 blocks of TRELLIS's structure flow at its release's geometry (4,096 tokens, MLX peak):
+
+  | Cotangent wait | Parameter gradients first | Peak |
+  |---|---|---|
+  | yes | yes | 6.032 GB |
+  | yes | no | 9.882 GB |
+  | no | yes | 18.226 GB |
+  | no | no | 9.832 GB |
+
+  With both, the step grows 0.262 GB per block and the released 24-block flow peaks at 7.793 GB, where it was
+  19.54 GB with neither. `NFKMLXCustomFunction.recomputed(_:_:)` applies both. Wan's `recomputed` takes the
+  cotangent wait and LTX-2's neither; both could take the parameter-gradient order and the second-handle
+  put-back, which is open follow-up work. A clipped trainer step evaluating every gradient together
+  (`NFKMLXTrainer`) addresses the same deferral from the other end.
+- **An evaluation inside a gradient's trace keeps everything it computes (2026-11-21).** An array evaluated
+  while `valueAndGrad` traces is not detached from its graph, so every array the evaluation reaches stays held
+  until the trace ends. TRELLIS's sparse convolution evaluated its sum after each of its 27 offsets to bound
+  inference memory; inside the latent flow's training step that held all 24 blocks' forward, and the first step
+  outgrew 30 GB within 20 s. The latent flow's convolutions instead order each offset's gather by `depends` on
+  the sum before it (`evaluatesEachOffset: false`), with the same arithmetic: the step then peaked at 12.171 GB,
+  and at 5.655 GB with the recomputed blocks' backward ordered as the entry before describes.
 - **A debug build's encoding cost is not a release build's (2026-11-04).** `swift test` builds mlx's C++ core
   at `-O0` with libc++'s hardening checks, which verify the whole red-black tree of MLX's buffer cache on each
   insert and erase (`std::__tree_sub_invariant`). A token-by-token decoder, which encodes thousands of small

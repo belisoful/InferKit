@@ -182,7 +182,12 @@ final class NFKTrellisSparseConvolution: Module {
     /// product per offset.
     static let fusedLimit = 1 << 27
 
-    func callAsFunction(_ x: MLXArray, grid: NFKTrellisVoxelGrid, fusedLimit: Int = NFKTrellisSparseConvolution.fusedLimit) -> MLXArray {
+    /// The convolution at `x` on `grid`. Past `fusedLimit` the offsets run one at a time: each product is
+    /// evaluated before the next gather when `evaluatesEachOffset` is set, and otherwise each gather waits on
+    /// the sum before it (MLX's `depends`) with nothing evaluated, which a gradient can trace: an evaluation
+    /// inside a gradient's trace keeps every array it computes until the trace ends.
+    func callAsFunction(_ x: MLXArray, grid: NFKTrellisVoxelGrid, fusedLimit: Int = NFKTrellisSparseConvolution.fusedLimit,
+                        evaluatesEachOffset: Bool = true) -> MLXArray {
         let outputs = weight.dim(0), inputs = weight.dim(4)
         if kernel == 1 {
             return matmul(x, weight.reshaped([outputs, inputs]).transposed()) + bias
@@ -196,9 +201,12 @@ final class NFKTrellisSparseConvolution: Module {
         }
         var out = broadcast(bias, to: [grid.count, outputs])
         for offset in 0 ..< 27 {
-            let gathered = take(padded, table[0..., offset], axis: 0)
+            let source = evaluatesEachOffset || offset == 0 ? padded : depends(input: padded, dependencies: [out])
+            let gathered = take(source, table[0..., offset], axis: 0)
             out = out + matmul(gathered, taps[0..., offset, 0...].transposed())
-            eval(out)
+            if evaluatesEachOffset {
+                eval(out)
+            }
         }
         return out
     }
@@ -210,7 +218,9 @@ final class NFKTrellisSparseConvolutionSlot: Module {
     init(inputChannels: Int, outputChannels: Int, kernel: Int) {
         _conv.wrappedValue = NFKTrellisSparseConvolution(inputChannels: inputChannels, outputChannels: outputChannels, kernel: kernel)
     }
-    func callAsFunction(_ x: MLXArray, grid: NFKTrellisVoxelGrid) -> MLXArray { conv(x, grid: grid) }
+    func callAsFunction(_ x: MLXArray, grid: NFKTrellisVoxelGrid, evaluatesEachOffset: Bool = true) -> MLXArray {
+        conv(x, grid: grid, evaluatesEachOffset: evaluatesEachOffset)
+    }
 }
 
 /// The flow's residual block on voxels: an optional halving or restoring of the grid first, then
@@ -237,11 +247,12 @@ final class NFKTrellisSparseResidualBlock: Module {
 
     var modulationLinear: Linear { embedding[1] as! Linear }
 
-    /// The block at `x` with its two modulation parts `[1, outputChannels]`, scale then shift.
+    /// The block at `x` with its two modulation parts `[1, outputChannels]`, scale then shift. The flow is
+    /// trained through these blocks, so their convolutions evaluate nothing mid-forward.
     func callAsFunction(_ x: MLXArray, grid: NFKTrellisVoxelGrid, modulation: [MLXArray]) -> MLXArray {
-        var h = conv1(silu(norm1(x)), grid: grid)
+        var h = conv1(silu(norm1(x)), grid: grid, evaluatesEachOffset: false)
         h = NFKTrellisAttention.normalized(h, eps: 1e-6) * (1 + modulation[0]) + modulation[1]
-        h = conv2(silu(h), grid: grid)
+        h = conv2(silu(h), grid: grid, evaluatesEachOffset: false)
         return h + (skip.map { $0(x) } ?? x)
     }
 }
@@ -279,6 +290,16 @@ public final class NFKMLXTrellisLatentFlow: Module {
     @ModuleInfo(key: "out_layer") var outputLayer: Linear
 
     public let configuration: NFKMLXTrellisConfiguration
+
+    /// Whether a gradient through the flow recomputes each transformer block's activations from the block's
+    /// inputs in the backward pass (activation checkpointing, MLX's `checkpoint`), as
+    /// ``NFKMLXTrellisStructureFlow/recomputesBlocksInBackward`` does. The residual
+    /// blocks on the voxels hold theirs. Off by default;
+    /// ``NFKMLXTrellisTraining/fineTuneLatentFlow(_:examples:trainable:optimizer:steps:seed:clipGradientNorm:recomputesBlocksInBackward:observer:)``
+    /// sets it for its run.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var recomputesBlocksInBackward = false
 
     init(_ configuration: NFKMLXTrellisConfiguration) {
         self.configuration = configuration
@@ -343,7 +364,7 @@ public final class NFKMLXTrellisLatentFlow: Module {
         h = h + NFKTrellisPositions.absolute(coarse.positions, width: configuration.flowWidth)
         var tokens = expandedDimensions(h, axis: 0)
         for (block, parts) in zip(blocks, cross) {
-            tokens = block(tokens, modulation: parts, context: condition)
+            tokens = block(tokens, modulation: parts, context: condition, recomputing: recomputesBlocksInBackward)
         }
         h = NFKTrellisResampling.restore(concatenated([tokens[0], coarseSkip], axis: 1), parent: parent)
         h = outputBlocks[0](h, grid: grid, modulation: output[0])

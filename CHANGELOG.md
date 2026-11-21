@@ -218,7 +218,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   returns a vertex-colored `NFKMesh` (FlexiCubes) under `NFKOutputMesh` and `NFKGaussianSplats` under
   `NFKOutputGaussianSplats`. The stages load together or one at a time, and the flows quantize.
   `NFKMLXTrellisTraining` fine-tunes either flow (LoRA or full) on the release's objective, the structure
-  stage from images and meshes on device.
+  stage from images and meshes on device. Both recipes recompute each transformer block in the backward pass
+  (`recomputesBlocksInBackward` on either flow), so a LoRA step on the released structure flow fits a 32 GB
+  machine.
 - The native PyTorch reader reads a tensor pickled through `_rebuild_from_type_v2` as a plain `Tensor` or
   `Parameter` (DINOv2's checkpoints), and still refuses a tensor subclass.
 

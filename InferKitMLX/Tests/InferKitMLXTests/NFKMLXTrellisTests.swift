@@ -788,6 +788,199 @@ final class NFKMLXTrellisTests: XCTestCase {
         XCTAssertEqual(maxDifference(flow(x, t: t, condition: example.condition), reloaded(x, t: t, condition: example.condition)), 0)
     }
 
+    /// The flow's LoRA adapters with nonzero `B`, so every adapter array receives a gradient.
+    private func drawAdapters(_ flow: Module, key: UInt64) throws {
+        var adapters = NFKMLXLoRA.adapterArrays(of: flow)
+        for (index, name) in adapters.keys.sorted().enumerated() where name.hasSuffix(".lora_b") {
+            adapters[name] = 0.1 * MLXRandom.normal(adapters[name]!.shape, key: MLXRandom.key(key + UInt64(index)))
+        }
+        XCTAssertGreaterThan(try NFKMLXLoRA.loadAdapters(adapters, into: flow), 0)
+    }
+
+    /// The loss and the gradients of `loss` over the flow, plain and with its blocks recomputed, and the largest
+    /// absolute difference between the two over every gradient array.
+    private func recomputationGap<Flow: Module>(_ flow: Flow, recomputing: (Flow, Bool) -> Void,
+                                                loss: @escaping (Flow) -> MLXArray) throws -> (plain: Float, recomputed: Float, worst: Float, arrays: Int) {
+        func step(_ recomputes: Bool) -> (Float, [String: MLXArray]) {
+            recomputing(flow, recomputes)
+            let (values, gradients) = valueAndGrad(model: flow) { flow, _ in [loss(flow)] }(flow, [])
+            let flat = Dictionary(uniqueKeysWithValues: gradients.flattened())
+            eval([values[0]] + Array(flat.values))
+            return (values[0].item(Float.self), flat)
+        }
+        let plain = step(false), recomputed = step(true)
+        XCTAssertEqual(Set(recomputed.1.keys), Set(plain.1.keys))
+        var worst: Float = 0
+        for (key, value) in plain.1 {
+            worst = max(worst, maxDifference(try XCTUnwrap(recomputed.1[key]), value))
+        }
+        return (plain.0, recomputed.0, worst, plain.1.count)
+    }
+
+    func testRecomputingTheStructureFlowsBlocksKeepsItsLossAndGradients() throws {
+        var configuration = tinyConfiguration()
+        configuration.flowBlocks = 2
+        let condition = MLXRandom.normal([1, 7, 16], key: MLXRandom.key(1)), x0 = MLXRandom.normal([1, 4, 4, 4, 2], key: MLXRandom.key(2))
+        let noise = MLXRandom.normal([1, 4, 4, 4, 2], key: MLXRandom.key(3)), t = MLXArray([Float(0.7)])
+        for trainable in [NFKMLXTrellisTrainable.all, .attentionLoRA(rank: 4, alpha: 4)] {
+            MLXRandom.seed(17)
+            let flow = try NFKMLXTrellis.structureFlow(weightsURL: nil, configuration: configuration)
+            try NFKMLXTrellisTraining.freeze(flow, trainable)
+            if trainable != .all {
+                try drawAdapters(flow, key: 40)
+            }
+            let gap = try recomputationGap(flow, recomputing: { $0.recomputesBlocksInBackward = $1 }) { flow in
+                NFKMLXTrellisObjective.structureLoss(flow, x0: x0, condition: condition, noise: noise, t: t)
+            }
+            report("TRELLIS structure flow recomputed (\(trainable)): loss \(gap.recomputed) against \(gap.plain), "
+                   + "largest gradient difference \(gap.worst) over \(gap.arrays) arrays")
+            XCTAssertGreaterThan(gap.arrays, 0)
+            XCTAssertEqual(gap.recomputed, gap.plain)
+            XCTAssertEqual(gap.worst, 0)
+        }
+    }
+
+    func testRecomputingTheLatentFlowsBlocksKeepsItsLossAndGradients() throws {
+        var configuration = tinyConfiguration()
+        configuration.flowBlocks = 2
+        configuration.latentChannels = 2
+        configuration.latentFlowIOWidth = 32
+        // Voxels four apart: neither they nor their parents at half resolution have an occupied neighbor, so no
+        // gradient sums two contributions in a scatter, whose GPU order varies from run to run.
+        let voxels = grid(side: 8) { x, y, z in x % 4 == 0 && y % 4 == 0 && z % 4 == 0 }
+        let coordinates = voxels.positions
+        let condition = MLXRandom.normal([1, 7, 16], key: MLXRandom.key(1)), x0 = MLXRandom.normal([voxels.count, 2], key: MLXRandom.key(2))
+        let noise = MLXRandom.normal([voxels.count, 2], key: MLXRandom.key(3)), t = MLXArray([Float(0.4)])
+        for trainable in [NFKMLXTrellisTrainable.all, .attentionLoRA(rank: 4, alpha: 4)] {
+            MLXRandom.seed(19)
+            let flow = try NFKMLXTrellis.latentFlow(weightsURL: nil, configuration: configuration)
+            try NFKMLXTrellisTraining.freeze(flow, trainable)
+            if trainable != .all {
+                try drawAdapters(flow, key: 60)
+            }
+            let gap = try recomputationGap(flow, recomputing: { $0.recomputesBlocksInBackward = $1 }) { flow in
+                NFKMLXTrellisObjective.latentLoss(flow, x0: x0, voxels: coordinates, condition: condition, noise: noise, t: t)
+            }
+            report("TRELLIS latent flow recomputed (\(trainable)): loss \(gap.recomputed) against \(gap.plain), "
+                   + "largest gradient difference \(gap.worst) over \(gap.arrays) arrays")
+            XCTAssertGreaterThan(gap.arrays, 0)
+            XCTAssertEqual(gap.recomputed, gap.plain)
+            XCTAssertEqual(gap.worst, 0)
+        }
+    }
+
+    func testTheRecipesRecomputeTheBlocksForTheirRunAndRestoreTheFlowsSetting() throws {
+        var configuration = tinyConfiguration()
+        configuration.latentChannels = 2
+        configuration.latentFlowIOWidth = 32
+        let structure = try NFKMLXTrellis.structureFlow(weightsURL: nil, configuration: configuration)
+        var seen = [Bool]()
+        try NFKMLXTrellisTraining.fineTuneStructureFlow(
+            structure, examples: [NFKMLXTrellisStructureExample(condition: MLXRandom.normal([1, 7, 16]), latent: MLXRandom.normal([1, 4, 4, 4, 2]))],
+            steps: 1) { _ in
+            seen.append(structure.recomputesBlocksInBackward)
+            return true
+        }
+        XCTAssertEqual(seen, [true])
+        XCTAssertFalse(structure.recomputesBlocksInBackward)
+        let voxels = grid(side: 8) { x, y, z in x + y + z < 6 }
+        let latent = try NFKMLXTrellis.latentFlow(weightsURL: nil, configuration: configuration)
+        latent.recomputesBlocksInBackward = true
+        try NFKMLXTrellisTraining.fineTuneLatentFlow(
+            latent, examples: [NFKMLXTrellisLatentExample(condition: MLXRandom.normal([1, 7, 16]), voxels: voxels.positions,
+                                                          latent: MLXRandom.normal([voxels.count, 2]))],
+            steps: 1, recomputesBlocksInBackward: false) { _ in
+            seen.append(latent.recomputesBlocksInBackward)
+            return true
+        }
+        XCTAssertEqual(seen, [true, false])
+        XCTAssertTrue(latent.recomputesBlocksInBackward)
+    }
+
+    /// The process's footprint and MLX's memory, flushed to standard error, and MLX's peak reset.
+    private func memory(_ stage: String, since start: Date) -> Int {
+        var info = rusage_info_v4()
+        _ = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) }
+        }
+        func gigabytes(_ bytes: Int) -> String { String(format: "%.3f", Double(bytes) / 1e9) }
+        let peak = NFKMLXGPU.peakMemory
+        report("MEMORY trellis \(stage): \(String(format: "%.1f", Date().timeIntervalSince(start))) s, footprint "
+               + "\(gigabytes(Int(info.ri_phys_footprint))) GB, lifetime peak \(gigabytes(Int(info.ri_lifetime_max_phys_footprint))) GB, "
+               + "MLX active \(gigabytes(NFKMLXGPU.activeMemory)) GB, peak \(gigabytes(peak)) GB")
+        NFKMLXGPU.resetPeakMemory()
+        return peak
+    }
+
+    // One LoRA step of the default recipe (rank 16 on every attention projection, blocks recomputed) on the
+    // released structure flow, 4,096 tokens a block, on a drawn condition of the release's 1,374 tokens. Then the
+    // release's geometry at 1 and 2 random blocks, plain and recomputed: the plain peak's growth per block is what
+    // the plain backward holds for each block. Loads the release: run it under LMC.
+    func testALoRAStepOnTheReleasedStructureFlowHoldsOneBlockAtATime() throws {
+        let weights = try checkpoint("ss_flow_img_dit_L_16l8_fp16")
+        let example = NFKMLXTrellisStructureExample(condition: MLXRandom.normal([1, 1374, 1024], key: MLXRandom.key(1)),
+                                                    latent: MLXRandom.normal([1, 16, 16, 16, 8], key: MLXRandom.key(2)))
+        eval(example.condition, example.latent)
+        NFKMLXGPU.resetPeakMemory()
+        var start = Date()
+        do {
+            let flow = try NFKMLXTrellis.structureFlow(weightsURL: weights)
+            eval(flow)
+            _ = memory("released structure flow build", since: start)
+            start = Date()
+            let losses = try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: [example], steps: 1, seed: 1)
+            let peak = memory("released structure flow LoRA step (loss \(losses[0]))", since: start)
+            XCTAssertEqual(losses.count, 1)
+            XCTAssertTrue(losses[0].isFinite)
+            // Measured 7.793 GB (2026-11-21); the bar leaves 1.87 GB of margin.
+            XCTAssertLessThan(peak, 9 << 30)
+        }
+        NFKMLXGPU.clearCache()
+        var peaks = [String: Int]()
+        for (blocks, recomputes) in [(1, false), (2, false), (1, true), (2, true)] {
+            var geometry = NFKMLXTrellisConfiguration.released
+            geometry.flowBlocks = blocks
+            MLXRandom.seed(3)
+            let flow = try NFKMLXTrellis.structureFlow(weightsURL: nil, configuration: geometry)
+            eval(flow)
+            NFKMLXGPU.resetPeakMemory()
+            start = Date()
+            try NFKMLXTrellisTraining.fineTuneStructureFlow(flow, examples: [example], steps: 1, seed: 1,
+                                                            recomputesBlocksInBackward: recomputes)
+            peaks["\(blocks) \(recomputes)"] = memory("\(blocks) blocks of the release's geometry, "
+                                                       + (recomputes ? "recomputed" : "plain"), since: start)
+            NFKMLXGPU.clearCache()
+        }
+        report("MEMORY trellis per block: plain \(String(format: "%.3f", Double(peaks["2 false"]! - peaks["1 false"]!) / 1e9)) GB, "
+               + "recomputed \(String(format: "%.3f", Double(peaks["2 true"]! - peaks["1 true"]!) / 1e9)) GB")
+        XCTAssertLessThan(peaks["2 true"]!, peaks["2 false"]!)
+    }
+
+    // One LoRA step of the default recipe on the released latent flow, on the objectives record's structured
+    // latent (17,111 voxels, 2,467 at the blocks' half resolution) and condition. Loads the release: run it
+    // under LMC.
+    func testALoRAStepOnTheReleasedLatentFlowHoldsOneBlockAtATime() throws {
+        let reference = try objectives()
+        let weights = try checkpoint("slat_flow_img_dit_L_64l8p2_fp16")
+        let example = NFKMLXTrellisLatentExample(condition: reference["sparse0.cond"]!,
+                                                 voxels: reference["slat_x0.coords"]![0..., 1...].asType(.int32),
+                                                 latent: reference["slat_x0"]!)
+        eval(example.condition, example.voxels, example.latent)
+        NFKMLXGPU.resetPeakMemory()
+        var start = Date()
+        let flow = try NFKMLXTrellis.latentFlow(weightsURL: weights)
+        eval(flow)
+        _ = memory("released latent flow build", since: start)
+        _ = memory("released latent flow before the step on \(example.voxels.dim(0)) voxels", since: start)
+        start = Date()
+        let losses = try NFKMLXTrellisTraining.fineTuneLatentFlow(flow, examples: [example], steps: 1, seed: 1)
+        let peak = memory("released latent flow LoRA step on \(example.voxels.dim(0)) voxels (loss \(losses[0]))", since: start)
+        XCTAssertEqual(losses.count, 1)
+        XCTAssertTrue(losses[0].isFinite)
+        // Measured 5.655 GB (2026-11-21); the bar leaves 1.86 GB of margin.
+        XCTAssertLessThan(peak, 7 << 30)
+    }
+
     func testTheOccupancyOfAMeshMarksItsSurfaceInTheDecodersFrame() throws {
         // A thin box twice as tall (y, glTF up) as it is wide.
         var positions = [Float]()

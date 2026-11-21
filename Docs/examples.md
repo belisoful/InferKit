@@ -6292,7 +6292,9 @@ let tuned = try NFKMLXTrellisFactory.backend(directoryURL: releaseDirectory, enc
 The defaults are the release trainers': AdamW at 1e-4, the condition dropped to zeros one step in ten, times
 drawn logit-normal around 1, and the gradient clipped to norm 1. `fineTuneLatentFlow` trains the
 appearance stage the same way on structured latents, which the release's toolkit encodes offline from
-rendered views.
+rendered views. Both recipes recompute each transformer block in the backward pass
+(`recomputesBlocksInBackward: true`, the default), so a LoRA step holds one block's attention at a time: on the
+released structure flow it peaks within 7.8 GB and fits a 32 GB machine.
 
 ### Fine-tuning Hi3DGen on your own objects
 
@@ -6319,8 +6321,9 @@ let tuned = try NFKMLXHi3DGenFactory.backend(directoryURL: releaseDirectory, nor
                                              residency: .automatic)
 ```
 
-Stable3DGen publishes no training code, so the objective and its defaults are TRELLIS's trainers'. A step on
-the released structure flow needs more memory than a 32 GB machine holds, as for TRELLIS.
+Stable3DGen publishes no training code, so the objective and its defaults are TRELLIS's trainers'. The recipe
+recomputes each transformer block in the backward pass, as for TRELLIS, so a LoRA step on the released
+structure flow peaks within 7.8 GB and fits a 32 GB machine.
 
 ## Dynamic backend discovery (optional engines)
 

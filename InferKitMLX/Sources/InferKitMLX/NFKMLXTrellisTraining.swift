@@ -214,6 +214,10 @@ public enum NFKMLXTrellisTraining {
     ///   - steps: how many updates.
     ///   - seed: seeds the noise, the times, and the condition dropout.
     ///   - clipGradientNorm: bounds the global gradient norm, the trainers' 1.0 by default.
+    ///   - recomputesBlocksInBackward: recomputes each transformer block's activations in the backward pass
+    ///     (``NFKMLXTrellisStructureFlow/recomputesBlocksInBackward``), on by default; the flow's own setting
+    ///     returns after the run. A step on the released image flow then holds one block's attention over the
+    ///     4,096 structure tokens, where the plain backward holds every block's.
     ///   - observer: receives each step and can end the run early.
     ///
     /// Save with `NFKMLXWeights.save` (after ``NFKMLXLoRA/merge(into:)`` for LoRA, or its adapters alone);
@@ -223,8 +227,12 @@ public enum NFKMLXTrellisTraining {
     public static func fineTuneStructureFlow(_ flow: NFKMLXTrellisStructureFlow, examples: [NFKMLXTrellisStructureExample],
                                              trainable: NFKMLXTrellisTrainable = .attentionLoRA(rank: 16, alpha: 16),
                                              optimizer: Optimizer? = nil, steps: Int, seed: UInt64 = 0, clipGradientNorm: Float? = 1,
+                                             recomputesBlocksInBackward: Bool = true,
                                              observer: NFKMLXTrainer.Observer? = nil) throws -> [Float] {
         guard !examples.isEmpty else { throw NFKMLXError.nothingToTrain("no training examples") }
+        let recomputed = flow.recomputesBlocksInBackward
+        flow.recomputesBlocksInBackward = recomputesBlocksInBackward
+        defer { flow.recomputesBlocksInBackward = recomputed }
         return try NFKMLXFineTune.run(
             flow, freezing: { try freeze(flow, trainable) }, optimizer: optimizer, reference: referenceOptimizer,
             referenceSchedule: { .constant }, steps: steps,
@@ -242,13 +250,20 @@ public enum NFKMLXTrellisTraining {
 
     /// Fine-tunes the latent flow on examples, one structure per step (cycling). The structured latents
     /// come from the release's offline encoder (`dataset_toolkits/encode_latent.py`), which reads DINOv2
-    /// features rendered from 150 views; the arguments follow ``fineTuneStructureFlow(_:examples:trainable:optimizer:steps:seed:clipGradientNorm:observer:)``.
+    /// features rendered from 150 views; the arguments follow ``fineTuneStructureFlow(_:examples:trainable:optimizer:steps:seed:clipGradientNorm:recomputesBlocksInBackward:observer:)``.
+    /// The transformer blocks attend over the structure's voxels at half resolution, whose count follows the
+    /// object, and `recomputesBlocksInBackward` (``NFKMLXTrellisLatentFlow/recomputesBlocksInBackward``, on by
+    /// default) holds one block's attention at a time.
     @discardableResult
     public static func fineTuneLatentFlow(_ flow: NFKMLXTrellisLatentFlow, examples: [NFKMLXTrellisLatentExample],
                                           trainable: NFKMLXTrellisTrainable = .attentionLoRA(rank: 16, alpha: 16),
                                           optimizer: Optimizer? = nil, steps: Int, seed: UInt64 = 0, clipGradientNorm: Float? = 1,
+                                          recomputesBlocksInBackward: Bool = true,
                                           observer: NFKMLXTrainer.Observer? = nil) throws -> [Float] {
         guard !examples.isEmpty else { throw NFKMLXError.nothingToTrain("no training examples") }
+        let recomputed = flow.recomputesBlocksInBackward
+        flow.recomputesBlocksInBackward = recomputesBlocksInBackward
+        defer { flow.recomputesBlocksInBackward = recomputed }
         return try NFKMLXFineTune.run(
             flow, freezing: { try freeze(flow, trainable) }, optimizer: optimizer, reference: referenceOptimizer,
             referenceSchedule: { .constant }, steps: steps,
