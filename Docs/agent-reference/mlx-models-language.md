@@ -850,6 +850,14 @@ attention and feed-forward.
   release's (the text class matches 1 of 386), with no cache, since transformers refuses a cache with
   no attention layer to measure. `testQwen4ExpCutLinearAttentionStepsMatchTheBFloat16Reference` holds
   each step of the first linear attention on the reference's own inputs, from the function probe.
+  **Catalog revision (2026-11-21).** The catalog measures `Qwen/Qwen3.8-Flash-Next` at `de4b8e4d`, the
+  revision of the validation cuts. Qwen's `812d96e1` (2026-11-07, "Add a response template and generation
+  tags", after the README-only `7ecef55a`) changes `chat_template.jinja` (8,952 to 9,004 bytes) and
+  `tokenizer_config.json` (17,928 to 9,984 bytes; the earlier one embeds the 8,952-byte template), and no
+  weight or `config.json`. The backend reads both: the template renders a message list, and
+  `tokenizer_config.json` gives it `bos_token` and `eos_token`. The measured revision stays until the two
+  files are compared with the earlier ones and the release's template renders through
+  `NFKMLXChatTemplateEngine`, which parses `{% generation %}` blocks.
 - `NFKMLXDeepSeek` — the DeepSeek V4 decoder (`DeepseekV4ForCausalLM`): Multi-head Latent Attention
   over a mixture of experts, a third architecture family beside the dense stack and the hybrid.
   Its arithmetic is measured — at a tiny all-sliding configuration against transformers' own

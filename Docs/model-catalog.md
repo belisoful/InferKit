@@ -1409,6 +1409,9 @@ swift run inferkit-catalog sources
 
 # Measure every source again and regenerate the table (from the repository root)
 python3 -I Tools/catalog/measure.py
+
+# Measure only the named models, keeping every other row of the table
+python3 -I Tools/catalog/measure.py --models ltx-2.5,ltx-2.5-full
 ```
 
 - `inferkit-catalog` is an executable target of the MLX package that no product names, so a consumer of
@@ -1418,6 +1421,11 @@ python3 -I Tools/catalog/measure.py
   and `/api/models/{repo}/revision/{revision}` for each Hugging Face source, two HTTP range requests per
   safetensors file for its header, and a HEAD request for each URL file. It fetches small JSON files
   whole (the shard indexes and `config.json`) and no weight file. It sends `HF_TOKEN` when the
-  environment sets it.
+  environment sets it, and stops before measuring when the hub refuses the token, since an expired token
+  draws a 401 from every repository.
+- A source that names no revision is measured at the repository's default branch, so a full run takes
+  each such repository's newest commit. `--models` re-measures the named models and keeps the other rows
+  as the table holds them; a file row only the named models list and their repositories no longer serve
+  leaves the table.
 - The manifest writer sorts keys and models, and the measurements carry no date or machine path, so the
   same catalog writes the same bytes on every machine.

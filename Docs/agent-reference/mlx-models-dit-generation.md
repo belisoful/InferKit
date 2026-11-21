@@ -412,7 +412,9 @@ arithmetic as before.
   0.9999999999999952 from both streams, 0.9999999999999999 video alone, 0.9999999999999922 audio alone, and
   all 60 frame counts of the reference's own `predict_num_frames` sweep equal. Released weights
   (`ltx2_real_duration_head`, float32, connector-shaped unit-RMS inputs): 3.6821983 s against 3.682198 s,
-  video alone 3.6474862 against 3.6474857, audio alone 3.697795 against 3.6977944.
+  video alone 3.6474862 against 3.6474857, audio alone 3.697795 against 3.6977944. The catalog's file rows
+  for `duration_head/` and `transformer_full/` are measured at `4791a110`, the revision the variant figures
+  already counted them at; `Lightricks/LTX-2.5-Diffusers` served both folders there.
 
   **The prompt enhancer** (`NFKMLXLTX2PromptEnhancer`, LTX-2.5's `prompt_enhancer/` with `processor/`, a
   Gemma 4 E2B read by `NFKMLXGemmaLanguage`). Off by default (`enhancesPrompts`, the request key
@@ -1041,7 +1043,9 @@ arithmetic as before.
   against diffusers on a tiny-spatial input (4 image tokens) at the bfloat16 it ships in: velocity
   0.9999831167429072 (`run_reference.py flux_real`, `IK_PARITY_FLUX_REAL` / `IK_VAL_FLUX_SCHNELL`, from the
   ungated `cocktailpeanut/xulf-s` mirror). The 12B transformer needs ~24 GB resident, so that test runs
-  where the machine can hold it, not by default.
+  where the machine can hold it, not by default. The catalog measures `black-forest-labs/FLUX.1-dev` at
+  `45d95c49` and `FLUX.1-schnell` at `169573f5`, Black Forest Labs' commits of 2026-11-19, which change
+  `README.md` and no file the download fetches (`3de623fc` and `741f7c3c` before them).
   **Held adapters (2026-11-05).** `NFKMLXFluxAdapters.hold` reads diffusers' `transformer.<layer>.lora_A` /
   `lora_B` (scaled by `lora_adapter_metadata` or a layer's `alpha`, else 1), kohya's `lora_unet_<layer>` and
   Black Forest Labs' `diffusion_model.<layer>`. The last two name the original model, through
@@ -1375,7 +1379,9 @@ arithmetic as before.
   `InferKit/validation/flux2-dev`,
   and neither has been run: [dev]'s transformer is 60 GB at bfloat16, larger than a 32 GB machine
   loads whole. Customization is offline-only on the same
-  grounds as FLUX.1 and SDXL.
+  grounds as FLUX.1 and SDXL. The catalog measures the klein 9B at `1498bcb8`, the base 9B at `8e4154e4`,
+  and `klein-9b-kv` at `6c882f3f`, Black Forest Labs' commits of 2026-11-19, which change `README.md` and
+  no file the download fetches (`92196c8e`, `32773329`, and `a6dfb36e` before them).
 
 - `NFKMLXSD3Pipeline` / `NFKMLXFluxPipeline` — the SD3 and FLUX text-to-image pipeline glue, chaining
   the transformer (denoised over the rectified-flow schedule) and the autoencoder. The caller supplies

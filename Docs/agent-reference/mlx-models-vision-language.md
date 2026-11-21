@@ -60,7 +60,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (256M: vision 0.9999999999398742, connector 0.9999999999894968, logits 0.9999999999585247, argmax
   1140/1140; 2.2B: vision 0.9999999997401828, connector 0.9999999998995716, logits 0.9999999959030899,
   argmax 1428/1429, where the one disagreeing position is a 1.4e-05 tie in the REFERENCE's own logits
-  and the test asserts that gap rather than the token). The 2.2B config states no
+  and the test asserts that gap rather than the token). The catalog measures the 256M, 500M, and 2.2B at
+  `9cda5c16`, `4cde9d20`, and `be92141c` (2026-11-12 and 11-13, "Chat template: render string `content`
+  instead of dropping it"), which change `chat_template.json` and the `chat_template` of
+  `tokenizer_config.json`, files the catalog's download does not fetch (`067788b1`, `7b375e1b`, and
+  `482adb53` before them). The backend sends a text message as parts (`chatTextAsParts`). The 2.2B config states no
   `num_attention_heads`, so the language reader derives the head count from `head_dim` instead of
   falling back to 16; transformers derives 32, and the wrong count would have loaded silently.
 - `NFKMLXQwen3VLVisionNet` / `NFKMLXQwen3VL` — the vision tower of a **second VLM**, Qwen3-VL-2B, and a

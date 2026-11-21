@@ -171,6 +171,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   subsampler (ReLU at 1, 4, 7) and the joint (ReLU 0, Dropout 1, Linear 2) are kept with marker modules
   so every other key matches with no remap; the 4-D and 3-D convolutions transpose to channels-last.
   Weights: `nvidia/parakeet-tdt-0.6b-v2` (2.47 GB `.nemo`; v3 and the CTC release are the same encoder).
+  The catalog measures it at `c00e3877` (2026-11-19), whose `README.md` points to v3; the `.nemo` is the
+  file `ae9ad070` served.
 - `NFKMLXNemotronASR` / `NFKMLXNemotronASRNet` / `NFKMLXNemotronASRBackend` (`@objc`) — **Nemotron ASR
   Streaming 0.6B** (`nvidia/nemotron-speech-streaming-en-0.6b` at `ebe59e5a`, NVIDIA Open Model License),
   the live recognizer: NVIDIA's cache-aware streaming FastConformer with an RNN-T transducer, ported from

@@ -875,7 +875,15 @@ The measurement:
   plan's precisions and `NFKMLXResidencyBudget.leastWorkingSet(holding:)` of the largest stage. A
   model's requirement is the least of its variants' figures, set after the derivation.
 - Rerun the script after adding a source or changing a file list. It runs in a few minutes on a fresh
-  network and sends `HF_TOKEN` when set, which measures the gated repositories' tensor headers.
+  network and sends `HF_TOKEN` when set, which measures the gated repositories' tensor headers. It stops
+  when the hub refuses the token (an expired token draws a 401 from public repositories too).
+- A change re-measures its own models with `--models <name>,…`, which keeps every other row. A full run
+  measures each source without a revision at its repository's newest commit, so it moves other models'
+  rows wherever their publishers committed since. A moved row that changes only files the download does
+  not fetch (a README) takes the new commit; one that changes a file a loader reads (a tokenizer, a chat
+  template) keeps the measured commit until the store holds the new file and its tests pass on it, and the
+  model's entry names the commit it waits on. `NFKMLXMeasuredFile` rows are looked up by key, so their
+  order in the table does not matter; the script writes them sorted, 25 rows a literal.
 
 Memory facts, load options, and presets (`NFKMLXCatalogOptions.swift`, 2026-10-15):
 

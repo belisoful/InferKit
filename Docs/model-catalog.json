@@ -9504,7 +9504,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "3de623fc3c33e44ffbe2bad470d0f45bccf2eb21",
+            "measuredRevision" : "45d95c497444bbaebe766e1528792fc9158c0c3a",
             "repository" : "black-forest-labs/FLUX.1-dev",
             "requiresConversion" : false
           }
@@ -9792,7 +9792,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "741f7c3ce8b383c54771c7003378a50191e9efe9",
+            "measuredRevision" : "169573f54945f633efbe126a40a5676b4228363c",
             "repository" : "black-forest-labs/FLUX.1-schnell",
             "requiresConversion" : false
           }
@@ -10506,7 +10506,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "92196c8e11f7b6cf2b7493e037d8c5345c559216",
+            "measuredRevision" : "1498bcb8aaebb230bae82c34b02ecc4087beebac",
             "repository" : "black-forest-labs/FLUX.2-klein-9B",
             "requiresConversion" : false
           }
@@ -10863,7 +10863,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "a6dfb36eca3a3906eb2fd460795adfb844e5fcce",
+            "measuredRevision" : "6c882f3fd7da58b360c43079d32affdc953d8670",
             "repository" : "black-forest-labs/FLUX.2-klein-9b-kv",
             "requiresConversion" : false
           }
@@ -11577,7 +11577,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "32773329fbe7e81a90ef971740e8ba4b0364ecf3",
+            "measuredRevision" : "8e4154e4c94c6eb08644d0761d404e1c28d325c2",
             "repository" : "black-forest-labs/FLUX.2-klein-base-9B",
             "requiresConversion" : false
           }
@@ -27853,14 +27853,17 @@
                 "sha256" : "a3b86da4299e2131d2c0ee4ee218f8475b95dd199ddc26c94a62acea60f7e3c7"
               },
               {
+                "bytes" : 251,
                 "optional" : false,
                 "path" : "duration_head/config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 3808466,
                 "optional" : false,
                 "path" : "duration_head/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "282732cae8d2fdfdaa5b0818920513904eb1a443e65ac92f352b4ca0c9184c9a"
               }
             ],
             "kind" : "huggingface",
@@ -28393,6 +28396,7 @@
                 "role" : "weights"
               },
               {
+                "bytes" : 1440,
                 "optional" : false,
                 "path" : "transformer_full/config.json",
                 "role" : "config"
@@ -28403,6 +28407,7 @@
                 "role" : "weights"
               },
               {
+                "bytes" : 446505,
                 "optional" : true,
                 "path" : "transformer_full/diffusion_pytorch_model.safetensors.index.json",
                 "role" : "weights"
@@ -28486,14 +28491,17 @@
                 "sha256" : "a3b86da4299e2131d2c0ee4ee218f8475b95dd199ddc26c94a62acea60f7e3c7"
               },
               {
+                "bytes" : 251,
                 "optional" : false,
                 "path" : "duration_head/config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 3808466,
                 "optional" : false,
                 "path" : "duration_head/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "282732cae8d2fdfdaa5b0818920513904eb1a443e65ac92f352b4ca0c9184c9a"
               }
             ],
             "kind" : "huggingface",
@@ -37699,7 +37707,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "file",
-            "measuredRevision" : "ae9ad07059c7c739ffaf932226a8fe64ae2620b0",
+            "measuredRevision" : "c00e38779b028d48624b08ab3d9909952db43901",
             "repository" : "nvidia/parakeet-tdt-0.6b-v2",
             "requiresConversion" : false
           }
@@ -66754,7 +66762,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "482adb537c021c86670beed01cd58990d01e72e4",
+            "measuredRevision" : "be92141c8d0ceb98596a923c308ac2bbb4a7c466",
             "repository" : "HuggingFaceTB/SmolVLM2-2.2B-Instruct",
             "requiresConversion" : false
           }
@@ -66981,7 +66989,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "067788b187b95ebe7b2e040b3e4299e342e5b8fd",
+            "measuredRevision" : "9cda5c165b28c68a52e9bb542d2b89f0f6963709",
             "repository" : "HuggingFaceTB/SmolVLM2-256M-Video-Instruct",
             "requiresConversion" : false
           }
@@ -67208,7 +67216,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "7b375e1b73b11138ff12fe22c8f2822d8fe03467",
+            "measuredRevision" : "4cde9d208e19519c36917aa170fffc7e381aa0ad",
             "repository" : "HuggingFaceTB/SmolVLM2-500M-Video-Instruct",
             "requiresConversion" : false
           }

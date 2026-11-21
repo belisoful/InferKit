@@ -575,6 +575,14 @@ quarter of the floor.
   separate weights; an earlier note wrongly called it text-only. The oracle and the Swift side each load
   the sub-towers selectively from that one checkpoint (`model.vision_tower.` / `model.embed_vision.` /
   `model.language_model.`), so neither has to hold the whole tri-modal graph at float32 at once.
+- **Catalog revisions (2026-11-21).** The catalog measures `google/gemma-4-E2B-it`, `gemma-4-E4B-it`, and
+  `gemma-4-12B-it` at `3e22461f`, `ee0ef602`, and `707f0a3b`, the `tokenizer.json` the validation store
+  holds (SHA-256 `cc8d3a0c…`, the same file in all three). Google's next commits (`4adf1574` and
+  `4ecc2ba6` on 2026-11-03, `43c9d014` on 2026-10-30, "Remediate 233 / 219 / 210 glitch tokens in
+  tokenizer.json") change `tokenizer.json` and no other file. `NFKMLXGemmaTokenizer` reads that file, so
+  the measured revisions stay until the new tokenizers are in the store and the tests that tokenize a
+  Gemma 4 prompt pass on them. A download follows the default branch and fetches the new file. LTX-2.5's
+  `tokenizer/tokenizer.json` is the earlier file.
 - Nothing remains in the Gemma 4 family. The four architectures, both towers' full forwards (the
   optional vision standardization included), the input adapters, the fusion, and the
   conditional-generation chain are all at reference parity on the released weights; the text decoders

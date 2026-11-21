@@ -3,10 +3,13 @@
 
 Run from the repository root with the standard library only:
 
-    python3 -I Tools/catalog/measure.py [--sources FILE] [--output FILE] [--jobs N]
+    python3 -I Tools/catalog/measure.py [--sources FILE] [--output FILE] [--jobs N] [--models NAMES]
 
 The sources are the variants `swift run inferkit-catalog sources` lists (or the JSON file `--sources`
-names). For a Hugging Face source the script reads the repository's file tree
+names). `--models` measures only the named models' variants and keeps every other row the output file
+holds, so a change re-measures its own models without taking upstream changes to the rest. A source
+that names no revision is measured at the repository's default branch, so a full run records each such
+repository's current head. For a Hugging Face source the script reads the repository's file tree
 (`/api/models/{repo}/tree/{revision}?recursive=1`), which gives each file's size, the SHA-256 Git LFS
 records, and, through `/api/models/{repo}/revision/{revision}`, the commit the revision resolves to.
 It reads each safetensors file's header by two HTTP range requests (`shapes.header`) to sum the
@@ -15,7 +18,8 @@ top-level directory, the repeated layers with the largest of them and their tota
 bytes, and the elements a runtime weight quantization packs. It reads the repository's `config.json` for the
 geometry the key-value cache follows. A URL source gets a HEAD request for its Content-Length. A Google Drive page serves no size and is recorded as
 unmeasurable; a page source, whose files are downloaded by hand, is not measured. `HF_TOKEN` is sent when set; a repository that refuses the listing without it is
-recorded as gated.
+recorded as gated. The hub answers 401 to every request that carries an expired token, public
+repositories included, so the script checks the token first and stops when the hub refuses it.
 
 The download a variant makes is the one the package's download code makes: every required file,
 each optional file the repository serves, the first weight candidate a directory serves, and the
@@ -109,6 +113,22 @@ class _HeadRedirects(urllib.request.HTTPRedirectHandler):
 
 
 _head_opener = urllib.request.build_opener(_HeadRedirects)
+
+
+def refused_token():
+    """The reason the hub refuses the `HF_TOKEN` the environment sets, or None where it accepts it or
+    none is set."""
+    if not os.environ.get("HF_TOKEN"):
+        return None
+    request = urllib.request.Request(f"{HUB}/api/whoami-v2")
+    _token_header(request)
+    try:
+        with urllib.request.urlopen(request, timeout=60):
+            return None
+    except urllib.error.HTTPError as error:
+        if error.code == 401:
+            return "the hub refuses HF_TOKEN (HTTP 401 on /api/whoami-v2)"
+        raise
 
 
 def head_length(url):
@@ -614,22 +634,85 @@ def swift_table(name, element_type, elements):
     return lines
 
 
-def write_swift(rows, measurements, path):
-    files = []
-    for (location, revision, file_path) in sorted(rows, key=lambda key: (key[0], key[1] or "", key[2])):
-        size, sha = rows[(location, revision, file_path)]
-        files.append(f"NFKMLXMeasuredFile(location: {swift_string(location)}, revision: {swift_string(revision)}, "
-                     f"path: {swift_string(file_path)}, bytes: {size}, sha256: {swift_string(sha)})")
-    variants = []
-    for m in sorted(measurements, key=lambda m: (m.model, m.variant)):
-        variants.append(f"NFKMLXMeasuredVariant(model: {swift_string(m.model)}, variant: {swift_string(m.variant)}, "
-                        f"status: .{m.status}, note: {swift_string(m.note)}, commit: {swift_string(m.commit)}, "
-                        f"downloadBytes: {swift_optional_int(m.download_bytes)}, "
-                        f"parameterCount: {swift_optional_int(m.parameter_count)}, "
-                        f"tensorBytes: {swift_nested_dictionary(m.tensor_bytes)}, "
-                        f"opaqueBytes: {swift_int_dictionary(m.opaque_bytes)}"
-                        f"{swift_structure(m)})")
-    write_swift_tables(files, variants, path)
+def file_rows(rows):
+    """(location, revision, path) -> the Swift row of each measured file."""
+    return {key: f"NFKMLXMeasuredFile(location: {swift_string(key[0])}, revision: {swift_string(key[1])}, "
+                 f"path: {swift_string(key[2])}, bytes: {size}, sha256: {swift_string(sha)})"
+            for key, (size, sha) in rows.items()}
+
+
+def variant_rows(measurements):
+    """(model, variant) -> the Swift row of each measurement."""
+    return {(m.model, m.variant): f"NFKMLXMeasuredVariant(model: {swift_string(m.model)}, variant: {swift_string(m.variant)}, "
+                                  f"status: .{m.status}, note: {swift_string(m.note)}, commit: {swift_string(m.commit)}, "
+                                  f"downloadBytes: {swift_optional_int(m.download_bytes)}, "
+                                  f"parameterCount: {swift_optional_int(m.parameter_count)}, "
+                                  f"tensorBytes: {swift_nested_dictionary(m.tensor_bytes)}, "
+                                  f"opaqueBytes: {swift_int_dictionary(m.opaque_bytes)}"
+                                  f"{swift_structure(m)})"
+            for m in measurements}
+
+
+def write_swift(files, variants, path):
+    """Writes the file rows and the variant rows, each keyed as `file_rows` and `variant_rows` key them,
+    in the order of their keys."""
+    ordered_files = [files[key] for key in sorted(files, key=lambda key: (key[0], key[1] or "", key[2]))]
+    ordered_variants = [variants[key] for key in sorted(variants)]
+    write_swift_tables(ordered_files, ordered_variants, path)
+
+
+SWIFT_STRING = r'"((?:[^"\\]|\\.)*)"'
+SWIFT_OPTIONAL_STRING = r'(nil|' + SWIFT_STRING + r')'
+FILE_ROW = re.compile(r"\s*(NFKMLXMeasuredFile\(location: " + SWIFT_STRING + r", revision: " + SWIFT_OPTIONAL_STRING
+                      + r", path: " + SWIFT_STRING + r",.*\)),$")
+VARIANT_ROW = re.compile(r"\s*(NFKMLXMeasuredVariant\(model: " + SWIFT_STRING + r", variant: " + SWIFT_STRING + r",.*\)),$")
+
+
+def swift_unstring(body):
+    """The text of a Swift string literal's body as `swift_string` writes it."""
+    return re.sub(r"\\u\{([0-9a-f]+)\}|\\(.)",
+                  lambda match: chr(int(match.group(1), 16)) if match.group(1) else match.group(2), body)
+
+
+def read_swift_rows(path):
+    """The file rows and the variant rows a generated table holds, keyed as `file_rows` and
+    `variant_rows` key them."""
+    files, variants = {}, {}
+    for line in pathlib.Path(path).read_text().splitlines():
+        match = FILE_ROW.fullmatch(line)
+        if match:
+            revision = None if match.group(3) == "nil" else swift_unstring(match.group(4))
+            files[(swift_unstring(match.group(2)), revision, swift_unstring(match.group(5)))] = match.group(1)
+            continue
+        match = VARIANT_ROW.fullmatch(line)
+        if match:
+            variants[(swift_unstring(match.group(2)), swift_unstring(match.group(3)))] = match.group(1)
+    return files, variants
+
+
+def listed_file_keys(sources):
+    """The file-row keys of every file the sources list."""
+    keys = set()
+    for source in sources:
+        for file in source.get("files") or []:
+            location, revision, is_url = file_location(source, file)
+            keys.add((location, None if is_url else revision, file["path"]))
+    return keys
+
+
+def merged_rows(path, sources, measured_sources, files, variants):
+    """The rows of the table at `path` with the measured sources' rows replaced by `files` and
+    `variants`. A file row the measured sources list and no other source lists is dropped, so a file a
+    repository stopped serving leaves the table."""
+    kept_files, kept_variants = read_swift_rows(path)
+    measured = {(source["model"], source["variant"]) for source in measured_sources}
+    others = [source for source in sources if (source["model"], source["variant"]) not in measured]
+    remeasured = listed_file_keys(measured_sources) - listed_file_keys(others)
+    merged_files = {key: row for key, row in kept_files.items() if key not in remeasured}
+    merged_files.update(files)
+    merged_variants = {key: row for key, row in kept_variants.items() if key not in measured}
+    merged_variants.update(variants)
+    return merged_files, merged_variants
 
 
 def write_swift_tables(files, variants, path):
@@ -667,19 +750,37 @@ def main(argv):
     parser.add_argument("--sources", help="the JSON `inferkit-catalog sources` wrote; runs the tool when absent")
     parser.add_argument("--output", default=str(OUTPUT), help="the Swift file to write")
     parser.add_argument("--jobs", type=int, default=6, help="concurrent requests")
+    parser.add_argument("--models", help="comma-separated model names: measure only their variants and keep "
+                                         "every other row the output file holds")
     arguments = parser.parse_args(argv[1:])
 
+    refusal = refused_token()
+    if refusal:
+        print(f"measure.py: {refusal}; refresh the token or unset HF_TOKEN", file=sys.stderr)
+        return 1
     sources = load_sources(arguments.sources)
+    measured_sources = sources
+    if arguments.models:
+        wanted = {name.strip() for name in arguments.models.split(",") if name.strip()}
+        unknown = sorted(wanted - {source["model"] for source in sources})
+        if unknown:
+            parser.error("no source names the model " + ", ".join(unknown))
+        if not pathlib.Path(arguments.output).exists():
+            parser.error(f"--models keeps the other rows of {arguments.output}, which does not exist")
+        measured_sources = [source for source in sources if source["model"] in wanted]
     rows = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=arguments.jobs) as pool:
-        futures = [pool.submit(measure, source, rows) for source in sources]
+        futures = [pool.submit(measure, source, rows) for source in measured_sources]
         measurements = []
         for done, future in enumerate(concurrent.futures.as_completed(futures), 1):
             measurement = future.result()
             measurements.append(measurement)
             if done % 25 == 0:
                 print(f"{done}/{len(futures)} variants", file=sys.stderr)
-    write_swift(rows, measurements, pathlib.Path(arguments.output))
+    files, variants = file_rows(rows), variant_rows(measurements)
+    if arguments.models:
+        files, variants = merged_rows(arguments.output, sources, measured_sources, files, variants)
+    write_swift(files, variants, pathlib.Path(arguments.output))
 
     by_status = {}
     for m in measurements:
