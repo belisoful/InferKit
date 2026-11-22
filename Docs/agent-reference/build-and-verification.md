@@ -16,9 +16,9 @@ xcodebuild build -scheme InferKit -destination 'generic/platform=iOS'
 # tvOS goes through the SDK, not a destination — see the Full Check below.
 xcodebuild build -workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64
 
-# The MLX companion (Apple Silicon, macOS 14 / iOS 17) is a separate package. SwiftPM cannot
-# compile Metal shaders, so place MLX's Metal library beside the test binary first or the
-# MLX-dependent tests skip.
+# The MLX companion (Apple Silicon, macOS 14 / iOS 17) is a separate package. Under Xcode 27
+# SwiftPM bundles MLX's Metal library and the script checks that nothing shadows it; under an
+# earlier SwiftPM the script places the library, or the MLX-dependent tests skip.
 cd InferKitMLX && swift build --build-tests && ../Tools/mlx-metallib.sh && swift test
 
 # The Foundation Models companion (macOS 26 / iOS 26) is a separate package
@@ -60,7 +60,9 @@ which `.build/debug` links to), so a plain `swift test` runs the MLX-dependent t
 `Tools/mlx-metallib.sh`: `NFKMLXTrainerTests` ran all 21 tests, none skipped. The script recognizes
 that layout and exits without placing anything; for a toolchain that builds the single
 `InferKitMLXPackageTests.xctest`, it still compiles the kernels and places `mlx.metallib`. Measured
-2026-09-15 with Xcode 27.0 (27A266a).
+2026-09-15 with Xcode 27.0 (27A266a). The script compiles with SwiftPM's recipe and exits 1 when a
+colocated `mlx.metallib` would shadow a bundle's `default.metallib`; the measurements are in
+`mlx-runtime-gotchas.md`.
 
 Xcode 27's Swift 6.4 optimizer aborts the compile of
 `NFKMLXJSONSchemaConstraint.startValue(_:node:byte:)`. Its CopyPropagation pass fails its own
@@ -178,14 +180,14 @@ The causes and their fixes:
 3. `xcodebuild analyze -scheme InferKit -derivedDataPath <FRESH DIR>` — **0 analyzer issues**. Use a
    fresh derived-data path: the analyzer is cached, and reusing one silently reports nothing.
 4. `InferKitMLX/` `swift build` + `swift test` when a change touches the MLX companion. SwiftPM
-   cannot compile Metal shaders, so a plain build carries no `default.metallib` and MLX aborts the
-   Process at the first array it has to evaluate, with "0 failures" still printed for the classes
-   that ran before it, so a crash there is a truncated run rather than a red one. The summary line and
-   the exit code disagree for a second reason too, and this one is silent: a test can fail while
-   every `Executed N tests` line in the log says "0 failures", because those lines are per test
-   SUITE and xctest prints one per suite that passed. **Read `swift test`'s own exit code, and read
-   it without a pipe.** `swift test | grep … ; echo $?` reports the status of the LAST stage of the
-   pipeline, which is the grep, and is 0 whatever the tests did. Redirect instead:
+   before Xcode 27 compiles no Metal shaders, so its build carries no `default.metallib` and MLX
+   aborts the Process at the first array it has to evaluate, with "0 failures" still printed for the
+   classes that ran before it, so a crash there is a truncated run rather than a red one. The
+   summary line and the exit code disagree for a second reason too, and this one is silent: a test
+   can fail while every `Executed N tests` line in the log says "0 failures", because those lines
+   are per test SUITE and xctest prints one per suite that passed. **Read `swift test`'s own exit
+   code, and read it without a pipe.** `swift test | grep … ; echo $?` reports the status of the
+   LAST stage of the pipeline, which is the grep, and is 0 whatever the tests did. Redirect instead:
 
    ```bash
    swift test > /tmp/suite.log 2>&1; code=$?; echo "EXIT $code"
@@ -194,10 +196,12 @@ The causes and their fixes:
 
    A run reported here as green on the strength of a piped summary is not evidence. This mistake
    produced two such reports on 2026-09-21, both of which had to be withdrawn and re-run. **Run
-   `Tools/mlx-metallib.sh` first**: it compiles mlx-swift's nine kernels with `xcrun metal` (the same
-   sources Xcode's build system compiles) and places `mlx.metallib` beside the SwiftPM test binary,
-   which is the first place MLX's loader looks, before any bundle. `swift test` then runs every test
-   in all three test targets (the file survives a relink).
+   `Tools/mlx-metallib.sh` first**: where SwiftPM bundles no `default.metallib`, it compiles
+   mlx-swift's kernels with SwiftPM's recipe and places `mlx.metallib` beside the SwiftPM test
+   binary, which is the first place MLX's loader looks, before any bundle. `swift test` then runs
+   every test in all three test targets (the file survives a relink). Where SwiftPM bundles the
+   library (Xcode 27), the script places nothing and fails when a colocated `mlx.metallib` differs
+   from it.
 
    **How long the suite takes, and when to re-record it.** Measured 2026-09-22 on an M1 Max against
    mlx core 0.32.2: 1423 tests, 0 failures, **28 minutes** (1664 s). The figure covers test EXECUTION

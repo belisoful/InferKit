@@ -10,12 +10,53 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   stream request initializes the scheduler, which constructs the Metal device, so even
   `mlx_default_cpu_stream_new` throws without it (measured: a probe pinned to `Device(cpu, 0)` aborts
   with the library absent and runs convolutions and a full backend inference with it present). It is
-  built and bundled by the **Xcode build system**
-  (`mlx-swift_Cmlx.bundle/Contents/Resources/`) but a plain CLI `swift build`/`swift test` does not —
-  so MLX array evaluation aborts under `swift test`. Run MLX-eval tests via
+  built and bundled by the **Xcode build system** (`mlx-swift_Cmlx.bundle/Contents/Resources/`), and
+  by SwiftPM from Xcode 27 on. An earlier CLI `swift build`/`swift test` does not build it, so MLX
+  array evaluation aborts under its `swift test`. Run MLX-eval tests there via
   `xcodebuild test -scheme InferKitMLX -destination 'platform=macOS' -skipPackagePluginValidation`
   (the `-skip…` flag gets past the unrelated `CudaBuild` plugin's validation). The matting round-trip
   tests auto-detect this: they skip when the test bundle is under `.build` and run under xcodebuild.
+- Two Metal libraries built from the same mlx-swift sources compute different numbers. Xcode 27's
+  SwiftPM compiles mlx-swift's kernels as a package resource with Xcode's Metal defaults, which
+  include fast math: its build description's `CompileMetalFile` commands pass
+  `-fmetal-math-mode=fast -fmetal-math-fp32-functions=fast`. mlx's CMake build and mlx-swift's own
+  Xcode project pass `-fno-fast-math`, and `Tools/mlx-metallib.sh` and
+  `Tools/background-probe/build.sh` did until 2026-11-21. Every parity figure in this repository
+  comes from SwiftPM's library.
+- MLX's loader (`device.cpp`, `load_default_library`) takes `mlx.metallib` beside the binary MLX is
+  linked into, then `Resources/mlx.metallib` beside it, before any `mlx-swift_Cmlx.bundle`. Under
+  `swift test` that binary is the test bundle's executable, so a library copied into
+  `<target>.xctest/Contents/MacOS` replaces the bundle's `default.metallib` with no message.
+  Measured 2026-11-21 on main 6d8610ee with a hand-compiled `mlx.metallib` there:
+  - `NFKMLXTrellisTests/testTextLargeMatchesReference` → `TRELLIS floor ss_latent` port 6.796e-11,
+    ratio 2.02, and the test fails. SwiftPM's library gives 4.7746e-11, ratio 1.4225.
+  - `NFKMLXHi3DGenTests/testBothSamplersMatchReferenceFromTheRecordedNoise` → structure sampling
+    cosine 0.9999999999957779, under its bar of 0.999999999996, and the test fails. SwiftPM's
+    library gives 0.999999999998655.
+- `Tools/mlx-metallib-recipe.sh` holds SwiftPM's compile and link command lines, which both scripts
+  source. Measured 2026-11-21 with mlx-swift 90194196, Metal 32023.921, and Xcode 27.0 (27A266a):
+  - The recipe's library is byte-identical to SwiftPM's `default.metallib` (SHA-256 `282550b0…`).
+  - The former recipe's library is `b3bb7c96…`. With its math flag swapped for SwiftPM's, it
+    compiles AIR byte-identical to SwiftPM's for all ten kernels, so the math mode is its one
+    compile difference. Its other flags (`-x metal`, `-I`, the warning suppressions,
+    `-mmacosx-version-min=14.0`) change no byte.
+  - Linking identical AIR with `xcrun metallib` instead of the `metal` driver SwiftPM uses gives
+    another container (`da508fc4…`), so the recipe links with the driver.
+  - The AIR embeds each source's path. A byte comparison holds only between builds from the same
+    checkout path, so the script compiles from the kernels' physical path, as SwiftPM does.
+  - The release configuration's Metal command lines are unrecorded. The script uses the same recipe
+    there and compares the result with a release SwiftPM library when the build directory has one.
+- `Tools/mlx-metallib.sh` guards the library a test run loads:
+  - A test bundle's colocated `mlx.metallib` or `Resources/mlx.metallib` differs from its
+    `default.metallib` → the script names the file and exits 1, which stops the
+    `mlx-metallib.sh && swift test` chain. A byte-identical copy prints a note.
+  - Every bundle carries `default.metallib` → it places nothing.
+  - A bundle without one (an earlier SwiftPM's single `InferKitMLXPackageTests.xctest`) → it builds
+    with the recipe and places `Contents/MacOS/mlx.metallib`. It refuses when the mlx-swift checkout
+    is not the revision `Package.resolved` pins, when the checkout has local changes, and when the
+    build directory holds a SwiftPM-built library the result differs from.
+  - `--verify` rebuilds with the recipe and compares with SwiftPM's library; run it after a Metal
+    toolchain or mlx-swift change. `--package <dir>` points the script at a mirror's package.
 - An MLX error ends the process: mlx-swift's default handler calls `fatalError`, so an allocation past
   Metal's largest buffer (`[metal::malloc] Attempting to allocate … greater than the maximum allowed
   buffer size`) killed a whole server over one request. `NFKMLXErrorScope.run` installs mlx-swift's
