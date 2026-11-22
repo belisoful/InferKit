@@ -213,6 +213,12 @@ public struct NFKMLXLoadOptions: @unchecked Sendable {
     /// ``quantizationGroupSize``, then evaluates it and returns the replaced weights to the system. Does
     /// nothing when the options ask for no quantization. Embeddings stay as loaded, since a tied model's
     /// embedding is also its output projection. Introduced in InferKit 0.4.0.
+    /// ``quantizationBits`` at ``quantizationGroupSize`` for a loader that packs layers as it reads them
+    /// (``NFKMLXReadQuantization``), or nil without a quantization.
+    var readQuantization: (bits: Int, groupSize: Int)? {
+        quantizationBits.map { ($0, quantizationGroupSize) }
+    }
+
     public func applyWeightQuantization(to module: Module) throws {
         guard let bits = quantizationBits else {
             return

@@ -696,6 +696,21 @@ Streaming:
   and an mlx_lm quantized release (`statesMLXQuantization`) loads resident: their layers are rebuilt to
   the packing before a load, and a stream installs into the layers as built.
   A streamed net does not fine-tune or quantize at load (`requireHeldLayers(for:)`).
+- A quantization at load holds every layer and never streams; an explicit `.streamed` with a
+  quantization is refused before a weight is read. A dense sharded decoder packs as it reads
+  (`NFKMLXReadQuantization`, the `quantization:` argument on `NFKMLXLanguage.loadedRelease` and
+  `NFKMLXQwen3VL.loadDecoderWeights`, from `NFKMLXLoadOptions.readQuantization`):
+  - `prepare` gives the net its `QuantizedLinear` structure before the read; the initial values stay
+    unevaluated, so the replacement holds nothing.
+  - `NFKMLXReleaseWeights.materializedArrays(…expand:)` packs each eligible weight with MLX's
+    `quantized` at the type the group converted it to, so the arrays equal those of a load then
+    `applyWeightQuantization`, element for element.
+  - The fit check counts the packed bytes, and the load holds the packed layers and one 256 MB group:
+    a 1 GB bfloat16 release peaks below four fifths of its bytes, where a load then a quantization holds
+    it whole first (`NFKMLXReadQuantizationTests`).
+  - A mixture, a paged load, an mlx_lm release, and a single file keep the load then the quantization.
+  - The catalog's decoder memory models state `quantizationHoldsEveryLayer`, so the estimate never streams
+    a stage it quantizes, where a quantized Qwen3 14B was offered a stream the loader refused.
 - Streaming is opt-in at the loader (`streams:` on `NFKMLXLanguage.loadedRelease`,
   `NFKMLXQwen3VL.loadDecoderWeights`, and Pixtral's internal `decoder`), because only a caller that
   checks the stream after a pass may receive one. The public residency factories stream: the language

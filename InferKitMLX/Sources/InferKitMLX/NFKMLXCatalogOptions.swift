@@ -393,7 +393,9 @@ extension NFKMLXLoadProfile {
                 residencyOptionKey: residency ? NFKModelLoadOptionResidency : nil,
                 adaptersOptionKey: adapters ? NFKModelLoadOptionAdapters : nil,
                 cacheStage: nil, draftStage: nil, adapterStage: nil, stagePrecisions: fixedPrecisions,
-                fallbackPrecision: precision ? fallbackPrecision : nil, extensions: nil)
+                fallbackPrecision: precision ? fallbackPrecision : nil,
+                // The decoder loaders pack a quantized load's layers as they read them and hold every layer.
+                quantizationHoldsEveryLayer: quantizes && stageIdentifier == "decoder", extensions: nil)
         }
         declaration.presets = presets(for: entry, options: declaration.options)
         return declaration

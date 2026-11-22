@@ -64,9 +64,13 @@ enum NFKMLXReleaseWeights {
     ///   - precision: as ``arrays(inDirectory:precision:remap:)``.
     ///   - remap: as ``arrays(inDirectory:precision:remap:)``.
     ///   - transform: the tensor a remapped one becomes, in the stored element type, or nil to drop it.
+    ///   - expand: the tensors a converted one becomes, evaluated with its group, such as a weight packed
+    ///     into its quantized words, scales, and biases (``NFKMLXReadQuantization``), so the converted
+    ///     tensor is never held beside the rest of the release.
     static func materializedArrays(inDirectory directory: URL, precision: NFKMLXWeightPrecision = .float32,
                                    remap: (String) -> String? = { $0 },
-                                   transform: (String, MLXArray) -> (String, MLXArray)? = { ($0, $1) })
+                                   transform: (String, MLXArray) -> (String, MLXArray)? = { ($0, $1) },
+                                   expand: (String, MLXArray) -> [(String, MLXArray)] = { [($0, $1)] })
         throws -> [(String, MLXArray)] {
         var merged = [(String, MLXArray)]()
         for url in try files(inDirectory: directory) {
@@ -78,7 +82,7 @@ enum NFKMLXReleaseWeights {
                     transform(name, value).map { kept, shaped in
                         (kept, precision == .checkpoint || !shaped.dtype.isFloatingPoint ? shaped : shaped.asType(.float32))
                     }
-                }
+                }.flatMap { expand($0.0, $0.1) }
                 eval(converted.map(\.1))
                 merged += converted
                 read.removeAll()
@@ -180,10 +184,13 @@ enum NFKMLXReleaseWeights {
     static func verifyFits(inDirectory directory: URL,
                            precision: NFKMLXWeightPrecision = .float32,
                            budget: Int = NFKMLXGPU.recommendedWorkingSetSize,
-                           reserve: Int = 0) throws {
+                           reserve: Int = 0, packing: NFKMLXReadQuantization? = nil) throws {
         guard budget > 0 else { return }                        // an unknown machine does not gate a load
         let stored = try weightBytes(inDirectory: directory)
-        let resident = precision == .checkpoint ? stored : stored * 2   // fp16/bf16 → fp32 doubles it
+        var resident = precision == .checkpoint ? stored : stored * 2   // fp16/bf16 → fp32 doubles it
+        if let packing {
+            resident = max(0, resident - packing.unpackedBytes(at: precision) + packing.packedBytes(at: precision))
+        }
         guard resident + reserve <= budget else {
             let gib = { (bytes: Int) in String(format: "%.1f", Double(bytes) / 1_073_741_824) }
             throw NFKMLXError.unsupportedConfiguration(

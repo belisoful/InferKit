@@ -16665,6 +16665,7 @@
         "cacheGroupSize" : "cacheGroupSize",
         "contextLength" : "contextLength",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -20261,6 +20262,7 @@
         "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -20622,6 +20624,7 @@
         "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -20983,6 +20986,7 @@
         "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -21540,6 +21544,7 @@
         "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -22096,6 +22101,7 @@
         "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -30502,6 +30508,7 @@
         "contextLength" : "contextLength",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -31343,6 +31350,7 @@
         "contextLength" : "contextLength",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -38506,7 +38514,8 @@
       },
       "memoryModel" : {
         "precision" : "precision",
-        "quantizationBits" : "quantizationBits"
+        "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true
       },
       "modelTypes" : [
         "qwen3_5"
@@ -38812,7 +38821,8 @@
       },
       "memoryModel" : {
         "precision" : "precision",
-        "quantizationBits" : "quantizationBits"
+        "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true
       },
       "modelTypes" : [
         "qwen3_5"
@@ -39413,6 +39423,7 @@
         "contextLength" : "contextLength",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -40235,6 +40246,7 @@
         "contextLength" : "contextLength",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -41081,6 +41093,7 @@
         "draftBits" : "draftBits",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -42011,6 +42024,7 @@
         "draftBits" : "draftBits",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -42955,6 +42969,7 @@
         "contextLength" : "contextLength",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -43805,6 +43820,7 @@
         "draftBits" : "draftBits",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -44759,6 +44775,7 @@
         "draftBits" : "draftBits",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "modelTypes" : [
@@ -47559,6 +47576,7 @@
         "draftBits" : "draftBits",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "options" : [
@@ -48292,6 +48310,7 @@
         "contextLength" : "contextLength",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "options" : [
@@ -48930,6 +48949,7 @@
         "draftBits" : "draftBits",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "options" : [
@@ -49673,6 +49693,7 @@
         "draftBits" : "draftBits",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "options" : [
@@ -62946,6 +62967,7 @@
         "adapters" : "adapters",
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
+        "quantizationHoldsEveryLayer" : true,
         "residency" : "residency"
       },
       "options" : [

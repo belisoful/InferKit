@@ -507,6 +507,7 @@ option. The variant comes from the `variant` option.
 | `adapterStage` | string | The stage whose weights the adapters run beside. The last stage when absent. |
 | `stagePrecisions` | object of string | The precision of each stage the precision option does not change, keyed by stage. |
 | `fallbackPrecision` | string | The precision a load takes where the caller states none, the default does not fit the budget, and this one does. Absent where the default stands. |
+| `quantizationHoldsEveryLayer` | boolean | `true` where a load-time quantization packs each layer as it is read and holds every layer, so the estimate never streams a stage it quantizes. Absent (`false`) where the engine streams quantized layers. |
 
 ### The estimate
 

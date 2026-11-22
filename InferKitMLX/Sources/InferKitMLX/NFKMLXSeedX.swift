@@ -179,10 +179,12 @@ public final class NFKMLXSeedX: NSObject {
 
     /// ``translator(directoryURL:precision:residency:)`` as a catalog's load options name it: their
     /// precision (the release's bfloat16 when they name none) and residency, and a runtime weight
-    /// quantization of the decoder, which a streamed decoder refuses.
+    /// quantization of the decoder, packed as the release is read and held with every layer.
     static func translator(directoryURL directory: URL, loadOptions: NFKMLXLoadOptions) throws -> NFKMLXSeedXTranslator {
-        let translator = try translator(directoryURL: directory, precision: loadOptions.precision ?? .checkpoint,
-                                        residency: loadOptions.residency)
+        let (net, tokenizer) = try NFKMLXLanguage.loadedReleaseWithTokenizer(
+            at: directory, precision: loadOptions.precision ?? .checkpoint, residency: loadOptions.residency,
+            streams: true, quantization: loadOptions.readQuantization)
+        let translator = NFKMLXSeedXTranslator(net: net, tokenizer: tokenizer, identifier: modelName)
         if loadOptions.quantizationBits != nil {
             try translator.net.requireHeldLayers(for: "quantize at load")
         }

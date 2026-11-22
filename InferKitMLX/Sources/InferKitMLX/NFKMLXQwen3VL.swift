@@ -508,7 +508,8 @@ public final class NFKMLXQwen3VL: NSObject {
         let vision = try visionNet(directoryURL: directoryURL)
         let decoder = try decoder(directoryURL: directoryURL, precision: loadOptions.precision ?? .float32,
                                   residency: loadOptions.residency, streams: true,
-                                  besides: NFKMLXLanguage.heldBytes(of: vision))
+                                  besides: NFKMLXLanguage.heldBytes(of: vision),
+                                  quantization: loadOptions.readQuantization)
         if loadOptions.quantizationBits != nil {
             try decoder.requireHeldLayers(for: "quantize at load")
         }
@@ -695,10 +696,11 @@ public final class NFKMLXQwen3VL: NSObject {
     /// decoder whole. `besides` is what the caller holds beside the decoder from the same release, which
     /// a stream's plan counts.
     static func decoder(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                        streams: Bool, besides: Int = 0) throws -> NFKMLXLanguageNet {
+                        streams: Bool, besides: Int = 0,
+                        quantization: (bits: Int, groupSize: Int)? = nil) throws -> NFKMLXLanguageNet {
         let net = NFKMLXLanguageNet(try decoderConfiguration(directoryURL: directoryURL))
         try loadDecoderWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
-                               streams: streams, besides: besides)
+                               streams: streams, besides: besides, quantization: quantization)
         return net
     }
 
@@ -707,11 +709,17 @@ public final class NFKMLXQwen3VL: NSObject {
     /// read, so the release's element type is never held whole beside it. `streams` lets a dense decoder
     /// stream, for a caller that checks the stream after each pass; without it the decoder's layers are
     /// held under every residency. `besides` is what the caller holds beside the decoder from the same
-    /// release, which a stream's plan counts.
+    /// release, which a stream's plan counts. `quantization` holds every layer, and a dense decoder read
+    /// without `dtype` packs its layers as they are read (``NFKMLXReadQuantization``).
     static func loadDecoderWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
                                    outerPrefix: String = "", dtype: DType? = nil, streams: Bool = false,
-                                   besides: Int = 0, budget: Int = NFKMLXResidencyBudget.current()) throws {
+                                   besides: Int = 0, budget: Int = NFKMLXResidencyBudget.current(),
+                                   quantization: (bits: Int, groupSize: Int)? = nil) throws {
+        if quantization != nil && residency == .streamed {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a streamed decoder does not quantize at load; load it with a residency that holds every layer")
+        }
         let prefix = outerPrefix + "model.language_model."
         let head = outerPrefix + "lm_head.weight"
         let untied = !net.configuration.tiesWordEmbeddings
@@ -719,10 +727,11 @@ public final class NFKMLXQwen3VL: NSObject {
             if key.hasPrefix(prefix) { return "model." + String(key.dropFirst(prefix.count)) }
             return key == head && untied ? "lm_head.weight" : nil
         }
-        let dense = try streams && NFKMLXExpertInventory.planning(inDirectory: directory, precision: precision, classify: { key, entry in
-            moduleKey(key).map { expertSlices(forModuleKey: $0, entry: entry) } ?? []
-        }).experts.isEmpty
-        let streamed = dense
+        let dense = try (streams || quantization != nil)
+            && NFKMLXExpertInventory.planning(inDirectory: directory, precision: precision, classify: { key, entry in
+                moduleKey(key).map { expertSlices(forModuleKey: $0, entry: entry) } ?? []
+            }).experts.isEmpty
+        let streamed = dense && streams && quantization == nil
             ? try NFKMLXLanguage.streamedLayers(directory: directory, precision: precision, residency: residency,
                                                 budget: budget, besides: besides, moduleKey: moduleKey)
             : []
@@ -730,6 +739,11 @@ public final class NFKMLXQwen3VL: NSObject {
             try NFKMLXLanguage.loadStreamedWeights(into: net, fromDirectory: directory, precision: precision,
                                                    streamed: streamed, converting: dtype, moduleKey: moduleKey)
             return
+        }
+        let packing = try quantization.flatMap { quantization in
+            dense && dtype == nil
+                ? try NFKMLXReadQuantization.prepare(net, bits: quantization.bits, groupSize: quantization.groupSize)
+                : nil
         }
         net.expertStore = try NFKMLXExpertInventory.load(
             directory: directory, precision: precision, residency: residency,
@@ -748,7 +762,9 @@ public final class NFKMLXQwen3VL: NSObject {
                 // A converted load reads in evaluated groups, so the release's tensors never sit whole
                 // beside their conversions.
                 let arrays = try dtype.map { try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: $0, remap: remap) }
-                    ?? NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: remap)
+                    ?? NFKMLXReleaseWeights.materializedArrays(
+                        inDirectory: directory, precision: precision, remap: remap,
+                        expand: { name, value in packing?.expand(name, value) ?? [(name, value)] })
                 try NFKMLXWeights.apply(releaseExperts(arrays), to: net)
             })
     }

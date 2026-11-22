@@ -635,7 +635,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 {
 	return @[ @"precision", @"quantizationBits", @"quantizationGroupSize", @"contextLength", @"cacheBits",
 			  @"cacheGroupSize", @"draft", @"draftBits", @"residency", @"adapters", @"cacheStage", @"draftStage",
-			  @"adapterStage", @"stagePrecisions", @"fallbackPrecision" ];
+			  @"adapterStage", @"stagePrecisions", @"fallbackPrecision", @"quantizationHoldsEveryLayer" ];
 }
 
 @implementation NFKModelMemoryModel
@@ -655,6 +655,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 							  adapterStage:(nullable NSString *)adapterStage
 						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
 							 fallbackPrecision:(nullable NSString *)fallbackPrecision
+			   quantizationHoldsEveryLayer:(BOOL)quantizationHoldsEveryLayer
 								extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
 	self = [super init];
@@ -674,9 +675,36 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 		_adapterStage = [adapterStage copy];
 		_stagePrecisions = [stagePrecisions copy] ?: @{};
 		_fallbackPrecision = [fallbackPrecision copy];
+		_quantizationHoldsEveryLayer = quantizationHoldsEveryLayer;
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelMemoryModelFields());
 	}
 	return self;
+}
+
+- (instancetype)initWithPrecisionOptionKey:(nullable NSString *)precisionOptionKey
+				 quantizationBitsOptionKey:(nullable NSString *)quantizationBitsOptionKey
+			quantizationGroupSizeOptionKey:(nullable NSString *)quantizationGroupSizeOptionKey
+					contextLengthOptionKey:(nullable NSString *)contextLengthOptionKey
+						cacheBitsOptionKey:(nullable NSString *)cacheBitsOptionKey
+				   cacheGroupSizeOptionKey:(nullable NSString *)cacheGroupSizeOptionKey
+							draftOptionKey:(nullable NSString *)draftOptionKey
+						draftBitsOptionKey:(nullable NSString *)draftBitsOptionKey
+						residencyOptionKey:(nullable NSString *)residencyOptionKey
+						 adaptersOptionKey:(nullable NSString *)adaptersOptionKey
+								cacheStage:(nullable NSString *)cacheStage
+								draftStage:(nullable NSString *)draftStage
+							  adapterStage:(nullable NSString *)adapterStage
+						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
+						 fallbackPrecision:(nullable NSString *)fallbackPrecision
+								extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithPrecisionOptionKey:precisionOptionKey quantizationBitsOptionKey:quantizationBitsOptionKey
+			 quantizationGroupSizeOptionKey:quantizationGroupSizeOptionKey contextLengthOptionKey:contextLengthOptionKey
+						 cacheBitsOptionKey:cacheBitsOptionKey cacheGroupSizeOptionKey:cacheGroupSizeOptionKey
+							 draftOptionKey:draftOptionKey draftBitsOptionKey:draftBitsOptionKey
+						 residencyOptionKey:residencyOptionKey adaptersOptionKey:adaptersOptionKey cacheStage:cacheStage
+								 draftStage:draftStage adapterStage:adapterStage stagePrecisions:stagePrecisions
+						  fallbackPrecision:fallbackPrecision quantizationHoldsEveryLayer:NO extensions:extensions];
 }
 
 - (instancetype)initWithPrecisionOptionKey:(nullable NSString *)precisionOptionKey
@@ -740,11 +768,13 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 	}
 	NSString *cacheStage = nil, *draftStage = nil, *adapterStage = nil, *fallbackPrecision = nil;
 	NSDictionary<NSString *, NSString *> *stagePrecisions = nil;
+	BOOL holdsEveryLayer = NO;
 	if (![reader readString:@"cacheStage" required:NO into:&cacheStage error:error]
 		|| ![reader readString:@"draftStage" required:NO into:&draftStage error:error]
 		|| ![reader readString:@"adapterStage" required:NO into:&adapterStage error:error]
 		|| ![reader readStringDictionary:@"stagePrecisions" into:&stagePrecisions error:error]
-		|| ![reader readString:@"fallbackPrecision" required:NO into:&fallbackPrecision error:error]) {
+		|| ![reader readString:@"fallbackPrecision" required:NO into:&fallbackPrecision error:error]
+		|| ![reader readBoolean:@"quantizationHoldsEveryLayer" into:&holdsEveryLayer error:error]) {
 		return nil;
 	}
 	return [[self alloc] initWithPrecisionOptionKey:keys[@"precision"] quantizationBitsOptionKey:keys[@"quantizationBits"]
@@ -754,7 +784,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 								 draftBitsOptionKey:keys[@"draftBits"] residencyOptionKey:keys[@"residency"]
 								  adaptersOptionKey:keys[@"adapters"] cacheStage:cacheStage draftStage:draftStage
 									   adapterStage:adapterStage stagePrecisions:stagePrecisions
-								  fallbackPrecision:fallbackPrecision
+								  fallbackPrecision:fallbackPrecision quantizationHoldsEveryLayer:holdsEveryLayer
 										 extensions:[reader extensionsWithoutFields:NFKModelMemoryModelFields()]];
 }
 
@@ -778,6 +808,9 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 		dictionary[@"stagePrecisions"] = self.stagePrecisions;
 	}
 	dictionary[@"fallbackPrecision"] = self.fallbackPrecision;
+	if (self.quantizationHoldsEveryLayer) {
+		dictionary[@"quantizationHoldsEveryLayer"] = @YES;
+	}
 	return [dictionary copy];
 }
 
@@ -1827,7 +1860,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	for (NFKModelStageFacts *stage in facts.stages) {
 		NSString *stagePrecision = model.stagePrecisions[stage.identifier] ?: precision ?: NFKModelPrecisionCheckpoint;
 		[loads addObject:[self loadOfStage:stage precision:stagePrecision bits:bits group:group
-						checkpointPrecision:variant.precision]];
+						checkpointPrecision:variant.precision holdsQuantizedLayers:model.quantizationHoldsEveryLayer]];
 	}
 	if (loads.count == 0) {
 		return loads;
@@ -1904,11 +1937,13 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	components[NFKModelMemoryComponentAdapters] = @(total);
 }
 
+// A stage quantized at load by an engine that holds every layer it quantizes has no layers to stream.
 - (NFKModelStageLoad *)loadOfStage:(NFKModelStageFacts *)stage
 						 precision:(NSString *)precision
 							  bits:(NSInteger)bits
 							 group:(NSInteger)group
 			   checkpointPrecision:(nullable NSString *)checkpointPrecision
+			  holdsQuantizedLayers:(BOOL)holdsQuantizedLayers
 {
 	NFKModelStageLoad *load = [[NFKModelStageLoad alloc] init];
 	load.identifier = stage.identifier;
@@ -1923,11 +1958,12 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	double scale = atPrecision > 0 ? (double)weights / (double)atPrecision : 1;
 	load.weights = weights;
 	load.pageable = (NSInteger)((double)NFKModelBytesAtPrecision(stage.pageableByteCountByPrecision, precision, checkpointPrecision) * scale);
-	load.layerCount = stage.layerCount;
-	load.largestLayer = (NSInteger)((double)NFKModelBytesAtPrecision(stage.largestLayerByteCountByPrecision, precision,
-																	 checkpointPrecision) * scale);
-	load.layerTotal = (NSInteger)((double)NFKModelBytesAtPrecision(stage.layerByteCountByPrecision, precision,
-																   checkpointPrecision) * scale);
+	BOOL streams = !(quantizes && holdsQuantizedLayers);
+	load.layerCount = streams ? stage.layerCount : 0;
+	load.largestLayer = streams ? (NSInteger)((double)NFKModelBytesAtPrecision(stage.largestLayerByteCountByPrecision, precision,
+																			   checkpointPrecision) * scale) : 0;
+	load.layerTotal = streams ? (NSInteger)((double)NFKModelBytesAtPrecision(stage.layerByteCountByPrecision, precision,
+																			 checkpointPrecision) * scale) : 0;
 	if (stage.widenedPrecision != nil && !quantizes && ![stage.widenedPrecision isEqualToString:precision]) {
 		load.widenedWeights = @(NFKModelBytesAtPrecision(stage.byteCountByPrecision, stage.widenedPrecision, checkpointPrecision));
 	}
@@ -2022,7 +2058,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 		}
 		NSString *stagePrecision = draft.memoryModel.stagePrecisions[stage.identifier] ?: precision ?: NFKModelPrecisionCheckpoint;
 		total += [self loadOfStage:stage precision:stagePrecision bits:bits group:group
-			   checkpointPrecision:variant.precision].weights;
+			   checkpointPrecision:variant.precision holdsQuantizedLayers:NO].weights;
 	}
 	NFKModelMemoryFacts *facts = variant.memoryFacts;
 	double sixteenBitBytes = facts.keyValueByteCountPerToken.doubleValue * (double)context

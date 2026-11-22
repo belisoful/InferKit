@@ -609,6 +609,14 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 - (NFKModelDescriptor *)fittingDecoderWithTask:(NSString *)task quantizes:(BOOL)quantizes
 								  cacheChoices:(NSArray<NSNumber *> *)cacheChoiceValues
 {
+	return [self fittingDecoderWithTask:task quantizes:quantizes cacheChoices:cacheChoiceValues holdsEveryLayer:NO];
+}
+
+// fittingDecoderWithTask:quantizes:cacheChoices: whose memory model says a quantization at load holds every layer.
+- (NFKModelDescriptor *)fittingDecoderWithTask:(NSString *)task quantizes:(BOOL)quantizes
+								  cacheChoices:(NSArray<NSNumber *> *)cacheChoiceValues
+							   holdsEveryLayer:(BOOL)holdsEveryLayer
+{
 	NSInteger stored = quantizes ? 80000000000 : 17500000000;
 	NFKModelStageFacts *stage = [[NFKModelStageFacts alloc]
 			initWithIdentifier:@"decoder" title:nil
@@ -660,7 +668,9 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																	  draftBitsOptionKey:nil
 																	  residencyOptionKey:NFKModelLoadOptionResidency
 																	   adaptersOptionKey:nil cacheStage:nil draftStage:nil
-																			adapterStage:nil stagePrecisions:nil extensions:nil];
+																			adapterStage:nil stagePrecisions:nil
+																	   fallbackPrecision:nil
+															 quantizationHoldsEveryLayer:holdsEveryLayer extensions:nil];
 	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.fitting" displayName:nil family:@"test" summary:nil
 												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
 													tasks:@[ task ] inputModalities:nil outputModalities:nil inputs:nil
@@ -720,6 +730,29 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																 preferred:requested];
 	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionQuantizationBits], @4);
 	XCTAssertTrue(constraints.fittingEstimate.fits);
+}
+
+// The same request where a quantization at load holds every layer: 4-bit weights do not stream, so the way out
+// keeps every layer it quantizes, and a streamed quantized load is refused outright.
+- (void)testAQuantizationThatHoldsEveryLayerIsNeverStreamed
+{
+	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:32 * NFKTestGiB];
+	NFKModelDescriptor *model = [self fittingDecoderWithTask:NFKModelTaskTextToImage quantizes:YES
+												  cacheChoices:@[ @0, @8, @4 ] holdsEveryLayer:YES];
+	NSDictionary *requested = @{ NFKModelLoadOptionQuantizationBits: @4, NFKModelLoadOptionContextLength: @10240,
+								 NFKModelLoadOptionResidency: NFKModelResidencyResident };
+	NFKModelMemoryConstraints *constraints = [model constraintsForOptions:nil memoryBudget:budget profile:nil
+																   catalog:NFKModelCatalog.sharedCatalog
+																 preferred:requested];
+	XCTAssertTrue(constraints.fittingEstimate.fits);
+	NSInteger bits = [constraints.fittingOptions[NFKModelLoadOptionQuantizationBits] integerValue];
+	XCTAssertTrue(bits == 0 || ![constraints.fittingEstimate.residency isEqualToString:NFKModelResidencyStreamed],
+				  @"%@ resolves to %@", constraints.fittingOptions, constraints.fittingEstimate.residency);
+
+	NSDictionary *streamed = @{ NFKModelLoadOptionQuantizationBits: @4, NFKModelLoadOptionContextLength: @10240,
+								NFKModelLoadOptionResidency: NFKModelResidencyStreamed };
+	NFKModelMemoryEstimate *estimate = [model estimatedMemoryForOptions:streamed memoryBudget:budget error:NULL];
+	XCTAssertFalse(estimate.fits, @"a stage quantized at load has no layers to stream");
 }
 
 - (void)testADecoderKeepsItsCacheWhereItsWeightsFitBesideIt
@@ -977,6 +1010,23 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertEqualObjects(model.dictionaryRepresentation, dictionary);
 	XCTAssertEqualObjects(model.optionKeys, (@[ @"precision", @"quantizationBits", @"contextLength", @"draftModel",
 											   @"residency" ]));
+}
+
+- (void)testAMemoryModelStatesThatItsQuantizationHoldsEveryLayerOnlyWhereItDoes
+{
+	NFKModelMemoryModel *holds = [NFKModelMemoryModel memoryModelWithDictionary:@{ @"quantizationBits": @"quantizationBits",
+																				   @"quantizationHoldsEveryLayer": @YES }
+																		 error:NULL];
+	XCTAssertTrue(holds.quantizationHoldsEveryLayer);
+	XCTAssertEqualObjects(holds.dictionaryRepresentation[@"quantizationHoldsEveryLayer"], @YES);
+	XCTAssertNil(holds.extensions[@"quantizationHoldsEveryLayer"]);
+	NFKModelMemoryModel *streams = [NFKModelMemoryModel memoryModelWithDictionary:@{ @"quantizationBits": @"quantizationBits" }
+																			error:NULL];
+	XCTAssertFalse(streams.quantizationHoldsEveryLayer);
+	XCTAssertNil(streams.dictionaryRepresentation[@"quantizationHoldsEveryLayer"]);
+	NSError *error = nil;
+	XCTAssertNil([NFKModelMemoryModel memoryModelWithDictionary:@{ @"quantizationHoldsEveryLayer": @"yes" } error:&error]);
+	XCTAssertNotNil(error);
 }
 
 - (void)testAFigureRoundTripsAndAMissingPeakIsTheResidentBytes

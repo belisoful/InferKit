@@ -349,7 +349,9 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 				cacheStage names the stage that holds the key-value cache and the draft model, the last
 				stage when nil. draftStage names the stage of this model a draft for another model loads,
 				every stage when nil. adapterStage names the stage whose weights the adapters run beside,
-				the last stage when nil. Introduced in InferKit 0.4.0.
+				the last stage when nil. quantizationHoldsEveryLayer is YES for an engine whose load-time
+				quantization packs each layer as it reads it and holds every layer: a stage quantized at load
+				never streams. Introduced in InferKit 0.4.0.
 */
 @interface NFKModelMemoryModel : NSObject <NSCopying>
 
@@ -375,10 +377,13 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 /*! The precision a load takes where the caller states none, the default does not fit the budget, and this
 	one does. nil where the default stands. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy, nullable) NSString *fallbackPrecision;
+/*! YES where a stage quantized at load holds every layer, so the estimate never streams it. NO, the
+	default, where an engine streams quantized layers. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) BOOL quantizationHoldsEveryLayer;
 /*! The fields of the model's dictionary this version does not read, written back as they came. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *extensions;
 
-/*! A memory model with every field. */
+/*! A memory model with every field. Introduced in InferKit 0.4.0. */
 - (instancetype)initWithPrecisionOptionKey:(nullable NSString *)precisionOptionKey
 				 quantizationBitsOptionKey:(nullable NSString *)quantizationBitsOptionKey
 			quantizationGroupSizeOptionKey:(nullable NSString *)quantizationGroupSizeOptionKey
@@ -394,9 +399,29 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 							  adapterStage:(nullable NSString *)adapterStage
 						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
 						 fallbackPrecision:(nullable NSString *)fallbackPrecision
+			   quantizationHoldsEveryLayer:(BOOL)quantizationHoldsEveryLayer
 								extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
 
-/*! A memory model with every field but fallbackPrecision, which it leaves nil. */
+/*! A memory model with every field but quantizationHoldsEveryLayer, which it leaves NO. */
+- (instancetype)initWithPrecisionOptionKey:(nullable NSString *)precisionOptionKey
+				 quantizationBitsOptionKey:(nullable NSString *)quantizationBitsOptionKey
+			quantizationGroupSizeOptionKey:(nullable NSString *)quantizationGroupSizeOptionKey
+					contextLengthOptionKey:(nullable NSString *)contextLengthOptionKey
+						cacheBitsOptionKey:(nullable NSString *)cacheBitsOptionKey
+				   cacheGroupSizeOptionKey:(nullable NSString *)cacheGroupSizeOptionKey
+							draftOptionKey:(nullable NSString *)draftOptionKey
+						draftBitsOptionKey:(nullable NSString *)draftBitsOptionKey
+						residencyOptionKey:(nullable NSString *)residencyOptionKey
+						 adaptersOptionKey:(nullable NSString *)adaptersOptionKey
+								cacheStage:(nullable NSString *)cacheStage
+								draftStage:(nullable NSString *)draftStage
+							  adapterStage:(nullable NSString *)adapterStage
+						   stagePrecisions:(nullable NSDictionary<NSString *, NSString *> *)stagePrecisions
+						 fallbackPrecision:(nullable NSString *)fallbackPrecision
+								extensions:(nullable NSDictionary<NSString *, id> *)extensions;
+
+/*! A memory model with every field but fallbackPrecision, which it leaves nil, and
+	quantizationHoldsEveryLayer, which it leaves NO. */
 - (instancetype)initWithPrecisionOptionKey:(nullable NSString *)precisionOptionKey
 				 quantizationBitsOptionKey:(nullable NSString *)quantizationBitsOptionKey
 			quantizationGroupSizeOptionKey:(nullable NSString *)quantizationGroupSizeOptionKey
@@ -418,8 +443,9 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 
 /*! Reads a memory model from its dictionary, whose fields are precision, quantizationBits,
 	quantizationGroupSize, contextLength, cacheBits, cacheGroupSize, draft, draftBits, residency,
-	adapters, cacheStage, draftStage, adapterStage, stagePrecisions, and fallbackPrecision. Returns nil and sets error when a field has the wrong
-	type. */
+	adapters, cacheStage, draftStage, adapterStage, stagePrecisions, fallbackPrecision, and
+	quantizationHoldsEveryLayer (a boolean, NO when absent). Returns nil and sets error when a field has the
+	wrong type. */
 + (nullable instancetype)memoryModelWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 /*! The memory model as its dictionary. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;

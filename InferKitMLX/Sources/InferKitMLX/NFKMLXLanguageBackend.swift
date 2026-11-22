@@ -1864,13 +1864,21 @@ public final class NFKMLXLanguage: NSObject {
     /// and nothing else. Introduced in InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
                                    precision requested: NFKMLXWeightPrecision = .float32) throws {
+        try loadWeights(into: net, fromDirectory: directory, precision: requested, packing: nil)
+    }
+
+    /// ``loadWeights(into:fromDirectory:precision:)`` packing each of `packing`'s layers as its group is
+    /// read, for a sharded dense release whose net ``NFKMLXReadQuantization/prepare(_:bits:groupSize:)``
+    /// gave its quantized structure. The fit check counts the packed bytes.
+    static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
+                            precision requested: NFKMLXWeightPrecision, packing: NFKMLXReadQuantization?) throws {
         // An mlx_lm quantized release loads as stored: its packed words are integers whatever the
         // request, and its scales keep the precision mlx_lm computed them at.
         let releaseEntries = try packedReleaseEntries(inDirectory: directory, net: net)
         let precision = releaseEntries == nil ? requested : .checkpoint
         // Refuse a release whose weights alone exceed the memory budget, before materializing any,
         // so "the process died" becomes an error naming the shortfall.
-        try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision)
+        try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision, packing: packing)
         if let releaseEntries {
             try NFKMLXQuantization.matchStructure(toRelease: releaseEntries, on: net)
         }
@@ -1887,8 +1895,9 @@ public final class NFKMLXLanguage: NSObject {
         // Each expert stored as its own tensor stays lazy: stacking reads it as the stack forms, so the
         // stored experts never sit whole beside the stacked ones.
         let kept: (String) -> String? = { tied && $0.hasPrefix("lm_head.") ? nil : $0 }
-        let merged = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision,
-                                                                 remap: { isPerExpert($0) ? nil : kept($0) })
+        let merged = try NFKMLXReleaseWeights.materializedArrays(
+            inDirectory: directory, precision: precision, remap: { isPerExpert($0) ? nil : kept($0) },
+            expand: { name, value in packing?.expand(name, value, moduleKey: moduleKey(forRelease:)) ?? [(name, value)] })
             + NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision,
                                              remap: { isPerExpert($0) ? kept($0) : nil })
         let prepared = releaseWeights(merged)
@@ -2046,7 +2055,8 @@ public final class NFKMLXLanguage: NSObject {
         }
         let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, precision: precision,
                                                               residency: loadOptions.residency, streams: true,
-                                                              reserving: draft.map(heldBytes(of:)) ?? 0)
+                                                              reserving: draft.map(heldBytes(of:)) ?? 0,
+                                                              quantization: loadOptions.readQuantization)
         if let draft {
             try verifyDraft(draft, sharesVocabularyWith: net)
         }
@@ -2113,10 +2123,12 @@ public final class NFKMLXLanguage: NSObject {
     /// tokenizer cannot be read is refused.
     static func loadedReleaseWithTokenizer(at directoryURL: URL, precision: NFKMLXWeightPrecision? = nil,
                                            residency: NFKMLXResidency = .automatic, streams: Bool = false,
-                                           reserving reserved: Int = 0)
+                                           reserving reserved: Int = 0,
+                                           quantization: (bits: Int, groupSize: Int)? = nil)
         throws -> (NFKMLXLanguageNet, NFKTokenizer) {
         let (net, tokenizer) = try loadedRelease(at: directoryURL, requiringTokenizer: true, precision: precision,
-                                                 residency: residency, streams: streams, reserving: reserved)
+                                                 residency: residency, streams: streams, reserving: reserved,
+                                                 quantization: quantization)
         guard let tokenizer else { throw NFKMLXError.unsupportedConfiguration("unreachable: the tokenizer was required") }
         return (net, tokenizer)
     }
@@ -2129,11 +2141,13 @@ public final class NFKMLXLanguage: NSObject {
     /// fit stream the layers it cannot hold; it is for a caller that checks the stream after each pass
     /// (``NFKMLXLanguageNet/verifyStream()``), as the backends do, and every other caller holds the
     /// release whole or is refused. `reserved` is what a model held beside this one, such as a draft,
-    /// takes from the working set the load plans against.
+    /// takes from the working set the load plans against. `quantization` packs a dense sharded release's
+    /// layers as they are read (``NFKMLXReadQuantization``) and holds every layer.
     static func loadedRelease(at directoryURL: URL, requiringTokenizer: Bool = false,
                               precision: NFKMLXWeightPrecision? = nil,
                               residency: NFKMLXResidency = .automatic, streams: Bool = false,
-                              reserving reserved: Int = 0) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
+                              reserving reserved: Int = 0,
+                              quantization: (bits: Int, groupSize: Int)? = nil) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
         var configuration = try self.configuration(
             fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
         if try statesMLXQuantization(configURL: directoryURL.appendingPathComponent("config.json")) {
@@ -2154,7 +2168,8 @@ public final class NFKMLXLanguage: NSObject {
         try loadWeights(into: net, fromDirectory: directoryURL,
                         precision: precision ?? (packed ? .checkpoint : .float32), residency: residency,
                         streams: streams,
-                        budget: budget > 0 && reserved > 0 ? Swift.max(budget - reserved, 1) : budget, reserving: reserved)
+                        budget: budget > 0 && reserved > 0 ? Swift.max(budget - reserved, 1) : budget, reserving: reserved,
+                        quantization: quantization)
         // Checked after the load, whose memory check refuses a release the machine cannot hold before
         // reading any weight: that refusal is the one a caller can act on, so it comes first.
         if requiringTokenizer, let tokenizerRefusal {
@@ -2173,7 +2188,12 @@ public final class NFKMLXLanguage: NSObject {
     /// the check a resident load makes; `budget` already leaves it out.
     static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
                             precision: NFKMLXWeightPrecision, residency: NFKMLXResidency, streams: Bool = true,
-                            budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0) throws {
+                            budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0,
+                            quantization: (bits: Int, groupSize: Int)? = nil) throws {
+        if quantization != nil && residency == .streamed {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a streamed decoder does not quantize at load; load it with a residency that holds every layer")
+        }
         let inventory = try NFKMLXExpertInventory.planning(inDirectory: directory, precision: precision,
                                                            classify: expertSlices(forRelease:entry:))
         let plan = try NFKMLXResidencyBudget.plan([inventory.footprint], residency: residency, budget: budget)
@@ -2183,7 +2203,10 @@ public final class NFKMLXLanguage: NSObject {
             // An mlx_lm quantized release packs its layers as it loads, and a stream installs tensors into
             // the layers as built, so it loads as stored.
             let packed = try statesMLXQuantization(configURL: directory.appendingPathComponent("config.json"))
-            let streamed = streams && inventory.experts.isEmpty && !net.configuration.isMixtureOfExperts && !packed
+            let dense = inventory.experts.isEmpty && !net.configuration.isMixtureOfExperts && !packed
+            // A quantization at load holds every layer: a stream installs the release's tensors into the
+            // layers as built, a pass at a time.
+            let streamed = streams && quantization == nil && dense
                 ? try streamedLayers(directory: directory, precision: precision, residency: residency, budget: budget,
                                      reserving: reserved, moduleKey: moduleKey)
                 : []
@@ -2192,7 +2215,13 @@ public final class NFKMLXLanguage: NSObject {
                                         moduleKey: moduleKey)
                 return
             }
-            try loadWeights(into: net, fromDirectory: directory, precision: precision)
+            // A single file is read through the checkpoint reader and quantized after the load.
+            let packing = try quantization.flatMap { quantization in
+                try dense && NFKMLXReleaseWeights.files(inDirectory: directory).count > 1
+                    ? NFKMLXReadQuantization.prepare(net, bits: quantization.bits, groupSize: quantization.groupSize)
+                    : nil
+            }
+            try loadWeights(into: net, fromDirectory: directory, precision: precision, packing: packing)
             return
         }
         try loadPagedWeights(into: net, fromDirectory: directory, precision: precision,
