@@ -6493,6 +6493,48 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertGreaterThan(similarity, 0.999999, "the prompt's embedding matches the reference's")
     }
 
+    // The catalog's releases as a host downloads them into the default Hugging Face cache: each size's own
+    // repository tokenizes the record's prompt to the reference's ids, and clip-vit-b-32 built through the
+    // catalog embeds the prompt as the reference does and an image beside it. Skips until the catalog has
+    // downloaded a release.
+    func testCLIPCatalogDownloadsEmbedTheReferencePrompt() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_CLIP_TEXT"] else { throw XCTSkip("set IK_PARITY_CLIP_TEXT") }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let referenceTokens = try XCTUnwrap(arrays["tokens"]).asArray(Int32.self).map(Int.init)
+        let referenceOutput = try XCTUnwrap(arrays["output"]).asArray(Float.self).map(Double.init)
+        let prompt = "a photograph of a dog running on grass"
+
+        NFKMLXReferenceModels.registerAll()
+        let catalog = NFKModelCatalog()
+        XCTAssertTrue(catalog.addDescriptors(fromProviderClassName: "NFKMLXModelDescriptors"))
+        let hub = NFKHFHub(cacheDirectoryURL: NFKHFHub.defaultCacheDirectoryURL())
+        var tokenized = 0
+        for variant in NFKMLXCatalogImage.clipReleases {
+            let release = NFKMLXCLIP.release(for: variant)
+            let files = NFKMLXCLIP.tokenizerFiles.map { NFKModelFile(path: $0, role: NFKModelFileRoleTokenizer) }
+            let tokenizerSource = NFKModelSource.hub(release.repository, revision: release.revision, files: files)
+            let status = hub.downloadStatus(source: tokenizerSource)
+            guard status.presence == .complete, let snapshot = status.localURL else { continue }
+            XCTAssertEqual(try NFKMLXCLIP.tokenizer(in: snapshot).tokens(for: prompt, contextLength: 77), referenceTokens,
+                           "\(release.repository)'s tokenizer reads the prompt as the reference's does")
+            tokenized += 1
+        }
+        let name = NFKMLXCLIP.modelName
+        let source = try XCTUnwrap(catalog.descriptor(withIdentifier: name)?.defaultVariant?.source)
+        guard hub.downloadStatus(source: source).presence == .complete else {
+            throw XCTSkip("download the catalog's \(name) into the default Hugging Face cache first (\(tokenized) tokenizers read)")
+        }
+        let backend = try catalog.backend(forModelIdentifier: name, options: nil)
+        XCTAssertEqual(backend.supportedInputKeys, [NFKInputImage, NFKInputPrompt])
+        let text = try XCTUnwrap(try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: prompt])).embedding)
+        let similarity = cosine(text.map(\.doubleValue), referenceOutput)
+        print("VALIDATION PARITY clip-catalog-prompt: cosine \(similarity), \(tokenized) tokenizers read")
+        XCTAssertGreaterThan(similarity, 0.999999, "the catalog's build embeds the prompt as the reference does")
+        let image = try XCTUnwrap(try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: NFKMLXCLIPTests.solid(8, 8)])).embedding)
+        XCTAssertEqual(image.count, text.count, "the image embeds into the prompt's space")
+    }
+
     // MARK: BiSeNet
 
     // Segmentation logits against CoinCheung's own BiSeNetV1 on the released Cityscapes weights.
