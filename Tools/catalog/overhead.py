@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """The catalog's load overheads: measure each variant's load and reference-request peaks, then table them.
 
-    python3 -I Tools/catalog/overhead.py plan --output PLAN.json [--locations LOCATIONS.json]
+    python3 -I Tools/catalog/overhead.py plan --output PLAN.json [--locations LOCATIONS.json] [--options OPTIONS.json]
     python3 -I Tools/catalog/overhead.py run --plan PLAN.json --results DIR [--only KEY,...] [--families F,...]
     python3 -I Tools/catalog/overhead.py table --plan PLAN.json --results DIR [--results DIR ...]
 
 `plan` lists every MLX catalog variant with the stored release that holds its files, found by matching the
 variant's source repository against `Tools/validation-assets/manifest.json`'s releases and reading each
 release's keys in `~/.inferkit-validation.json`. `--locations` names releases the manifest does not, as a
-JSON object of `model/variant` to path. A variant without a release is measured on initial values where its
+JSON object of `model/variant` to path. `--options` names load options that replace a variant's defaults,
+built past the budget check, for a variant its own overhead refuses on the measuring machine. A variant without a release is measured on initial values where its
 float32 bytes are at most `--initial-limit`.
 
 `run` measures the selected variants one process each through `NFKMLXLoadOverheadTests`, smallest first,
@@ -135,10 +136,13 @@ def plan(arguments):
         manifest = json.load(handle)
     with open(VALIDATION) as handle:
         keys = json.load(handle)
-    given = {}
+    given, overrides = {}, {}
     if arguments.locations:
         with open(arguments.locations) as handle:
             given = json.load(handle)
+    if arguments.options:
+        with open(arguments.options) as handle:
+            overrides = json.load(handle)
     releases = {}
     for release in manifest["releases"]:
         if release.get("repo"):
@@ -155,6 +159,8 @@ def plan(arguments):
             "weights": "stored" if location else ("initial" if size <= arguments.initial_limit else "none"),
             "float32Bytes": size, "residentBytes": variant.get("residentBytes") or size,
         })
+        if key in overrides:
+            rows[-1]["options"] = overrides[key]
     with open(arguments.output, "w") as handle:
         json.dump(rows, handle, indent=1)
     counts = {}
@@ -211,7 +217,8 @@ def run(arguments):
                     continue
         environment = dict(os.environ, IK_LOAD_OVERHEAD_VARIANT=row["key"], IK_LOAD_OVERHEAD_OUTPUT=output,
                            IK_LOAD_OVERHEAD_LOCATION=row["location"] or "",
-                           IK_LOAD_OVERHEAD_CAP=str(arguments.memory_cap))
+                           IK_LOAD_OVERHEAD_CAP=str(arguments.memory_cap),
+                           IK_LOAD_OVERHEAD_OPTIONS=json.dumps(row["options"]) if row.get("options") else "")
         log = output[:-5] + ".log"
         started = time.time()
         print(f"[{index}/{len(selected)}] {row['key']} ({row['weights']}, {row['residentBytes'] / 2**30:.2f} GiB)",
@@ -405,6 +412,9 @@ def main():
     planning.add_argument("--output", required=True)
     planning.add_argument("--locations", help="a JSON object of model/variant to the release that holds it, "
                           "for releases the manifest does not name")
+    planning.add_argument("--options", help="a JSON object of model/variant to the load options that replace its "
+                          "defaults, built past the budget check, for a variant its own overhead refuses on the "
+                          "measuring machine")
     planning.add_argument("--initial-limit", type=int, default=6 << 30,
                           help="the largest float32 bytes measured on initial values (default 6 GiB)")
     running = commands.add_parser("run")

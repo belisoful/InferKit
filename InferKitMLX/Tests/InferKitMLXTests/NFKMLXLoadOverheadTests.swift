@@ -39,6 +39,13 @@ final class NFKMLXLoadOverheadTests: XCTestCase {
         try requireMLXRuntime()
         let location = environment["IK_LOAD_OVERHEAD_LOCATION"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
         var record = NFKMLXOverheadRecord(name: name, location: location)
+        if let json = environment["IK_LOAD_OVERHEAD_OPTIONS"], !json.isEmpty {
+            guard let options = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] else {
+                throw NSError(domain: "NFKMLXLoadOverheadTests", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "IK_LOAD_OVERHEAD_OPTIONS is not a JSON object"])
+            }
+            record.overrides = options
+        }
         let cap = environment["IK_LOAD_OVERHEAD_CAP"].flatMap(Int.init) ?? 18 << 30
         NFKMLXOverheadWatchdog.start(name: name, weights: location == nil ? "initial" : "stored", cap: cap,
                                      output: URL(fileURLWithPath: output))
@@ -60,6 +67,10 @@ private struct NFKMLXOverheadRecord {
     let name: String
     let location: URL?
     var fields: [String: Any] = [:]
+    /// Load options that replace the defaults, built past the budget check: the residency a variant took
+    /// before its own overhead was counted, for a variant whose overhead now refuses it on the measuring
+    /// machine.
+    var overrides: [String: Any] = [:]
 
     init(name: String, location: URL?) {
         self.name = name
@@ -84,6 +95,11 @@ private struct NFKMLXOverheadRecord {
         fields["family"] = descriptor.family
         fields["tasks"] = descriptor.tasks
         var options: [String: Any] = descriptor.variants.count > 1 ? [NFKModelLoadOptionVariant: variant.identifier] : [:]
+        if !overrides.isEmpty {
+            options.merge(overrides) { _, override in override }
+            options[NFKModelLoadOptionIgnoreMemoryBudget] = true
+            fields["optionsOverride"] = Self.jsonValues(overrides)
+        }
         let budget = NFKModelMemoryBudget.current()
         fields["budgetBytes"] = budget.byteCount
         let request: NFKModelBuildRequest
