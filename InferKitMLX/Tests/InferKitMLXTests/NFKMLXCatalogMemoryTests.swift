@@ -52,10 +52,27 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
         }
     }
 
+    /// The least working set, to a mebibyte, under which `options` fit `descriptor`'s estimate.
+    private func leastFittingWorkingSet(_ descriptor: NFKModelDescriptor, _ options: [String: Any]) throws -> Int {
+        var (low, high) = (1 << 30, 256 << 30)
+        while high - low > 1 << 20 {
+            let middle = (low + high) / 2
+            let fits = try descriptor.estimatedMemory(forOptions: options,
+                                                      memoryBudget: NFKModelMemoryBudget(workingSetByteCount: middle)).fits
+            (low, high) = fits ? (low, middle) : (middle, high)
+        }
+        return high
+    }
+
+    // The two working sets are the least that hold the published precision and float32, so the rule is held
+    // between them whatever the decoder's figures are.
     func testAFloat32DefaultFallsBackToThePublishedPrecisionOnlyWhereItDoesNotFit() throws {
         let decoder = try descriptor("gemma-4-12b-it")
-        let small = NFKModelMemoryBudget(workingSetByteCount: 11_453_246_122)
-        let large = NFKModelMemoryBudget(workingSetByteCount: 26_800_000_000)
+        let published = try leastFittingWorkingSet(decoder, [NFKModelLoadOptionPrecision: NFKModelPrecisionCheckpoint])
+        let wide = try leastFittingWorkingSet(decoder, [NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32])
+        XCTAssertLessThan(published, wide, "float32 needs more than the published precision")
+        let small = NFKModelMemoryBudget(workingSetByteCount: published)
+        let large = NFKModelMemoryBudget(workingSetByteCount: wide)
         let fallen = try decoder.estimatedMemory(forOptions: nil, memoryBudget: small)
         XCTAssertTrue(fallen.fits)
         XCTAssertEqual(fallen.resolvedOptions[NFKModelLoadOptionPrecision] as? String, NFKModelPrecisionCheckpoint)

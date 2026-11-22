@@ -22,6 +22,7 @@ extension NFKMLXCatalogMeasurements {
         loadOverheads11,
         loadOverheads12,
         loadOverheads13,
+        loadOverheads14,
     ] as [[String: NFKMLXLoadOverhead]]).joined().map { ($0.key, $0.value) })
 
     private static let loadOverheads0: [String: NFKMLXLoadOverhead] = [
@@ -36,6 +37,11 @@ extension NFKMLXCatalogMeasurements {
         "bisenet/default": NFKMLXLoadOverhead(bytes: 1278214144, basis: .measured, loadBytes: 0, requestBytes: 1278214144, weights: .initial),
         "chatterbox/english": NFKMLXLoadOverhead(bytes: 2099249152, basis: .measured, loadBytes: 82837504, requestBytes: 2099249152, weights: .stored),
         "chronos-bolt-base/chronos-bolt-base": NFKMLXLoadOverhead(bytes: 97517568, basis: .measured, loadBytes: 0, requestBytes: 97517568, weights: .initial),
+        "clip-probe/default": NFKMLXLoadOverhead(bytes: 1343225856, basis: .family, source: "clip-vit-l-14-336/default"),
+        "clip-vit-b-16/default": NFKMLXLoadOverhead(bytes: 214958080, basis: .measured, loadBytes: 0, requestBytes: 214958080, weights: .initial),
+        "clip-vit-b-32/default": NFKMLXLoadOverhead(bytes: 68157440, basis: .measured, loadBytes: 0, requestBytes: 68157440, weights: .initial),
+        "clip-vit-l-14-336/default": NFKMLXLoadOverhead(bytes: 1343225856, basis: .measured, loadBytes: 0, requestBytes: 1343225856, weights: .initial),
+        "clip-vit-l-14/default": NFKMLXLoadOverhead(bytes: 729808896, basis: .measured, loadBytes: 0, requestBytes: 729808896, weights: .initial),
         "codeformer-photo/default": NFKMLXLoadOverhead(bytes: 0, basis: .measured, loadBytes: 0, requestBytes: 0, weights: .initial),
         "codeformer/default": NFKMLXLoadOverhead(bytes: 3554672640, basis: .measured, loadBytes: 0, requestBytes: 3554672640, weights: .initial),
         "colorizer-eccv16/default": NFKMLXLoadOverhead(bytes: 470810624, basis: .measured, loadBytes: 0, requestBytes: 470810624, weights: .initial),
@@ -45,14 +51,14 @@ extension NFKMLXCatalogMeasurements {
         "cosmos-tokenizer-ci8x8/default": NFKMLXLoadOverhead(bytes: 5166333952, basis: .measured, loadBytes: 0, requestBytes: 5166333952, weights: .initial),
         "cosmos-tokenizer-cv4x8x8/default": NFKMLXLoadOverhead(bytes: 4504682496, basis: .measured, loadBytes: 0, requestBytes: 4504682496, weights: .initial),
         "cosmos-tokenizer-cv8x16x16/default": NFKMLXLoadOverhead(bytes: 4504682496, basis: .measured, loadBytes: 0, requestBytes: 4504682496, weights: .initial),
+    ]
+
+    private static let loadOverheads1: [String: NFKMLXLoadOverhead] = [
         "cosmos-tokenizer-cv8x8x8/default": NFKMLXLoadOverhead(bytes: 4504682496, basis: .measured, loadBytes: 0, requestBytes: 4504682496, weights: .initial),
         "cosmos-tokenizer-di16x16/default": NFKMLXLoadOverhead(bytes: 3985637376, basis: .measured, loadBytes: 0, requestBytes: 3985637376, weights: .initial),
         "cosmos-tokenizer-di8x8/default": NFKMLXLoadOverhead(bytes: 5166333952, basis: .measured, loadBytes: 0, requestBytes: 5166333952, weights: .initial),
         "cosmos-tokenizer-dv4x8x8/default": NFKMLXLoadOverhead(bytes: 4504682496, basis: .measured, loadBytes: 0, requestBytes: 4504682496, weights: .initial),
         "cosmos-tokenizer-dv8x16x16/default": NFKMLXLoadOverhead(bytes: 4504682496, basis: .measured, loadBytes: 0, requestBytes: 4504682496, weights: .initial),
-    ]
-
-    private static let loadOverheads1: [String: NFKMLXLoadOverhead] = [
         "cosmos-tokenizer-dv8x8x8/default": NFKMLXLoadOverhead(bytes: 4504682496, basis: .measured, loadBytes: 0, requestBytes: 4504682496, weights: .initial),
         "dac/44khz-8kbps": NFKMLXLoadOverhead(bytes: 3049259008, basis: .measured, loadBytes: 0, requestBytes: 3049259008, weights: .initial),
         "ddcolor-artistic/default": NFKMLXLoadOverhead(bytes: 1860173824, basis: .measured, loadBytes: 0, requestBytes: 1860173824, weights: .initial),
@@ -73,17 +79,22 @@ extension NFKMLXCatalogMeasurements {
         "depth-anything-v2-small/default": NFKMLXLoadOverhead(bytes: 1475346432, basis: .measured, loadBytes: 0, requestBytes: 1475346432, weights: .initial),
         "diffusion-controlnet/default": NFKMLXLoadOverhead(bytes: 63963136, basis: .measured, loadBytes: 0, requestBytes: 63963136, weights: .initial),
         "diffusion-depth/default": NFKMLXLoadOverhead(bytes: 89128960, basis: .measured, loadBytes: 0, requestBytes: 89128960, weights: .initial),
+    ]
+
+    private static let loadOverheads2: [String: NFKMLXLoadOverhead] = [
         "diffusion-inpaint/default": NFKMLXLoadOverhead(bytes: 139460608, basis: .measured, loadBytes: 0, requestBytes: 139460608, weights: .initial),
         "diffusion-upscaler/default": NFKMLXLoadOverhead(bytes: 265289728, basis: .measured, loadBytes: 0, requestBytes: 265289728, weights: .initial),
         "embeddinggemma-300m/embeddinggemma-300m": NFKMLXLoadOverhead(bytes: 2574254080, basis: .family, source: "gemma-3-4b-it/gemma-3-4b-it"),
         "fast-style-transfer/default": NFKMLXLoadOverhead(bytes: 3876585472, basis: .measured, loadBytes: 0, requestBytes: 3876585472, weights: .initial),
         "florence-2-base-ft/default": NFKMLXLoadOverhead(bytes: 463470592, basis: .measured, loadBytes: 463470592, requestBytes: 17825792, weights: .stored),
-    ]
-
-    private static let loadOverheads2: [String: NFKMLXLoadOverhead] = [
         "florence-2-base/default": NFKMLXLoadOverhead(bytes: 463470592, basis: .measured, loadBytes: 463470592, requestBytes: 17825792, weights: .stored),
         "florence-2-large-ft/default": NFKMLXLoadOverhead(bytes: 1542455296, basis: .measured, loadBytes: 1542455296, requestBytes: 17825792, weights: .stored),
         "florence-2-large/default": NFKMLXLoadOverhead(bytes: 1555038208, basis: .measured, loadBytes: 1555038208, requestBytes: 17825792, weights: .stored),
+        "flux.2-klein-4b/default": NFKMLXLoadOverhead(bytes: 8437891072, basis: .measured, loadBytes: 1048576, requestBytes: 8437891072, weights: .stored),
+        "flux.2-klein-9b-kv/default": NFKMLXLoadOverhead(bytes: 8437891072, basis: .family, source: "flux.2-klein-4b/default"),
+        "flux.2-klein-9b/default": NFKMLXLoadOverhead(bytes: 8437891072, basis: .family, source: "flux.2-klein-4b/default"),
+        "flux.2-klein-base-4b/default": NFKMLXLoadOverhead(bytes: 8437891072, basis: .family, source: "flux.2-klein-4b/default"),
+        "flux.2-klein-base-9b/default": NFKMLXLoadOverhead(bytes: 8437891072, basis: .family, source: "flux.2-klein-4b/default"),
         "frcrn/se-16k": NFKMLXLoadOverhead(bytes: 2634022912, basis: .measured, loadBytes: 56623104, requestBytes: 2634022912, weights: .stored),
         "gemma-3-12b-it/gemma-3-12b-it": NFKMLXLoadOverhead(bytes: 2574254080, basis: .family, source: "gemma-3-4b-it/gemma-3-4b-it"),
         "gemma-3-1b-it/gemma-3-1b-it": NFKMLXLoadOverhead(bytes: 2574254080, basis: .family, source: "gemma-3-4b-it/gemma-3-4b-it"),
@@ -91,6 +102,17 @@ extension NFKMLXCatalogMeasurements {
         "gemma-3-27b-it/gemma-3-27b-it": NFKMLXLoadOverhead(bytes: 2574254080, basis: .family, source: "gemma-3-4b-it/gemma-3-4b-it"),
         "gemma-3-4b-it/gemma-3-4b-it": NFKMLXLoadOverhead(bytes: 2574254080, basis: .measured, loadBytes: 1048576, requestBytes: 2574254080, weights: .stored),
         "gemma-3n-e2b-it/gemma-3n-e2b-it": NFKMLXLoadOverhead(bytes: 9408872448, basis: .measured, loadBytes: 1048576, requestBytes: 9408872448, weights: .stored),
+        "gemma-3n-e4b-it/gemma-3n-e4b-it": NFKMLXLoadOverhead(bytes: 8772386816, basis: .measured, loadBytes: 1048576, requestBytes: 8772386816, weights: .stored),
+        "gemma-4-12b-it/gemma-4-12b-it": NFKMLXLoadOverhead(bytes: 3988783104, basis: .measured, loadBytes: 189792256, requestBytes: 3988783104, weights: .stored),
+        "gemma-4-26b-a4b-it/gemma-4-26b-a4b-it": NFKMLXLoadOverhead(bytes: 7823425536, basis: .family, source: "gemma-4-31b-it/gemma-4-31b-it"),
+        "gemma-4-31b-it/gemma-4-31b-it": NFKMLXLoadOverhead(bytes: 7823425536, basis: .measured, loadBytes: 265289728, requestBytes: 7823425536, weights: .stored),
+        "gemma-4-e2b-it/gemma-4-e2b-it": NFKMLXLoadOverhead(bytes: 7823425536, basis: .family, source: "gemma-4-31b-it/gemma-4-31b-it"),
+    ]
+
+    private static let loadOverheads3: [String: NFKMLXLoadOverhead] = [
+        "gemma-4-e4b-it/gemma-4-e4b-it": NFKMLXLoadOverhead(bytes: 2124414976, basis: .measured, loadBytes: 2124414976, requestBytes: 1879048192, weights: .stored),
+        "gemma4-multimodal/gemma-4-e2b-it": NFKMLXLoadOverhead(bytes: 7823425536, basis: .family, source: "gemma-4-31b-it/gemma-4-31b-it"),
+        "gemma4-multimodal/gemma-4-e4b-it": NFKMLXLoadOverhead(bytes: 7823425536, basis: .family, source: "gemma-4-31b-it/gemma-4-31b-it"),
         "gpt-oss-20b/gpt-oss-20b": NFKMLXLoadOverhead(bytes: 4884267008, basis: .measured, loadBytes: 1048576, requestBytes: 4884267008, weights: .stored),
         "granite-4.0-h-tiny/granite-4.0-h-tiny": NFKMLXLoadOverhead(bytes: 15622733824, basis: .family, source: "granite-4.0-h/granite-4.0-h-1b"),
         "granite-4.0-h/granite-4.0-h-1b": NFKMLXLoadOverhead(bytes: 15622733824, basis: .measured, loadBytes: 1048576, requestBytes: 15622733824, weights: .stored),
@@ -106,16 +128,16 @@ extension NFKMLXCatalogMeasurements {
         "hubert-large-ls960-ft/hubert-large-ls960-ft": NFKMLXLoadOverhead(bytes: 1951399936, basis: .measured, loadBytes: 1048576, requestBytes: 1951399936, weights: .stored),
         "hubert-xlarge-ll60k/hubert-xlarge-ll60k": NFKMLXLoadOverhead(bytes: 1795162112, basis: .measured, loadBytes: 1048576, requestBytes: 1795162112, weights: .stored),
         "hubert-xlarge-ls960-ft/hubert-xlarge-ls960-ft": NFKMLXLoadOverhead(bytes: 1795162112, basis: .measured, loadBytes: 1048576, requestBytes: 1795162112, weights: .stored),
-    ]
-
-    private static let loadOverheads3: [String: NFKMLXLoadOverhead] = [
         "hunyuan-mt-chimera/hunyuan-mt-chimera-7b": NFKMLXLoadOverhead(bytes: 603979776, basis: .family, source: "hy-mt2/hy-mt2-1.8b"),
         "hunyuan-mt/hunyuan-mt-7b": NFKMLXLoadOverhead(bytes: 590348288, basis: .measured, loadBytes: 1048576, requestBytes: 590348288, weights: .stored),
         "hy-mt1.5/hy-mt1.5-1.8b": NFKMLXLoadOverhead(bytes: 589299712, basis: .measured, loadBytes: 1048576, requestBytes: 589299712, weights: .stored),
         "hy-mt1.5/hy-mt1.5-7b": NFKMLXLoadOverhead(bytes: 590348288, basis: .measured, loadBytes: 1048576, requestBytes: 590348288, weights: .stored),
-        "hy-mt2-30b-a3b/hy-mt2-30b-a3b": NFKMLXLoadOverhead(bytes: 603979776, basis: .family, source: "hy-mt2/hy-mt2-1.8b"),
+        "hy-mt2-30b-a3b/hy-mt2-30b-a3b": NFKMLXLoadOverhead(bytes: 370147328, basis: .measured, loadBytes: 1048576, requestBytes: 370147328, weights: .stored),
         "hy-mt2/hy-mt2-1.8b": NFKMLXLoadOverhead(bytes: 603979776, basis: .measured, loadBytes: 1048576, requestBytes: 603979776, weights: .stored),
         "hy-mt2/hy-mt2-7b": NFKMLXLoadOverhead(bytes: 550502400, basis: .measured, loadBytes: 1048576, requestBytes: 550502400, weights: .stored),
+    ]
+
+    private static let loadOverheads4: [String: NFKMLXLoadOverhead] = [
         "hyper-sd15-1step-lora/default": NFKMLXLoadOverhead(bytes: 4379901952, basis: .measured, loadBytes: 85983232, requestBytes: 4379901952, weights: .stored),
         "hyper-sd15-4steps-lora/default": NFKMLXLoadOverhead(bytes: 4465885184, basis: .measured, loadBytes: 85983232, requestBytes: 4465885184, weights: .stored),
         "hyper-sd15-8steps-cfg-lora/default": NFKMLXLoadOverhead(bytes: 4379901952, basis: .measured, loadBytes: 85983232, requestBytes: 4379901952, weights: .stored),
@@ -134,15 +156,16 @@ extension NFKMLXCatalogMeasurements {
         "m2m100/m2m100_418m": NFKMLXLoadOverhead(bytes: 1574961152, basis: .measured, loadBytes: 1574961152, requestBytes: 18874368, weights: .stored),
         "madlad400-3b-mt/madlad400-3b-mt": NFKMLXLoadOverhead(bytes: 1328545792, basis: .measured, loadBytes: 1049624576, requestBytes: 1328545792, weights: .stored),
         "madlad400-7b-mt/madlad400-7b-mt": NFKMLXLoadOverhead(bytes: 2232418304, basis: .measured, loadBytes: 2232418304, requestBytes: 1160773632, weights: .stored),
-    ]
-
-    private static let loadOverheads4: [String: NFKMLXLoadOverhead] = [
         "marigold-depth/default": NFKMLXLoadOverhead(bytes: 11655970816, basis: .measured, loadBytes: 0, requestBytes: 11655970816, weights: .initial),
         "metricgan-plus/voicebank": NFKMLXLoadOverhead(bytes: 52428800, basis: .measured, loadBytes: 0, requestBytes: 52428800, weights: .initial),
         "mimi/mimi": NFKMLXLoadOverhead(bytes: 2491416576, basis: .measured, loadBytes: 0, requestBytes: 2491416576, weights: .initial),
         "minimax-music3/music3": NFKMLXLoadOverhead(bytes: 349175808, basis: .measured, loadBytes: 0, requestBytes: 349175808, weights: .stored),
+        "mistral-small-24b-instruct-2501/mistral-small-24b-instruct-2501": NFKMLXLoadOverhead(bytes: 2759852032, basis: .measured, loadBytes: 1048576, requestBytes: 2759852032, weights: .stored),
         "modnet/default": NFKMLXLoadOverhead(bytes: 1752170496, basis: .measured, loadBytes: 0, requestBytes: 1752170496, weights: .initial),
         "mossformer2-se/se-48k": NFKMLXLoadOverhead(bytes: 232783872, basis: .measured, loadBytes: 0, requestBytes: 232783872, weights: .initial),
+    ]
+
+    private static let loadOverheads5: [String: NFKMLXLoadOverhead] = [
         "mossformer2-sr/sr-48k": NFKMLXLoadOverhead(bytes: 14317256704, basis: .measured, loadBytes: 441450496, requestBytes: 14317256704, weights: .stored),
         "muscriptor-large/large": NFKMLXLoadOverhead(bytes: 1918894080, basis: .measured, loadBytes: 0, requestBytes: 1918894080, weights: .initial),
         "muscriptor-small/small": NFKMLXLoadOverhead(bytes: 473956352, basis: .measured, loadBytes: 0, requestBytes: 473956352, weights: .initial),
@@ -152,51 +175,53 @@ extension NFKMLXCatalogMeasurements {
         "nafnet-reds/default": NFKMLXLoadOverhead(bytes: 2966421504, basis: .measured, loadBytes: 0, requestBytes: 2966421504, weights: .initial),
         "nafnet-sidd-width64/default": NFKMLXLoadOverhead(bytes: 2966421504, basis: .measured, loadBytes: 0, requestBytes: 2966421504, weights: .initial),
         "nafnet/default": NFKMLXLoadOverhead(bytes: 2320498688, basis: .measured, loadBytes: 0, requestBytes: 2320498688, weights: .initial),
+        "nemotron-3-nano-4b/nvidia-nemotron-3-nano-4b-bf16": NFKMLXLoadOverhead(bytes: 18274582528, basis: .measured, loadBytes: 1048576, requestBytes: 18274582528, weights: .stored),
         "nemotron-asr-streaming/en-0.6b": NFKMLXLoadOverhead(bytes: 1066401792, basis: .measured, loadBytes: 1048576, requestBytes: 1066401792, weights: .stored),
         "nllb-200-1.3b/nllb-200-1.3b": NFKMLXLoadOverhead(bytes: 3148873728, basis: .measured, loadBytes: 3148873728, requestBytes: 1048576, weights: .stored),
         "nllb-200-3.3b/nllb-200-3.3b": NFKMLXLoadOverhead(bytes: 6296698880, basis: .measured, loadBytes: 6296698880, requestBytes: 1048576, weights: .stored),
         "nllb-200-distilled-1.3b/nllb-200-distilled-1.3b": NFKMLXLoadOverhead(bytes: 3148873728, basis: .measured, loadBytes: 3148873728, requestBytes: 1048576, weights: .stored),
         "nllb-200/nllb-200-distilled-600m": NFKMLXLoadOverhead(bytes: 3148873728, basis: .measured, loadBytes: 3148873728, requestBytes: 1048576, weights: .stored),
         "nuwave2/official": NFKMLXLoadOverhead(bytes: 16839081984, basis: .measured, loadBytes: 0, requestBytes: 16839081984, weights: .initial),
-        "open-jev-27b-v1.1/open-jev-27b-v1.1": NFKMLXLoadOverhead(bytes: 2032140288, basis: .family, source: "open-jev-2b/open-jev-2b"),
+        "open-jev-27b-v1.1/open-jev-27b-v1.1": NFKMLXLoadOverhead(bytes: 2845835264, basis: .measured, loadBytes: 61865984, requestBytes: 2845835264, weights: .stored),
         "open-jev-2b/open-jev-2b": NFKMLXLoadOverhead(bytes: 2032140288, basis: .measured, loadBytes: 10485760, requestBytes: 2032140288, weights: .stored),
         "open-jev-9b/open-jev-9b": NFKMLXLoadOverhead(bytes: 426770432, basis: .measured, loadBytes: 24117248, requestBytes: 426770432, weights: .stored),
         "open-jev-deberta-v3-large/open-jev-deberta-v3-large": NFKMLXLoadOverhead(bytes: 1261436928, basis: .measured, loadBytes: 1048576, requestBytes: 1261436928, weights: .stored),
+        "opus-mt/opus-mt-ar-en": NFKMLXLoadOverhead(bytes: 286261248, basis: .measured, loadBytes: 260046848, requestBytes: 286261248, weights: .stored),
+        "opus-mt/opus-mt-en-de": NFKMLXLoadOverhead(bytes: 274726912, basis: .measured, loadBytes: 240123904, requestBytes: 274726912, weights: .stored),
+        "opus-mt/opus-mt-en-zh": NFKMLXLoadOverhead(bytes: 268435456, basis: .measured, loadBytes: 268435456, requestBytes: 123731968, weights: .stored),
+        "opus-mt/opus-mt-hi-en": NFKMLXLoadOverhead(bytes: 325058560, basis: .measured, loadBytes: 252706816, requestBytes: 325058560, weights: .stored),
+        "opus-mt/opus-mt-ja-en": NFKMLXLoadOverhead(bytes: 338690048, basis: .measured, loadBytes: 251658240, requestBytes: 338690048, weights: .stored),
     ]
 
-    private static let loadOverheads5: [String: NFKMLXLoadOverhead] = [
-        "opus-mt/opus-mt-ar-en": NFKMLXLoadOverhead(bytes: 274726912, basis: .family, source: "opus-mt/opus-mt-en-de"),
-        "opus-mt/opus-mt-en-de": NFKMLXLoadOverhead(bytes: 274726912, basis: .measured, loadBytes: 240123904, requestBytes: 274726912, weights: .stored),
-        "opus-mt/opus-mt-en-zh": NFKMLXLoadOverhead(bytes: 274726912, basis: .family, source: "opus-mt/opus-mt-en-de"),
-        "opus-mt/opus-mt-hi-en": NFKMLXLoadOverhead(bytes: 274726912, basis: .family, source: "opus-mt/opus-mt-en-de"),
-        "opus-mt/opus-mt-ja-en": NFKMLXLoadOverhead(bytes: 274726912, basis: .family, source: "opus-mt/opus-mt-en-de"),
-        "opus-mt/opus-mt-ko-en": NFKMLXLoadOverhead(bytes: 274726912, basis: .family, source: "opus-mt/opus-mt-en-de"),
-        "opus-mt/opus-mt-th-en": NFKMLXLoadOverhead(bytes: 274726912, basis: .family, source: "opus-mt/opus-mt-en-de"),
-        "opus-mt/opus-mt-vi-en": NFKMLXLoadOverhead(bytes: 274726912, basis: .family, source: "opus-mt/opus-mt-en-de"),
-        "opus-mt/opus-mt-zh-en": NFKMLXLoadOverhead(bytes: 274726912, basis: .family, source: "opus-mt/opus-mt-en-de"),
+    private static let loadOverheads6: [String: NFKMLXLoadOverhead] = [
+        "opus-mt/opus-mt-ko-en": NFKMLXLoadOverhead(bytes: 367001600, basis: .measured, loadBytes: 268435456, requestBytes: 367001600, weights: .stored),
+        "opus-mt/opus-mt-th-en": NFKMLXLoadOverhead(bytes: 365953024, basis: .measured, loadBytes: 257949696, requestBytes: 365953024, weights: .stored),
+        "opus-mt/opus-mt-vi-en": NFKMLXLoadOverhead(bytes: 281018368, basis: .measured, loadBytes: 222298112, requestBytes: 281018368, weights: .stored),
+        "opus-mt/opus-mt-zh-en": NFKMLXLoadOverhead(bytes: 344981504, basis: .measured, loadBytes: 268435456, requestBytes: 344981504, weights: .stored),
         "phi-4-multimodal/phi-4-multimodal-instruct": NFKMLXLoadOverhead(bytes: 4242538496, basis: .measured, loadBytes: 125829120, requestBytes: 4242538496, weights: .stored),
+        "pixtral-12b/pixtral-12b": NFKMLXLoadOverhead(bytes: 1343225856, basis: .measured, loadBytes: 1343225856, requestBytes: 1118830592, weights: .stored),
         "pose-simplebaseline/default": NFKMLXLoadOverhead(bytes: 85983232, basis: .measured, loadBytes: 0, requestBytes: 85983232, weights: .initial),
         "pplx-decider-flash-v1.2/pplx-decider-flash-v1.2": NFKMLXLoadOverhead(bytes: 2264924160, basis: .measured, loadBytes: 1048576, requestBytes: 2264924160, weights: .stored),
-        "pplx-decider-v1.2/pplx-decider-v1.2": NFKMLXLoadOverhead(bytes: 2264924160, basis: .family, source: "pplx-decider-flash-v1.2/pplx-decider-flash-v1.2"),
+        "pplx-decider-v1.2/pplx-decider-v1.2": NFKMLXLoadOverhead(bytes: 3498049536, basis: .measured, loadBytes: 3498049536, requestBytes: 3148873728, weights: .stored),
         "qwen3-0.6b/qwen3-0.6b": NFKMLXLoadOverhead(bytes: 2298478592, basis: .measured, loadBytes: 1048576, requestBytes: 2298478592, weights: .stored),
         "qwen3-1.7b/qwen3-1.7b": NFKMLXLoadOverhead(bytes: 2793406464, basis: .family, source: "qwen3-4b/qwen3-4b"),
-        "qwen3-14b/qwen3-14b": NFKMLXLoadOverhead(bytes: 6983516160, basis: .family, source: "qwen3-4b/qwen3-4b"),
-        "qwen3-32b/qwen3-32b": NFKMLXLoadOverhead(bytes: 6983516160, basis: .family, source: "qwen3-4b/qwen3-4b"),
+        "qwen3-14b/qwen3-14b": NFKMLXLoadOverhead(bytes: 1652555776, basis: .measured, loadBytes: 1433403392, requestBytes: 1652555776, weights: .stored),
+        "qwen3-32b/qwen3-32b": NFKMLXLoadOverhead(bytes: 2864709632, basis: .measured, loadBytes: 1048576, requestBytes: 2864709632, weights: .stored),
         "qwen3-4b/qwen3-4b": NFKMLXLoadOverhead(bytes: 3491758080, basis: .measured, loadBytes: 1048576, requestBytes: 3491758080, weights: .stored),
         "qwen3-embedding-0.6b/qwen3-embedding-0.6b": NFKMLXLoadOverhead(bytes: 1092616192, basis: .measured, loadBytes: 133169152, requestBytes: 1092616192, weights: .stored),
         "qwen3-vl-2b/qwen3-vl-2b-instruct": NFKMLXLoadOverhead(bytes: 2815426560, basis: .measured, loadBytes: 177209344, requestBytes: 2815426560, weights: .stored),
         "qwen3-vl-30b-a3b/qwen3-vl-30b-a3b-instruct": NFKMLXLoadOverhead(bytes: 2815426560, basis: .family, source: "qwen3-vl-2b/qwen3-vl-2b-instruct"),
-        "qwen3-vl-32b/qwen3-vl-32b-instruct": NFKMLXLoadOverhead(bytes: 2815426560, basis: .family, source: "qwen3-vl-2b/qwen3-vl-2b-instruct"),
-        "qwen3-vl-8b/qwen3-vl-8b-instruct": NFKMLXLoadOverhead(bytes: 2815426560, basis: .family, source: "qwen3-vl-2b/qwen3-vl-2b-instruct"),
+        "qwen3-vl-32b/qwen3-vl-32b-instruct": NFKMLXLoadOverhead(bytes: 1556086784, basis: .measured, loadBytes: 1556086784, requestBytes: 1309671424, weights: .stored),
+        "qwen3-vl-8b/qwen3-vl-8b-instruct": NFKMLXLoadOverhead(bytes: 1388314624, basis: .measured, loadBytes: 1244659712, requestBytes: 1388314624, weights: .stored),
         "qwen3-vl-embedding-2b/qwen3-vl-embedding-2b": NFKMLXLoadOverhead(bytes: 709885952, basis: .measured, loadBytes: 177209344, requestBytes: 709885952, weights: .stored),
-        "qwen3-vl-reranker-2b/qwen3-vl-reranker-2b": NFKMLXLoadOverhead(bytes: 2815426560, basis: .family, source: "qwen3-vl-2b/qwen3-vl-2b-instruct"),
-    ]
-
-    private static let loadOverheads6: [String: NFKMLXLoadOverhead] = [
+        "qwen3-vl-reranker-2b/qwen3-vl-reranker-2b": NFKMLXLoadOverhead(bytes: 715128832, basis: .measured, loadBytes: 177209344, requestBytes: 715128832, weights: .stored),
         "qwen3.5-2b/qwen3.5-2b": NFKMLXLoadOverhead(bytes: 1712324608, basis: .measured, loadBytes: 1048576, requestBytes: 1712324608, weights: .stored),
         "qwen3.5-9b/qwen3.5-9b": NFKMLXLoadOverhead(bytes: 2060451840, basis: .measured, loadBytes: 1048576, requestBytes: 2060451840, weights: .stored),
         "qwen3.5/qwen3.5-4b": NFKMLXLoadOverhead(bytes: 1288699904, basis: .family, source: "qwen3.5-9b/qwen3.5-9b"),
         "qwen3.8-27b/qwen3.8-27b": NFKMLXLoadOverhead(bytes: 2576351232, basis: .family, source: "qwen3.5-9b/qwen3.5-9b"),
+    ]
+
+    private static let loadOverheads7: [String: NFKMLXLoadOverhead] = [
         "raft/default": NFKMLXLoadOverhead(bytes: 3087007744, basis: .measured, loadBytes: 0, requestBytes: 3087007744, weights: .initial),
         "real-esrgan-anime-video-x4v3/default": NFKMLXLoadOverhead(bytes: 2228224000, basis: .measured, loadBytes: 0, requestBytes: 2228224000, weights: .initial),
         "real-esrgan-general-x4v3/default": NFKMLXLoadOverhead(bytes: 2228224000, basis: .measured, loadBytes: 0, requestBytes: 2228224000, weights: .initial),
@@ -218,13 +243,13 @@ extension NFKMLXCatalogMeasurements {
         "rf-detr/default": NFKMLXLoadOverhead(bytes: 595591168, basis: .measured, loadBytes: 0, requestBytes: 595591168, weights: .initial),
         "rife-clip/default": NFKMLXLoadOverhead(bytes: 2776629248, basis: .measured, loadBytes: 0, requestBytes: 2776629248, weights: .initial),
         "rife-v4/default": NFKMLXLoadOverhead(bytes: 1542455296, basis: .measured, loadBytes: 0, requestBytes: 1542455296, weights: .initial),
-    ]
-
-    private static let loadOverheads7: [String: NFKMLXLoadOverhead] = [
         "rife/default": NFKMLXLoadOverhead(bytes: 1455423488, basis: .measured, loadBytes: 0, requestBytes: 1455423488, weights: .initial),
         "robust-video-matting-clip/default": NFKMLXLoadOverhead(bytes: 897581056, basis: .measured, loadBytes: 0, requestBytes: 897581056, weights: .initial),
         "robust-video-matting-resnet50-clip/default": NFKMLXLoadOverhead(bytes: 1050673152, basis: .measured, loadBytes: 0, requestBytes: 1050673152, weights: .initial),
         "robust-video-matting-resnet50/default": NFKMLXLoadOverhead(bytes: 2022703104, basis: .measured, loadBytes: 0, requestBytes: 2022703104, weights: .initial),
+    ]
+
+    private static let loadOverheads8: [String: NFKMLXLoadOverhead] = [
         "robust-video-matting/default": NFKMLXLoadOverhead(bytes: 1677721600, basis: .measured, loadBytes: 0, requestBytes: 1677721600, weights: .initial),
         "rtdetr-r101vd/default": NFKMLXLoadOverhead(bytes: 610271232, basis: .measured, loadBytes: 0, requestBytes: 610271232, weights: .initial),
         "rtdetr-r18vd/default": NFKMLXLoadOverhead(bytes: 427819008, basis: .measured, loadBytes: 0, requestBytes: 427819008, weights: .initial),
@@ -246,13 +271,13 @@ extension NFKMLXCatalogMeasurements {
         "sam-vit-h/default": NFKMLXLoadOverhead(bytes: 2617245696, basis: .measured, loadBytes: 0, requestBytes: 2617245696, weights: .initial),
         "sam-vit-l/default": NFKMLXLoadOverhead(bytes: 2732589056, basis: .measured, loadBytes: 0, requestBytes: 2732589056, weights: .initial),
         "sam/default": NFKMLXLoadOverhead(bytes: 97517568, basis: .measured, loadBytes: 0, requestBytes: 97517568, weights: .initial),
-    ]
-
-    private static let loadOverheads8: [String: NFKMLXLoadOverhead] = [
         "sam2-hiera-base-plus-video/default": NFKMLXLoadOverhead(bytes: 2735734784, basis: .measured, loadBytes: 0, requestBytes: 2735734784, weights: .initial),
         "sam2-hiera-base-plus/default": NFKMLXLoadOverhead(bytes: 2672820224, basis: .measured, loadBytes: 0, requestBytes: 2672820224, weights: .initial),
         "sam2-hiera-large-video/default": NFKMLXLoadOverhead(bytes: 2534408192, basis: .measured, loadBytes: 0, requestBytes: 2534408192, weights: .initial),
         "sam2-hiera-large/default": NFKMLXLoadOverhead(bytes: 2471493632, basis: .measured, loadBytes: 0, requestBytes: 2471493632, weights: .initial),
+    ]
+
+    private static let loadOverheads9: [String: NFKMLXLoadOverhead] = [
         "sam2-hiera-small-video/default": NFKMLXLoadOverhead(bytes: 2403336192, basis: .measured, loadBytes: 0, requestBytes: 2403336192, weights: .initial),
         "sam2-hiera-small/default": NFKMLXLoadOverhead(bytes: 2095054848, basis: .measured, loadBytes: 0, requestBytes: 2095054848, weights: .initial),
         "sam2-hiera-tiny-video/default": NFKMLXLoadOverhead(bytes: 2403336192, basis: .measured, loadBytes: 0, requestBytes: 2403336192, weights: .initial),
@@ -265,6 +290,11 @@ extension NFKMLXCatalogMeasurements {
         "sam2.1-hiera-small-video/default": NFKMLXLoadOverhead(bytes: 2403336192, basis: .measured, loadBytes: 0, requestBytes: 2403336192, weights: .initial),
         "sam2.1-hiera-small/default": NFKMLXLoadOverhead(bytes: 2095054848, basis: .measured, loadBytes: 0, requestBytes: 2095054848, weights: .initial),
         "sam2/default": NFKMLXLoadOverhead(bytes: 1945108480, basis: .measured, loadBytes: 0, requestBytes: 1945108480, weights: .initial),
+        "sd3-controlnet/default": NFKMLXLoadOverhead(bytes: 7634681856, basis: .family, source: "sd3.5-large/default"),
+        "sd3-medium/default": NFKMLXLoadOverhead(bytes: 7632584704, basis: .measured, loadBytes: 167772160, requestBytes: 7632584704, weights: .stored),
+        "sd3.5-large-turbo/default": NFKMLXLoadOverhead(bytes: 7634681856, basis: .family, source: "sd3.5-large/default"),
+        "sd3.5-large/default": NFKMLXLoadOverhead(bytes: 7634681856, basis: .measured, loadBytes: 0, requestBytes: 7634681856, weights: .stored),
+        "sd3/default": NFKMLXLoadOverhead(bytes: 7632584704, basis: .measured, loadBytes: 167772160, requestBytes: 7632584704, weights: .stored),
         "sdxl-lightning-4step-lora/default": NFKMLXLoadOverhead(bytes: 11474567168, basis: .measured, loadBytes: 315621376, requestBytes: 11474567168, weights: .stored),
         "sdxl-turbo/default": NFKMLXLoadOverhead(bytes: 4434427904, basis: .measured, loadBytes: 315621376, requestBytes: 4434427904, weights: .stored),
         "seed-x/seed-x-instruct-7b": NFKMLXLoadOverhead(bytes: 590348288, basis: .measured, loadBytes: 1048576, requestBytes: 590348288, weights: .stored),
@@ -273,10 +303,10 @@ extension NFKMLXCatalogMeasurements {
         "siglip2-base-patch16-224/default": NFKMLXLoadOverhead(bytes: 243269632, basis: .measured, loadBytes: 0, requestBytes: 243269632, weights: .initial),
         "siglip2-base-patch16-256/default": NFKMLXLoadOverhead(bytes: 311427072, basis: .measured, loadBytes: 0, requestBytes: 311427072, weights: .initial),
         "siglip2-base-patch16-384/default": NFKMLXLoadOverhead(bytes: 679477248, basis: .measured, loadBytes: 0, requestBytes: 679477248, weights: .initial),
-        "siglip2-base-patch16-512/default": NFKMLXLoadOverhead(bytes: 803209216, basis: .measured, loadBytes: 0, requestBytes: 803209216, weights: .initial),
     ]
 
-    private static let loadOverheads9: [String: NFKMLXLoadOverhead] = [
+    private static let loadOverheads10: [String: NFKMLXLoadOverhead] = [
+        "siglip2-base-patch16-512/default": NFKMLXLoadOverhead(bytes: 803209216, basis: .measured, loadBytes: 0, requestBytes: 803209216, weights: .initial),
         "siglip2-base-patch32-256/default": NFKMLXLoadOverhead(bytes: 99614720, basis: .measured, loadBytes: 0, requestBytes: 99614720, weights: .initial),
         "siglip2-giant-opt-patch16-256/default": NFKMLXLoadOverhead(bytes: 1409286144, basis: .family, source: "siglip2-large-patch16-512/default"),
         "siglip2-giant-opt-patch16-384/default": NFKMLXLoadOverhead(bytes: 1409286144, basis: .family, source: "siglip2-large-patch16-512/default"),
@@ -301,10 +331,10 @@ extension NFKMLXCatalogMeasurements {
         "stable-audio-open-1.0/1.0": NFKMLXLoadOverhead(bytes: 6444548096, basis: .measured, loadBytes: 1001390080, requestBytes: 6444548096, weights: .stored),
         "stable-diffusion-2-1-base/default": NFKMLXLoadOverhead(bytes: 11474567168, basis: .family, source: "hyper-sdxl-1step-lora/default"),
         "stable-diffusion-v1-5/default": NFKMLXLoadOverhead(bytes: 4465885184, basis: .measured, loadBytes: 85983232, requestBytes: 4465885184, weights: .stored),
-        "stable-diffusion-xl-base-1.0/default": NFKMLXLoadOverhead(bytes: 11474567168, basis: .measured, loadBytes: 315621376, requestBytes: 11474567168, weights: .stored),
     ]
 
-    private static let loadOverheads10: [String: NFKMLXLoadOverhead] = [
+    private static let loadOverheads11: [String: NFKMLXLoadOverhead] = [
+        "stable-diffusion-xl-base-1.0/default": NFKMLXLoadOverhead(bytes: 11474567168, basis: .measured, loadBytes: 315621376, requestBytes: 11474567168, weights: .stored),
         "stable-fast-3d/default": NFKMLXLoadOverhead(bytes: 5912920064, basis: .measured, loadBytes: 87031808, requestBytes: 5912920064, weights: .stored),
         "swinir-lightweight-x2/default": NFKMLXLoadOverhead(bytes: 9375318016, basis: .measured, loadBytes: 0, requestBytes: 9375318016, weights: .initial),
         "swinir-lightweight-x3/default": NFKMLXLoadOverhead(bytes: 9375318016, basis: .measured, loadBytes: 0, requestBytes: 9375318016, weights: .initial),
@@ -317,7 +347,8 @@ extension NFKMLXCatalogMeasurements {
         "taesd/default": NFKMLXLoadOverhead(bytes: 2261778432, basis: .measured, loadBytes: 0, requestBytes: 2261778432, weights: .initial),
         "timesfm-2.5-200m/timesfm-2.5-200m-pytorch": NFKMLXLoadOverhead(bytes: 16777216, basis: .measured, loadBytes: 1048576, requestBytes: 16777216, weights: .stored),
         "tone-speech/default": NFKMLXLoadOverhead(bytes: 5242880, basis: .measured, loadBytes: 0, requestBytes: 5242880, weights: .initial),
-        "translategemma/translategemma-27b-it": NFKMLXLoadOverhead(bytes: 2574254080, basis: .family, source: "gemma-3-4b-it/gemma-3-4b-it"),
+        "translategemma/translategemma-12b-it": NFKMLXLoadOverhead(bytes: 674234368, basis: .measured, loadBytes: 1048576, requestBytes: 674234368, weights: .stored),
+        "translategemma/translategemma-27b-it": NFKMLXLoadOverhead(bytes: 1562378240, basis: .measured, loadBytes: 1048576, requestBytes: 1562378240, weights: .stored),
         "translategemma/translategemma-4b-it": NFKMLXLoadOverhead(bytes: 825229312, basis: .measured, loadBytes: 1048576, requestBytes: 825229312, weights: .stored),
         "triposr/default": NFKMLXLoadOverhead(bytes: 2472542208, basis: .measured, loadBytes: 0, requestBytes: 2472542208, weights: .initial),
         "trocr-base-handwritten/default": NFKMLXLoadOverhead(bytes: 621805568, basis: .measured, loadBytes: 1048576, requestBytes: 621805568, weights: .stored),
@@ -328,11 +359,11 @@ extension NFKMLXCatalogMeasurements {
         "trocr-large-printed/default": NFKMLXLoadOverhead(bytes: 930086912, basis: .measured, loadBytes: 1048576, requestBytes: 930086912, weights: .stored),
         "trocr-large-stage1/default": NFKMLXLoadOverhead(bytes: 930086912, basis: .measured, loadBytes: 1048576, requestBytes: 930086912, weights: .stored),
         "trocr-large-str/default": NFKMLXLoadOverhead(bytes: 930086912, basis: .measured, loadBytes: 210763776, requestBytes: 930086912, weights: .stored),
-        "trocr-small-handwritten/default": NFKMLXLoadOverhead(bytes: 206569472, basis: .measured, loadBytes: 1048576, requestBytes: 206569472, weights: .stored),
-        "trocr-small-printed/default": NFKMLXLoadOverhead(bytes: 206569472, basis: .measured, loadBytes: 1048576, requestBytes: 206569472, weights: .stored),
     ]
 
-    private static let loadOverheads11: [String: NFKMLXLoadOverhead] = [
+    private static let loadOverheads12: [String: NFKMLXLoadOverhead] = [
+        "trocr-small-handwritten/default": NFKMLXLoadOverhead(bytes: 206569472, basis: .measured, loadBytes: 1048576, requestBytes: 206569472, weights: .stored),
+        "trocr-small-printed/default": NFKMLXLoadOverhead(bytes: 206569472, basis: .measured, loadBytes: 1048576, requestBytes: 206569472, weights: .stored),
         "trocr-small-stage1/default": NFKMLXLoadOverhead(bytes: 206569472, basis: .measured, loadBytes: 1048576, requestBytes: 206569472, weights: .stored),
         "u2net/default": NFKMLXLoadOverhead(bytes: 2815426560, basis: .measured, loadBytes: 0, requestBytes: 2815426560, weights: .initial),
         "u2netp/default": NFKMLXLoadOverhead(bytes: 2250244096, basis: .measured, loadBytes: 0, requestBytes: 2250244096, weights: .initial),
@@ -350,17 +381,20 @@ extension NFKMLXCatalogMeasurements {
         "voicerestore/voicerestore": NFKMLXLoadOverhead(bytes: 9194962944, basis: .measured, loadBytes: 0, requestBytes: 9194962944, weights: .initial),
         "voxtral-mini-3b/2507": NFKMLXLoadOverhead(bytes: 2850029568, basis: .measured, loadBytes: 1048576, requestBytes: 2850029568, weights: .stored),
         "w2v-bert-2.0/2.0": NFKMLXLoadOverhead(bytes: 1315962880, basis: .measured, loadBytes: 1048576, requestBytes: 1315962880, weights: .stored),
+        "wan/default": NFKMLXLoadOverhead(bytes: 8108638208, basis: .measured, loadBytes: 1048576, requestBytes: 8108638208, weights: .stored),
+        "wan2.1-t2v-14b/default": NFKMLXLoadOverhead(bytes: 8108638208, basis: .family, source: "wan/default"),
+        "wan2.2-ti2v-5b/default": NFKMLXLoadOverhead(bytes: 8108638208, basis: .family, source: "wan/default"),
         "wav2vec2-base-960h/wav2vec2-base-960h": NFKMLXLoadOverhead(bytes: 1941962752, basis: .measured, loadBytes: 1048576, requestBytes: 1941962752, weights: .stored),
         "wav2vec2-base/wav2vec2-base": NFKMLXLoadOverhead(bytes: 1941962752, basis: .measured, loadBytes: 3145728, requestBytes: 1941962752, weights: .stored),
         "wav2vec2-large-960h-lv60-self/wav2vec2-large-960h-lv60-self": NFKMLXLoadOverhead(bytes: 1951399936, basis: .measured, loadBytes: 1048576, requestBytes: 1951399936, weights: .stored),
+    ]
+
+    private static let loadOverheads13: [String: NFKMLXLoadOverhead] = [
         "wav2vec2-large-960h/wav2vec2-large-960h": NFKMLXLoadOverhead(bytes: 1883242496, basis: .measured, loadBytes: 1048576, requestBytes: 1883242496, weights: .stored),
         "wav2vec2-large-lv60/wav2vec2-large-lv60": NFKMLXLoadOverhead(bytes: 1951399936, basis: .measured, loadBytes: 8388608, requestBytes: 1951399936, weights: .stored),
         "wav2vec2-large-xlsr-53/wav2vec2-large-xlsr-53": NFKMLXLoadOverhead(bytes: 1951399936, basis: .measured, loadBytes: 8388608, requestBytes: 1951399936, weights: .stored),
         "wav2vec2-xls-r-1b/wav2vec2-xls-r-1b": NFKMLXLoadOverhead(bytes: 1795162112, basis: .measured, loadBytes: 12582912, requestBytes: 1795162112, weights: .stored),
         "wav2vec2-xls-r-2b/wav2vec2-xls-r-2b": NFKMLXLoadOverhead(bytes: 2637168640, basis: .measured, loadBytes: 15728640, requestBytes: 2637168640, weights: .stored),
-    ]
-
-    private static let loadOverheads12: [String: NFKMLXLoadOverhead] = [
         "wav2vec2-xls-r-300m/wav2vec2-xls-r-300m": NFKMLXLoadOverhead(bytes: 1951399936, basis: .measured, loadBytes: 8388608, requestBytes: 1951399936, weights: .stored),
         "whisper-base/base": NFKMLXLoadOverhead(bytes: 982515712, basis: .measured, loadBytes: 0, requestBytes: 982515712, weights: .initial),
         "whisper-large-v1/large-v1": NFKMLXLoadOverhead(bytes: 2011168768, basis: .measured, loadBytes: 0, requestBytes: 2011168768, weights: .initial),
@@ -381,14 +415,14 @@ extension NFKMLXCatalogMeasurements {
         "yolo12n/default": NFKMLXLoadOverhead(bytes: 164626432, basis: .measured, loadBytes: 0, requestBytes: 164626432, weights: .initial),
         "yolo12s/default": NFKMLXLoadOverhead(bytes: 271581184, basis: .measured, loadBytes: 0, requestBytes: 271581184, weights: .initial),
         "yolo12x/default": NFKMLXLoadOverhead(bytes: 764411904, basis: .measured, loadBytes: 0, requestBytes: 764411904, weights: .initial),
+    ]
+
+    private static let loadOverheads14: [String: NFKMLXLoadOverhead] = [
         "yolo26l/default": NFKMLXLoadOverhead(bytes: 356515840, basis: .measured, loadBytes: 0, requestBytes: 356515840, weights: .initial),
         "yolo26m/default": NFKMLXLoadOverhead(bytes: 337641472, basis: .measured, loadBytes: 0, requestBytes: 337641472, weights: .initial),
         "yolo26n/default": NFKMLXLoadOverhead(bytes: 143654912, basis: .measured, loadBytes: 0, requestBytes: 143654912, weights: .initial),
         "yolo26s/default": NFKMLXLoadOverhead(bytes: 231735296, basis: .measured, loadBytes: 0, requestBytes: 231735296, weights: .initial),
         "yolo26x/default": NFKMLXLoadOverhead(bytes: 508559360, basis: .measured, loadBytes: 0, requestBytes: 508559360, weights: .initial),
-    ]
-
-    private static let loadOverheads13: [String: NFKMLXLoadOverhead] = [
         "yolov10b/default": NFKMLXLoadOverhead(bytes: 506462208, basis: .measured, loadBytes: 0, requestBytes: 506462208, weights: .initial),
         "yolov10l/default": NFKMLXLoadOverhead(bytes: 605028352, basis: .measured, loadBytes: 0, requestBytes: 605028352, weights: .initial),
         "yolov10m/default": NFKMLXLoadOverhead(bytes: 292552704, basis: .measured, loadBytes: 0, requestBytes: 292552704, weights: .initial),
@@ -400,7 +434,7 @@ extension NFKMLXCatalogMeasurements {
         "yolov8s/default": NFKMLXLoadOverhead(bytes: 276824064, basis: .measured, loadBytes: 0, requestBytes: 276824064, weights: .initial),
         "yolov8x/default": NFKMLXLoadOverhead(bytes: 773849088, basis: .measured, loadBytes: 0, requestBytes: 773849088, weights: .initial),
         "yolov9c/default": NFKMLXLoadOverhead(bytes: 507510784, basis: .measured, loadBytes: 0, requestBytes: 507510784, weights: .initial),
-        "yolov9e/default": NFKMLXLoadOverhead(bytes: 783286272, basis: .family, source: "yolov10x/default"),
+        "yolov9e/default": NFKMLXLoadOverhead(bytes: 759169024, basis: .measured, loadBytes: 0, requestBytes: 759169024, weights: .initial),
         "yolov9m/default": NFKMLXLoadOverhead(bytes: 334495744, basis: .measured, loadBytes: 0, requestBytes: 334495744, weights: .initial),
         "yolov9s/default": NFKMLXLoadOverhead(bytes: 180355072, basis: .measured, loadBytes: 0, requestBytes: 180355072, weights: .initial),
         "yolov9t/default": NFKMLXLoadOverhead(bytes: 117440512, basis: .measured, loadBytes: 0, requestBytes: 117440512, weights: .initial),

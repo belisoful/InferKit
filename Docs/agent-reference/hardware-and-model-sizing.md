@@ -116,27 +116,36 @@ states. `NFKMLXLoadOverheadTests` measures one variant per process from MLX's ow
   wait and fails no allocation, so it cannot bound the peak.
 - Records live outside `/private/tmp`, which macOS clears of files untouched for a few days.
 
-Measured 2026-11-11 on an M1 Max with 32 GB: 309 variants measured (123 from stored releases, 186 on
-initial values) and 35 that take their family's figure. The median overhead is 1.5 GiB. The largest:
-NU-Wave 2 15.6 GiB (30 s), Granite 4.0-H 1B 14.5 GiB (a 4096-token prefill), Real-ESRGAN ×4 14.5 GiB
-(1024², ×4), MossFormer2 SR 13.3 GiB, Marigold 10.8 GiB, SDXL and its LoRAs 10.6 GiB, HT Demucs 6s 9.8 GiB.
+Measured 2026-11-11 to 11-22 on an M1 Max with 32 GB: 344 variants measured (153 from stored releases, 191
+on initial values) and 30 that take their family's figure. The median overhead is 1.4 GiB. The largest:
+Nemotron 3 Nano 4B 17.0 GiB (a 4096-token prefill), NU-Wave 2 15.6 GiB (30 s), Granite 4.0-H 1B 14.5 GiB
+(a 4096-token prefill), Real-ESRGAN ×4 14.5 GiB (1024², ×4), MossFormer2 SR 13.3 GiB, Marigold 10.8 GiB,
+SDXL and its LoRAs 10.6 GiB, HT Demucs 6s 9.8 GiB.
 
-With the figures, the variants refused at their defaults went from 145 / 80 / 41 / 13 to
-248 / 138 / 88 / 40 of 409 at 8 / 16 / 24 / 32 GB.
+- A release that its own figure refuses on the measuring machine (Qwen3 32B, Qwen3-VL 8B and 32B, Open-Jev
+  27B) is measured at the residency it took before its overhead was counted, past the budget check
+  (`plan --options`).
+- Qwen3 14B is measured at the options its refusal names (5-bit, a 1792-token context), resident: a
+  quantized decoder packs its layers as it reads them and never streams (`mlx-companion.md`).
 
-Twenty variants take no figure because their reference request exceeds a Mac. Their defaults need tiling
-or a shorter input:
+With the figures, the variants refused at their defaults went from 145 / 80 / 41 / 13 of 409 to
+251 / 143 / 98 / 58 of 411 at 8 / 16 / 24 / 32 GB.
+
+Twenty-two variants take no figure because their reference request exceeds a Mac. Their defaults need
+tiling or a shorter input:
 - past the cap on initial values: SwinIR (classical ×2/×3/×4/×8, real-world ×4 M/L, ×4), HAT ×4 and HAT-L ×4,
   Real-HAT-GAN, video super-resolution and its clip backend, SD inpaint, the SD ×4 upscaler, SGMSE,
   STORM (28.7 GB at 30 s), and Resemble Enhance stage 2
+- past a 26 GiB cap with the weights held, above the 32 GB Mac's 26.8 GB working set: Codestral Mamba
+  (28.9 GB at a 4096-token prefill) and Qwen-Image 2.1 (33.6 GB)
 - one Metal buffer past the device's 20.1 GB limit: CMGAN (37 GB) and MP-SENet (283 GB) at 30 s, and
   Nemotron Nano 2 (21 GB) at a 4096-token prefill
 
-Ten stored releases passed the cap with their weights resident and wait for a run at a higher cap: Codestral
-Mamba, SD3, SD3 medium, SD 3.5 large, Qwen-Image 2.1, Wan 2.1 1.3B, Gemma 3n E4B, TranslateGemma 12B,
-Nemotron 3 Nano 4B, and FLUX.2 klein 4B. The releases over 24 GiB at their catalog figures, and the
-families the store holds only as layer cuts or partial directories (DeepSeek V4, LTX-2, Mixtral, Qwen2-MoE,
-Qwen3-MoE, Qwen4-Exp, Sana, Wan 2.2 Animate), are not measured yet.
+Not measured: the families the store holds only as layer cuts or partial directories (DeepSeek V4, LTX-2,
+Mixtral, Qwen2-MoE, Qwen3-MoE, Qwen4-Exp, Sana, Wan 2.2 Animate), releases refused at 32 GB before any
+overhead (FLUX.1, LTX-Video, Gemma 4 multimodal E4B), models that build only from a release the store does
+not hold (the CLIP and SigLIP probes, EmbeddingGemma, FastSpeech 2, Gemma 3 270M and 1B, Parakeet TDT,
+SAM 3 and 3.1, SD 2.1 base, Canary), and HunyuanMT Chimera, whose request needs candidate translations.
 
 ## Neural accelerators, and how to measure them
 

@@ -2075,7 +2075,7 @@
       ],
       "registryName" : "clip-vit-b-16",
       "requirements" : {
-        "minimumMemoryBytes" : 825499008,
+        "minimumMemoryBytes" : 1331282725,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2098,7 +2098,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 214958080,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -2110,8 +2110,8 @@
             ],
             "vocabularySize" : 49408
           },
-          "minimumMemoryBytes" : 825499008,
-          "peakBytes" : 350837078,
+          "minimumMemoryBytes" : 1331282725,
+          "peakBytes" : 565795158,
           "registryName" : "clip-vit-b-16",
           "residentBytes" : 350837078,
           "source" : {
@@ -2196,7 +2196,7 @@
       ],
       "registryName" : "clip-vit-b-32",
       "requirements" : {
-        "minimumMemoryBytes" : 832885935,
+        "minimumMemoryBytes" : 993256382,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2219,7 +2219,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 68157440,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -2231,8 +2231,8 @@
             ],
             "vocabularySize" : 49408
           },
-          "minimumMemoryBytes" : 832885935,
-          "peakBytes" : 353976522,
+          "minimumMemoryBytes" : 993256382,
+          "peakBytes" : 422133962,
           "registryName" : "clip-vit-b-32",
           "residentBytes" : 353976522,
           "source" : {
@@ -2317,7 +2317,7 @@
       ],
       "registryName" : "clip-vit-l-14",
       "requirements" : {
-        "minimumMemoryBytes" : 2194748551,
+        "minimumMemoryBytes" : 3911945953,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2340,7 +2340,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 729808896,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -2352,8 +2352,8 @@
             ],
             "vocabularySize" : 49408
           },
-          "minimumMemoryBytes" : 2194748551,
-          "peakBytes" : 932768134,
+          "minimumMemoryBytes" : 3911945953,
+          "peakBytes" : 1662577030,
           "registryName" : "clip-vit-l-14",
           "residentBytes" : 932768134,
           "source" : {
@@ -2438,7 +2438,7 @@
       ],
       "registryName" : "clip-vit-l-14-336",
       "requirements" : {
-        "minimumMemoryBytes" : 2197855718,
+        "minimumMemoryBytes" : 5358387144,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2461,7 +2461,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 1343225856,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -2473,8 +2473,8 @@
             ],
             "vocabularySize" : 49408
           },
-          "minimumMemoryBytes" : 2197855718,
-          "peakBytes" : 934088680,
+          "minimumMemoryBytes" : 5358387144,
+          "peakBytes" : 2277314536,
           "registryName" : "clip-vit-l-14-336",
           "residentBytes" : 934088680,
           "source" : {
@@ -9947,7 +9947,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 15964118094,
+                "peakBytes" : 24402009166,
                 "residentBytes" : 15964118094
               },
               "title" : "Resident",
@@ -9955,7 +9955,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 8044936192,
+                "peakBytes" : 16482827264,
                 "residentBytes" : 8044936192
               },
               "title" : "Staged",
@@ -10004,7 +10004,7 @@
       ],
       "registryName" : "flux.2-klein-4b",
       "requirements" : {
-        "minimumMemoryBytes" : 14517533516,
+        "minimumMemoryBytes" : 24444464189,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -10030,7 +10030,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 8437891072,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -10053,9 +10053,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 14517533516,
+          "minimumMemoryBytes" : 24444464189,
           "parameterCount" : 7982059044,
-          "peakBytes" : 8044936192,
+          "peakBytes" : 16482827264,
           "precision" : "bfloat16",
           "registryName" : "flux.2-klein-4b",
           "residentBytes" : 8044936192,
@@ -10305,7 +10305,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 34706725966,
+                "peakBytes" : 43144617038,
                 "residentBytes" : 34706725966
               },
               "title" : "Resident",
@@ -10313,7 +10313,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 18325255246,
+                "peakBytes" : 26763146318,
                 "residentBytes" : 18325255246
               },
               "title" : "Staged",
@@ -10362,7 +10362,7 @@
       ],
       "registryName" : "flux.2-klein-9b",
       "requirements" : {
-        "minimumMemoryBytes" : 26612026520,
+        "minimumMemoryBytes" : 36538957193,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -10388,7 +10388,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 8437891072,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -10411,9 +10411,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 26612026520,
+          "minimumMemoryBytes" : 36538957193,
           "parameterCount" : 17353362980,
-          "peakBytes" : 18325255246,
+          "peakBytes" : 26763146318,
           "precision" : "bfloat16",
           "registryName" : "flux.2-klein-9b",
           "residentBytes" : 18325255246,
@@ -10662,7 +10662,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 34706725966,
+                "peakBytes" : 43144617038,
                 "residentBytes" : 34706725966
               },
               "title" : "Resident",
@@ -10670,7 +10670,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 18325255246,
+                "peakBytes" : 26763146318,
                 "residentBytes" : 18325255246
               },
               "title" : "Staged",
@@ -10719,7 +10719,7 @@
       ],
       "registryName" : "flux.2-klein-9b-kv",
       "requirements" : {
-        "minimumMemoryBytes" : 26612026520,
+        "minimumMemoryBytes" : 36538957193,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -10745,7 +10745,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 8437891072,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -10768,9 +10768,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 26612026520,
+          "minimumMemoryBytes" : 36538957193,
           "parameterCount" : 17353362980,
-          "peakBytes" : 18325255246,
+          "peakBytes" : 26763146318,
           "precision" : "bfloat16",
           "registryName" : "flux.2-klein-9b-kv",
           "residentBytes" : 18325255246,
@@ -11018,7 +11018,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 15964118094,
+                "peakBytes" : 24402009166,
                 "residentBytes" : 15964118094
               },
               "title" : "Resident",
@@ -11026,7 +11026,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 8044936192,
+                "peakBytes" : 16482827264,
                 "residentBytes" : 8044936192
               },
               "title" : "Staged",
@@ -11075,7 +11075,7 @@
       ],
       "registryName" : "flux.2-klein-base-4b",
       "requirements" : {
-        "minimumMemoryBytes" : 14517533516,
+        "minimumMemoryBytes" : 24444464189,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -11101,7 +11101,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 8437891072,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -11124,9 +11124,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 14517533516,
+          "minimumMemoryBytes" : 24444464189,
           "parameterCount" : 7982059044,
-          "peakBytes" : 8044936192,
+          "peakBytes" : 16482827264,
           "precision" : "bfloat16",
           "registryName" : "flux.2-klein-base-4b",
           "residentBytes" : 8044936192,
@@ -11376,7 +11376,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 34706725966,
+                "peakBytes" : 43144617038,
                 "residentBytes" : 34706725966
               },
               "title" : "Resident",
@@ -11384,7 +11384,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 18325255246,
+                "peakBytes" : 26763146318,
                 "residentBytes" : 18325255246
               },
               "title" : "Staged",
@@ -11433,7 +11433,7 @@
       ],
       "registryName" : "flux.2-klein-base-9b",
       "requirements" : {
-        "minimumMemoryBytes" : 26612026520,
+        "minimumMemoryBytes" : 36538957193,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -11459,7 +11459,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 8437891072,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -11482,9 +11482,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 26612026520,
+          "minimumMemoryBytes" : 36538957193,
           "parameterCount" : 17353362980,
-          "peakBytes" : 18325255246,
+          "peakBytes" : 26763146318,
           "precision" : "bfloat16",
           "registryName" : "flux.2-klein-base-9b",
           "residentBytes" : 18325255246,
@@ -13866,7 +13866,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 15699956384,
+                "peakBytes" : 24472343200,
                 "residentBytes" : 15699956384
               },
               "title" : "As published",
@@ -13874,7 +13874,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31399912768,
+                "peakBytes" : 40172299584,
                 "residentBytes" : 31399912768
               },
               "title" : "Float32",
@@ -13962,7 +13962,7 @@
       ],
       "registryName" : "gemma-3n-e4b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 23523439624,
+        "minimumMemoryBytes" : 33843894702,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -13988,7 +13988,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 8772386816,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -14002,9 +14002,9 @@
             ],
             "vocabularySize" : 262400
           },
-          "minimumMemoryBytes" : 23523439624,
+          "minimumMemoryBytes" : 33843894702,
           "parameterCount" : 7849978192,
-          "peakBytes" : 15699956384,
+          "peakBytes" : 24472343200,
           "precision" : "bfloat16",
           "registryName" : "gemma-3n-e4b-it",
           "residentBytes" : 15699956384,
@@ -14216,7 +14216,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47838920896,
+                "peakBytes" : 51827704000,
                 "residentBytes" : 47838920896
               },
               "title" : "Resident",
@@ -14224,7 +14224,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 6170820616,
+                "peakBytes" : 10159603720,
                 "residentBytes" : 6170820616
               },
               "title" : "Streamed",
@@ -14243,7 +14243,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 23919460448,
+                "peakBytes" : 27908243552,
                 "residentBytes" : 23919460448
               },
               "title" : "As published",
@@ -14251,7 +14251,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47838920896,
+                "peakBytes" : 51827704000,
                 "residentBytes" : 47838920896
               },
               "title" : "Float32",
@@ -14270,7 +14270,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 68331636812,
+                "peakBytes" : 72320419916,
                 "residentBytes" : 68331636812
               },
               "title" : "Gemma 4 E2B IT",
@@ -14278,7 +14278,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 79823550568,
+                "peakBytes" : 83812333672,
                 "residentBytes" : 79823550568
               },
               "title" : "Gemma 4 E4B IT",
@@ -14296,7 +14296,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 47838920896,
+                "peakBytes" : 51827704000,
                 "residentBytes" : 47838920896
               },
               "title" : "None",
@@ -14304,7 +14304,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47838920896,
+                "peakBytes" : 51827704000,
                 "residentBytes" : 47838920896
               },
               "title" : "8-bit",
@@ -14312,7 +14312,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47838920896,
+                "peakBytes" : 51827704000,
                 "residentBytes" : 47838920896
               },
               "title" : "6-bit",
@@ -14320,7 +14320,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47838920896,
+                "peakBytes" : 51827704000,
                 "residentBytes" : 47838920896
               },
               "title" : "5-bit",
@@ -14328,7 +14328,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47838920896,
+                "peakBytes" : 51827704000,
                 "residentBytes" : 47838920896
               },
               "title" : "4-bit",
@@ -14336,7 +14336,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47838920896,
+                "peakBytes" : 51827704000,
                 "residentBytes" : 47838920896
               },
               "title" : "3-bit",
@@ -14344,7 +14344,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47838920896,
+                "peakBytes" : 51827704000,
                 "residentBytes" : 47838920896
               },
               "title" : "2-bit",
@@ -14436,7 +14436,7 @@
       ],
       "registryName" : "gemma-4-12b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 61333986109,
+        "minimumMemoryBytes" : 66026672113,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -14461,7 +14461,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 3988783104,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -14486,9 +14486,9 @@
             ],
             "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 61333986109,
+          "minimumMemoryBytes" : 66026672113,
           "parameterCount" : 11959730224,
-          "peakBytes" : 47838920896,
+          "peakBytes" : 51827704000,
           "precision" : "bfloat16",
           "registryName" : "gemma-4-12b-it",
           "residentBytes" : 47838920896,
@@ -14715,7 +14715,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 103223744824,
+                "peakBytes" : 111047170360,
                 "residentBytes" : 103223744824
               },
               "title" : "Resident",
@@ -14723,7 +14723,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 16166771000,
+                "peakBytes" : 23990196536,
                 "residentBytes" : 16166771000
               },
               "title" : "Paged",
@@ -14815,7 +14815,7 @@
       ],
       "registryName" : "gemma-4-26b-a4b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 24072633290,
+        "minimumMemoryBytes" : 33276663332,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -14840,7 +14840,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7823425536,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -14859,9 +14859,9 @@
             ],
             "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 24072633290,
+          "minimumMemoryBytes" : 33276663332,
           "parameterCount" : 25805936206,
-          "peakBytes" : 103223744824,
+          "peakBytes" : 111047170360,
           "precision" : "bfloat16",
           "registryName" : "gemma-4-26b-a4b-it",
           "residentBytes" : 103223744824,
@@ -15088,7 +15088,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 125092355504,
+                "peakBytes" : 132915781040,
                 "residentBytes" : 125092355504
               },
               "title" : "Resident",
@@ -15096,7 +15096,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12212219080,
+                "peakBytes" : 20035644616,
                 "residentBytes" : 12212219080
               },
               "title" : "Streamed",
@@ -15115,7 +15115,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 62546177752,
+                "peakBytes" : 70369603288,
                 "residentBytes" : 62546177752
               },
               "title" : "As published",
@@ -15123,7 +15123,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 125092355504,
+                "peakBytes" : 132915781040,
                 "residentBytes" : 125092355504
               },
               "title" : "Float32",
@@ -15142,7 +15142,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 145585071420,
+                "peakBytes" : 153408496956,
                 "residentBytes" : 145585071420
               },
               "title" : "Gemma 4 E2B IT",
@@ -15150,7 +15150,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 157076985176,
+                "peakBytes" : 164900410712,
                 "residentBytes" : 157076985176
               },
               "title" : "Gemma 4 E4B IT",
@@ -15158,7 +15158,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 172931276400,
+                "peakBytes" : 180754701936,
                 "residentBytes" : 172931276400
               },
               "title" : "Gemma 4 12B IT",
@@ -15176,7 +15176,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 125092355504,
+                "peakBytes" : 132915781040,
                 "residentBytes" : 125092355504
               },
               "title" : "None",
@@ -15184,7 +15184,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 125092355504,
+                "peakBytes" : 132915781040,
                 "residentBytes" : 125092355504
               },
               "title" : "8-bit",
@@ -15192,7 +15192,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 125092355504,
+                "peakBytes" : 132915781040,
                 "residentBytes" : 125092355504
               },
               "title" : "6-bit",
@@ -15200,7 +15200,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 125092355504,
+                "peakBytes" : 132915781040,
                 "residentBytes" : 125092355504
               },
               "title" : "5-bit",
@@ -15208,7 +15208,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 125092355504,
+                "peakBytes" : 132915781040,
                 "residentBytes" : 125092355504
               },
               "title" : "4-bit",
@@ -15216,7 +15216,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 125092355504,
+                "peakBytes" : 132915781040,
                 "residentBytes" : 125092355504
               },
               "title" : "3-bit",
@@ -15224,7 +15224,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 125092355504,
+                "peakBytes" : 132915781040,
                 "residentBytes" : 125092355504
               },
               "title" : "2-bit",
@@ -15316,7 +15316,7 @@
       ],
       "registryName" : "gemma-4-31b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 152220379765,
+        "minimumMemoryBytes" : 161424409808,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -15341,7 +15341,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7823425536,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -15366,9 +15366,9 @@
             ],
             "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 152220379765,
+          "minimumMemoryBytes" : 161424409808,
           "parameterCount" : 31273088876,
-          "peakBytes" : 125092355504,
+          "peakBytes" : 132915781040,
           "precision" : "bfloat16",
           "registryName" : "gemma-4-31b-it",
           "residentBytes" : 125092355504,
@@ -15593,7 +15593,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 20492715916,
+                "peakBytes" : 28316141452,
                 "residentBytes" : 20492715916
               },
               "title" : "Resident",
@@ -15601,7 +15601,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 13536419592,
+                "peakBytes" : 21359845128,
                 "residentBytes" : 13536419592
               },
               "title" : "Streamed",
@@ -15620,7 +15620,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 10246357958,
+                "peakBytes" : 18069783494,
                 "residentBytes" : 10246357958
               },
               "title" : "As published",
@@ -15628,7 +15628,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 20492715916,
+                "peakBytes" : 28316141452,
                 "residentBytes" : 20492715916
               },
               "title" : "Float32",
@@ -15720,7 +15720,7 @@
       ],
       "registryName" : "gemma-4-e2b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 29161980250,
+        "minimumMemoryBytes" : 38366010292,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -15745,7 +15745,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7823425536,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -15770,9 +15770,9 @@
             ],
             "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 29161980250,
+          "minimumMemoryBytes" : 38366010292,
           "parameterCount" : 5123178979,
-          "peakBytes" : 20492715916,
+          "peakBytes" : 28316141452,
           "precision" : "bfloat16",
           "registryName" : "gemma-4-e2b-it",
           "residentBytes" : 20492715916,
@@ -16000,7 +16000,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31984629672,
+                "peakBytes" : 34109044648,
                 "residentBytes" : 31984629672
               },
               "title" : "Resident",
@@ -16008,7 +16008,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 16830566152,
+                "peakBytes" : 18954981128,
                 "residentBytes" : 16830566152
               },
               "title" : "Streamed",
@@ -16027,7 +16027,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 15992314836,
+                "peakBytes" : 18116729812,
                 "residentBytes" : 15992314836
               },
               "title" : "As published",
@@ -16035,7 +16035,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31984629672,
+                "peakBytes" : 34109044648,
                 "residentBytes" : 31984629672
               },
               "title" : "Float32",
@@ -16054,7 +16054,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 52477345588,
+                "peakBytes" : 54601760564,
                 "residentBytes" : 52477345588
               },
               "title" : "Gemma 4 E2B IT",
@@ -16072,7 +16072,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 31984629672,
+                "peakBytes" : 34109044648,
                 "residentBytes" : 31984629672
               },
               "title" : "None",
@@ -16080,7 +16080,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31984629672,
+                "peakBytes" : 34109044648,
                 "residentBytes" : 31984629672
               },
               "title" : "8-bit",
@@ -16088,7 +16088,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31984629672,
+                "peakBytes" : 34109044648,
                 "residentBytes" : 31984629672
               },
               "title" : "6-bit",
@@ -16096,7 +16096,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31984629672,
+                "peakBytes" : 34109044648,
                 "residentBytes" : 31984629672
               },
               "title" : "5-bit",
@@ -16104,7 +16104,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31984629672,
+                "peakBytes" : 34109044648,
                 "residentBytes" : 31984629672
               },
               "title" : "4-bit",
@@ -16112,7 +16112,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31984629672,
+                "peakBytes" : 34109044648,
                 "residentBytes" : 31984629672
               },
               "title" : "3-bit",
@@ -16120,7 +16120,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31984629672,
+                "peakBytes" : 34109044648,
                 "residentBytes" : 31984629672
               },
               "title" : "2-bit",
@@ -16212,7 +16212,7 @@
       ],
       "registryName" : "gemma-4-e4b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 42681878786,
+        "minimumMemoryBytes" : 45181190523,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16237,7 +16237,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 2124414976,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -16262,9 +16262,9 @@
             ],
             "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 42681878786,
+          "minimumMemoryBytes" : 45181190523,
           "parameterCount" : 7996157418,
-          "peakBytes" : 31984629672,
+          "peakBytes" : 34109044648,
           "precision" : "bfloat16",
           "registryName" : "gemma-4-e4b-it",
           "residentBytes" : 31984629672,
@@ -16455,7 +16455,7 @@
       ],
       "registryName" : "gemma4-multimodal",
       "requirements" : {
-        "minimumMemoryBytes" : 29161980250,
+        "minimumMemoryBytes" : 38366010292,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16480,7 +16480,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7823425536,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -16494,9 +16494,9 @@
             ],
             "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 29161980250,
+          "minimumMemoryBytes" : 38366010292,
           "parameterCount" : 5123178979,
-          "peakBytes" : 20492715916,
+          "peakBytes" : 28316141452,
           "precision" : "bfloat16",
           "registryName" : "gemma4-multimodal",
           "residentBytes" : 20492715916,
@@ -16554,7 +16554,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7823425536,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -16568,9 +16568,9 @@
             ],
             "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 42681878786,
+          "minimumMemoryBytes" : 51885908829,
           "parameterCount" : 7996157418,
-          "peakBytes" : 31984629672,
+          "peakBytes" : 39808055208,
           "precision" : "bfloat16",
           "registryName" : "gemma4-multimodal",
           "residentBytes" : 31984629672,
@@ -22176,7 +22176,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 60733443584,
+                "peakBytes" : 60499611136,
                 "residentBytes" : 60129463808
               },
               "title" : "Resident",
@@ -22184,7 +22184,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 8254311936,
+                "peakBytes" : 8020479488,
                 "residentBytes" : 7650332160
               },
               "title" : "Paged",
@@ -22203,7 +22203,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 60733443584,
+                "peakBytes" : 60499611136,
                 "residentBytes" : 60129463808
               },
               "title" : "As published",
@@ -22211,7 +22211,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 120862883328,
+                "peakBytes" : 120629050880,
                 "residentBytes" : 120258903552
               },
               "title" : "Float32",
@@ -22230,7 +22230,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 60733443584,
+                "peakBytes" : 60499611136,
                 "residentBytes" : 60129463808
               },
               "title" : "None",
@@ -22238,7 +22238,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 32779963904,
+                "peakBytes" : 32546131456,
                 "residentBytes" : 32175984128
               },
               "title" : "8-bit",
@@ -22246,7 +22246,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 25325702656,
+                "peakBytes" : 25091870208,
                 "residentBytes" : 24721722880
               },
               "title" : "6-bit",
@@ -22254,7 +22254,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 21598572032,
+                "peakBytes" : 21364739584,
                 "residentBytes" : 20994592256
               },
               "title" : "5-bit",
@@ -22262,7 +22262,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 17871441408,
+                "peakBytes" : 17637608960,
                 "residentBytes" : 17267461632
               },
               "title" : "4-bit",
@@ -22270,7 +22270,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 14144310784,
+                "peakBytes" : 13910478336,
                 "residentBytes" : 13540331008
               },
               "title" : "3-bit",
@@ -22278,7 +22278,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 10417180160,
+                "peakBytes" : 10183347712,
                 "residentBytes" : 9813200384
               },
               "title" : "2-bit",
@@ -22327,7 +22327,7 @@
       ],
       "registryName" : "hy-mt2-30b-a3b",
       "requirements" : {
-        "minimumMemoryBytes" : 14763857920,
+        "minimumMemoryBytes" : 14488760923,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22351,7 +22351,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 603979776,
+            "loadOverheadBytes" : 370147328,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -22371,9 +22371,9 @@
             ],
             "vocabularySize" : 120832
           },
-          "minimumMemoryBytes" : 14763857920,
+          "minimumMemoryBytes" : 14488760923,
           "parameterCount" : 30064725888,
-          "peakBytes" : 60733443584,
+          "peakBytes" : 60499611136,
           "precision" : "bfloat16",
           "registryName" : "hy-mt2-30b-a3b",
           "residentBytes" : 60129463808,
@@ -30847,7 +30847,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47815895040,
+                "peakBytes" : 50575747072,
                 "residentBytes" : 47815895040
               },
               "title" : "Resident",
@@ -30855,7 +30855,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 5578475520,
+                "peakBytes" : 8338327552,
                 "residentBytes" : 5578475520
               },
               "title" : "Streamed",
@@ -30874,7 +30874,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 47815895040,
+                "peakBytes" : 50575747072,
                 "residentBytes" : 47815895040
               },
               "title" : "As published",
@@ -30882,7 +30882,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 95631790080,
+                "peakBytes" : 98391642112,
                 "residentBytes" : 95631790080
               },
               "title" : "Float32",
@@ -30901,7 +30901,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 47815895040,
+                "peakBytes" : 50575747072,
                 "residentBytes" : 47815895040
               },
               "title" : "None",
@@ -30909,7 +30909,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 26346301440,
+                "peakBytes" : 29106153472,
                 "residentBytes" : 26346301440
               },
               "title" : "8-bit",
@@ -30917,7 +30917,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 20621076480,
+                "peakBytes" : 23380928512,
                 "residentBytes" : 20621076480
               },
               "title" : "6-bit",
@@ -30925,7 +30925,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 17758464000,
+                "peakBytes" : 20518316032,
                 "residentBytes" : 17758464000
               },
               "title" : "5-bit",
@@ -30933,7 +30933,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 14895851520,
+                "peakBytes" : 17655703552,
                 "residentBytes" : 14895851520
               },
               "title" : "4-bit",
@@ -30941,7 +30941,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12033239040,
+                "peakBytes" : 14793091072,
                 "residentBytes" : 12033239040
               },
               "title" : "3-bit",
@@ -30949,7 +30949,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 9170626560,
+                "peakBytes" : 11930478592,
                 "residentBytes" : 9170626560
               },
               "title" : "2-bit",
@@ -30981,7 +30981,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 47815895040,
+                "peakBytes" : 50575747072,
                 "residentBytes" : 47815895040
               },
               "title" : "None",
@@ -30989,7 +30989,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47501322240,
+                "peakBytes" : 50261174272,
                 "residentBytes" : 47501322240
               },
               "title" : "8-bit",
@@ -30997,7 +30997,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47417436160,
+                "peakBytes" : 50177288192,
                 "residentBytes" : 47417436160
               },
               "title" : "6-bit",
@@ -31005,7 +31005,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47375493120,
+                "peakBytes" : 50135345152,
                 "residentBytes" : 47375493120
               },
               "title" : "5-bit",
@@ -31013,7 +31013,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47333550080,
+                "peakBytes" : 50093402112,
                 "residentBytes" : 47333550080
               },
               "title" : "4-bit",
@@ -31021,7 +31021,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47291607040,
+                "peakBytes" : 50051459072,
                 "residentBytes" : 47291607040
               },
               "title" : "3-bit",
@@ -31029,7 +31029,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47249664000,
+                "peakBytes" : 50009516032,
                 "residentBytes" : 47249664000
               },
               "title" : "2-bit",
@@ -31048,7 +31048,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 47815895040,
+                "peakBytes" : 50575747072,
                 "residentBytes" : 47815895040
               },
               "title" : "32",
@@ -31056,7 +31056,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47815895040,
+                "peakBytes" : 50575747072,
                 "residentBytes" : 47815895040
               },
               "title" : "64",
@@ -31064,7 +31064,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 47815895040,
+                "peakBytes" : 50575747072,
                 "residentBytes" : 47815895040
               },
               "title" : "128",
@@ -31181,7 +31181,7 @@
       ],
       "registryName" : "mistral-small-24b-instruct-2501",
       "requirements" : {
-        "minimumMemoryBytes" : 61306896866,
+        "minimumMemoryBytes" : 64553781610,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -31206,7 +31206,7 @@
           "memoryFacts" : {
             "basis" : "measured",
             "keyValueBytesPerToken" : 163840,
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 2759852032,
             "maximumContextLength" : 32768,
             "stages" : [
               {
@@ -31233,9 +31233,9 @@
             ],
             "vocabularySize" : 131072
           },
-          "minimumMemoryBytes" : 61306896866,
+          "minimumMemoryBytes" : 64553781610,
           "parameterCount" : 23572403200,
-          "peakBytes" : 47815895040,
+          "peakBytes" : 50575747072,
           "precision" : "bfloat16",
           "registryName" : "mistral-small-24b-instruct-2501",
           "residentBytes" : 47815895040,
@@ -33673,7 +33673,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 7947113664,
+                "peakBytes" : 26221696192,
                 "residentBytes" : 7947113664
               },
               "title" : "Resident",
@@ -33681,7 +33681,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 1960320512,
+                "peakBytes" : 20234903040,
                 "residentBytes" : 1960320512
               },
               "title" : "Streamed",
@@ -33700,7 +33700,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 7947113664,
+                "peakBytes" : 26221696192,
                 "residentBytes" : 7947113664
               },
               "title" : "As published",
@@ -33708,7 +33708,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 15894227328,
+                "peakBytes" : 34168809856,
                 "residentBytes" : 15894227328
               },
               "title" : "Float32",
@@ -33787,7 +33787,7 @@
       ],
       "registryName" : "nemotron-3-nano-4b",
       "requirements" : {
-        "minimumMemoryBytes" : 14402448189,
+        "minimumMemoryBytes" : 35901957045,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -33811,7 +33811,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 18274582528,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -33836,9 +33836,9 @@
             ],
             "vocabularySize" : 131072
           },
-          "minimumMemoryBytes" : 14402448189,
+          "minimumMemoryBytes" : 35901957045,
           "parameterCount" : 3973556832,
-          "peakBytes" : 7947113664,
+          "peakBytes" : 26221696192,
           "precision" : "bfloat16",
           "registryName" : "nemotron-3-nano-4b",
           "residentBytes" : 7947113664,
@@ -35625,7 +35625,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 57656884397,
+                "peakBytes" : 58470579373,
                 "residentBytes" : 55624744109
               },
               "title" : "Resident",
@@ -35633,7 +35633,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 10483584045,
+                "peakBytes" : 11297279021,
                 "residentBytes" : 8451443757
               },
               "title" : "Streamed",
@@ -35652,7 +35652,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 57656884397,
+                "peakBytes" : 58470579373,
                 "residentBytes" : 55624744109
               },
               "title" : "As published",
@@ -35660,7 +35660,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 113219740301,
+                "peakBytes" : 114033435277,
                 "residentBytes" : 111187600013
               },
               "title" : "Float32",
@@ -35717,7 +35717,7 @@
       ],
       "registryName" : "open-jev-27b-v1.1",
       "requirements" : {
-        "minimumMemoryBytes" : 72884531404,
+        "minimumMemoryBytes" : 73841819611,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35742,7 +35742,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 2032140288,
+            "loadOverheadBytes" : 2845835264,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -35766,8 +35766,8 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 72884531404,
-          "peakBytes" : 57656884397,
+          "minimumMemoryBytes" : 73841819611,
+          "peakBytes" : 58470579373,
           "precision" : "bfloat16",
           "registryName" : "open-jev-27b-v1.1",
           "residentBytes" : 55624744109,
@@ -36829,7 +36829,7 @@
       ],
       "registryName" : "opus-mt",
       "requirements" : {
-        "minimumMemoryBytes" : 1326363052,
+        "minimumMemoryBytes" : 1341166478,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -36942,7 +36942,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "stored-dtype",
-            "loadOverheadBytes" : 274726912,
+            "loadOverheadBytes" : 338690048,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -36954,8 +36954,8 @@
             ],
             "vocabularySize" : 60716
           },
-          "minimumMemoryBytes" : 1360049650,
-          "peakBytes" : 578021101,
+          "minimumMemoryBytes" : 1510551146,
+          "peakBytes" : 641984237,
           "registryName" : "opus-mt",
           "residentBytes" : 303294189,
           "residentEstimate" : "stored-dtype",
@@ -37032,7 +37032,7 @@
           },
           "memoryFacts" : {
             "basis" : "stored-dtype",
-            "loadOverheadBytes" : 274726912,
+            "loadOverheadBytes" : 344981504,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -37044,8 +37044,8 @@
             ],
             "vocabularySize" : 65001
           },
-          "minimumMemoryBytes" : 1380738638,
-          "peakBytes" : 586813921,
+          "minimumMemoryBytes" : 1546043560,
+          "peakBytes" : 657068513,
           "registryName" : "opus-mt",
           "residentBytes" : 312087009,
           "residentEstimate" : "stored-dtype",
@@ -37114,7 +37114,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "stored-dtype",
-            "loadOverheadBytes" : 274726912,
+            "loadOverheadBytes" : 268435456,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -37126,8 +37126,8 @@
             ],
             "vocabularySize" : 65001
           },
-          "minimumMemoryBytes" : 1380738638,
-          "peakBytes" : 586813921,
+          "minimumMemoryBytes" : 1365935212,
+          "peakBytes" : 580522465,
           "registryName" : "opus-mt",
           "residentBytes" : 312087009,
           "residentEstimate" : "stored-dtype",
@@ -37196,7 +37196,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "stored-dtype",
-            "loadOverheadBytes" : 274726912,
+            "loadOverheadBytes" : 286261248,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -37208,8 +37208,8 @@
             ],
             "vocabularySize" : 62834
           },
-          "minimumMemoryBytes" : 1370275852,
-          "peakBytes" : 582367237,
+          "minimumMemoryBytes" : 1397415466,
+          "peakBytes" : 593901573,
           "registryName" : "opus-mt",
           "residentBytes" : 307640325,
           "residentEstimate" : "stored-dtype",
@@ -37278,7 +37278,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "stored-dtype",
-            "loadOverheadBytes" : 274726912,
+            "loadOverheadBytes" : 281018368,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -37290,8 +37290,8 @@
             ],
             "vocabularySize" : 53739
           },
-          "minimumMemoryBytes" : 1326363052,
-          "peakBytes" : 563704297,
+          "minimumMemoryBytes" : 1341166478,
+          "peakBytes" : 569995753,
           "registryName" : "opus-mt",
           "residentBytes" : 288977385,
           "residentEstimate" : "stored-dtype",
@@ -37360,7 +37360,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "stored-dtype",
-            "loadOverheadBytes" : 274726912,
+            "loadOverheadBytes" : 365953024,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -37372,8 +37372,8 @@
             ],
             "vocabularySize" : 62307
           },
-          "minimumMemoryBytes" : 1367731372,
-          "peakBytes" : 581285833,
+          "minimumMemoryBytes" : 1582381048,
+          "peakBytes" : 672511945,
           "registryName" : "opus-mt",
           "residentBytes" : 306558921,
           "residentEstimate" : "stored-dtype",
@@ -37442,7 +37442,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "stored-dtype",
-            "loadOverheadBytes" : 274726912,
+            "loadOverheadBytes" : 325058560,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -37454,8 +37454,8 @@
             ],
             "vocabularySize" : 61127
           },
-          "minimumMemoryBytes" : 1362034055,
-          "peakBytes" : 578864473,
+          "minimumMemoryBytes" : 1480461462,
+          "peakBytes" : 629196121,
           "registryName" : "opus-mt",
           "residentBytes" : 304137561,
           "residentEstimate" : "stored-dtype",
@@ -37524,7 +37524,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "stored-dtype",
-            "loadOverheadBytes" : 274726912,
+            "loadOverheadBytes" : 367001600,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -37536,8 +37536,8 @@
             ],
             "vocabularySize" : 65001
           },
-          "minimumMemoryBytes" : 1380738638,
-          "peakBytes" : 586813921,
+          "minimumMemoryBytes" : 1597855551,
+          "peakBytes" : 679088609,
           "registryName" : "opus-mt",
           "residentBytes" : 312087009,
           "residentEstimate" : "stored-dtype",
@@ -38139,7 +38139,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 50730958848,
+                "peakBytes" : 52074184704,
                 "residentBytes" : 50730958848
               },
               "title" : "Resident",
@@ -38147,7 +38147,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 9289678848,
+                "peakBytes" : 10632904704,
                 "residentBytes" : 9289678848
               },
               "title" : "Streamed",
@@ -38166,7 +38166,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 25365479424,
+                "peakBytes" : 26708705280,
                 "residentBytes" : 25365479424
               },
               "title" : "As published",
@@ -38174,7 +38174,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 50730958848,
+                "peakBytes" : 52074184704,
                 "residentBytes" : 50730958848
               },
               "title" : "Float32",
@@ -38227,7 +38227,7 @@
       ],
       "registryName" : "pixtral-12b",
       "requirements" : {
-        "minimumMemoryBytes" : 64736383699,
+        "minimumMemoryBytes" : 66316649412,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -38251,7 +38251,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 1343225856,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -38276,9 +38276,9 @@
             ],
             "vocabularySize" : 131072
           },
-          "minimumMemoryBytes" : 64736383699,
+          "minimumMemoryBytes" : 66316649412,
           "parameterCount" : 12682739712,
-          "peakBytes" : 50730958848,
+          "peakBytes" : 52074184704,
           "precision" : "bfloat16",
           "registryName" : "pixtral-12b",
           "residentBytes" : 50730958848,
@@ -38832,7 +38832,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 54438195680,
+                "peakBytes" : 55671321056,
                 "residentBytes" : 52173271520
               },
               "title" : "As published",
@@ -38840,7 +38840,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 106611467200,
+                "peakBytes" : 107844592576,
                 "residentBytes" : 104346543040
               },
               "title" : "Float32",
@@ -38859,7 +38859,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 54438195680,
+                "peakBytes" : 55671321056,
                 "residentBytes" : 52173271520
               },
               "title" : "None",
@@ -38867,7 +38867,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31307650400,
+                "peakBytes" : 32540775776,
                 "residentBytes" : 29042726240
               },
               "title" : "8-bit",
@@ -38875,7 +38875,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 25139504992,
+                "peakBytes" : 26372630368,
                 "residentBytes" : 22874580832
               },
               "title" : "6-bit",
@@ -38883,7 +38883,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 22055432288,
+                "peakBytes" : 23288557664,
                 "residentBytes" : 19790508128
               },
               "title" : "5-bit",
@@ -38891,7 +38891,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 18971359584,
+                "peakBytes" : 20204484960,
                 "residentBytes" : 16706435424
               },
               "title" : "4-bit",
@@ -38899,7 +38899,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 15887286880,
+                "peakBytes" : 17120412256,
                 "residentBytes" : 13622362720
               },
               "title" : "3-bit",
@@ -38907,7 +38907,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12803214176,
+                "peakBytes" : 14036339552,
                 "residentBytes" : 10538290016
               },
               "title" : "2-bit",
@@ -38964,7 +38964,7 @@
       ],
       "registryName" : "pplx-decider-v1.2",
       "requirements" : {
-        "minimumMemoryBytes" : 69097838796,
+        "minimumMemoryBytes" : 70548574532,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -38988,7 +38988,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 2264924160,
+            "loadOverheadBytes" : 3498049536,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -39003,9 +39003,9 @@
             ],
             "vocabularySize" : 248320
           },
-          "minimumMemoryBytes" : 69097838796,
+          "minimumMemoryBytes" : 70548574532,
           "parameterCount" : 26086635760,
-          "peakBytes" : 54438195680,
+          "peakBytes" : 55671321056,
           "precision" : "bfloat16",
           "registryName" : "pplx-decider-v1.2",
           "residentBytes" : 52173271520,
@@ -42362,7 +42362,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "Resident",
@@ -42370,7 +42370,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12087512064,
+                "peakBytes" : 6756551680,
                 "residentBytes" : 5103995904
               },
               "title" : "Streamed",
@@ -42389,7 +42389,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "As published",
@@ -42397,7 +42397,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 67398922240,
+                "peakBytes" : 62067961856,
                 "residentBytes" : 60415406080
               },
               "title" : "Float32",
@@ -42416,7 +42416,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "None",
@@ -42424,7 +42424,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 24075622400,
+                "peakBytes" : 18744662016,
                 "residentBytes" : 17092106240
               },
               "title" : "8-bit",
@@ -42432,7 +42432,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 20578129920,
+                "peakBytes" : 15247169536,
                 "residentBytes" : 13594613760
               },
               "title" : "6-bit",
@@ -42440,7 +42440,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 18829383680,
+                "peakBytes" : 13498423296,
                 "residentBytes" : 11845867520
               },
               "title" : "5-bit",
@@ -42448,7 +42448,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 17080637440,
+                "peakBytes" : 11749677056,
                 "residentBytes" : 10097121280
               },
               "title" : "4-bit",
@@ -42456,7 +42456,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 15331891200,
+                "peakBytes" : 10000930816,
                 "residentBytes" : 8348375040
               },
               "title" : "3-bit",
@@ -42464,7 +42464,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 13583144960,
+                "peakBytes" : 8252184576,
                 "residentBytes" : 6599628800
               },
               "title" : "2-bit",
@@ -42496,7 +42496,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "None",
@@ -42504,7 +42504,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 36876646400,
+                "peakBytes" : 31545686016,
                 "residentBytes" : 29893130240
               },
               "title" : "8-bit",
@@ -42512,7 +42512,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 36792760320,
+                "peakBytes" : 31461799936,
                 "residentBytes" : 29809244160
               },
               "title" : "6-bit",
@@ -42520,7 +42520,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 36750817280,
+                "peakBytes" : 31419856896,
                 "residentBytes" : 29767301120
               },
               "title" : "5-bit",
@@ -42528,7 +42528,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 36708874240,
+                "peakBytes" : 31377913856,
                 "residentBytes" : 29725358080
               },
               "title" : "4-bit",
@@ -42536,7 +42536,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 36666931200,
+                "peakBytes" : 31335970816,
                 "residentBytes" : 29683415040
               },
               "title" : "3-bit",
@@ -42544,7 +42544,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 36624988160,
+                "peakBytes" : 31294027776,
                 "residentBytes" : 29641472000
               },
               "title" : "2-bit",
@@ -42563,7 +42563,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "32",
@@ -42571,7 +42571,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "64",
@@ -42579,7 +42579,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "128",
@@ -42598,7 +42598,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 39164246016,
+                "peakBytes" : 33833285632,
                 "residentBytes" : 32180729856
               },
               "title" : "Qwen3 0.6B",
@@ -42606,7 +42606,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 41724461056,
+                "peakBytes" : 36393500672,
                 "residentBytes" : 34740944896
               },
               "title" : "Qwen3 1.7B",
@@ -42614,7 +42614,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 45840135168,
+                "peakBytes" : 40509174784,
                 "residentBytes" : 38856619008
               },
               "title" : "Qwen3 4B",
@@ -42632,7 +42632,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "None",
@@ -42640,7 +42640,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "8-bit",
@@ -42648,7 +42648,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "6-bit",
@@ -42656,7 +42656,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "5-bit",
@@ -42664,7 +42664,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "4-bit",
@@ -42672,7 +42672,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "3-bit",
@@ -42680,7 +42680,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37191219200,
+                "peakBytes" : 31860258816,
                 "residentBytes" : 30207703040
               },
               "title" : "2-bit",
@@ -42797,7 +42797,7 @@
       ],
       "registryName" : "qwen3-14b",
       "requirements" : {
-        "minimumMemoryBytes" : 48807278231,
+        "minimumMemoryBytes" : 42535560132,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -42823,7 +42823,7 @@
           "memoryFacts" : {
             "basis" : "measured",
             "keyValueBytesPerToken" : 163840,
-            "loadOverheadBytes" : 6983516160,
+            "loadOverheadBytes" : 1652555776,
             "maximumContextLength" : 40960,
             "stages" : [
               {
@@ -42850,9 +42850,9 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 48807278231,
+          "minimumMemoryBytes" : 42535560132,
           "parameterCount" : 14768307200,
-          "peakBytes" : 37191219200,
+          "peakBytes" : 31860258816,
           "precision" : "bfloat16",
           "registryName" : "qwen3-14b",
           "residentBytes" : 30207703040,
@@ -44158,7 +44158,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "Resident",
@@ -44166,7 +44166,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 13119310848,
+                "peakBytes" : 9000504320,
                 "residentBytes" : 6135794688
               },
               "title" : "Streamed",
@@ -44185,7 +44185,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "As published",
@@ -44193,7 +44193,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 140179492864,
+                "peakBytes" : 136060686336,
                 "residentBytes" : 133195976704
               },
               "title" : "Float32",
@@ -44212,7 +44212,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "None",
@@ -44220,7 +44220,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 43596941312,
+                "peakBytes" : 39478134784,
                 "residentBytes" : 36613425152
               },
               "title" : "8-bit",
@@ -44228,7 +44228,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 35601057792,
+                "peakBytes" : 31482251264,
                 "residentBytes" : 28617541632
               },
               "title" : "6-bit",
@@ -44236,7 +44236,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 31603116032,
+                "peakBytes" : 27484309504,
                 "residentBytes" : 24619599872
               },
               "title" : "5-bit",
@@ -44244,7 +44244,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 27605174272,
+                "peakBytes" : 23486367744,
                 "residentBytes" : 20621658112
               },
               "title" : "4-bit",
@@ -44252,7 +44252,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 23607232512,
+                "peakBytes" : 19488425984,
                 "residentBytes" : 16623716352
               },
               "title" : "3-bit",
@@ -44260,7 +44260,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 19609290752,
+                "peakBytes" : 15490484224,
                 "residentBytes" : 12625774592
               },
               "title" : "2-bit",
@@ -44292,7 +44292,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "None",
@@ -44300,7 +44300,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73078188032,
+                "peakBytes" : 68959381504,
                 "residentBytes" : 66094671872
               },
               "title" : "8-bit",
@@ -44308,7 +44308,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 72943970304,
+                "peakBytes" : 68825163776,
                 "residentBytes" : 65960454144
               },
               "title" : "6-bit",
@@ -44316,7 +44316,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 72876861440,
+                "peakBytes" : 68758054912,
                 "residentBytes" : 65893345280
               },
               "title" : "5-bit",
@@ -44324,7 +44324,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 72809752576,
+                "peakBytes" : 68690946048,
                 "residentBytes" : 65826236416
               },
               "title" : "4-bit",
@@ -44332,7 +44332,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 72742643712,
+                "peakBytes" : 68623837184,
                 "residentBytes" : 65759127552
               },
               "title" : "3-bit",
@@ -44340,7 +44340,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 72675534848,
+                "peakBytes" : 68556728320,
                 "residentBytes" : 65692018688
               },
               "title" : "2-bit",
@@ -44359,7 +44359,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "32",
@@ -44367,7 +44367,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "64",
@@ -44375,7 +44375,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "128",
@@ -44394,7 +44394,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 75554531328,
+                "peakBytes" : 71435724800,
                 "residentBytes" : 68571015168
               },
               "title" : "Qwen3 0.6B",
@@ -44402,7 +44402,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 78114746368,
+                "peakBytes" : 73995939840,
                 "residentBytes" : 71131230208
               },
               "title" : "Qwen3 1.7B",
@@ -44410,7 +44410,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 82230420480,
+                "peakBytes" : 78111613952,
                 "residentBytes" : 75246904320
               },
               "title" : "Qwen3 4B",
@@ -44418,7 +44418,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 103789207552,
+                "peakBytes" : 99670401024,
                 "residentBytes" : 96805691392
               },
               "title" : "Qwen3 14B",
@@ -44436,7 +44436,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "None",
@@ -44444,7 +44444,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "8-bit",
@@ -44452,7 +44452,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "6-bit",
@@ -44460,7 +44460,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "5-bit",
@@ -44468,7 +44468,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "4-bit",
@@ -44476,7 +44476,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "3-bit",
@@ -44484,7 +44484,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 73581504512,
+                "peakBytes" : 69462697984,
                 "residentBytes" : 66597988352
               },
               "title" : "2-bit",
@@ -44601,7 +44601,7 @@
       ],
       "registryName" : "qwen3-32b",
       "requirements" : {
-        "minimumMemoryBytes" : 91619378598,
+        "minimumMemoryBytes" : 86773723859,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -44627,7 +44627,7 @@
           "memoryFacts" : {
             "basis" : "measured",
             "keyValueBytesPerToken" : 262144,
-            "loadOverheadBytes" : 6983516160,
+            "loadOverheadBytes" : 2864709632,
             "maximumContextLength" : 40960,
             "stages" : [
               {
@@ -44654,9 +44654,9 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 91619378598,
+          "minimumMemoryBytes" : 86773723859,
           "parameterCount" : 32762123264,
-          "peakBytes" : 73581504512,
+          "peakBytes" : 69462697984,
           "precision" : "bfloat16",
           "registryName" : "qwen3-32b",
           "residentBytes" : 66597988352,
@@ -46622,7 +46622,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 136244986816,
+                "peakBytes" : 134985647040,
                 "residentBytes" : 133429560256
               },
               "title" : "Resident",
@@ -46630,7 +46630,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 15320599488,
+                "peakBytes" : 14061259712,
                 "residentBytes" : 12505172928
               },
               "title" : "Streamed",
@@ -46649,7 +46649,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 69530206688,
+                "peakBytes" : 68270866912,
                 "residentBytes" : 66714780128
               },
               "title" : "As published",
@@ -46657,7 +46657,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 136244986816,
+                "peakBytes" : 134985647040,
                 "residentBytes" : 133429560256
               },
               "title" : "Float32",
@@ -46710,7 +46710,7 @@
       ],
       "registryName" : "qwen3-vl-32b",
       "requirements" : {
-        "minimumMemoryBytes" : 165341122485,
+        "minimumMemoryBytes" : 163859546278,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -46734,7 +46734,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 2815426560,
+            "loadOverheadBytes" : 1556086784,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -46759,9 +46759,9 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 165341122485,
+          "minimumMemoryBytes" : 163859546278,
           "parameterCount" : 33357390064,
-          "peakBytes" : 136244986816,
+          "peakBytes" : 134985647040,
           "precision" : "bfloat16",
           "registryName" : "qwen3-vl-32b",
           "residentBytes" : 133429560256,
@@ -46963,7 +46963,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37883921344,
+                "peakBytes" : 36456809408,
                 "residentBytes" : 35068494784
               },
               "title" : "Resident",
@@ -46971,7 +46971,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 11643206592,
+                "peakBytes" : 10216094656,
                 "residentBytes" : 8827780032
               },
               "title" : "Streamed",
@@ -46990,7 +46990,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 20349673952,
+                "peakBytes" : 18922562016,
                 "residentBytes" : 17534247392
               },
               "title" : "As published",
@@ -46998,7 +46998,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 37883921344,
+                "peakBytes" : 36456809408,
                 "residentBytes" : 35068494784
               },
               "title" : "Float32",
@@ -47051,7 +47051,7 @@
       ],
       "registryName" : "qwen3-vl-8b",
       "requirements" : {
-        "minimumMemoryBytes" : 49622221930,
+        "minimumMemoryBytes" : 47943266711,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -47075,7 +47075,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 2815426560,
+            "loadOverheadBytes" : 1388314624,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -47100,9 +47100,9 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 49622221930,
+          "minimumMemoryBytes" : 47943266711,
           "parameterCount" : 8767123696,
-          "peakBytes" : 37883921344,
+          "peakBytes" : 36456809408,
           "precision" : "bfloat16",
           "registryName" : "qwen3-vl-8b",
           "residentBytes" : 35068494784,
@@ -47415,7 +47415,7 @@
       ],
       "registryName" : "qwen3-vl-reranker-2b",
       "requirements" : {
-        "minimumMemoryBytes" : 18377084688,
+        "minimumMemoryBytes" : 15906146184,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -47438,7 +47438,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 2815426560,
+            "loadOverheadBytes" : 715128832,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -47452,9 +47452,9 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 18377084688,
+          "minimumMemoryBytes" : 15906146184,
           "parameterCount" : 2127532032,
-          "peakBytes" : 11325554688,
+          "peakBytes" : 9225256960,
           "precision" : "bfloat16",
           "registryName" : "qwen3-vl-reranker-2b",
           "residentBytes" : 8510128128,
@@ -60300,7 +60300,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 18072468492,
+                "peakBytes" : 25705053196,
                 "residentBytes" : 18072468492
               },
               "title" : "Resident",
@@ -60308,7 +60308,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12797861888,
+                "peakBytes" : 20430446592,
                 "residentBytes" : 12797861888
               },
               "title" : "Staged",
@@ -60316,7 +60316,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12797861888,
+                "peakBytes" : 20430446592,
                 "residentBytes" : 12797861888
               },
               "title" : "Streamed",
@@ -60378,7 +60378,7 @@
       ],
       "registryName" : "sd3",
       "requirements" : {
-        "minimumMemoryBytes" : 20109210805,
+        "minimumMemoryBytes" : 29088722222,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60403,7 +60403,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7632584704,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -60438,9 +60438,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 20109210805,
+          "minimumMemoryBytes" : 29088722222,
           "parameterCount" : 8134104419,
-          "peakBytes" : 12797861888,
+          "peakBytes" : 20430446592,
           "precision" : "float16",
           "registryName" : "sd3",
           "residentBytes" : 12797861888,
@@ -60707,7 +60707,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 38039778060,
+                "peakBytes" : 45674459916,
                 "residentBytes" : 38039778060
               },
               "title" : "Resident",
@@ -60715,7 +60715,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 25241916172,
+                "peakBytes" : 32876598028,
                 "residentBytes" : 25241916172
               },
               "title" : "Staged",
@@ -60756,7 +60756,7 @@
       ],
       "registryName" : "sd3-controlnet",
       "requirements" : {
-        "minimumMemoryBytes" : 34749274669,
+        "minimumMemoryBytes" : 43731253323,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60780,7 +60780,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7634681856,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -60804,9 +60804,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 34749274669,
+          "minimumMemoryBytes" : 43731253323,
           "parameterCount" : 15964240227,
-          "peakBytes" : 25241916172,
+          "peakBytes" : 32876598028,
           "precision" : "bfloat16",
           "registryName" : "sd3-controlnet",
           "residentBytes" : 25241916172,
@@ -61112,7 +61112,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 17303042828,
+                "peakBytes" : 24935627532,
                 "residentBytes" : 17303042828
               },
               "title" : "Resident",
@@ -61120,7 +61120,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12797861888,
+                "peakBytes" : 20430446592,
                 "residentBytes" : 12797861888
               },
               "title" : "Staged",
@@ -61128,7 +61128,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12797861888,
+                "peakBytes" : 20430446592,
                 "residentBytes" : 12797861888
               },
               "title" : "Streamed",
@@ -61177,7 +61177,7 @@
       ],
       "registryName" : "sd3-medium",
       "requirements" : {
-        "minimumMemoryBytes" : 20109210805,
+        "minimumMemoryBytes" : 29088722222,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61202,7 +61202,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7632584704,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -61237,9 +61237,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 20109210805,
+          "minimumMemoryBytes" : 29088722222,
           "parameterCount" : 7749391587,
-          "peakBytes" : 12797861888,
+          "peakBytes" : 20430446592,
           "precision" : "float16",
           "registryName" : "sd3-medium",
           "residentBytes" : 12797861888,
@@ -61505,7 +61505,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 29425702156,
+                "peakBytes" : 37060384012,
                 "residentBytes" : 29425702156
               },
               "title" : "Resident",
@@ -61513,7 +61513,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 16627840268,
+                "peakBytes" : 24262522124,
                 "residentBytes" : 16627840268
               },
               "title" : "Staged",
@@ -61521,7 +61521,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12797861888,
+                "peakBytes" : 20432543744,
                 "residentBytes" : 12797861888
               },
               "title" : "Streamed",
@@ -61583,7 +61583,7 @@
       ],
       "registryName" : "sd3.5-large",
       "requirements" : {
-        "minimumMemoryBytes" : 24615067723,
+        "minimumMemoryBytes" : 33597046377,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61608,7 +61608,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7634681856,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -61643,9 +61643,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 24615067723,
+          "minimumMemoryBytes" : 33597046377,
           "parameterCount" : 13810721251,
-          "peakBytes" : 16627840268,
+          "peakBytes" : 24262522124,
           "precision" : "bfloat16",
           "registryName" : "sd3.5-large",
           "residentBytes" : 16627840268,
@@ -61910,7 +61910,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 29425702156,
+                "peakBytes" : 37060384012,
                 "residentBytes" : 29425702156
               },
               "title" : "Resident",
@@ -61918,7 +61918,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 16627840268,
+                "peakBytes" : 24262522124,
                 "residentBytes" : 16627840268
               },
               "title" : "Staged",
@@ -61926,7 +61926,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 12797861888,
+                "peakBytes" : 20432543744,
                 "residentBytes" : 12797861888
               },
               "title" : "Streamed",
@@ -61977,7 +61977,7 @@
       ],
       "registryName" : "sd3.5-large-turbo",
       "requirements" : {
-        "minimumMemoryBytes" : 24615067723,
+        "minimumMemoryBytes" : 33597046377,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62002,7 +62002,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 7634681856,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -62037,9 +62037,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 24615067723,
+          "minimumMemoryBytes" : 33597046377,
           "parameterCount" : 13810721251,
-          "peakBytes" : 16627840268,
+          "peakBytes" : 24262522124,
           "precision" : "bfloat16",
           "registryName" : "sd3.5-large-turbo",
           "residentBytes" : 16627840268,
@@ -71634,11 +71634,11 @@
                   "residentBytes" : 8600158944
                 },
                 "translategemma-12b-it" : {
-                  "peakBytes" : 24374650080,
+                  "peakBytes" : 25048884448,
                   "residentBytes" : 24374650080
                 },
                 "translategemma-27b-it" : {
-                  "peakBytes" : 57439067360,
+                  "peakBytes" : 56427191520,
                   "residentBytes" : 54864813280
                 }
               },
@@ -71656,11 +71656,11 @@
                   "residentBytes" : 2559673056
                 },
                 "translategemma-12b-it" : {
-                  "peakBytes" : 3752942816,
+                  "peakBytes" : 4427177184,
                   "residentBytes" : 3752942816
                 },
                 "translategemma-27b-it" : {
-                  "peakBytes" : 7891240160,
+                  "peakBytes" : 6879364320,
                   "residentBytes" : 5316986080
                 }
               },
@@ -71689,11 +71689,11 @@
                   "residentBytes" : 8600158944
                 },
                 "translategemma-12b-it" : {
-                  "peakBytes" : 24374650080,
+                  "peakBytes" : 25048884448,
                   "residentBytes" : 24374650080
                 },
                 "translategemma-27b-it" : {
-                  "peakBytes" : 57439067360,
+                  "peakBytes" : 56427191520,
                   "residentBytes" : 54864813280
                 }
               },
@@ -71711,11 +71711,11 @@
                   "residentBytes" : 17200317888
                 },
                 "translategemma-12b-it" : {
-                  "peakBytes" : 48749300160,
+                  "peakBytes" : 49423534528,
                   "residentBytes" : 48749300160
                 },
                 "translategemma-27b-it" : {
-                  "peakBytes" : 112303880640,
+                  "peakBytes" : 111292004800,
                   "residentBytes" : 109729626560
                 }
               },
@@ -71891,7 +71891,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 674234368,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -71916,9 +71916,9 @@
             ],
             "vocabularySize" : 262208
           },
-          "minimumMemoryBytes" : 33728961619,
+          "minimumMemoryBytes" : 34522178523,
           "parameterCount" : 12187325040,
-          "peakBytes" : 24374650080,
+          "peakBytes" : 25048884448,
           "precision" : "bfloat16",
           "registryName" : "translategemma",
           "residentBytes" : 24374650080,
@@ -71993,7 +71993,7 @@
           "isDefault" : false,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 2574254080,
+            "loadOverheadBytes" : 1562378240,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -72018,9 +72018,9 @@
             ],
             "vocabularySize" : 262208
           },
-          "minimumMemoryBytes" : 72628276066,
+          "minimumMemoryBytes" : 71437833902,
           "parameterCount" : 27432406640,
-          "peakBytes" : 57439067360,
+          "peakBytes" : 56427191520,
           "precision" : "bfloat16",
           "registryName" : "translategemma",
           "residentBytes" : 54864813280,
@@ -79473,7 +79473,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 17545377996,
+                "peakBytes" : 25654016204,
                 "residentBytes" : 17545377996
               },
               "title" : "Resident",
@@ -79481,7 +79481,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 11361820672,
+                "peakBytes" : 19470458880,
                 "residentBytes" : 11361820672
               },
               "title" : "Staged",
@@ -79500,7 +79500,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 11361820672,
+                "peakBytes" : 19470458880,
                 "residentBytes" : 11361820672
               },
               "title" : "As published",
@@ -79508,7 +79508,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 11361820672,
+                "peakBytes" : 19470458880,
                 "residentBytes" : 11361820672
               },
               "title" : "BFloat16",
@@ -79549,7 +79549,7 @@
       ],
       "registryName" : "wan",
       "requirements" : {
-        "minimumMemoryBytes" : 18419750551,
+        "minimumMemoryBytes" : 27959324913,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -79573,7 +79573,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 8108638208,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -79597,9 +79597,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 18419750551,
+          "minimumMemoryBytes" : 27959324913,
           "parameterCount" : 7226799667,
-          "peakBytes" : 11361820672,
+          "peakBytes" : 19470458880,
           "precision" : "float32",
           "registryName" : "wan",
           "residentBytes" : 11361820672,
@@ -79807,7 +79807,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 69023357132,
+                "peakBytes" : 77131995340,
                 "residentBytes" : 69023357132
               },
               "title" : "Resident",
@@ -79815,7 +79815,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 57661536460,
+                "peakBytes" : 65770174668,
                 "residentBytes" : 57661536460
               },
               "title" : "Staged",
@@ -79834,7 +79834,7 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 57661536460,
+                "peakBytes" : 65770174668,
                 "residentBytes" : 57661536460
               },
               "title" : "As published",
@@ -79842,7 +79842,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 29084553292,
+                "peakBytes" : 37193191500,
                 "residentBytes" : 29084553292
               },
               "title" : "BFloat16",
@@ -79883,7 +79883,7 @@
       ],
       "registryName" : "wan2.1-t2v-14b",
       "requirements" : {
-        "minimumMemoryBytes" : 72890004419,
+        "minimumMemoryBytes" : 82429578782,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -79907,7 +79907,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 8108638208,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -79931,9 +79931,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 72890004419,
+          "minimumMemoryBytes" : 82429578782,
           "parameterCount" : 20096294451,
-          "peakBytes" : 57661536460,
+          "peakBytes" : 65770174668,
           "precision" : "float32",
           "registryName" : "wan2.1-t2v-14b",
           "residentBytes" : 57661536460,
@@ -82017,7 +82017,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 34179726192,
+                "peakBytes" : 42288364400,
                 "residentBytes" : 34179726192
               },
               "title" : "Resident",
@@ -82025,7 +82025,7 @@
             },
             {
               "memory" : {
-                "peakBytes" : 22817905520,
+                "peakBytes" : 30926543728,
                 "residentBytes" : 22817905520
               },
               "title" : "Staged",
@@ -82066,7 +82066,7 @@
       ],
       "registryName" : "wan2.2-ti2v-5b",
       "requirements" : {
-        "minimumMemoryBytes" : 31897497431,
+        "minimumMemoryBytes" : 41437071793,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -82090,7 +82090,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 0,
+            "loadOverheadBytes" : 8108638208,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -82114,9 +82114,9 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 31897497431,
+          "minimumMemoryBytes" : 41437071793,
           "parameterCount" : 11385386716,
-          "peakBytes" : 22817905520,
+          "peakBytes" : 30926543728,
           "precision" : "float32",
           "registryName" : "wan2.2-ti2v-5b",
           "residentBytes" : 22817905520,
@@ -91648,7 +91648,7 @@
       ],
       "registryName" : "yolov9e",
       "requirements" : {
-        "minimumMemoryBytes" : 2119546612,
+        "minimumMemoryBytes" : 2062800146,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -91671,7 +91671,7 @@
           "isDefault" : true,
           "memoryFacts" : {
             "basis" : "measured",
-            "loadOverheadBytes" : 783286272,
+            "loadOverheadBytes" : 759169024,
             "stages" : [
               {
                 "bytesByPrecision" : {
@@ -91682,8 +91682,8 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 2119546612,
-          "peakBytes" : 900807310,
+          "minimumMemoryBytes" : 2062800146,
+          "peakBytes" : 876690062,
           "registryName" : "yolov9e",
           "residentBytes" : 117521038,
           "source" : {

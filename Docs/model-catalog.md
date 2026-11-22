@@ -462,7 +462,8 @@ A variant without its own measurement takes its family's largest measured figure
 scales by its hidden size, else its vocabulary. A variant whose reference request outgrows the
 measurement's memory cap, or asks Metal for a buffer past its limit, states no figure and lends none to
 its family: its default request does not fit the Macs the catalog plans for, and it needs a tiled or
-shorter default instead. `NFKMLXCatalogLoadOverheads.swift` names each figure's basis.
+shorter default instead. A release measured with its weights held counts so where it passes a cap at
+or above the 32 GB Mac's working set. `NFKMLXCatalogLoadOverheads.swift` names each figure's basis.
 
 ### Stage
 

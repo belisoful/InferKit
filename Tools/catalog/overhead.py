@@ -28,7 +28,8 @@ MiB. Two kinds of variant take no figure and lend none to their family:
 
 - one whose reference request exceeds what a Mac holds: on initial values it passes the memory cap, or it
   asks Metal for one buffer past the device's limit; its default needs tiling or a shorter input
-- a stored release that passes the cap with its weights resident, which a run at a higher cap measures
+- a stored release that passes the cap with its weights resident: one past a cap at or above the 32 GB Mac's
+  working set exceeds a Mac, and one past a lower cap waits for a run at a higher one
 """
 
 import argparse
@@ -50,6 +51,7 @@ VALIDATION = os.path.expanduser("~/.inferkit-validation.json")
 TEST = "NFKMLXLoadOverheadTests/testTheNamedVariantsLoadAndReferenceRequestPeaks"
 MIB = 1 << 20
 BUFFER_LIMIT = "maximum allowed buffer size"
+LARGEST_WORKING_SET = 26_800_000_000   # the 32 GB Mac's, as NFKMLXCatalogTiers assumes
 
 
 def mlx_variants():
@@ -309,7 +311,7 @@ def table(arguments):
     for key, (record, path) in records.items():
         weights = record.get("weights") or planned.get(key, {}).get("weights")
         limit = exceeding_buffer(record, path)
-        if record.get("overCap") and weights == "initial":
+        if record.get("overCap") and (weights == "initial" or record.get("capBytes", 0) >= LARGEST_WORKING_SET):
             exceeds[key] = f"{record['activeBytes'] / 1e9:.1f} GB active in the {record.get('phase')}, past the cap"
             continue
         if limit:

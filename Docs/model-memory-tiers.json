@@ -74,28 +74,28 @@
       "32" : "resident 918689280 fits"
     },
     "clip-vit-b-16/default" : {
-      "8" : "resident 350837078 fits",
-      "16" : "resident 350837078 fits",
-      "24" : "resident 350837078 fits",
-      "32" : "resident 350837078 fits"
+      "8" : "resident 565795158 fits",
+      "16" : "resident 565795158 fits",
+      "24" : "resident 565795158 fits",
+      "32" : "resident 565795158 fits"
     },
     "clip-vit-b-32/default" : {
-      "8" : "resident 353976522 fits",
-      "16" : "resident 353976522 fits",
-      "24" : "resident 353976522 fits",
-      "32" : "resident 353976522 fits"
+      "8" : "resident 422133962 fits",
+      "16" : "resident 422133962 fits",
+      "24" : "resident 422133962 fits",
+      "32" : "resident 422133962 fits"
     },
     "clip-vit-l-14-336/default" : {
-      "8" : "resident 934088680 fits",
-      "16" : "resident 934088680 fits",
-      "24" : "resident 934088680 fits",
-      "32" : "resident 934088680 fits"
+      "8" : "resident 2277314536 fits",
+      "16" : "resident 2277314536 fits",
+      "24" : "resident 2277314536 fits",
+      "32" : "resident 2277314536 fits"
     },
     "clip-vit-l-14/default" : {
-      "8" : "resident 932768134 fits",
-      "16" : "resident 932768134 fits",
-      "24" : "resident 932768134 fits",
-      "32" : "resident 932768134 fits"
+      "8" : "resident 1662577030 fits",
+      "16" : "resident 1662577030 fits",
+      "24" : "resident 1662577030 fits",
+      "32" : "resident 1662577030 fits"
     },
     "cmgan/best-ckpt" : {
       "8" : "resident 7488051 fits",
@@ -374,34 +374,34 @@
       "32" : "staged 23950160934 refused"
     },
     "flux.2-klein-4b/default" : {
-      "8" : "staged 8044936192 refused",
-      "16" : "staged 8044936192 refused",
-      "24" : "staged 8044936192 fits",
-      "32" : "resident 15964118094 fits"
+      "8" : "staged 16482827264 refused",
+      "16" : "staged 16482827264 refused",
+      "24" : "staged 16482827264 refused",
+      "32" : "resident 24402009166 refused"
     },
     "flux.2-klein-9b-kv/default" : {
-      "8" : "staged 18325255246 refused",
-      "16" : "staged 18325255246 refused",
-      "24" : "staged 18325255246 refused",
-      "32" : "staged 18325255246 fits"
+      "8" : "staged 26763146318 refused",
+      "16" : "staged 26763146318 refused",
+      "24" : "staged 26763146318 refused",
+      "32" : "staged 26763146318 refused"
     },
     "flux.2-klein-9b/default" : {
-      "8" : "staged 18325255246 refused",
-      "16" : "staged 18325255246 refused",
-      "24" : "staged 18325255246 refused",
-      "32" : "staged 18325255246 fits"
+      "8" : "staged 26763146318 refused",
+      "16" : "staged 26763146318 refused",
+      "24" : "staged 26763146318 refused",
+      "32" : "staged 26763146318 refused"
     },
     "flux.2-klein-base-4b/default" : {
-      "8" : "staged 8044936192 refused",
-      "16" : "staged 8044936192 refused",
-      "24" : "staged 8044936192 fits",
-      "32" : "resident 15964118094 fits"
+      "8" : "staged 16482827264 refused",
+      "16" : "staged 16482827264 refused",
+      "24" : "staged 16482827264 refused",
+      "32" : "resident 24402009166 refused"
     },
     "flux.2-klein-base-9b/default" : {
-      "8" : "staged 18325255246 refused",
-      "16" : "staged 18325255246 refused",
-      "24" : "staged 18325255246 refused",
-      "32" : "staged 18325255246 fits"
+      "8" : "staged 26763146318 refused",
+      "16" : "staged 26763146318 refused",
+      "24" : "staged 26763146318 refused",
+      "32" : "staged 26763146318 refused"
     },
     "frcrn/se-16k" : {
       "8" : "resident 2795076663 refused",
@@ -446,52 +446,52 @@
       "32" : "resident 20287748992 refused"
     },
     "gemma-3n-e4b-it/gemma-3n-e4b-it" : {
-      "8" : "resident 15699956384 refused",
-      "16" : "resident 15699956384 refused",
-      "24" : "resident 15699956384 refused",
-      "32" : "resident 15699956384 fits"
+      "8" : "resident 24472343200 refused",
+      "16" : "resident 24472343200 refused",
+      "24" : "resident 24472343200 refused",
+      "32" : "resident 24472343200 refused"
     },
     "gemma-4-12b-it/gemma-4-12b-it" : {
-      "8" : "streamed 6170820616 refused",
-      "16" : "streamed 5411529607 fits",
-      "24" : "streamed 9917230948 fits",
-      "32" : "streamed 18069685351 fits"
+      "8" : "streamed 10159603720 refused",
+      "16" : "streamed 10159603720 refused",
+      "24" : "streamed 13906014052 refused",
+      "32" : "streamed 22058468455 refused"
     },
     "gemma-4-26b-a4b-it/gemma-4-26b-a4b-it" : {
-      "8" : "paged 11871803704 refused",
-      "16" : "paged 11871803704 refused",
-      "24" : "paged 11871803704 refused",
-      "32" : "paged 15178418204 fits"
+      "8" : "paged 19695229240 refused",
+      "16" : "paged 19695229240 refused",
+      "24" : "paged 19695229240 refused",
+      "32" : "paged 23001843740 refused"
     },
     "gemma-4-31b-it/gemma-4-31b-it" : {
-      "8" : "streamed 12212219080 refused",
-      "16" : "streamed 12212219080 refused",
-      "24" : "streamed 10188358216 fits",
-      "32" : "streamed 18430507184 fits"
+      "8" : "streamed 20035644616 refused",
+      "16" : "streamed 20035644616 refused",
+      "24" : "streamed 20035644616 refused",
+      "32" : "streamed 26253932720 refused"
     },
     "gemma-4-e2b-it/gemma-4-e2b-it" : {
-      "8" : "streamed 13536419592 refused",
-      "16" : "streamed 13536419592 refused",
-      "24" : "resident 10246357958 fits",
-      "32" : "streamed 18324948888 fits"
+      "8" : "streamed 21359845128 refused",
+      "16" : "streamed 21359845128 refused",
+      "24" : "streamed 21359845128 refused",
+      "32" : "resident 18069783494 fits"
     },
     "gemma-4-e4b-it/gemma-4-e4b-it" : {
-      "8" : "streamed 16830566152 refused",
-      "16" : "streamed 16830566152 refused",
-      "24" : "streamed 10165992214 fits",
-      "32" : "streamed 18437726488 fits"
+      "8" : "streamed 18954981128 refused",
+      "16" : "streamed 18954981128 refused",
+      "24" : "streamed 18954981128 refused",
+      "32" : "resident 18116729812 fits"
     },
     "gemma4-multimodal/gemma-4-e2b-it" : {
-      "8" : "resident 20492715916 refused",
-      "16" : "resident 20492715916 refused",
-      "24" : "resident 20492715916 refused",
-      "32" : "resident 20492715916 refused"
+      "8" : "resident 28316141452 refused",
+      "16" : "resident 28316141452 refused",
+      "24" : "resident 28316141452 refused",
+      "32" : "resident 28316141452 refused"
     },
     "gemma4-multimodal/gemma-4-e4b-it" : {
-      "8" : "resident 31984629672 refused",
-      "16" : "resident 31984629672 refused",
-      "24" : "resident 31984629672 refused",
-      "32" : "resident 31984629672 refused"
+      "8" : "resident 39808055208 refused",
+      "16" : "resident 39808055208 refused",
+      "24" : "resident 39808055208 refused",
+      "32" : "resident 39808055208 refused"
     },
     "gpt-oss-20b/gpt-oss-20b" : {
       "8" : "paged 8681241728 refused",
@@ -614,10 +614,10 @@
       "32" : "resident 16649428992 fits"
     },
     "hy-mt2-30b-a3b/hy-mt2-30b-a3b" : {
-      "8" : "paged 3959344640 refused",
-      "16" : "paged 5001808161 fits",
-      "24" : "paged 7435622963 fits",
-      "32" : "paged 11524178560 fits"
+      "8" : "paged 3725512192 refused",
+      "16" : "paged 4767975713 fits",
+      "24" : "paged 7201790515 fits",
+      "32" : "paged 11290346112 fits"
     },
     "hy-mt2/hy-mt2-1.8b" : {
       "8" : "streamed 2944412672 refused",
@@ -788,10 +788,10 @@
       "32" : "staged 18810177536 refused"
     },
     "mistral-small-24b-instruct-2501/mistral-small-24b-instruct-2501" : {
-      "8" : "streamed 5578475520 refused",
-      "16" : "streamed 5578475520 refused",
-      "24" : "streamed 10024519680 fits",
-      "32" : "streamed 17805096960 fits"
+      "8" : "streamed 8338327552 refused",
+      "16" : "streamed 8338327552 refused",
+      "24" : "streamed 12784371712 refused",
+      "32" : "streamed 20564948992 refused"
     },
     "mixtral-8x7b-instruct/mixtral-8x7b-instruct-v0.1" : {
       "8" : "paged 3748143104 refused",
@@ -866,10 +866,10 @@
       "32" : "resident 2437360529 fits"
     },
     "nemotron-3-nano-4b/nvidia-nemotron-3-nano-4b-bf16" : {
-      "8" : "streamed 2426137412 fits",
-      "16" : "streamed 5419533985 fits",
-      "24" : "resident 7947113664 fits",
-      "32" : "resident 7947113664 fits"
+      "8" : "streamed 20700719940 refused",
+      "16" : "streamed 23694116513 refused",
+      "24" : "resident 26221696192 refused",
+      "32" : "resident 26221696192 refused"
     },
     "nemotron-asr-streaming/en-0.6b" : {
       "8" : "resident 3538741252 refused",
@@ -926,10 +926,10 @@
       "32" : "streamed 18901493441 refused"
     },
     "open-jev-27b-v1.1/open-jev-27b-v1.1" : {
-      "8" : "streamed 10483584045 refused",
-      "16" : "streamed 10483584045 refused",
-      "24" : "streamed 12016676781 refused",
-      "32" : "streamed 20386133294 refused"
+      "8" : "streamed 11297279021 refused",
+      "16" : "streamed 11297279021 refused",
+      "24" : "streamed 12830371757 refused",
+      "32" : "streamed 21199828270 refused"
     },
     "open-jev-deberta-v3-large/open-jev-deberta-v3-large" : {
       "8" : "resident 3010076676 refused",
@@ -938,10 +938,10 @@
       "32" : "resident 3010076676 fits"
     },
     "opus-mt/opus-mt-ar-en" : {
-      "8" : "resident 582367237 fits",
-      "16" : "resident 582367237 fits",
-      "24" : "resident 582367237 fits",
-      "32" : "resident 582367237 fits"
+      "8" : "resident 593901573 fits",
+      "16" : "resident 593901573 fits",
+      "24" : "resident 593901573 fits",
+      "32" : "resident 593901573 fits"
     },
     "opus-mt/opus-mt-en-de" : {
       "8" : "resident 572655121 fits",
@@ -950,46 +950,46 @@
       "32" : "resident 572655121 fits"
     },
     "opus-mt/opus-mt-en-zh" : {
-      "8" : "resident 586813921 fits",
-      "16" : "resident 586813921 fits",
-      "24" : "resident 586813921 fits",
-      "32" : "resident 586813921 fits"
+      "8" : "resident 580522465 fits",
+      "16" : "resident 580522465 fits",
+      "24" : "resident 580522465 fits",
+      "32" : "resident 580522465 fits"
     },
     "opus-mt/opus-mt-hi-en" : {
-      "8" : "resident 578864473 fits",
-      "16" : "resident 578864473 fits",
-      "24" : "resident 578864473 fits",
-      "32" : "resident 578864473 fits"
+      "8" : "resident 629196121 fits",
+      "16" : "resident 629196121 fits",
+      "24" : "resident 629196121 fits",
+      "32" : "resident 629196121 fits"
     },
     "opus-mt/opus-mt-ja-en" : {
-      "8" : "resident 578021101 fits",
-      "16" : "resident 578021101 fits",
-      "24" : "resident 578021101 fits",
-      "32" : "resident 578021101 fits"
+      "8" : "resident 641984237 fits",
+      "16" : "resident 641984237 fits",
+      "24" : "resident 641984237 fits",
+      "32" : "resident 641984237 fits"
     },
     "opus-mt/opus-mt-ko-en" : {
-      "8" : "resident 586813921 fits",
-      "16" : "resident 586813921 fits",
-      "24" : "resident 586813921 fits",
-      "32" : "resident 586813921 fits"
+      "8" : "resident 679088609 fits",
+      "16" : "resident 679088609 fits",
+      "24" : "resident 679088609 fits",
+      "32" : "resident 679088609 fits"
     },
     "opus-mt/opus-mt-th-en" : {
-      "8" : "resident 581285833 fits",
-      "16" : "resident 581285833 fits",
-      "24" : "resident 581285833 fits",
-      "32" : "resident 581285833 fits"
+      "8" : "resident 672511945 fits",
+      "16" : "resident 672511945 fits",
+      "24" : "resident 672511945 fits",
+      "32" : "resident 672511945 fits"
     },
     "opus-mt/opus-mt-vi-en" : {
-      "8" : "resident 563704297 fits",
-      "16" : "resident 563704297 fits",
-      "24" : "resident 563704297 fits",
-      "32" : "resident 563704297 fits"
+      "8" : "resident 569995753 fits",
+      "16" : "resident 569995753 fits",
+      "24" : "resident 569995753 fits",
+      "32" : "resident 569995753 fits"
     },
     "opus-mt/opus-mt-zh-en" : {
-      "8" : "resident 586813921 fits",
-      "16" : "resident 586813921 fits",
-      "24" : "resident 586813921 fits",
-      "32" : "resident 586813921 fits"
+      "8" : "resident 657068513 fits",
+      "16" : "resident 657068513 fits",
+      "24" : "resident 657068513 fits",
+      "32" : "resident 657068513 fits"
     },
     "parakeet-tdt/0.6b-v2" : {
       "8" : "resident 2472222720 refused",
@@ -1010,10 +1010,10 @@
       "32" : "resident 15391459264 fits"
     },
     "pixtral-12b/pixtral-12b" : {
-      "8" : "streamed 9289678848 refused",
-      "16" : "streamed 5190119424 fits",
-      "24" : "streamed 9289678848 fits",
-      "32" : "streamed 18014158848 fits"
+      "8" : "streamed 10632904704 refused",
+      "16" : "streamed 10632904704 refused",
+      "24" : "streamed 10632904704 refused",
+      "32" : "streamed 19357384704 refused"
     },
     "pose-simplebaseline/default" : {
       "8" : "resident 229426521 fits",
@@ -1028,10 +1028,10 @@
       "32" : "resident 11344760832 fits"
     },
     "pplx-decider-v1.2/pplx-decider-v1.2" : {
-      "8" : "resident 54438195680 refused",
-      "16" : "resident 54438195680 refused",
-      "24" : "resident 54438195680 refused",
-      "32" : "resident 54438195680 refused"
+      "8" : "resident 55671321056 refused",
+      "16" : "resident 55671321056 refused",
+      "24" : "resident 55671321056 refused",
+      "32" : "resident 55671321056 refused"
     },
     "qwen-image-2.1/default" : {
       "8" : "staged 17534247392 refused",
@@ -1064,10 +1064,10 @@
       "32" : "resident 12140674048 fits"
     },
     "qwen3-14b/qwen3-14b" : {
-      "8" : "streamed 12087512064 refused",
-      "16" : "streamed 12087512064 refused",
-      "24" : "streamed 16711879168 refused",
-      "32" : "streamed 25299989504 refused"
+      "8" : "streamed 6756551680 refused",
+      "16" : "streamed 6756551680 refused",
+      "24" : "streamed 11380918784 refused",
+      "32" : "streamed 19969029120 refused"
     },
     "qwen3-30b-a3b/qwen3-30b-a3b" : {
       "8" : "paged 3484839936 refused",
@@ -1076,10 +1076,10 @@
       "32" : "paged 10984936320 fits"
     },
     "qwen3-32b/qwen3-32b" : {
-      "8" : "streamed 13119310848 refused",
-      "16" : "streamed 13119310848 refused",
-      "24" : "streamed 17020097536 refused",
-      "32" : "streamed 24821670912 refused"
+      "8" : "streamed 9000504320 refused",
+      "16" : "streamed 9000504320 refused",
+      "24" : "streamed 12901291008 refused",
+      "32" : "streamed 20702864384 refused"
     },
     "qwen3-embedding-0.6b/qwen3-embedding-0.6b" : {
       "8" : "resident 3475722240 refused",
@@ -1094,10 +1094,10 @@
       "32" : "resident 11325554688 fits"
     },
     "qwen3-vl-8b/qwen3-vl-8b-instruct" : {
-      "8" : "streamed 11643206592 refused",
-      "16" : "streamed 11643206592 refused",
-      "24" : "streamed 12414992320 refused",
-      "32" : "streamed 20904635328 refused"
+      "8" : "streamed 10216094656 refused",
+      "16" : "streamed 10216094656 refused",
+      "24" : "streamed 10987880384 refused",
+      "32" : "streamed 19477523392 refused"
     },
     "qwen3-vl-30b-a3b/qwen3-vl-30b-a3b-instruct" : {
       "8" : "paged 11134325696 refused",
@@ -1106,10 +1106,10 @@
       "32" : "paged 16217392480 fits"
     },
     "qwen3-vl-32b/qwen3-vl-32b-instruct" : {
-      "8" : "streamed 15320599488 refused",
-      "16" : "streamed 15320599488 refused",
-      "24" : "streamed 15320599488 refused",
-      "32" : "streamed 21171779520 refused"
+      "8" : "streamed 14061259712 refused",
+      "16" : "streamed 14061259712 refused",
+      "24" : "streamed 14061259712 refused",
+      "32" : "streamed 19912439744 refused"
     },
     "qwen3-vl-embedding-2b/qwen3-vl-embedding-2b" : {
       "8" : "resident 9220014080 refused",
@@ -1118,10 +1118,10 @@
       "32" : "resident 9220014080 fits"
     },
     "qwen3-vl-reranker-2b/qwen3-vl-reranker-2b" : {
-      "8" : "resident 11325554688 refused",
-      "16" : "resident 11325554688 refused",
-      "24" : "resident 11325554688 refused",
-      "32" : "resident 11325554688 fits"
+      "8" : "resident 9225256960 refused",
+      "16" : "resident 9225256960 refused",
+      "24" : "resident 9225256960 fits",
+      "32" : "resident 9225256960 fits"
     },
     "qwen3.5-2b/qwen3.5-2b" : {
       "8" : "streamed 4034786688 refused",
@@ -1562,34 +1562,34 @@
       "32" : "resident 2114895788 fits"
     },
     "sd3-controlnet/default" : {
-      "8" : "staged 25241916172 refused",
-      "16" : "staged 25241916172 refused",
-      "24" : "staged 25241916172 refused",
-      "32" : "staged 25241916172 refused"
+      "8" : "staged 32876598028 refused",
+      "16" : "staged 32876598028 refused",
+      "24" : "staged 32876598028 refused",
+      "32" : "staged 32876598028 refused"
     },
     "sd3-medium/default" : {
-      "8" : "streamed 12797861888 refused",
-      "16" : "staged 12797861888 refused",
-      "24" : "staged 12797861888 refused",
-      "32" : "resident 17303042828 fits"
+      "8" : "streamed 20430446592 refused",
+      "16" : "staged 20430446592 refused",
+      "24" : "staged 20430446592 refused",
+      "32" : "resident 24935627532 refused"
     },
     "sd3.5-large-turbo/default" : {
-      "8" : "streamed 12797861888 refused",
-      "16" : "streamed 12797861888 refused",
-      "24" : "streamed 12797861888 refused",
-      "32" : "staged 16627840268 fits"
+      "8" : "streamed 20432543744 refused",
+      "16" : "streamed 20432543744 refused",
+      "24" : "streamed 20432543744 refused",
+      "32" : "staged 24262522124 refused"
     },
     "sd3.5-large/default" : {
-      "8" : "streamed 12797861888 refused",
-      "16" : "streamed 12797861888 refused",
-      "24" : "streamed 12797861888 refused",
-      "32" : "staged 16627840268 fits"
+      "8" : "streamed 20432543744 refused",
+      "16" : "streamed 20432543744 refused",
+      "24" : "streamed 20432543744 refused",
+      "32" : "staged 24262522124 refused"
     },
     "sd3/default" : {
-      "8" : "streamed 12797861888 refused",
-      "16" : "staged 12797861888 refused",
-      "24" : "staged 12797861888 refused",
-      "32" : "resident 18072468492 fits"
+      "8" : "streamed 20430446592 refused",
+      "16" : "staged 20430446592 refused",
+      "24" : "staged 20430446592 refused",
+      "32" : "resident 25705053196 refused"
     },
     "sdxl-lightning-4step-lora/default" : {
       "8" : "resident 18973054924 refused",
@@ -1904,16 +1904,16 @@
       "32" : "resident 9425388256 fits"
     },
     "translategemma/translategemma-12b-it" : {
-      "8" : "streamed 3752942816 refused",
-      "16" : "streamed 5097836768 fits",
-      "24" : "streamed 10029114592 fits",
-      "32" : "streamed 18098478304 fits"
+      "8" : "streamed 4427177184 refused",
+      "16" : "streamed 5772071136 refused",
+      "24" : "streamed 10703348960 refused",
+      "32" : "streamed 18772712672 refused"
     },
     "translategemma/translategemma-27b-it" : {
-      "8" : "streamed 7891240160 refused",
-      "16" : "streamed 7891240160 refused",
-      "24" : "streamed 12846022880 refused",
-      "32" : "streamed 20278196960 refused"
+      "8" : "streamed 6879364320 refused",
+      "16" : "streamed 6879364320 refused",
+      "24" : "streamed 11834147040 refused",
+      "32" : "streamed 19266321120 refused"
     },
     "trellis-image-large/default" : {
       "8" : "staged 6858156913 refused",
@@ -2114,16 +2114,16 @@
       "32" : "resident 3637935360 fits"
     },
     "wan/default" : {
-      "8" : "staged 11361820672 refused",
-      "16" : "staged 11361820672 refused",
-      "24" : "staged 11361820672 refused",
-      "32" : "resident 17545377996 fits"
+      "8" : "staged 19470458880 refused",
+      "16" : "staged 19470458880 refused",
+      "24" : "staged 19470458880 refused",
+      "32" : "resident 25654016204 refused"
     },
     "wan2.1-t2v-14b/default" : {
-      "8" : "staged 57661536460 refused",
-      "16" : "staged 57661536460 refused",
-      "24" : "staged 57661536460 refused",
-      "32" : "staged 57661536460 refused"
+      "8" : "staged 65770174668 refused",
+      "16" : "staged 65770174668 refused",
+      "24" : "staged 65770174668 refused",
+      "32" : "staged 65770174668 refused"
     },
     "wan2.2-animate-14b-distilled/default" : {
       "8" : "streamed 12623352832 refused",
@@ -2150,10 +2150,10 @@
       "32" : "streamed 17797804288 fits"
     },
     "wan2.2-ti2v-5b/default" : {
-      "8" : "staged 22817905520 refused",
-      "16" : "staged 22817905520 refused",
-      "24" : "staged 22817905520 refused",
-      "32" : "staged 22817905520 refused"
+      "8" : "staged 30926543728 refused",
+      "16" : "staged 30926543728 refused",
+      "24" : "staged 30926543728 refused",
+      "32" : "staged 30926543728 refused"
     },
     "wav2vec2-base-960h/wav2vec2-base-960h" : {
       "8" : "resident 2319544960 fits",
@@ -2384,10 +2384,10 @@
       "32" : "resident 559305624 fits"
     },
     "yolov9e/default" : {
-      "8" : "resident 900807310 fits",
-      "16" : "resident 900807310 fits",
-      "24" : "resident 900807310 fits",
-      "32" : "resident 900807310 fits"
+      "8" : "resident 876690062 fits",
+      "16" : "resident 876690062 fits",
+      "24" : "resident 876690062 fits",
+      "32" : "resident 876690062 fits"
     },
     "yolov9m/default" : {
       "8" : "resident 375489236 fits",
