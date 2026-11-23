@@ -23,21 +23,27 @@ protocol NFKMLXExpertSource {
     var heldBytes: Int { get }
     /// The bytes the source leaves in a mapped release file.
     var mappedBytes: Int { get }
-    /// The array the layer computes with. The result may be lazy; the store evaluates it.
+    /// The array the layer computes with, or its stored form where ``computeType`` names a wider type.
+    /// The result may be lazy; the store evaluates it.
     func materialize() -> MLXArray
     /// Starts reading what ``materialize()`` will read, where the source is left in a release.
     func prefetch()
+    /// The type the layer computes in, where it is wider than what ``materialize()`` returns, or nil.
+    var computeType: DType? { get }
 }
 
 extension NFKMLXExpertSource {
     func prefetch() {}
+    var computeType: DType? { nil }
 }
 
 /// An expert tensor read as stored, then passed through `transform`.
 ///
 /// @discussion The transform carries what the release's layout needs to become the module's: a
-/// transposition, a conversion to the load precision, a view of packed bytes as words. It runs on
-/// one expert's slice, so the arithmetic is the resident loader's applied to less of the tensor.
+/// transposition, a column split, a view of packed bytes as words. It runs on one expert's slice, so
+/// the arithmetic is the resident loader's applied to less of the tensor. A conversion to the load
+/// precision is ``computeType``: the store caches the stored form and converts the stacked bank, so a
+/// cached expert holds its stored bytes.
 struct NFKMLXExpertTensor: NFKMLXExpertSource {
     enum Storage {
         case held(MLXArray)
@@ -48,6 +54,7 @@ struct NFKMLXExpertTensor: NFKMLXExpertSource {
     let dtype: DType
     let shape: [Int]
     var transform: (MLXArray) -> MLXArray = { $0 }
+    var computeType: DType?
 
     var byteCount: Int { shape.reduce(dtype.size, *) }
 
@@ -81,7 +88,8 @@ struct NFKMLXExpertTensor: NFKMLXExpertSource {
     /// @discussion A stacked tensor is row-major, so one expert's slice is one contiguous byte range
     /// and needs no gather.
     static func mapped(_ entry: NFKMLXSafetensorsEntry, expert: Int, in file: NFKMLXMappedFile,
-                       transform: @escaping (MLXArray) -> MLXArray = { $0 }) -> NFKMLXExpertTensor? {
+                       transform: @escaping (MLXArray) -> MLXArray = { $0 },
+                       computeType: DType? = nil) -> NFKMLXExpertTensor? {
         guard let dtype = NFKMLXSafetensors.dtype(entry.dtype), entry.shape.count >= 2,
               (0 ..< entry.shape[0]).contains(expert) else { return nil }
         let shape = Array(entry.shape.dropFirst())
@@ -89,17 +97,18 @@ struct NFKMLXExpertTensor: NFKMLXExpertSource {
         let offset = entry.start + expert * stride
         guard file.contains(offset: offset, count: stride) else { return nil }
         return NFKMLXExpertTensor(storage: .mapped(file, offset: offset), dtype: dtype, shape: shape,
-                                  transform: transform)
+                                  transform: transform, computeType: computeType)
     }
 
     /// A tensor the release stores whole for one expert, left in the release.
     static func mapped(_ entry: NFKMLXSafetensorsEntry, in file: NFKMLXMappedFile,
-                       transform: @escaping (MLXArray) -> MLXArray = { $0 }) -> NFKMLXExpertTensor? {
+                       transform: @escaping (MLXArray) -> MLXArray = { $0 },
+                       computeType: DType? = nil) -> NFKMLXExpertTensor? {
         guard let dtype = NFKMLXSafetensors.dtype(entry.dtype),
               entry.byteCount == entry.shape.reduce(dtype.size, *),
               file.contains(offset: entry.start, count: entry.byteCount) else { return nil }
         return NFKMLXExpertTensor(storage: .mapped(file, offset: entry.start), dtype: dtype,
-                                  shape: entry.shape, transform: transform)
+                                  shape: entry.shape, transform: transform, computeType: computeType)
     }
 }
 
@@ -117,7 +126,12 @@ struct NFKMLXExpertTensor: NFKMLXExpertSource {
 ///
 /// Paging changes where the weights live and nothing about what the layer computes. Each routed
 /// token meets the same matrix it would meet resident, so a paged decoder produces the same values
-/// as a resident one.
+/// as a resident one. A half-precision release loaded at float32 is cached as stored and widened as
+/// a stacked bank, an exact conversion, so the cache holds twice the experts it would hold widened.
+///
+/// Every request frees the bank it built and the experts the cache evicts, and their sizes vary with
+/// the routing, so MLX's allocator keeps buffers it cannot reuse. Past ``runtimeCacheByteBound`` of
+/// such buffers the store returns them to the system before the next request materializes.
 ///
 /// An Objective-C caller chooses paging through ``NFKMLXResidency/paged`` on a factory that takes a
 /// residency, and reaches the store through the backend's `expertStore` to read its counters and
@@ -144,6 +158,25 @@ public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
     private var held = 0
     private var mapped = 0
     private var budget: Int
+    private var runtimeBound = NFKMLXExpertStore.defaultRuntimeCacheByteBound
+
+    /// The ``runtimeCacheByteBound`` a store starts with: 1 GiB. Introduced in InferKit 0.4.0.
+    @objc public static let defaultRuntimeCacheByteBound = 1 << 30
+
+    /// The bytes of freed buffers MLX's allocator may keep cached when a request begins.
+    ///
+    /// @discussion A request that finds more clears MLX's buffer cache first. A freed buffer the
+    /// allocator keeps counts toward the process footprint, and an idle one is what the system moves to
+    /// swap. A negative value never clears. Introduced in InferKit 0.4.0.
+    @objc public var runtimeCacheByteBound: Int {
+        get { locked { runtimeBound } }
+        set { locked { runtimeBound = newValue } }
+    }
+
+    /// How many requests cleared MLX's buffer cache for ``runtimeCacheByteBound``. Introduced in InferKit 0.4.0.
+    @objc public var runtimeCacheClearCount: Int { locked { runtimeClears } }
+
+    private var runtimeClears = 0
 
     /// The bytes the cache may hold in materialized experts.
     ///
@@ -226,7 +259,13 @@ public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
 
     /// Expert `index` of `group`, every part materialized, or nil where the store does not hold it.
     func expert(group: String, index: Int) -> [String: MLXArray]? {
-        locked { acquire([Address(group: group, expert: index)])?.first }
+        locked {
+            let address = Address(group: group, expert: index)
+            guard let member = acquire([address])?.first else { return nil }
+            return member.reduce(into: [String: MLXArray]()) { widened, part in
+                widened[part.key] = widen(part.value, sources[address]?[part.key])
+            }
+        }
     }
 
     /// The experts `experts` names, each part stacked `[experts.count, …]` in that order.
@@ -238,9 +277,10 @@ public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
         locked {
             guard let members = acquire(experts.map { Address(group: group, expert: $0) }),
                   let parts = members.first?.keys else { return [:] }
+            let first = sources[Address(group: group, expert: experts[0])]
             var bank = [String: MLXArray]()
             for part in parts {
-                bank[part] = stacked(members.compactMap { $0[part] }, axis: 0)
+                bank[part] = widen(stacked(members.compactMap { $0[part] }, axis: 0), first?[part])
             }
             return bank
         }
@@ -262,6 +302,12 @@ public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
         }
     }
 
+    /// `array` in the type `source` computes in, which is `array` itself where the source names none.
+    private func widen(_ array: MLXArray, _ source: (any NFKMLXExpertSource)?) -> MLXArray {
+        guard let type = source?.computeType, array.dtype != type else { return array }
+        return array.asType(type)
+    }
+
     private func locked<T>(_ body: () throws -> T) rethrows -> T {
         lock.lock()
         defer { lock.unlock() }
@@ -275,6 +321,10 @@ public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
     /// overlap, and the misses are evaluated together, one synchronization for the batch. A fresh
     /// expert is cached where the budget has room.
     private func acquire(_ addresses: [Address]) -> [[String: MLXArray]]? {
+        if runtimeBound >= 0 && NFKMLXGPU.cacheMemory > runtimeBound {
+            NFKMLXGPU.clearCache()
+            runtimeClears += 1
+        }
         clock += 1
         var members = [[String: MLXArray]?](repeating: nil, count: addresses.count)
         var misses = [(slot: Int, address: Address, parts: [String: any NFKMLXExpertSource])]()

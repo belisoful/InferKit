@@ -621,6 +621,21 @@ Paging:
   `testPagedGatherThroughput` (`IK_BENCH_EXPERT_PAGING=1`, 64 bf16 experts, two back-to-back repeats
   each, 2026-09-24): uncached 424–429 ms/call (0.95 GB/s) before, 19.6–20.2 ms/call (≈20 GB/s) after;
   cached 8.6–9.3 ms/call both ways. The per-expert materialize-then-eval loop was the cost.
+- A half-precision release loaded at `.float32` caches its experts as stored and widens each stacked
+  bank (`NFKMLXExpertSource.computeType`). The conversion is exact, so the bank equals a stack of
+  widened experts, and the cache holds twice the experts it would hold widened. Widened, Hy-MT2
+  30B-A3B's 5.9 GB cache held about 940 expert projections, fewer than the 1,128 one decode pass reaches
+  across its 47 mixture layers, so the least-recently-used order evicted each before its next use and the
+  float32 run scored no cache hits (2026-11-22).
+- Every request frees the bank it stacked and the experts the cache evicts. Their sizes follow the
+  routing, so MLX's allocator keeps buffers it cannot reuse, and under MLX's default limits they
+  accumulate up to the allocator's trim point (`mlx-runtime-gotchas.md`, "Under MLX's default limits").
+  An idle cached buffer counts toward the footprint and is what macOS moves to swap. A request that finds
+  more than `runtimeCacheByteBound` (1 GiB by default) cached clears MLX's buffer cache before it
+  materializes, and `runtimeCacheClearCount` counts the clears; both are `@objc`. Measured on Hy-MT2
+  30B-A3B at float32 (2026-11-22): unbounded, MLX's cache grew from 3.0 to 11.1 GB over the first two
+  passes while swap grew 11.7 GB; bounded, it stays at or below 1.2 GB over 268 clears, the footprint
+  peaks at 14.9 GB, and every parity figure is unchanged.
 - A paged layer holds no parameters, so the load's coverage check cannot see a missing expert;
   `NFKMLXExpertInventory.verifyComplete` is that check.
 - A paged load is inference-only: the paged layers evaluate inside the forward pass and hold nothing

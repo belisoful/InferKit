@@ -137,6 +137,50 @@ final class NFKMLXExpertPagingTests: XCTestCase {
         XCTAssertEqual(store.cachedBytes, 0, "lowering the budget evicts at once")
     }
 
+    // A half-precision source computed at float32 is cached as stored, and the store widens each bank and
+    // each expert it hands out, which equals widening every expert before the stack.
+    func testAWidenedSourceIsCachedAsStoredAndWidenedAsABank() throws {
+        try requireMLXRuntime()
+        let store = NFKMLXExpertStore(cacheByteBudget: 1 << 20)
+        let values = (0 ..< 3).map { expert in
+            MLXArray((0 ..< 6).map { Float(expert) + Float($0) / 7 }).reshaped([2, 3]).asType(.bfloat16)
+        }
+        for (expert, value) in values.enumerated() {
+            store.store(NFKMLXExpertTensor(storage: .held(value), dtype: .bfloat16, shape: [2, 3], computeType: .float32),
+                        group: "g", expert: expert, part: "weight")
+        }
+        let bank = try XCTUnwrap(store.bank(group: "g", experts: [2, 0])["weight"])
+        XCTAssertEqual(bank.dtype, .float32)
+        let widened = stacked([values[2].asType(.float32), values[0].asType(.float32)], axis: 0)
+        XCTAssertEqual(bank.asArray(Float.self), widened.asArray(Float.self))
+        XCTAssertEqual(store.cachedBytes, 2 * 6 * 2, "the cache holds the two experts' bfloat16 bytes")
+        let expert = try XCTUnwrap(store.expert(group: "g", index: 1)?["weight"])
+        XCTAssertEqual(expert.dtype, .float32)
+        XCTAssertEqual(expert.asArray(Float.self), values[1].asType(.float32).asArray(Float.self))
+    }
+
+    // A request that finds more of MLX's freed buffers cached than the bound clears them first; a negative bound
+    // never clears.
+    func testARequestPastTheRuntimeCacheBoundClearsMLXsCache() throws {
+        try requireMLXRuntime()
+        let store = NFKMLXExpertStore(cacheByteBudget: 0)
+        store.store(Counted(value: 1, reads: {}), group: "g", expert: 0, part: "weight")
+        XCTAssertEqual(store.runtimeCacheByteBound, NFKMLXExpertStore.defaultRuntimeCacheByteBound)
+        func leaveAFreedBuffer() {
+            let scratch = MLXArray.zeros([1 << 18]) + 1
+            eval(scratch)
+        }
+        store.runtimeCacheByteBound = -1
+        leaveAFreedBuffer()
+        _ = store.expert(group: "g", index: 0)
+        XCTAssertEqual(store.runtimeCacheClearCount, 0)
+        store.runtimeCacheByteBound = 0
+        leaveAFreedBuffer()
+        XCTAssertGreaterThan(NFKMLXGPU.cacheMemory, 0)
+        _ = store.expert(group: "g", index: 0)
+        XCTAssertEqual(store.runtimeCacheClearCount, 1)
+    }
+
     // Relief evicts the least recently used experts down to what it is asked to free or to keep, and leaves
     // the budget alone, so the cache fills again.
     func testReleasingCachedBytesEvictsTheLeastRecentAndKeepsTheBudget() throws {

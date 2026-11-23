@@ -21,8 +21,8 @@ struct NFKMLXExpertSlice {
     let part: String
     /// The expert the tensor holds, or nil where it stacks every expert along its first axis.
     let expert: Int?
-    /// What one expert's slice needs to become the module's layout. It runs after the conversion to
-    /// the load precision.
+    /// What one expert's slice needs to become the module's layout. It moves data and computes
+    /// nothing, so it runs on the stored type and the conversion to the load precision follows it.
     var transform: (MLXArray) -> MLXArray = { $0 }
     /// Whether the slice is stored `[in, out]`, the transpose of the module's `[out, in]`, and is
     /// multiplied as stored. A resident load transposes such a stack and multiplies by the transpose
@@ -107,9 +107,9 @@ struct NFKMLXExpertInventory {
     /// Files every expert slice in `store` as a byte range of its mapped shard.
     ///
     /// @discussion Each shard is mapped once and shared by every slice read from it; the mapping
-    /// lives as long as the store does. A half-precision float converts to float32 on
-    /// materialization where `precision` says so, which is the conversion the resident loader
-    /// applies to the whole tensor.
+    /// lives as long as the store does. A half-precision float converts to float32 where `precision`
+    /// says so, which is the conversion the resident loader applies to the whole tensor; the store
+    /// applies it to each bank it stacks, and caches the stored form.
     func register(into store: NFKMLXExpertStore, precision: NFKMLXWeightPrecision) throws {
         var mappings = [URL: NFKMLXMappedFile]()
         for (key, tensor) in experts {
@@ -121,11 +121,11 @@ struct NFKMLXExpertInventory {
                 mappings[tensor.file] = file
             }
             let widens = precision == .float32 && (tensor.entry.dtype == "F16" || tensor.entry.dtype == "BF16")
+            let computeType: DType? = widens ? .float32 : nil
             for slice in tensor.slices {
-                let transform: (MLXArray) -> MLXArray = widens
-                    ? { slice.transform($0.asType(.float32)) } : slice.transform
                 if let expert = slice.expert {
-                    guard let source = NFKMLXExpertTensor.mapped(tensor.entry, in: file, transform: transform) else {
+                    guard let source = NFKMLXExpertTensor.mapped(tensor.entry, in: file, transform: slice.transform,
+                                                                 computeType: computeType) else {
                         throw Self.unreadable(key, tensor.entry)
                     }
                     store.store(source, group: slice.group, expert: expert, part: slice.part)
@@ -133,7 +133,8 @@ struct NFKMLXExpertInventory {
                 }
                 for expert in 0 ..< (tensor.entry.shape.first ?? 0) {
                     guard let source = NFKMLXExpertTensor.mapped(tensor.entry, expert: expert, in: file,
-                                                                 transform: transform) else {
+                                                                 transform: slice.transform,
+                                                                 computeType: computeType) else {
                         throw Self.unreadable(key, tensor.entry)
                     }
                     store.store(source, group: slice.group, expert: expert, part: slice.part)

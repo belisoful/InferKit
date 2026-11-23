@@ -377,8 +377,14 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   cosine 0.99999999 with argmax 46/46, worst layer 0.99999976 at layer 7, loss 0.004486296 against
   0.004486533 ("Der schnelle braune Fuchs springt über den faulen Hund."); at bfloat16 against bfloat16,
   0.99664993 with argmax 43/46, worst layer 0.99797565 at layer 34, loss 0.0030297174 against
-  0.0034258484, the same translation. Paged, the float32 run materializes 64,713 expert tensors with no cache
-  hits and the bfloat16 run 54,296 with 10,441 hits, both over 56.8 GB mapped, an MLX peak of 18.3 GB. A
+  0.0034258484, the same translation. Paged, the float32 run materializes 55,881 expert tensors with 8,832 cache
+  hits and the bfloat16 run 54,299 with 10,438, both over 56.8 GB mapped. Measured 2026-11-22 on this M1 Max with
+  32 GB under the LMC lock: the float32 parity test peaks at a 14.9 GB footprint with swap 1.1 GB above its start
+  and runs in 584 s; the bfloat16 test peaks at 12.6 GB with no swap growth and runs in 549 s, where it took
+  20.5 GB and 658 s. Before the store cached experts as stored and bounded MLX's buffer cache (`mlx-companion.md`,
+  "Paging"), the float32 run held 5.9 GB of widened experts that no pass reused and MLX kept up to 11.1 GB of
+  freed banks; its footprint reached 24.6 GB and swap grew past 14 GB within 125–285 s, so the standing limits
+  stopped it. A
   bfloat16 mixture routes apart from the reference where two
   experts' scores round together, so the rounding itself is held on a four-layer cut routed as the
   reference routed (`model-parity.md`): at float32 every state matches to 0.99999999; at bfloat16 every
