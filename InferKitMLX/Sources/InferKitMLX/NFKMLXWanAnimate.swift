@@ -357,6 +357,23 @@ public final class NFKMLXWanAnimateNet: Module {
     /// nil where every block is held.
     var layerStream: NFKMLXLayerStream?
 
+    /// Whether the training forward recomputes each block's activations from its inputs in the backward pass
+    /// rather than holding them from the forward one (gradient checkpointing, DiffSynth-Studio's
+    /// `--use_gradient_checkpointing`). A training step then holds one block's activations at a time, at the
+    /// cost of a second forward pass. The values and the gradients are unchanged. Off by default;
+    /// ``NFKMLXWanAnimate/fineTune(_:examples:preset:optimizer:steps:seed:accumulationSteps:learningRateSchedule:checkpoint:recomputesBlocksInBackward:observer:)``
+    /// sets it for its run.
+    ///
+    /// @discussion The recomputed unit is the block's reference pass followed by its generation pass, as
+    /// DiffSynth-Studio checkpoints `forward_origin`: a custom function over the block's trainable arrays and
+    /// both passes' hidden states whose backward reruns the pair, ordered so the backward holds one block's
+    /// intermediates at a time. The keys and values the reference pass forms stay inside the unit. The
+    /// modulation, the texts, the image features, and the rotary tables depend on nothing trainable and enter
+    /// as constants.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var recomputesBlocksInBackward = false
+
     public init(_ config: NFKMLXWanAnimateConfiguration) {
         self.config = config
         self.rope = NFKZImageRope(axesDims: config.ropeAxes, theta: config.ropeTheta)
@@ -574,6 +591,21 @@ public final class NFKMLXWanAnimateNet: Module {
         return concatenated(perFrame, axis: 0)
     }
 
+    /// One forward's inputs to the blocks: the embedded tokens, the modulation, each pass's context, and the
+    /// rotary tables.
+    private struct Prepared {
+        let grid: NFKWanAnimateGrid
+        let reference: NFKWanAnimateGrid?
+        let video: (frames: Int, area: Int)?
+        let embedded: MLXArray
+        let temb: MLXArray
+        let blockModulation: MLXArray
+        let contexts: [MLXArray]
+        let image: MLXArray?
+        let referenceRope: (cos: MLXArray, sin: MLXArray)
+        let generationRope: (cos: MLXArray, sin: MLXArray)?
+    }
+
     /// `latent` and `condition` `[C, F, H, W]`, each pass's text `[Lc, textDim]`, `imageEmbeddings`
     /// `[Li, imageDim]`. `reference` and `video` are set for the generation pass only; the extract pass
     /// runs one pass.
@@ -585,6 +617,38 @@ public final class NFKMLXWanAnimateNet: Module {
             throw NFKMLXError.unsupportedConfiguration(
                 "the cache holds \(cache.layerCount) layers, the model has \(config.layers)")
         }
+        let prepared = prepare(latent: latent, condition: condition, texts: passes.map(\.text),
+                               imageEmbeddings: imageEmbeddings, timestep: timestep, reference: reference,
+                               video: video)
+
+        // Each block runs every pass in turn; the unconditional pass skips one block.
+        var hiddens = passes.map { _ in prepared.embedded }
+        for (index, block) in blocks.enumerated() {
+            let cached = reference != nil ? try cache.read(layer: index) : nil
+            let runs = passes.indices.filter { !(passes[$0].unconditional && index == Self.unconditionalSkippedBlock) }
+            guard let outputs = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
+                runs.map { pass -> (hidden: MLXArray, stored: (key: MLXArray, value: MLXArray)?) in
+                    blockForward(block, hiddens[pass], prepared, context: prepared.contexts[pass], cached: cached)
+                }
+            }, keeping: { outputs in
+                outputs.flatMap { [$0.hidden] + ($0.stored.map { [$0.key, $0.value] } ?? []) }
+            }) else {
+                continue
+            }
+            for (pass, output) in zip(runs, outputs) {
+                hiddens[pass] = output.hidden
+                if let stored = output.stored {
+                    cache.store(key: stored.key, value: stored.value, layer: index)
+                }
+            }
+        }
+        return hiddens.map { finish($0, prepared, latent: latent) }
+    }
+
+    /// The patch embedding, the time and text conditioning, and the rotary tables of one forward.
+    private func prepare(latent: MLXArray, condition: MLXArray, texts: [MLXArray], imageEmbeddings: MLXArray?,
+                         timestep: MLXArray, reference: NFKWanAnimateGrid?,
+                         video: (frames: Int, area: Int)?) -> Prepared {
         let pt = config.patchSize[0], ph = config.patchSize[1], pw = config.patchSize[2]
         let f = latent.dim(1), h = latent.dim(2), w = latent.dim(3)
         let grid = NFKWanAnimateGrid(frames: f / pt, height: h / ph, width: w / pw)
@@ -603,11 +667,11 @@ public final class NFKMLXWanAnimateNet: Module {
         let projection = (timeProjection[1] as! Linear)(NFKReferenceRounding.silu(temb))  // [1, 6·dim]
         let blockModulation = projection.reshaped([6, dim])
 
-        let contexts = passes.map { pass -> MLXArray in
-            var padded = pass.text
-            if pass.text.dim(0) < config.textLength {
-                padded = concatenated([pass.text, MLXArray.zeros([config.textLength - pass.text.dim(0), pass.text.dim(1)],
-                                                                  dtype: pass.text.dtype)], axis: 0)
+        let contexts = texts.map { text -> MLXArray in
+            var padded = text
+            if text.dim(0) < config.textLength {
+                padded = concatenated([text, MLXArray.zeros([config.textLength - text.dim(0), text.dim(1)],
+                                                            dtype: text.dtype)], axis: 0)
             }
             return (textEmbedding[2] as! Linear)(NFKReferenceRounding.geluTanh((textEmbedding[0] as! Linear)(padded)))
         }
@@ -621,45 +685,70 @@ public final class NFKMLXWanAnimateNet: Module {
         let offsets = (config.referOffsetT, config.referOffsetH, config.referOffsetW)
         let referencePositions = positions(referenceGrid, offset: offsets, timeStride: config.referStride)
         let (referenceCos, referenceSin) = rope.table(positions: referencePositions)
-        var generationCos: MLXArray?, generationSin: MLXArray?
+        var generationRope: (cos: MLXArray, sin: MLXArray)?
         if reference != nil {
             let table = rope.table(positions: positions(grid, offset: (0, 0, 0), timeStride: 1))
-            generationCos = table.cos
-            generationSin = table.sin
+            generationRope = (table.cos, table.sin)
         }
+        return Prepared(grid: grid, reference: reference, video: video, embedded: embedded, temb: temb,
+                        blockModulation: blockModulation, contexts: contexts, image: image,
+                        referenceRope: (referenceCos, referenceSin), generationRope: generationRope)
+    }
 
-        // 4. Blocks. Each block runs every pass in turn; the unconditional pass skips one block.
-        var hiddens = passes.map { _ in embedded }
+    /// The head over one pass's last hidden state, unpatchified to `latent`'s shape.
+    private func finish(_ hidden: MLXArray, _ prepared: Prepared, latent: MLXArray) -> MLXArray {
+        let pt = config.patchSize[0], ph = config.patchSize[1], pw = config.patchSize[2]
+        let grid = prepared.grid
+        let out = head(hidden, temb: prepared.temb[0])                    // [N, C·pt·ph·pw]
+        let patched = out.reshaped([grid.frames, grid.height, grid.width, pt, ph, pw, config.outChannels])
+        return patched.transposed(6, 0, 3, 1, 4, 2, 5)
+            .reshaped([config.outChannels, latent.dim(1), latent.dim(2), latent.dim(3)])
+    }
+
+    /// The generation pass's prediction for the training forward, DiffSynth-Studio's `forward_origin`: each
+    /// block runs the reference pass and then the generation pass over the keys and values the reference pass
+    /// just formed, so no block's keys and values outlive it. The prediction is the one
+    /// ``extractReference(latent:condition:text:imageEmbeddings:into:)`` followed by
+    /// ``generate(latent:condition:text:imageEmbeddings:timestep:cache:referenceGrid:videoFrames:videoArea:unconditional:)``
+    /// gives. Where ``recomputesBlocksInBackward`` is set and every block is held, each block's pair of passes
+    /// is recomputed in the backward pass over its trainable arrays and both passes' hidden states.
+    func trainingPrediction(reference: (latent: MLXArray, condition: MLXArray, text: MLXArray, imageEmbeddings: MLXArray?),
+                            latent: MLXArray, condition: MLXArray, text: MLXArray, imageEmbeddings: MLXArray?,
+                            timestep: MLXArray, videoFrames: Int, videoArea: Int) -> MLXArray {
+        let extract = prepare(latent: reference.latent, condition: reference.condition, texts: [reference.text],
+                              imageEmbeddings: reference.imageEmbeddings, timestep: MLXArray(Float(1)),
+                              reference: nil, video: nil)
+        let generation = prepare(latent: latent, condition: condition, texts: [text], imageEmbeddings: imageEmbeddings,
+                                 timestep: timestep, reference: extract.grid, video: (videoFrames, videoArea))
+        var hidden = generation.embedded, referenceHidden = extract.embedded
         for (index, block) in blocks.enumerated() {
-            let cached = reference != nil ? try cache.read(layer: index) : nil
-            let runs = passes.indices.filter { !(passes[$0].unconditional && index == Self.unconditionalSkippedBlock) }
+            let pair = { (arrays: [MLXArray]) -> [MLXArray] in
+                let extracted = self.blockForward(block, arrays[1], extract, context: extract.contexts[0], cached: nil)
+                let generated = self.blockForward(block, arrays[0], generation, context: generation.contexts[0],
+                                                  cached: extracted.stored)
+                return [generated.hidden, extracted.hidden]
+            }
             guard let outputs = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
-                runs.map { pass -> (hidden: MLXArray, stored: (key: MLXArray, value: MLXArray)?) in
-                    blockForward(block, hiddens[pass], modulation: blockModulation, context: contexts[pass],
-                                 image: image, grid: grid, reference: reference, video: video, cached: cached,
-                                 referenceRope: (referenceCos, referenceSin),
-                                 generationRope: generationCos.map { ($0, generationSin!) })
-                }
-            }, keeping: { outputs in
-                outputs.flatMap { [$0.hidden] + ($0.stored.map { [$0.key, $0.value] } ?? []) }
-            }) else {
+                recomputesBlocksInBackward && layerStream == nil
+                    ? NFKMLXCustomFunction.recomputed(block, pair)([hidden, referenceHidden])
+                    : pair([hidden, referenceHidden])
+            }, keeping: { $0 }) else {
                 continue
             }
-            for (pass, output) in zip(runs, outputs) {
-                hiddens[pass] = output.hidden
-                if let stored = output.stored {
-                    cache.store(key: stored.key, value: stored.value, layer: index)
-                }
-            }
+            hidden = outputs[0]
+            referenceHidden = outputs[1]
         }
+        return finish(hidden, generation, latent: latent)
+    }
 
-        // 5. Head and unpatchify.
-        let c = config.outChannels
-        return hiddens.map { hidden in
-            let out = head(hidden, temb: temb[0])                          // [N, C·pt·ph·pw]
-            let patched = out.reshaped([grid.frames, grid.height, grid.width, pt, ph, pw, c])
-            return patched.transposed(6, 0, 3, 1, 4, 2, 5).reshaped([c, f, h, w])
-        }
+    /// One block over one pass of `prepared`. The extract pass (no reference grid) returns the block's
+    /// pre-rotary keys and values beside its output.
+    private func blockForward(_ block: NFKWanAnimateBlock, _ hidden: MLXArray, _ prepared: Prepared,
+                              context: MLXArray, cached: (key: MLXArray, value: MLXArray)?)
+        -> (hidden: MLXArray, stored: (key: MLXArray, value: MLXArray)?) {
+        blockForward(block, hidden, modulation: prepared.blockModulation, context: context, image: prepared.image,
+                     grid: prepared.grid, reference: prepared.reference, video: prepared.video, cached: cached,
+                     referenceRope: prepared.referenceRope, generationRope: prepared.generationRope)
     }
 
     /// One block over one pass. The extract pass (`reference` nil) returns the block's pre-rotary keys

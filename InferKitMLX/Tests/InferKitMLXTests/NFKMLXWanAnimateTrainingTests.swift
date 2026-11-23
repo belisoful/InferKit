@@ -93,6 +93,95 @@ final class NFKMLXWanAnimateTrainingTests: XCTestCase {
         XCTAssertEqual(trained.item(Float.self), merged.item(Float.self), accuracy: 1e-4, "the saved file merges back")
     }
 
+    /// The line on standard error, which a stopped run keeps.
+    private func report(_ line: String) {
+        FileHandle.standardError.write(Data((line + "\n").utf8))
+    }
+
+    /// The loss and the adapters' gradients of one score with `net`'s blocks recomputed or not.
+    private func lossAndGradients(_ net: NFKMLXWanAnimateNet, recomputing: Bool,
+                                  _ score: @escaping (NFKMLXWanAnimateNet) -> MLXArray) -> (Float, [String: MLXArray]) {
+        net.recomputesBlocksInBackward = recomputing
+        let (values, gradients) = valueAndGrad(model: net) { net, _ in [score(net)] }(net, [])
+        let flat = Dictionary(uniqueKeysWithValues: gradients.flattened())
+        eval([values[0]] + Array(flat.values))
+        return (values[0].item(Float.self), flat)
+    }
+
+    private func largestDifference(_ a: [String: MLXArray], _ b: [String: MLXArray]) throws -> Float {
+        XCTAssertEqual(Set(a.keys), Set(b.keys))
+        return try a.reduce(Float(0)) { worst, entry in
+            max(worst, abs(try XCTUnwrap(b[entry.key]) - entry.value).max().item(Float.self))
+        }
+    }
+
+    // The training forward runs each block's reference pass and then its generation pass, as DiffSynth's
+    // `forward_origin` does: its prediction is the two passes' run one after the other, and recomputing each
+    // block's pair in the backward leaves the loss and every adapter's gradient as the plain backward's.
+    func testRecomputingBlocksInTheBackwardKeepsTheLossAndGradients() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(11)
+        let net = NFKMLXWanAnimate.makeNet(.tiny)
+        let preset = NFKMLXWanAnimateTrainingPreset.diffSynth
+        try NFKMLXLoRA.apply(to: net, rank: 4, alpha: 4) { path, _ in preset.adapts(path) }
+        for (path, layer) in net.leafModules().flattened() {
+            guard let adapter = layer as? NFKMLXLoRAAdapter else { continue }
+            _ = adapter.update(parameters: ModuleParameters.unflattened(
+                ["lora_b": MLXRandom.normal(adapter.loraB.shape, key: MLXRandom.key(UInt64(path.count))) * 0.1]))
+        }
+        net.freeze()
+        for (_, layer) in net.leafModules().flattened() where layer is NFKMLXLoRAAdapter {
+            layer.unfreeze(recursive: false, keys: ["lora_a", "lora_b"])
+        }
+        let example = tinyExample(9)
+        let noise = MLXRandom.normal(example.latent.shape, key: MLXRandom.key(4))
+        let draw = NFKMLXWanTrainingDraw(sigma: 0.6, timestep: 600, weight: 1)
+        let noisy = (1 - draw.sigma) * example.latent + draw.sigma * noise
+
+        let cache = NFKMLXWanAnimateKVCache(layerCount: net.blocks.count)
+        _ = try net.extractReference(latent: example.reference, condition: example.referenceCondition,
+                                     text: example.referenceText, imageEmbeddings: example.referenceImageFeatures,
+                                     into: cache)
+        let separate = try net.generate(latent: noisy, condition: example.condition, text: example.text,
+                                        imageEmbeddings: example.imageFeatures, timestep: MLXArray(draw.timestep),
+                                        cache: cache, referenceGrid: (2, 2, 2), videoFrames: 2, videoArea: 4)
+        let joint = try NFKMLXWanAnimate.trainingPrediction(net, example: example, noisy: noisy, timestep: draw.timestep)
+        XCTAssertEqual(abs(joint - separate).max().item(Float.self), 0, "the training forward predicts as the two passes do")
+
+        let score = { (net: NFKMLXWanAnimateNet) -> MLXArray in
+            try! NFKMLXWanAnimate.score(net, example: example, objective: preset.objective, draw: draw, noise: noise)
+        }
+        let plain = lossAndGradients(net, recomputing: false, score)
+        let again = lossAndGradients(net, recomputing: false, score)
+        let recomputed = lossAndGradients(net, recomputing: true, score)
+        let control = try largestDifference(plain.1, again.1), gap = try largestDifference(plain.1, recomputed.1)
+        report("wan animate recomputed backward: loss \(recomputed.0) against \(plain.0), largest gradient difference "
+               + "\(gap) over \(plain.1.count) arrays, plain against itself \(control)")
+        XCTAssertEqual(plain.1.count, 2 * 6)
+        XCTAssertEqual(control, 0, "the plain backward is deterministic")
+        XCTAssertEqual(recomputed.0, plain.0)
+        XCTAssertEqual(gap, 0)
+
+        var seen = [Bool]()
+        var small = preset
+        small.rank = 4
+        let trained = NFKMLXWanAnimate.makeNet(.tiny)
+        try NFKMLXWanAnimate.fineTune(trained, examples: { _ in [example] }, preset: small, steps: 1) { _ in
+            seen.append(trained.recomputesBlocksInBackward)
+            return true
+        }
+        XCTAssertFalse(trained.recomputesBlocksInBackward, "the network's own setting returns")
+        let plainTrained = NFKMLXWanAnimate.makeNet(.tiny)
+        plainTrained.recomputesBlocksInBackward = true
+        try NFKMLXWanAnimate.fineTune(plainTrained, examples: { _ in [example] }, preset: small, steps: 1,
+                                      recomputesBlocksInBackward: false) { _ in
+            seen.append(plainTrained.recomputesBlocksInBackward)
+            return true
+        }
+        XCTAssertTrue(plainTrained.recomputesBlocksInBackward, "the network's own setting returns")
+        XCTAssertEqual(seen, [true, false], "the recipe recomputes the blocks for its run where asked")
+    }
+
     func testTheObjectiveMatchesDiffSynth() throws {
         try requireMLXRuntime()
         guard let path = NFKMLXValidationConfig.environment["IK_PARITY_WAN_ANIMATE_LORA_DIFFSYNTH"] else {
@@ -148,6 +237,74 @@ final class NFKMLXWanAnimateTrainingTests: XCTestCase {
         }
         print("VALIDATION PARITY wan-animate-lora-diffsynth: prediction cosine \(predictionCosine), loss "
               + "\(loss.item(Float.self)) vs \(record["loss"]!.item(Float.self)), lowest gradient cosine \(lowest)")
+    }
+
+    /// The process's footprint and MLX's memory on standard error, and MLX's peak reset.
+    private func memory(_ stage: String, since start: Date) -> Int {
+        var info = rusage_info_v4()
+        _ = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) }
+        }
+        func gigabytes(_ bytes: Int) -> String { String(format: "%.3f", Double(bytes) / 1e9) }
+        let peak = NFKMLXGPU.peakMemory
+        report("MEMORY wan-animate \(stage): \(String(format: "%.1f", Date().timeIntervalSince(start))) s, footprint "
+               + "\(gigabytes(Int(info.ri_phys_footprint))) GB, lifetime peak \(gigabytes(Int(info.ri_lifetime_max_phys_footprint))) GB, "
+               + "MLX active \(gigabytes(NFKMLXGPU.activeMemory)) GB, peak \(gigabytes(peak)) GB")
+        NFKMLXGPU.resetPeakMemory()
+        return peak
+    }
+
+    // One LoRA step of DiffSynth's recipe (rank 32 on the blocks' self-attention query, key, and value) at the
+    // geometry of the release's transformer configuration in its stored bfloat16, over a 13-frame 640 × 352 clip:
+    // 4,400 generation tokens (the reference image's latent and the clip's 4 latent frames), 3,520 reference
+    // tokens, 512 text tokens, and 257 image tokens a pass. One drawn block runs plain, then 1 and 2 blocks run
+    // recomputed; the 2-block peak less the 1-block one is what each recomputed block adds to a step. A plain
+    // backward holds about 15.8 GB a block here, so its 2-block arm would reach the standing resident limit.
+    // Large: run it under LMC.
+    func testALoRAStepAtTheReleasedGeometryHoldsOneBlockAtATime() throws {
+        try requireMLXRuntime()
+        guard let path = NFKMLXValidationConfig.environment["IK_VAL_WAN_ANIMATE"] else {
+            throw XCTSkip("set IK_VAL_WAN_ANIMATE (Wan-AI/Wan2.2-Animate-2-14B-Diffusers)")
+        }
+        let released = try NFKMLXWanAnimateRelease.transformerConfiguration(
+            fromHuggingFace: URL(fileURLWithPath: path).appendingPathComponent("transformer/config.json"))
+        let keys = MLXRandom.split(key: MLXRandom.key(21), into: 7)
+        let latentChannels = released.outChannels, conditionChannels = released.inChannels - released.outChannels
+        let example = NFKMLXWanAnimateTrainingExample(
+            latent: MLXRandom.normal([latentChannels, 5, 80, 44], key: keys[0]),
+            condition: MLXRandom.normal([conditionChannels, 5, 80, 44], key: keys[1]),
+            reference: MLXRandom.normal([latentChannels, 4, 80, 44], key: keys[2]),
+            referenceCondition: MLXRandom.normal([conditionChannels, 4, 80, 44], key: keys[3]),
+            text: MLXRandom.normal([released.textLength, released.textDim], key: keys[4]),
+            referenceText: MLXRandom.normal([released.textLength, released.textDim], key: keys[5]),
+            imageFeatures: MLXRandom.normal([257, released.imageDim], key: keys[6]),
+            referenceImageFeatures: MLXRandom.normal([257, released.imageDim], key: keys[0]),
+            videoFrames: 13, videoArea: 640 * 352)
+        eval(example.latent, example.condition, example.reference, example.referenceCondition, example.text,
+             example.referenceText)
+        var peaks = [String: Int]()
+        for (blocks, recomputes) in [(1, false), (1, true), (2, true)] {
+            var geometry = released
+            geometry.layers = blocks
+            MLXRandom.seed(3)
+            let net = NFKMLXWanAnimateNet(geometry)
+            net.update(parameters: net.parameters().mapValues { $0.asType(.bfloat16) })
+            eval(net)
+            NFKMLXGPU.resetPeakMemory()
+            let start = Date()
+            let losses = try NFKMLXWanAnimate.fineTune(net, examples: { _ in [example] }, steps: 1, seed: 1,
+                                                       recomputesBlocksInBackward: recomputes)
+            XCTAssertEqual(losses.count, 1)
+            peaks["\(blocks) \(recomputes)"] = memory("\(blocks) blocks of the release's geometry, "
+                                                       + (recomputes ? "recomputed" : "plain") + " (loss \(losses[0]))",
+                                                       since: start)
+            NFKMLXGPU.clearCache()
+        }
+        let perBlock = peaks["2 true"]! - peaks["1 true"]!
+        report("MEMORY wan-animate per recomputed block: \(String(format: "%.3f", Double(perBlock) / 1e9)) GB")
+        // Measured 17.163 GB for 2 blocks and 1.258 GB a block (2026-11-22); the bars leave 2.16 GB and 0.88 GB.
+        XCTAssertLessThan(peaks["2 true"]!, 18 << 30)
+        XCTAssertLessThan(perBlock, 2 << 30)
     }
 
     func testAClipBecomesAnExampleAndTrainsOverItsRelease() throws {

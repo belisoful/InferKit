@@ -136,21 +136,74 @@ final class NFKMLXWanTrainingTests: XCTestCase {
         let draw = NFKMLXWanTrainingDraw(sigma: 0.6, timestep: 600, weight: 1)
         let noise = MLXRandom.normal(example.latent.shape, key: MLXRandom.key(4))
         let objective = NFKMLXWanTrainingPreset.diffSynth.objective
-        func gradients(recomputing: Bool) -> [String: MLXArray] {
+        func gradients(recomputing: Bool) -> (Float, [String: MLXArray]) {
             net.recomputesBlocksInBackward = recomputing
             let lossAndGradient = valueAndGrad(model: net) { net, _ in
                 [objective.score(net, example: example, draw: draw, noise: noise, epsilon: nil)]
             }
-            return Dictionary(uniqueKeysWithValues: lossAndGradient(net, []).1.flattened())
+            let (values, grads) = lossAndGradient(net, [])
+            return (values[0].item(Float.self), Dictionary(uniqueKeysWithValues: grads.flattened()))
         }
-        let plain = gradients(recomputing: false), recomputed = gradients(recomputing: true)
-        XCTAssertEqual(plain.count, 16 * 2)
-        var worst: Float = 0
-        for (key, value) in plain {
-            let other = try XCTUnwrap(recomputed[key])
-            worst = max(worst, abs(other - value).max().item(Float.self) / max(abs(value).max().item(Float.self), 1e-12))
+        func largestDifference(_ a: [String: MLXArray], _ b: [String: MLXArray]) throws -> Float {
+            XCTAssertEqual(Set(a.keys), Set(b.keys))
+            return try a.reduce(Float(0)) { worst, entry in
+                max(worst, abs(try XCTUnwrap(b[entry.key]) - entry.value).max().item(Float.self))
+            }
         }
-        XCTAssertLessThan(worst, 1e-5, "the recomputed backward is the plain one")
+        let plain = gradients(recomputing: false), again = gradients(recomputing: false)
+        let recomputed = gradients(recomputing: true)
+        let control = try largestDifference(plain.1, again.1), gap = try largestDifference(plain.1, recomputed.1)
+        print("wan recomputed backward: loss \(recomputed.0) against \(plain.0), largest gradient difference \(gap) "
+              + "over \(plain.1.count) arrays, plain against itself \(control)")
+        XCTAssertEqual(plain.1.count, 16 * 2)
+        XCTAssertEqual(control, 0, "the plain backward is deterministic")
+        XCTAssertEqual(recomputed.0, plain.0)
+        XCTAssertEqual(gap, 0, "the recomputed backward is the plain one")
+    }
+
+    // Three steps of the finetrainers recipe at the geometry of Wan 2.1 T2V 1.3B's released transformer, 2 drawn
+    // blocks at its stored float32, over the released step's 7,800-token latent and 512 text tokens: run plain twice
+    // and recomputed twice, every step's loss and every trained adapter of each run equal the first plain run's.
+    func testRecomputingAtTheReleasedGeometryKeepsEveryStep() throws {
+        try requireMLXRuntime()
+        guard let path = NFKMLXValidationConfig.environment["IK_VAL_WAN21_T2V_1_3B"] else {
+            throw XCTSkip("set IK_VAL_WAN21_T2V_1_3B (Wan-AI/Wan2.1-T2V-1.3B-Diffusers)")
+        }
+        var geometry = try NFKMLXWanRelease.transformerConfiguration(fromHuggingFace: URL(fileURLWithPath: path)
+            .appendingPathComponent("transformer/config.json"))
+        geometry.layers = 2
+        let keys = MLXRandom.split(key: MLXRandom.key(8), into: 3)
+        let example = NFKMLXWanTrainingExample(latent: MLXRandom.normal([16, 5, 60, 104], key: keys[0]),
+                                               logVariance: MLXRandom.normal([16, 5, 60, 104], key: keys[1]) - 4,
+                                               text: MLXRandom.normal([512, geometry.textDim], key: keys[2]))
+        func run(recomputing: Bool) throws -> (losses: [Float], adapters: [String: MLXArray]) {
+            MLXRandom.seed(3)
+            let net = NFKMLXWanTransformerNet(geometry)
+            eval(net)
+            let losses = try NFKMLXWanVideoGenerator.fineTune(net, examples: { _ in [example] }, preset: .finetrainers,
+                                                              steps: 3, seed: 1, recomputesBlocksInBackward: recomputing)
+            let adapters = Dictionary(uniqueKeysWithValues: net.trainableParameters().flattened())
+            eval(Array(adapters.values))
+            return (losses, adapters)
+        }
+        func largestDifference(_ a: [String: MLXArray], _ b: [String: MLXArray]) throws -> Float {
+            XCTAssertEqual(Set(a.keys), Set(b.keys))
+            return try a.reduce(Float(0)) { worst, entry in
+                max(worst, abs(try XCTUnwrap(b[entry.key]) - entry.value).max().item(Float.self))
+            }
+        }
+        let plain = try run(recomputing: false)
+        let runs = [("plain", try run(recomputing: false)), ("recomputed", try run(recomputing: true)),
+                    ("recomputed", try run(recomputing: true))]
+        XCTAssertFalse(plain.adapters.isEmpty)
+        for (name, other) in runs {
+            let gap = try largestDifference(plain.adapters, other.adapters)
+            print("wan2.1-1.3b geometry \(name): losses \(other.losses) against \(plain.losses), largest adapter "
+                  + "difference \(gap) over \(plain.adapters.count) arrays")
+            fflush(stdout)
+            XCTAssertEqual(other.losses, plain.losses, name)
+            XCTAssertEqual(gap, 0, name)
+        }
     }
 
     // Three LoRA steps of the finetrainers recipe (rank 32 on the attention projections) on Wan 2.1 T2V 1.3B's
@@ -173,17 +226,20 @@ final class NFKMLXWanTrainingTests: XCTestCase {
             NFKMLXGPU.setMemoryLimit(memoryLimit)
         }
         func gigabytes(_ bytes: Int) -> String { String(format: "%.2f", Double(bytes) / 1e9) }
-        func memory(_ stage: String, since start: Date) {
+        @discardableResult
+        func memory(_ stage: String, since start: Date) -> Int {
+            let peak = NFKMLXGPU.peakMemory
             var info = rusage_info_v4()
             _ = withUnsafeMutablePointer(to: &info) { pointer in
                 pointer.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(getpid(), RUSAGE_INFO_V4, $0) }
             }
             print("MEMORY wan2.1-1.3b-lora \(stage): \(String(format: "%.1f", Date().timeIntervalSince(start))) s, footprint "
                   + "\(gigabytes(Int(info.ri_phys_footprint))) GB, lifetime peak \(gigabytes(Int(info.ri_lifetime_max_phys_footprint))) GB, "
-                  + "MLX active \(gigabytes(NFKMLXGPU.activeMemory)) GB, peak \(gigabytes(NFKMLXGPU.peakMemory)) GB")
+                  + "MLX active \(gigabytes(NFKMLXGPU.activeMemory)) GB, peak \(gigabytes(peak)) GB")
             // A run stopped by a watchdog keeps only the lines already flushed from the test's piped output.
             fflush(stdout)
             NFKMLXGPU.resetPeakMemory()
+            return peak
         }
         let directory = URL(fileURLWithPath: path)
         let clip = MLXRandom.uniform(low: 0, high: 1, [17, 480, 832, 3], key: MLXRandom.key(8))
@@ -220,18 +276,19 @@ final class NFKMLXWanTrainingTests: XCTestCase {
         var start = Date()
         let net = try NFKMLXWanVideoGenerator.network(directoryURL: directory)
         memory("build", since: start)
-        var step = 0
+        var stepPeaks = [Int]()
         start = Date()
         let losses = try NFKMLXWanVideoGenerator.fineTune(net, examples: { _ in [example] }, preset: .finetrainers,
                                                           steps: 3, seed: 1) { _ in
-            step += 1
-            memory("step \(step)", since: start)
+            stepPeaks.append(memory("step \(stepPeaks.count + 1)", since: start))
             start = Date()
             return true
         }
         print("MEMORY wan2.1-1.3b-lora steps: losses \(losses), trainable \(NFKMLXLoRA.trainableParameterCount(of: net)) parameters")
         XCTAssertEqual(losses.count, 3)
         XCTAssertTrue(losses.allSatisfy(\.isFinite))
+        // Measured 11.03 GB at most (2026-11-22); the bar leaves 1.85 GB.
+        XCTAssertLessThan(stepPeaks.max() ?? 0, 12 << 30)
     }
 
     func testEachLayoutSavesWhatMergesBackToTheTrainedNetwork() throws {

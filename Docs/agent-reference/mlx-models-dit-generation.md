@@ -472,14 +472,20 @@ arithmetic as before.
     and refuses a streamed transformer. A quantized base takes `NFKMLXQuantizedLoRALinear` (QLoRA), which
     cannot merge. The reference quantizes with optimum-quanto (int8 by default in its low-VRAM recipe); the
     port quantizes with MLX's affine groups, so the objective is measured over a float base. A step recomputes
-    each block's activations in the backward pass (`recomputesBlocksInBackward`, MLX's `checkpoint` built from
-    a custom function whose backward re-runs the block over its LoRA arrays and its two streams), as the
-    trainer's `enable_gradient_checkpointing` does, and runs the transformer in its weights' type, as the
-    trainer's bfloat16 autocast does; recomputation leaves every gradient bit-identical (float and 8-bit).
-    Released (`testLTX25QLoRAStepOnReleasedWeights`, `transformer_full/` at 4 bits, rank 32, 49 frames at
-    512×320 with 1024 text tokens): build 13.8 s to 11.31 GB, step peak 24.48 GB, 78.6–98.7 s a step, 214M
-    trainable parameters. Without recomputation the step peaked at 84.89 GB and swapped (428 s a step);
-    with it but the latents at float32, which promotes the whole stack, 42.92 GB. Tiny: the loss
+    each block's activations in the backward pass (`recomputesBlocksInBackward`), as the trainer's
+    `enable_gradient_checkpointing` does: each block runs through `NFKMLXCustomFunction.recomputed` over its
+    LoRA arrays and its two streams, with the cotangent wait and the parameter-gradient ordering
+    (`mlx-runtime-gotchas.md`, "A recomputed block's backward needs two orderings"). The transformer runs in
+    its weights' type, as the trainer's bfloat16 autocast does. Recomputation leaves the loss and every
+    gradient bit-identical over a float and an 8-bit base, the plain backward held equal to itself first
+    (`testRecomputingBlocksInBackwardKeepsTheGradients`), and every step's loss and trained adapter over three
+    steps at the full transformer's geometry with 2 blocks at 4 bits
+    (`testRecomputingAtTheReleasedGeometryKeepsEveryStep`). Released (`testLTX25QLoRAStepOnReleasedWeights`,
+    `transformer_full/` at 4 bits, rank 32, 49 frames at 512×320 with 1024 text tokens, 2026-11-22): build
+    24.4 s to 11.31 GB, step peaks 15.86 / 17.59 / 17.58 GB under a bar of 18 GiB, 36.7–61.7 s a step, 213.9M
+    trainable parameters. The same run peaked at 18.67 GB with neither ordering, and at 24.48 GB before the
+    attention trained in query blocks. Without recomputation the step peaked at 84.89 GB and swapped (428 s a
+    step); with it but the latents at float32, which promotes the whole stack, 42.92 GB. Tiny: the loss
     falls 4.54 → 3.86 over 60 steps; a release written to disk runs data adapter → 8-bit build → fine-tune
     → save → `applyAdapters` with the reloaded transformer's velocities equal to the trained one's.
 
@@ -813,17 +819,22 @@ arithmetic as before.
   2.0276527; lowest of 40 adapter gradients 0.99999985. The Animate transformer's recipe is in
   `mlx-models-video.md`.
   `NFKMLXWanTransformerNet.recomputesBlocksInBackward` (on by default in `fineTune`, as the trainers enable
-  `gradient_checkpointing`) runs each block as a custom function whose backward reruns it, so a step holds
-  one block's activations; the gradients equal the plain backward's within 1e-5 relative
-  (`testRecomputingBlocksInTheBackwardKeepsTheGradients`); each recompute depends on its cotangents, as MLX's
-  `checkpoint` does, which took 0.67 GB off a step. `fineTune` runs float32 attentions longer than 1,024 tokens
+  `gradient_checkpointing`) runs each block through `NFKMLXCustomFunction.recomputed`, whose backward reruns
+  it, so a step holds one block's activations. Of its two orderings (`mlx-runtime-gotchas.md`, "A recomputed
+  block's backward needs two orderings"), the cotangent wait took 0.67 GB off a step and the parameter-gradient
+  ordering 0.55 GB more. The loss and the gradients are bit-identical
+  to the plain backward's, the plain backward held equal to itself first
+  (`testRecomputingBlocksInTheBackwardKeepsTheGradients`), and so is every step's loss and trained adapter
+  over three finetrainers steps at the 1.3B release's geometry with 2 blocks
+  (`testRecomputingAtTheReleasedGeometryKeepsEveryStep`). `fineTune` runs float32 attentions longer than 1,024 tokens
   through `NFKMLXBlockedAttention` (`mlx-training.md`, "A long attention trains in query blocks").
   `testA13BLoRAStepOnReleasedWeights` runs three finetrainers steps on Wan 2.1 T2V 1.3B's released float32
   transformer from a 17-frame 480 × 832 example (7,800 tokens) the generator's stages build, umT5 at bfloat16
   and each stage released before the next loads, under `NFKMLXGPU.applyStandingLimits()`, and prints the
   footprint and memory after each stage and step (an LMC leg). Measured on a 32 GB M1 Max: umT5 encode 12.4 GB
-  footprint, example build 11.6 GB MLX peak, network build 5.8 GB, each step 33–35 s with an 11.6 GB MLX peak
-  over 6.1 GB held. Before the clip evaluated its gradients first and the attention ran in blocks, a 9-frame
+  footprint, example build 11.6 GB MLX peak, network build 5.8 GB, each step 38–44 s with MLX peaks of
+  10.84 / 11.03 / 11.03 GB over 6.1 GB held, under a bar of 12 GiB (2026-11-22; 11.39 / 11.58 / 11.58 GB with
+  the cotangent wait alone). Before the clip evaluated its gradients first and the attention ran in blocks, a 9-frame
   step peaked at 25.1 GB and a 17-frame step pushed 12 GB to swap.
 - `NFKMLXQwenImageNet` / `NFKMLXQwenImage` (`@objc`) — the Qwen-Image 2.1 DiT
   (`QwenImage21Transformer2DModel`, Qwen), the denoising transformer of a 7.1B text-to-image model.

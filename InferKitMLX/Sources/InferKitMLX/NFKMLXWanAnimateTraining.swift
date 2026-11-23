@@ -105,22 +105,17 @@ public struct NFKMLXWanAnimateTrainingPreset: Sendable {
 extension NFKMLXWanAnimate {
 
     /// The generation pass's prediction for `noisy` at `timestep`, after the reference pass over the
-    /// example's driving latents at timestep 1, both run as the trainer's `forward_origin` runs them.
+    /// example's driving latents at timestep 1, both run as the trainer's `forward_origin` runs them: block by
+    /// block, the reference pass and then the generation pass.
     static func trainingPrediction(_ net: NFKMLXWanAnimateNet, example: NFKMLXWanAnimateTrainingExample,
                                    noisy: MLXArray, timestep: Float) throws -> MLXArray {
         let dtype = NFKReferenceRounding.parameterType(of: net)
-        let cache = NFKMLXWanAnimateKVCache(layerCount: net.blocks.count)
-        _ = try net.extractReference(latent: example.reference.asType(dtype),
-                                     condition: example.referenceCondition.asType(dtype),
-                                     text: example.referenceText.asType(dtype),
-                                     imageEmbeddings: example.referenceImageFeatures?.asType(dtype), into: cache)
-        let patch = net.config.patchSize
-        let referenceGrid = (example.reference.dim(1) / patch[0], example.reference.dim(2) / patch[1],
-                             example.reference.dim(3) / patch[2])
-        return try net.generate(latent: noisy.asType(dtype), condition: example.condition.asType(dtype),
-                                text: example.text.asType(dtype), imageEmbeddings: example.imageFeatures?.asType(dtype),
-                                timestep: MLXArray(timestep), cache: cache, referenceGrid: referenceGrid,
-                                videoFrames: example.videoFrames / 4 + 1, videoArea: example.videoArea / 256)
+        return net.trainingPrediction(
+            reference: (example.reference.asType(dtype), example.referenceCondition.asType(dtype),
+                        example.referenceText.asType(dtype), example.referenceImageFeatures?.asType(dtype)),
+            latent: noisy.asType(dtype), condition: example.condition.asType(dtype), text: example.text.asType(dtype),
+            imageEmbeddings: example.imageFeatures?.asType(dtype), timestep: MLXArray(timestep),
+            videoFrames: example.videoFrames / 4 + 1, videoArea: example.videoArea / 256)
     }
 
     /// The loss of one example at `draw` with `noise`: `weight · mean((prediction − (noise − clean))²)`.
@@ -150,6 +145,9 @@ extension NFKMLXWanAnimate {
     /// for each clip, ``network(directoryURL:quantizationBits:)`` to build, this to train, and
     /// ``saveAdapters(of:to:)`` to write the adapters as DiffSynth-Studio does, which a generator applies with
     /// ``NFKMLXWanAnimateGenerator/addAdapter(at:scale:)``. A step is multi-second; call it off the render thread.
+    /// `recomputesBlocksInBackward` (on by default, as the recipe's `--use_gradient_checkpointing`) recomputes
+    /// each block in the backward pass (``NFKMLXWanAnimateNet/recomputesBlocksInBackward``) for the run, and the
+    /// network's own setting returns after it.
     ///
     /// Introduced in InferKit 0.4.0.
     @discardableResult
@@ -163,8 +161,12 @@ extension NFKMLXWanAnimate {
         accumulationSteps: Int = 1,
         learningRateSchedule: NFKMLXLearningRateSchedule? = nil,
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
+        recomputesBlocksInBackward: Bool = true,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
+        let recomputed = net.recomputesBlocksInBackward
+        net.recomputesBlocksInBackward = recomputesBlocksInBackward
+        defer { net.recomputesBlocksInBackward = recomputed }
         var key = MLXRandom.key(seed)
         var batch = [NFKMLXWanAnimateTrainingExample]()
         var draws = [NFKMLXWanTrainingDraw]()

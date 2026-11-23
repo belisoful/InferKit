@@ -650,7 +650,12 @@ public final class NFKMLXLTX2TransformerNet: Module {
     /// Whether a block's activations are recomputed from its inputs in the backward pass rather than held
     /// from the forward one (gradient checkpointing, MLX's `checkpoint`), the trainer's
     /// `enable_gradient_checkpointing`. A training step then holds one block's activations at a time, at the
-    /// cost of a second forward pass. The forward's values are unchanged. Off by default.
+    /// cost of a second forward pass. The forward's values and the gradients are unchanged. Off by default.
+    ///
+    /// @discussion Each block runs as a custom function over its trainable arrays and its two streams whose
+    /// backward reruns the block, ordered so the backward holds one block's intermediates at a time. The
+    /// modulation, the text, and the rotary tables the block reads depend on nothing trainable and enter as
+    /// constants.
     ///
     /// Introduced in InferKit 0.4.0.
     public var recomputesBlocksInBackward = false
@@ -766,8 +771,14 @@ public final class NFKMLXLTX2TransformerNet: Module {
             }
             guard let outputs = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
                 prepared.map { p in
-                    recomputesBlocksInBackward && layerStream == nil
-                        ? Self.recomputed(block) { run(p, $0) }(p.streams) : run(p, p.streams)
+                    guard recomputesBlocksInBackward && layerStream == nil else {
+                        return run(p, p.streams)
+                    }
+                    let outputs = NFKMLXCustomFunction.recomputed(block) { streams in
+                        let output = run(p, NFKLTX2Block.Streams(video: streams[0], audio: streams[1]))
+                        return [output.video, output.audio]
+                    }([p.streams.video, p.streams.audio])
+                    return NFKLTX2Block.Streams(video: outputs[0], audio: outputs[1])
                 }
             }, keeping: { outputs in outputs.flatMap { [$0.video, $0.audio] } }) else {
                 continue
@@ -788,31 +799,6 @@ public final class NFKMLXLTX2TransformerNet: Module {
         return prepared.map { p in
             (finish(p.streams.video, table: scaleShiftTable, embedded: p.embedded, projection: projOut),
              finish(p.streams.audio, table: audioScaleShiftTable, embedded: p.audioEmbedded, projection: audioProjOut))
-        }
-    }
-
-    /// `body` over `block` as MLX's `checkpoint` builds it (`nn.utils.checkpoint`): the block's trainable
-    /// arrays and both streams are the inputs of a custom function whose backward runs `body` again over the
-    /// same inputs, so none of the block's activations outlive its forward pass. The other inputs the block
-    /// reads (the modulation, the text, the rotary tables) depend on nothing trainable and enter as constants.
-    static func recomputed(_ block: NFKLTX2Block, _ body: @escaping (NFKLTX2Block.Streams) -> NFKLTX2Block.Streams)
-        -> (NFKLTX2Block.Streams) -> NFKLTX2Block.Streams {
-        let trainable = block.trainableParameters().flattened()
-        let keys = trainable.map(\.0)
-        let forward: ([MLXArray]) -> [MLXArray] = { arrays in
-            let held = block.trainableParameters()
-            block.update(parameters: ModuleParameters.unflattened(Array(zip(keys, arrays.prefix(keys.count)))))
-            let output = body(NFKLTX2Block.Streams(video: arrays[keys.count], audio: arrays[keys.count + 1]))
-            block.update(parameters: held)
-            return [output.video, output.audio]
-        }
-        let checkpointed = NFKMLXCustomFunction.make {
-            Forward(forward)
-            VJP { primals, cotangents in vjp(forward, primals: primals, cotangents: cotangents).1 }
-        }
-        return { streams in
-            let outputs = checkpointed(trainable.map(\.1) + [streams.video, streams.audio])
-            return NFKLTX2Block.Streams(video: outputs[0], audio: outputs[1])
         }
     }
 

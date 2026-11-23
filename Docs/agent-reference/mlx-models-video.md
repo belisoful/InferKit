@@ -252,8 +252,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   DiffSynth-Studio trains it (1e8ae1d, `lora/Wan2.2-Animate-2-14B.sh`; Wan-Video publishes no training
   code). The trainer runs both passes in one forward (`forward_origin`): the reference pass over the
   driving video's latents at timestep 1, then the generation pass over the noised stack of the reference
-  image's latent and the clip's latents, the whole stack in the loss. The port composes
-  `extractReference` into a fresh cache and `generate` over it. LoRA on the blocks' `self_attn.q/k/v`
+  image's latent and the clip's latents, the whole stack in the loss. The port's training forward
+  (`NFKMLXWanAnimateNet.trainingPrediction`) runs `forward_origin` as DiffSynth does, block by block: each
+  block's reference pass, then its generation pass over the keys and values that pass just formed, so no
+  block's keys and values outlive it. Its prediction equals `extractReference` into a cache followed by
+  `generate` over it, exactly. LoRA on the blocks' `self_attn.q/k/v`
   (rank 32, alpha 32), DiffSynth's Wan sampler and Gaussian weight (`NFKMLXWanTrainingPreset.diffSynth`'s
   objective), AdamW 1e-4, weight decay 0.01, warm-up 5. The adapters save under the release's original
   names with PEFT's `.default` level and the scaling folded into the up weight, as DiffSynth's loader fuses
@@ -271,6 +274,26 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `model_fn_wananimate`): prediction 1.0000000; loss 1.9610462 against 1.9610443; lowest of 12 adapter
   gradients 0.99999994. A QLoRA run over the Animate test-dev release at 8 bits trains from examples the
   generator builds.
+  The recipe passes `--use_gradient_checkpointing`, under which DiffSynth checkpoints each block's
+  `forward_origin`. `NFKMLXWanAnimateNet.recomputesBlocksInBackward`, on by default in `fineTune`, does the
+  same: each block's pair of passes runs through `NFKMLXCustomFunction.recomputed` over the block's trainable
+  arrays and both passes' hidden states, with the cotangent wait and the parameter-gradient ordering
+  (`mlx-runtime-gotchas.md`, "A recomputed block's backward needs two orderings"). The loss and every
+  adapter gradient are bit-identical to the plain backward's, the plain backward held equal to itself first
+  (`testRecomputingBlocksInTheBackwardKeepsTheLossAndGradients`). One LoRA step at the release's geometry in
+  its stored bfloat16 (`testALoRAStepAtTheReleasedGeometryHoldsOneBlockAtATime`, rank 32, a 13-frame
+  640 × 352 clip: 4,400 generation tokens, 3,520 reference tokens, 512 text and 257 image tokens a pass), MLX
+  peak, 2026-11-22:
+
+  | Blocks | Plain | Recomputed |
+  |---|---|---|
+  | 1 | 15.501 GB | 15.905 GB |
+  | 2 | 31.326 GB | 17.163 GB |
+
+  A plain block adds 15.825 GB to the step and a recomputed one 1.258 GB, its bfloat16 weights included. The
+  test runs the plain arm at 1 block only, since its 2-block arm reaches the standing resident limit; its bars
+  are 18 GiB for 2 recomputed blocks and 2 GiB a block. The 40-block release's step at this clip is
+  unmeasured.
 - `NFKMLXVJEPA2` (`@objc`) — V-JEPA 2 (`VJEPA2Model` and `VJEPA2ForVideoClassification`, Meta, MIT), a
   self-supervised video ViT that maps a clip to a per-token feature sequence for retrieval or as a video
   encoder for a vision-language model; the classification releases add an attentive pooler and a linear

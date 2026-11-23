@@ -314,20 +314,76 @@ final class NFKMLXLTX2TrainingTests: XCTestCase {
                 let (values, grads) = step(net, [])
                 return (values[0].item(Float.self), Dictionary(uniqueKeysWithValues: grads.flattened()))
             }
+            func largestDifference(_ a: [String: MLXArray], _ b: [String: MLXArray]) throws -> Float {
+                XCTAssertEqual(Set(a.keys), Set(b.keys))
+                return try a.reduce(Float(0)) { worst, entry in
+                    max(worst, maxDifference(try XCTUnwrap(b[entry.key]), entry.value))
+                }
+            }
+            let base = bits.map { "\($0)-bit" } ?? "float"
             net.recomputesBlocksInBackward = false
             let (plainLoss, plain) = gradients()
+            let (_, again) = gradients()
             net.recomputesBlocksInBackward = true
             let (recomputedLoss, recomputed) = gradients()
-            XCTAssertEqual(recomputedLoss, plainLoss, "\(bits.map { "\($0)-bit" } ?? "float") loss")
-            XCTAssertEqual(Set(recomputed.keys), Set(plain.keys))
-            var worst: Float = 0
-            for (key, value) in plain {
-                worst = max(worst, maxDifference(try XCTUnwrap(recomputed[key]), value)
-                    / max(value.abs().max().item(Float.self), 1e-12))
+            let control = try largestDifference(plain, again), gap = try largestDifference(plain, recomputed)
+            print("ltx2 recomputed backward (\(base)): loss \(recomputedLoss) against \(plainLoss), largest gradient "
+                  + "difference \(gap) over \(plain.count) arrays, plain against itself \(control)")
+            XCTAssertFalse(plain.isEmpty)
+            XCTAssertEqual(control, 0, "\(base): the plain backward is deterministic")
+            XCTAssertEqual(recomputedLoss, plainLoss, "\(base) loss")
+            XCTAssertEqual(gap, 0, "\(base): the recomputed backward is the plain one")
+        }
+    }
+
+    // Three steps of the reference recipe at the geometry of LTX-2.5's full transformer, 2 drawn blocks at bfloat16
+    // packed to 4 bits as the released build packs them, over the released step's example: run plain twice and
+    // recomputed twice, every step's loss and every trained adapter of each run equal the first plain run's.
+    func testRecomputingAtTheReleasedGeometryKeepsEveryStep() throws {
+        guard let path = config["IK_VAL_LTX2_5_TRANSFORMER_FULL"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_VAL_LTX2_5_TRANSFORMER_FULL to the directory holding LTX-2.5's transformer_full/")
+        }
+        var geometry = try NFKMLXLTX2TransformerNet.configuration(fromHuggingFace: URL(fileURLWithPath: path)
+            .appendingPathComponent(NFKMLXLTX2Variant.ltx25Full.transformerFolder).appendingPathComponent("config.json"))
+        geometry.numLayers = 2
+        let (frames, height, width) = (7, 10, 16)
+        let example = NFKMLXLTX2TrainingExample(
+            video: MLXRandom.normal([frames * height * width, 128], key: MLXRandom.key(1)),
+            audio: MLXRandom.normal([51, 128], key: MLXRandom.key(2)),
+            text: MLXRandom.normal([1024, 4096], key: MLXRandom.key(3)).asType(.bfloat16),
+            audioText: MLXRandom.normal([1024, 2048], key: MLXRandom.key(4)).asType(.bfloat16),
+            frames: frames, height: height, width: width, frameRate: 24)
+        func run(recomputing: Bool) throws -> (losses: [Float], adapters: [String: MLXArray]) {
+            MLXRandom.seed(3)
+            let net = NFKMLXLTX2TransformerNet(geometry)
+            net.update(parameters: net.parameters().mapValues { $0.asType(.bfloat16) })
+            for block in net.transformerBlocks {
+                try NFKMLXQuantization.quantize(module: block, bits: 4, groupSize: 64)
             }
-            print("ltx2 recomputed backward (\(bits.map { "\($0)-bit" } ?? "float")): largest relative gradient "
-                  + "difference \(worst) over \(plain.count) arrays")
-            XCTAssertLessThan(worst, 1e-5)
+            eval(net)
+            let losses = try NFKMLXLTX2Generator.fineTune(net, examples: { _ in [example] }, steps: 3, seed: 1,
+                                                          recomputesBlocksInBackward: recomputing)
+            let adapters = Dictionary(uniqueKeysWithValues: net.trainableParameters().flattened())
+            eval(Array(adapters.values))
+            return (losses, adapters)
+        }
+        func largestDifference(_ a: [String: MLXArray], _ b: [String: MLXArray]) throws -> Float {
+            XCTAssertEqual(Set(a.keys), Set(b.keys))
+            return try a.reduce(Float(0)) { worst, entry in
+                max(worst, maxDifference(try XCTUnwrap(b[entry.key]), entry.value))
+            }
+        }
+        let plain = try run(recomputing: false)
+        let runs = [("plain", try run(recomputing: false)), ("recomputed", try run(recomputing: true)),
+                    ("recomputed", try run(recomputing: true))]
+        XCTAssertFalse(plain.adapters.isEmpty)
+        for (name, other) in runs {
+            let gap = try largestDifference(plain.adapters, other.adapters)
+            print("ltx2.5 geometry \(name): losses \(other.losses) against \(plain.losses), largest adapter difference "
+                  + "\(gap) over \(plain.adapters.count) arrays")
+            fflush(stdout)
+            XCTAssertEqual(other.losses, plain.losses, name)
+            XCTAssertEqual(gap, 0, name)
         }
     }
 
@@ -348,6 +404,8 @@ final class NFKMLXLTX2TrainingTests: XCTestCase {
         XCTAssertTrue(net.transformerBlocks[0].attn1.toQ is QuantizedLinear)
         print("MEMORY ltx2.5-qlora build: \(String(format: "%.1f", buildSeconds)) s, active "
               + "\(gigabytes(NFKMLXGPU.activeMemory)) GB, peak \(gigabytes(NFKMLXGPU.peakMemory)) GB")
+        // A run stopped by a watchdog keeps only the lines already flushed from the test's piped output.
+        fflush(stdout)
 
         let (frames, height, width) = (7, 10, 16)
         let example = NFKMLXLTX2TrainingExample(
@@ -359,16 +417,25 @@ final class NFKMLXLTX2TrainingTests: XCTestCase {
         NFKMLXGPU.resetPeakMemory()
         var stepStart = Date()
         var stepSeconds = [Double]()
+        var stepPeaks = [Int]()
         let losses = try NFKMLXLTX2Generator.fineTune(net, examples: { _ in [example] }, steps: 3, seed: 1) { _ in
             stepSeconds.append(Date().timeIntervalSince(stepStart))
+            stepPeaks.append(NFKMLXGPU.peakMemory)
+            print("MEMORY ltx2.5-qlora step \(stepPeaks.count): \(String(format: "%.1f", stepSeconds.last!)) s, peak "
+                  + "\(gigabytes(stepPeaks.last!)) GB")
+            fflush(stdout)
+            NFKMLXGPU.resetPeakMemory()
             stepStart = Date()
             return true
         }
         print("MEMORY ltx2.5-qlora steps: losses \(losses), seconds \(stepSeconds.map { String(format: "%.1f", $0) }), "
-              + "peak \(gigabytes(NFKMLXGPU.peakMemory)) GB, trainable "
+              + "peak \(gigabytes(stepPeaks.max() ?? 0)) GB, trainable "
               + "\(NFKMLXLoRA.trainableParameterCount(of: net)) parameters")
+        fflush(stdout)
         XCTAssertEqual(losses.count, 3)
         XCTAssertTrue(losses.allSatisfy(\.isFinite))
         XCTAssertTrue(net.transformerBlocks[0].attn1.toQ is NFKMLXQuantizedLoRALinear)
+        // Measured 17.59 GB at most (2026-11-22); the bar leaves 1.73 GB.
+        XCTAssertLessThan(stepPeaks.max() ?? 0, 18 << 30)
     }
 }

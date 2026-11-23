@@ -371,8 +371,8 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     Holding `block.trainableParameters()` for the put-back holds the same objects, which the placement has
     already overwritten, so the put-back writes the primals over themselves and the block leaves the backward
     holding the inner function's arrays. `NFKMLXCustomFunction.recomputed(_:_:)` keeps a second handle on
-    each held array (`mlx_array_set`) and puts those back. Wan's and LTX-2's `recomputed` hold the objects;
-    their gradients are unaffected, because the arrays the block keeps carry the held values.
+    each held array (`mlx_array_set`) and puts those back. Every recomputed block in the package (TRELLIS's
+    flows, Wan, Wan Animate, LTX-2) runs through it.
   - **Audit, 2026-09-30.** Every source `update(parameters:)` caller and every test snapshot that
     outlives an update was read; the snapshots copy (`+ 0`, `* 1`, `asArray`) or compare separate
     modules, and none aliased.
@@ -1025,10 +1025,23 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   | no | no | 9.832 GB |
 
   With both, the step grows 0.262 GB per block and the released 24-block flow peaks at 7.793 GB, where it was
-  19.54 GB with neither. `NFKMLXCustomFunction.recomputed(_:_:)` applies both. Wan's `recomputed` takes the
-  cotangent wait and LTX-2's neither; both could take the parameter-gradient order and the second-handle
-  put-back, which is open follow-up work. A clipped trainer step evaluating every gradient together
-  (`NFKMLXTrainer`) addresses the same deferral from the other end.
+  19.54 GB with neither. `NFKMLXCustomFunction.recomputed(_:_:)` applies both, and every recomputed block in
+  the package runs through it. Moving Wan's and LTX-2's own helpers onto it (2026-11-22; Wan's had the
+  cotangent wait, LTX-2's neither) left their losses and gradients bit-identical, plain and recomputed, over
+  three steps at each release's geometry in one process (`testRecomputingAtTheReleasedGeometryKeepsEveryStep`).
+  The released runs' losses from step 2 on vary between processes with the code unchanged (LTX-2.5's step 2
+  read 4.04394 and 4.0451827), so two released runs are not compared loss for loss. The ordering lowered the
+  step peaks of the released LoRA runs:
+
+  | Run | Before | After |
+  |---|---|---|
+  | Wan 2.1 T2V 1.3B, float32, 7,800 tokens, finetrainers | 11.58 GB | 11.03 GB |
+  | LTX-2.5 full transformer at 4 bits, 49 frames at 512×320 | 18.67 GB | 17.59 GB |
+
+  Both runs clip the gradient norm, and a clipped trainer step evaluates every gradient together
+  (`NFKMLXTrainer`), which addresses the same deferral from the other end; the ordering still took 0.55 GB and
+  1.08 GB off them. Wan Animate's recomputation is new with the helper: at its release's geometry a recomputed
+  block adds 1.258 GB to a LoRA step and a plain one 15.825 GB (`mlx-models-video.md`).
 - **An evaluation inside a gradient's trace keeps everything it computes (2026-11-21).** An array evaluated
   while `valueAndGrad` traces is not detached from its graph, so every array the evaluation reaches stays held
   until the trace ends. TRELLIS's sparse convolution evaluated its sum after each of its 27 offsets to bound

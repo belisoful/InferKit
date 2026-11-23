@@ -236,6 +236,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The native PyTorch reader reads a tensor pickled through `_rebuild_from_type_v2` as a plain `Tensor` or
   `Parameter` (DINOv2's checkpoints), and still refuses a tensor subclass.
 
+#### Wan, Wan Animate, and LTX-2 recompute each block as TRELLIS does
+
+- Wan's and LTX-2's training recompute each block in the backward pass through the helper TRELLIS's flows use,
+  which orders each block's backward after the next block's and its input gradients after its parameter
+  gradients. The losses and gradients are unchanged. The released LoRA steps peak lower: Wan 2.1 T2V 1.3B at
+  11.03 GB (11.58 before), LTX-2.5's full transformer at 4 bits at 17.59 GB (18.67 before).
+- `NFKMLXWanAnimateNet.recomputesBlocksInBackward` recomputes each block's reference and generation passes
+  together, as DiffSynth-Studio's recipe checkpoints them, and `NFKMLXWanAnimate.fineTune` turns it on for its
+  run (`recomputesBlocksInBackward`). At the release's geometry a recomputed block adds 1.258 GB to a LoRA
+  step, where a plain one adds 15.825 GB. The training forward runs the two passes block by block, so no
+  block's keys and values outlive it.
+
 ### InferKitAppleSwift (companion)
 
 #### The speech analyzer's live profile carries its measured time
