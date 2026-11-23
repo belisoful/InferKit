@@ -212,7 +212,7 @@ public enum NFKMLXTrellisTraining {
     ///   - trainable: what trains; LoRA on the attention projections by default, which a device holds.
     ///   - optimizer: the update rule. Nil uses ``referenceOptimizer()``.
     ///   - steps: how many updates.
-    ///   - seed: seeds the noise, the times, and the condition dropout.
+    ///   - seed: seeds the noise, the times, the condition dropout, and the adapters' initialization.
     ///   - clipGradientNorm: bounds the global gradient norm, the trainers' 1.0 by default.
     ///   - recomputesBlocksInBackward: recomputes each transformer block's activations in the backward pass
     ///     (``NFKMLXTrellisStructureFlow/recomputesBlocksInBackward``), on by default; the flow's own setting
@@ -246,7 +246,7 @@ public enum NFKMLXTrellisTraining {
                 loss: { flow, arrays in
                     NFKMLXTrellisObjective.structureLoss(flow, x0: arrays[0], condition: arrays[1], noise: arrays[2], t: arrays[3])
                 },
-                clipGradientNorm: clipGradientNorm, observer: observer)
+                clipGradientNorm: clipGradientNorm, seed: seed, observer: observer)
         }
     }
 
@@ -280,7 +280,7 @@ public enum NFKMLXTrellisTraining {
                     NFKMLXTrellisObjective.latentLoss(flow, x0: arrays[0], voxels: arrays[1], condition: arrays[2], noise: arrays[3],
                                                       t: arrays[4])
                 },
-                clipGradientNorm: clipGradientNorm, observer: observer)
+                clipGradientNorm: clipGradientNorm, seed: seed, observer: observer)
         }
     }
 

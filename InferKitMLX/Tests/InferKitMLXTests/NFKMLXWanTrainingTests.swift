@@ -118,6 +118,38 @@ final class NFKMLXWanTrainingTests: XCTestCase {
         }
     }
 
+    // The recipe's seed fixes the adapters' initialization: two runs of one network from different global
+    // random states train the same adapters to the same losses.
+    func testTheSeedFixesTheAdaptersWhateverTheGlobalRandomState() throws {
+        try requireMLXRuntime()
+        let examples = tinyExamples(count: 1)
+        var fast = NFKMLXWanTrainingPreset.finetrainers
+        fast.rank = 4
+        fast.alpha = 4
+        func run(globalSeed: UInt64) throws -> (losses: [Float], adapters: [String: MLXArray]) {
+            MLXRandom.seed(7)
+            let net = NFKMLXWanTransformerNet(.tiny)
+            eval(net)
+            MLXRandom.seed(globalSeed)
+            let losses = try NFKMLXWanVideoGenerator.fineTune(net, examples: { _ in examples }, preset: fast,
+                                                              optimizer: Adam(learningRate: 1e-2), steps: 3, seed: 3,
+                                                              learningRateSchedule: .constant)
+            let adapters = Dictionary(uniqueKeysWithValues: net.trainableParameters().flattened())
+            eval(Array(adapters.values))
+            return (losses, adapters)
+        }
+        let first = try run(globalSeed: 100), second = try run(globalSeed: 200)
+        XCTAssertFalse(first.adapters.isEmpty)
+        XCTAssertEqual(Set(second.adapters.keys), Set(first.adapters.keys))
+        let gap = try first.adapters.reduce(Float(0)) { worst, entry in
+            max(worst, abs(try XCTUnwrap(second.adapters[entry.key]) - entry.value).max().item(Float.self))
+        }
+        print("wan fine-tune from two global random states: losses \(second.losses) against \(first.losses), "
+              + "largest adapter difference \(gap) over \(first.adapters.count) arrays")
+        XCTAssertEqual(second.losses, first.losses)
+        XCTAssertEqual(gap, 0)
+    }
+
     func testRecomputingBlocksInTheBackwardKeepsTheGradients() throws {
         try requireMLXRuntime()
         MLXRandom.seed(21)

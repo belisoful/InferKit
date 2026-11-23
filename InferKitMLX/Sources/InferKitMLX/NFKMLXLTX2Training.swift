@@ -287,7 +287,7 @@ extension NFKMLXLTX2Generator {
     ///   - learningRate: the reference optimizer's learning rate, the trainer's 1e-4 by default.
     ///   - weightDecay: the reference optimizer's decoupled weight decay, torch's 0.01 by default.
     ///   - steps: how many updates to run; the reference's linear decay spans them.
-    ///   - seed: seeds the sigmas, the noise, and the conditioning.
+    ///   - seed: seeds the sigmas, the noise, the conditioning, and the adapters' initialization.
     ///   - clipGradientNorm: the reference clips the global norm to 1.
     ///   - recomputesBlocksInBackward: recomputes each block's activations in the backward pass (gradient
     ///     checkpointing), as the trainer's recipes do; on by default. A step then holds one block's
@@ -360,7 +360,7 @@ extension NFKMLXLTX2Generator {
                                               frameRate: grid.frameRate)
                 },
                 clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
-                learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
+                learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, seed: seed, observer: observer)
         }
     }
 

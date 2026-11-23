@@ -204,6 +204,36 @@ final class NFKMLXLTX2TrainingTests: XCTestCase {
             .item(Bool.self), "a frozen layer stays put")
     }
 
+    // The recipe's seed fixes the adapters' initialization: two runs of one network from different global
+    // random states train the same adapters to the same losses.
+    func testTheSeedFixesTheAdaptersWhateverTheGlobalRandomState() throws {
+        let example = NFKMLXLTX2TrainingExample(
+            video: MLXRandom.normal([18, 8], key: MLXRandom.key(1)), audio: MLXRandom.normal([5, 8], key: MLXRandom.key(2)),
+            text: MLXRandom.normal([4, 32], key: MLXRandom.key(3)), audioText: MLXRandom.normal([4, 16], key: MLXRandom.key(4)),
+            frames: 3, height: 2, width: 3, frameRate: 24)
+        func run(globalSeed: UInt64) throws -> (losses: [Float], adapters: [String: MLXArray]) {
+            NFKMLXRandom.seed(3)
+            let net = NFKMLXLTX2TransformerNet(Self.tinyConfiguration)
+            eval(net)
+            NFKMLXRandom.seed(globalSeed)
+            let losses = try NFKMLXLTX2Generator.fineTune(net, examples: { _ in [example] }, trainable: .lora(rank: 4, alpha: 4),
+                                                          objective: .textToVideo, learningRate: 3e-3, steps: 3, seed: 1)
+            let adapters = Dictionary(uniqueKeysWithValues: net.trainableParameters().flattened())
+            eval(Array(adapters.values))
+            return (losses, adapters)
+        }
+        let first = try run(globalSeed: 100), second = try run(globalSeed: 200)
+        XCTAssertFalse(first.adapters.isEmpty)
+        XCTAssertEqual(Set(second.adapters.keys), Set(first.adapters.keys))
+        let gap = try first.adapters.reduce(Float(0)) { worst, entry in
+            max(worst, maxDifference(try XCTUnwrap(second.adapters[entry.key]), entry.value))
+        }
+        print("ltx2 fine-tune from two global random states: losses \(second.losses) against \(first.losses), "
+              + "largest adapter difference \(gap) over \(first.adapters.count) arrays")
+        XCTAssertEqual(second.losses, first.losses)
+        XCTAssertEqual(gap, 0)
+    }
+
     // The video encoder the data preparation runs, through its directory loader: the posterior's moments and
     // the normalized latents the trainer stores, for a square 9-frame clip and a wide 17-frame one.
     func testLTX2VideoEncoderMatchesTheReference() throws {

@@ -414,7 +414,7 @@ extension NFKMLXWanVideoGenerator {
     ///   - preset: the trainer whose objective, targets, and optimizer the run follows.
     ///   - optimizer: nil uses torch's AdamW at the preset's rate, betas, and weight decay.
     ///   - steps: how many updates to run.
-    ///   - seed: seeds the draws, the noise, and the posterior samples.
+    ///   - seed: seeds the draws, the noise, the posterior samples, and the adapters' initialization.
     ///   - accumulationSteps: how many batches each update averages.
     ///   - learningRateSchedule: nil uses the preset's warm-up with the reference optimizer.
     ///   - checkpoint: writes the network periodically.
@@ -487,7 +487,7 @@ extension NFKMLXWanVideoGenerator {
                     return MLX.stacked(losses).mean()
                 },
                 clipGradientNorm: preset.clipGradientNorm, accumulationSteps: accumulationSteps,
-                learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
+                learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, seed: seed, observer: observer)
         }
     }
 

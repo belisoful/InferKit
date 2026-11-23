@@ -302,6 +302,35 @@ final class NFKMLXStableAudioTests: XCTestCase {
         }
     }
 
+    // The recipe's seed fixes the adapters' initialization and their dropout masks: two runs of one network
+    // from different global random states train the same adapters to the same losses.
+    func testTheSeedFixesTheAdaptersAndTheirDropoutWhateverTheGlobalRandomState() throws {
+        try requireMLXRuntime()
+        let examples = tinyExamples(count: 2, seed: 33)
+        func run(globalSeed: UInt64) throws -> (losses: [Float], adapters: [String: MLXArray]) {
+            MLXRandom.seed(31)
+            let net = tinyTrainingNet()
+            eval(net)
+            MLXRandom.seed(globalSeed)
+            let losses = try NFKMLXStableAudio.fineTune(net, examples: { _ in examples }, trainable: .lora(rank: 4, alpha: 4),
+                                                        loraDropout: 0.1, learningRate: 3e-3, steps: 3, seed: 37,
+                                                        learningRateSchedule: .constant)
+            let adapters = Dictionary(uniqueKeysWithValues: net.trainableParameters().flattened())
+            eval(Array(adapters.values))
+            return (losses, adapters)
+        }
+        let first = try run(globalSeed: 100), second = try run(globalSeed: 200)
+        XCTAssertFalse(first.adapters.isEmpty)
+        XCTAssertEqual(Set(second.adapters.keys), Set(first.adapters.keys))
+        let gap = try first.adapters.reduce(Float(0)) { worst, entry in
+            max(worst, abs(try XCTUnwrap(second.adapters[entry.key]) - entry.value).max().item(Float.self))
+        }
+        print("stable_audio fine-tune from two global random states: losses \(second.losses) against \(first.losses), "
+              + "largest adapter difference \(gap) over \(first.adapters.count) arrays")
+        XCTAssertEqual(second.losses, first.losses)
+        XCTAssertEqual(gap, 0)
+    }
+
     // A fine-tuned net saves as a release's `transformer/` and `projection_model/` and reloads through the
     // model's own builder to the same prediction and conditioning.
     func testAFineTunedNetRoundTripsThroughItsDirectories() throws {

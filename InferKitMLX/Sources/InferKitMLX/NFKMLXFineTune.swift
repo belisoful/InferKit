@@ -25,7 +25,7 @@ import MLXOptimizers
 
 /// Runs the fine-tuning sequence a recipe wraps.
 ///
-/// A recipe calls ``run(_:freezing:optimizer:reference:referenceSchedule:steps:arrays:loss:clipGradientNorm:accumulationSteps:precision:accumulation:learningRateSchedule:checkpoint:cachePolicy:constraint:observer:)``
+/// A recipe calls ``run(_:freezing:optimizer:reference:referenceSchedule:steps:arrays:loss:clipGradientNorm:accumulationSteps:precision:accumulation:learningRateSchedule:checkpoint:cachePolicy:constraint:seed:observer:)``
 /// in place of calling `NFKMLXTrainer.train` directly, so the ordering and the two resolution rules
 /// are written once. The recipe keeps its own public signature.
 ///
@@ -54,7 +54,8 @@ public enum NFKMLXFineTune {
     ///   - referenceSchedule: builds the schedule the reference runs over these steps. It is evaluated
     ///     only when it is the one that applies.
     ///   - steps: how many batches to train on.
-    ///   - arrays: supplies the per-step tensors, which the loss reads positionally.
+    ///   - arrays: supplies the per-step tensors, which the loss reads positionally. Each step's are evaluated
+    ///     before the trace.
     ///   - loss: scores the network on one step's tensors.
     ///   - clipGradientNorm: bounds the global gradient norm. Pass the reference's value; nil is the
     ///     reference setting no clip.
@@ -68,6 +69,10 @@ public enum NFKMLXFineTune {
     ///   - cachePolicy: the buffer-cache policy for the run.
     ///   - constraint: projects the network after every optimizer update, the reference's weight
     ///     constraint. It applies whichever optimizer runs, as a Keras variable's constraint does.
+    ///   - seed: seeds every draw the run makes without a key of its own, the adapters' initialization in
+    ///     `freezing` and the dropout masks among them, as the reference trainers' `set_seed` does. Nil
+    ///     draws them from MLX's global random state, which mlx-swift seeds from the clock, so two
+    ///     processes start their adapters apart.
     ///   - observer: receives each step and can end the run early.
     ///
     /// - Returns: the loss from each completed step.
@@ -102,20 +107,35 @@ public enum NFKMLXFineTune {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         cachePolicy: NFKMLXTrainingCachePolicy = .disabledOnGPU,
         constraint: ((Net) -> Void)? = nil,
+        seed: UInt64? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try freezing()
-        // A caller's optimizer with no schedule runs untouched: the trainer then never asks it for a
-        // single rate, which an optimizer such as Adafactor does not have.
-        let schedule = learningRateSchedule ?? (optimizer == nil ? referenceSchedule() : nil)
-        return try NFKMLXTrainer.train(
-            net, optimizer: optimizer ?? reference(), steps: steps,
-            arrays: arrays, loss: loss,
-            clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
-            accumulation: accumulation,
-            learningRateSchedule: schedule,
-            checkpoint: checkpoint, cachePolicy: cachePolicy, constraint: constraint,
-            observer: observer)
+        func sequence() throws -> [Float] {
+            try freezing()
+            // A caller's optimizer with no schedule runs untouched: the trainer then never asks it for a
+            // single rate, which an optimizer such as Adafactor does not have.
+            let schedule = learningRateSchedule ?? (optimizer == nil ? referenceSchedule() : nil)
+            // A step's arrays enter the trace evaluated, so the backward stops at them. Drawn without a key, an
+            // array carries every unevaluated split of MLX's global random state before it, and mlx's recursive
+            // `vjp` overflows the main thread's stack on a long chain (mlx-runtime-gotchas.md).
+            return try NFKMLXTrainer.train(
+                net, optimizer: optimizer ?? reference(), steps: steps,
+                arrays: { step in
+                    let batch = arrays(step)
+                    eval(batch)
+                    return batch
+                },
+                loss: loss,
+                clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
+                accumulation: accumulation,
+                learningRateSchedule: schedule,
+                checkpoint: checkpoint, cachePolicy: cachePolicy, constraint: constraint,
+                observer: observer)
+        }
+        guard let seed else {
+            return try sequence()
+        }
+        return try withRandomState(MLXRandom.RandomState(seed: seed)) { try sequence() }
     }
 
     /// The unlabeled form, for a recipe whose loss reads one array per step and no target, such as a

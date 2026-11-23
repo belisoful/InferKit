@@ -183,7 +183,8 @@ extension NFKMLXStableAudio {
     ///   - learningRate: the reference optimizer's learning rate, the release's 5e-5 by default.
     ///   - weightDecay: the reference optimizer's decoupled weight decay, the release's 1e-3 by default.
     ///   - steps: how many batches to train on.
-    ///   - seed: seeds the timesteps, the noise, and the conditioning dropout.
+    ///   - seed: seeds the timesteps, the noise, the conditioning dropout, the adapters' initialization, and
+    ///     the adapters' dropout.
     ///   - clipGradientNorm: bounds the global gradient norm before the update; the reference sets none.
     ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
     ///     default, updates after every batch.
@@ -245,7 +246,7 @@ extension NFKMLXStableAudio {
                 },
                 clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps,
                 learningRateSchedule: learningRateSchedule,
-                checkpoint: checkpoint, observer: observer)
+                checkpoint: checkpoint, seed: seed, observer: observer)
         }
     }
 

@@ -332,6 +332,19 @@ counts below are the ledger's, over its 169 rows.
     group, which Adafactor does not have: a caller's Adafactor threw `unsupportedConfiguration` from a
     recipe that never scheduled it. `run` passes nil instead, which holds the rate the same way and
     works with every optimizer (`testACallersOptimizerWithNoSingleRateRunsWithoutASchedule`).
+  - **A recipe's seed seeds the draws that carry no key (2026-11-22).** `run(…seed:)` runs the freezing
+    and the loop under a `RandomState` seeded with it, so the adapters' `lora_a` and any dropout mask
+    repeat across processes, as the reference trainers' `set_seed` makes them. A recipe that takes a
+    `seed` passes it: LTX-2, Wan, Wan Animate, Stable Audio, and both TRELLIS flows. A recipe with no
+    `seed` leaves nil, and its adapters follow MLX's global state, which mlx-swift seeds from the clock.
+    The released LTX-2.5 and Wan steps drifted from step 2 on until the seed reached the adapters
+    (`mlx-runtime-gotchas.md`, "A draw without a key is seeded from the clock"). The LTX-2, Wan, and
+    Stable Audio tests `testTheSeedFixesTheAdapters…WhateverTheGlobalRandomState` train one network
+    from two global states and require equal losses and adapters; Stable Audio's runs with LoRA dropout.
+  - **Each step's arrays are evaluated before the trace (2026-11-23)**, so the backward stops at them. An
+    array drawn without a key carries every unevaluated split of MLX's global random state, and mlx's
+    recursive `vjp` overflowed the stack on that chain in the whole-class TRELLIS run
+    (`mlx-runtime-gotchas.md`, "A backward overflows the stack over an input drawn after many unevaluated draws").
   - **The reference optimizer is built lazily**, so a recipe whose reference walks the parameter tree
     (SAM 2's layer decay, SegFormer's norm exemptions) does not pay for it when the caller supplied
     one.

@@ -469,6 +469,35 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   processes, its stream-to-clip gap and floor moved with the network, and CC#123 went red on one draw.
   The helper now draws over `flattened()` and writes back through `ModuleParameters.unflattened`.
   Within one process the GPU forward is bitwise repeatable; the run-to-run spread was the network.
+- **A draw without a key is seeded from the clock (2026-11-22).** mlx-swift's `MLXRandom.globalState`
+  starts from `DispatchTime.now().uptimeNanoseconds`, so an `MLXRandom` call with no `key:` differs in every
+  process that has not seeded it. `NFKMLXLoRALinear` and `NFKMLXQuantizedLoRALinear` draw `lora_a` that way.
+  `lora_b` starts at zero, so a recipe's first loss cannot see `lora_a` and repeats to the bit; every later
+  step moves. Measured on c515aca8, two processes each:
+  - LTX-2.5 22B 4-bit QLoRA (`testLTX25QLoRAStepOnReleasedWeights`): step 1 3.8457108 both times, step 2
+    4.04394 and 4.0451827 (spread 1.2e-3), step 3 4.4233313 and 4.4229584.
+  - Wan 2.1 1.3B LoRA (`testA13BLoRAStepOnReleasedWeights`): steps 1 and 2 equal to the bit, step 3
+    0.09864772 and 0.09864781.
+  The two-block released-geometry tests held every step exact because they call `MLXRandom.seed` before each
+  run. `NFKMLXFineTune.run(seed:)` runs the freezing and the loop under a `RandomState` seeded with the
+  recipe's seed, and every recipe that takes a `seed` passes it. With it (seedfix-r1, 2026-11-22), two processes
+  of each test repeat every step to the bit: LTX-2.5 [3.8457108, 4.0450883, 4.425347], Wan [0.061486945,
+  0.055976998, 0.09864772]. No GPU nondeterminism remains in these steps.
+- **A backward overflows the stack over an input drawn after many unevaluated draws (2026-11-23).** Each draw
+  without a key splits MLX's global `RandomState` lazily and keeps the new half, so the chain of splits grows
+  until a draw that shares it is evaluated. An array drawn from that state carries the whole chain, and mlx's
+  `vjp` walks every input of the traced graph recursively, so a backward over that array overflows the main
+  thread's stack (SIGSEGV, `KERN_PROTECTION_FAILURE` in the stack guard). Probe on one `Linear`:
+  - 2,000 unevaluated draws, then a lazily drawn input: passes.
+  - 40,000 unevaluated draws, then a lazily drawn input: SIGSEGV.
+  - 40,000, with the input evaluated before the trace: passes.
+  - 40,000, with only the layer's parameters drawn lazily after them: passes.
+  `NFKMLXTrellisTests` run as a whole class crashed in `testTheRecipesRecomputeTheBlocksForTheirRunAndRestoreTheFlowsSetting`
+  at a recursion depth of 13,549 to 13,553 from 8b90d6e9 on, with or without the recipe seed. The 35 tests before it
+  leave random initializations unevaluated where loaded weights replace them, and that test draws its example
+  without a key. `NFKMLXFineTune.run` evaluates each step's arrays before the trace, and the class then passes 40
+  of 40 (494.5 s, peak 12.3 GB). A direct `NFKMLXTrainer.train` caller that draws its arrays without a key
+  evaluates them itself.
 
 - **A wrong backward pass on the GPU, fixed in mlx core 0.32.0 (2026-09-19, resolved 2026-09-20).**
   Measured on an M1 Max (macOS 26.6.2, Xcode 27, mlx-swift 0.31.6).
@@ -1029,9 +1058,10 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   the package runs through it. Moving Wan's and LTX-2's own helpers onto it (2026-11-22; Wan's had the
   cotangent wait, LTX-2's neither) left their losses and gradients bit-identical, plain and recomputed, over
   three steps at each release's geometry in one process (`testRecomputingAtTheReleasedGeometryKeepsEveryStep`).
-  The released runs' losses from step 2 on vary between processes with the code unchanged (LTX-2.5's step 2
-  read 4.04394 and 4.0451827), so two released runs are not compared loss for loss. The ordering lowered the
-  step peaks of the released LoRA runs:
+  The released runs' losses from step 2 on varied between processes with the code unchanged (LTX-2.5's step 2
+  read 4.04394 and 4.0451827) until the recipe's seed reached the adapters ("A draw without a key is seeded
+  from the clock"); two processes now repeat every step to the bit. The ordering lowered the step peaks of the
+  released LoRA runs:
 
   | Run | Before | After |
   |---|---|---|

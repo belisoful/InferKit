@@ -144,7 +144,8 @@ extension NFKMLXWanAnimate {
     /// The customization path is four calls: ``NFKMLXWanAnimateGenerator/trainingExample(referenceImage:drivingVideo:video:prompt:referencePrompt:)``
     /// for each clip, ``network(directoryURL:quantizationBits:)`` to build, this to train, and
     /// ``saveAdapters(of:to:)`` to write the adapters as DiffSynth-Studio does, which a generator applies with
-    /// ``NFKMLXWanAnimateGenerator/addAdapter(at:scale:)``. A step is multi-second; call it off the render thread.
+    /// ``NFKMLXWanAnimateGenerator/addAdapter(at:scale:)``. `seed` seeds the draws, the noise, and the adapters'
+    /// initialization. A step is multi-second; call it off the render thread.
     /// `recomputesBlocksInBackward` (on by default, as the recipe's `--use_gradient_checkpointing`) recomputes
     /// each block in the backward pass (``NFKMLXWanAnimateNet/recomputesBlocksInBackward``) for the run, and the
     /// network's own setting returns after it.
@@ -209,7 +210,7 @@ extension NFKMLXWanAnimate {
                     return MLX.stacked(losses).mean()
                 },
                 clipGradientNorm: nil, accumulationSteps: accumulationSteps,
-                learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, observer: observer)
+                learningRateSchedule: learningRateSchedule, checkpoint: checkpoint, seed: seed, observer: observer)
         }
         if let failure {
             throw failure
