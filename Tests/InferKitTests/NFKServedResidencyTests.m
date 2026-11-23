@@ -17,7 +17,7 @@
 
 /*! A synchronous backend that answers "ok", optionally holding each run until the test opens its gate. */
 @interface NFKResidencyTestBackend : NSObject <NFKInferenceBackend>
-@property (nonatomic, strong, nullable) dispatch_semaphore_t gate;
+@property (atomic, strong, nullable) dispatch_semaphore_t gate;
 @property (atomic, assign) NSInteger running;
 @end
 
@@ -1200,8 +1200,9 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 	[self waitForJob:job];
 	XCTAssertEqualObjects(job.result.text, @"ok", @"%@", job.error);
 
-	NFKInferenceJob *after = [self submit:@"gated" on:server];
+	// The first run consumed the gate's one signal, and a run reads the gate as soon as it starts.
 	backend.gate = nil;
+	NFKInferenceJob *after = [self submit:@"gated" on:server];
 	[self waitForJob:after];
 	XCTAssertEqualObjects(after.result.text, @"ok", @"a stopped server still runs in-process jobs: %@", after.error);
 }
