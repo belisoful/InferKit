@@ -3,8 +3,8 @@
 //  InferKitMLXTests
 //
 //  Weight-free structural tests for the SmolVLM2 vision-language model: the SigLIP encoder, the
-//  pixel-shuffle connector, the image processor's tiling, and the prompt expansion. Numeric parity
-//  against the reference lives in NFKMLXReferenceParityTests.
+//  pixel-shuffle connector, the image processor's tiling, the prompt expansion, and the chat template a
+//  catalog download carries. Numeric parity against the reference lives in NFKMLXReferenceParityTests.
 //
 
 import XCTest
@@ -176,6 +176,55 @@ final class NFKMLXSmolVLMTests: XCTestCase {
         try JSONSerialization.data(withJSONObject: json).write(to: directory.appendingPathComponent("tokenizer.json"))
         XCTAssertThrowsError(try NFKMLXSmolVLM.tokenizer(inDirectory: directory)) { error in
             XCTAssertTrue("\(error)".contains("pre-tokenizer"), "\(error)")
+        }
+    }
+
+    /// The chat template the releases serve at the catalog's commits, in `tokenizer_config.json` and
+    /// `chat_template.json`.
+    static let releasedTemplate = "<|im_start|>{% for message in messages %}{{message['role'] | capitalize}}"
+        + "{% if message['content'] is string %}{{': ' + message['content']}}{% else %}"
+        + "{% if message['content'][0]['type'] == 'image' %}{{':'}}{% else %}{{': '}}{% endif %}"
+        + "{% for line in message['content'] %}{% if line['type'] == 'text' %}{{line['text']}}"
+        + "{% elif line['type'] == 'image' %}{{ '<image>' }}{% endif %}{% endfor %}{% endif %}<end_of_utterance>\n"
+        + "{% endfor %}{% if add_generation_prompt %}{{ 'Assistant:' }}{% endif %}"
+
+    // A directory holding only the non-weight files a SmolVLM2 catalog entry downloads, from a repository that
+    // serves the template where the releases do, gives the model a template that renders a message list.
+    func testAReleaseLaidOutAsTheCatalogDownloadsItRendersAMessageList() throws {
+        try requireMLXRuntime()
+        let served: [String: [String: Any]] = [
+            "tokenizer_config.json": ["bos_token": "<|im_start|>", "eos_token": "<end_of_utterance>",
+                                      "chat_template": Self.releasedTemplate],
+            "chat_template.json": ["chat_template": Self.releasedTemplate],
+        ]
+        let imageToken = 500
+        let model = NFKMLXSmolVLM(
+            net: NFKMLXSmolVLMNet(vision: NFKMLXSigLIPNet(.tiny),
+                                  connector: NFKMLXSmolVLMConnector(visionHidden: 32, decoderHidden: 64, scaleFactor: 2),
+                                  decoder: NFKMLXLanguage.makeNet(.tiny), imageTokenId: imageToken),
+            tokenizer: try NFKMLXBackendTestSupport.tokenizer(specials: ["<image>": imageToken, "<end_of_utterance>": 501]),
+            endToken: 501,
+            release: NFKMLXSmolVLM.Release(vision: .tiny, decoder: .tiny, scaleFactor: 2, imageTokenId: imageToken,
+                                           tileSize: 64, longestEdge: 128))
+        let entries = NFKMLXCatalogLanguage.entries
+        for name in ["smolvlm2-256m", NFKMLXSmolVLM.modelName, "smolvlm2-2.2b"] {
+            let entry = try XCTUnwrap(entries.first { $0.identifier == name }, name)
+            let files = try XCTUnwrap(try entry.descriptor().defaultVariant?.source?.files, name)
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent("smolvlm-catalog-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            for file in files {
+                guard let contents = served[file.path] else { continue }
+                try JSONSerialization.data(withJSONObject: contents).write(to: directory.appendingPathComponent(file.path))
+            }
+            model.releaseTemplate = NFKMLXVisionTemplate(directoryURL: directory)
+            XCTAssertNotNil(model.chatTemplate, "\(name) downloads no file that carries the chat template")
+            let messages: [[String: Any]] = [["role": "user", "content": "Describe it."],
+                                             ["role": "assistant", "content": "A square."],
+                                             ["role": "user", "content": "More detail."]]
+            XCTAssertEqual(try NFKMLXVisionPrompt.render(messages, images: [], model: model),
+                           "<|im_start|>User: Describe it.<end_of_utterance>\nAssistant: A square.<end_of_utterance>\n"
+                               + "User: More detail.<end_of_utterance>\nAssistant:", name)
         }
     }
 

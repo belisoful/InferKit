@@ -63,8 +63,16 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   and the test asserts that gap rather than the token). The catalog measures the 256M, 500M, and 2.2B at
   `9cda5c16`, `4cde9d20`, and `be92141c` (2026-11-12 and 11-13, "Chat template: render string `content`
   instead of dropping it"), which change `chat_template.json` and the `chat_template` of
-  `tokenizer_config.json`, files the catalog's download does not fetch (`067788b1`, `7b375e1b`, and
-  `482adb53` before them). The backend sends a text message as parts (`chatTextAsParts`). The 2.2B config states no
+  `tokenizer_config.json` (`067788b1`, `7b375e1b`, and `482adb53` before them). The template a message list
+  renders through is the `chat_template` of `tokenizer_config.json` (`NFKMLXReleaseChatTemplate` reads
+  `chat_template.jinja`, then that field; no reader takes `chat_template.json`), and the same file gives
+  `bos_token`. `NFKMLXSmolVLM.requiredFiles` lists it since 2026-11-22, so the catalog's download and the
+  repo factories fetch it; before, a downloaded release refused a message list ("ships no chat
+  template"). At the catalog's commits it is 28,713 bytes (256M, 500M) and 28,714 bytes (2.2B); the store
+  holds the earlier 28,626- and 28,627-byte files, whose template reads only parts and renders the same
+  prompt. `chat_template.json` (517 bytes) carries the same template and is not fetched.
+  `testAReleaseLaidOutAsTheCatalogDownloadsItRendersAMessageList` holds the catalog's lists to a template
+  that renders, with no weights. The backend sends a text message as parts (`chatTextAsParts`). The 2.2B config states no
   `num_attention_heads`, so the language reader derives the head count from `head_dim` instead of
   falling back to 16; transformers derives 32, and the wrong count would have loaded silently.
 - `NFKMLXQwen3VLVisionNet` / `NFKMLXQwen3VL` — the vision tower of a **second VLM**, Qwen3-VL-2B, and a

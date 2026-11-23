@@ -63,6 +63,9 @@ final class NFKMLXReleaseDownloadVisionLanguageTests: XCTestCase {
         let answer = model.answer(image: Self.patternImage(width: 256, height: 256),
                                   question: "What is in the image?", maxTokens: 3)
         XCTAssertFalse(answer.isEmpty, "the downloaded tokenizer encodes the prompt and decodes the answer")
+        let prompt = try NFKMLXVisionPrompt.render([["role": "user", "content": "Describe it."]], images: [], model: model)
+        XCTAssertEqual(prompt, "<|im_start|>User: Describe it.<end_of_utterance>\nAssistant:",
+                       "the download carries the chat template a message list renders through")
     }
 
     func testQwen3VL2BBuildsFromItsListsOffline() throws {

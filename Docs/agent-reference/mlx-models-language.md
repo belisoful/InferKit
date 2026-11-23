@@ -855,9 +855,12 @@ attention and feed-forward.
   tags", after the README-only `7ecef55a`) changes `chat_template.jinja` (8,952 to 9,004 bytes) and
   `tokenizer_config.json` (17,928 to 9,984 bytes; the earlier one embeds the 8,952-byte template), and no
   weight or `config.json`. The backend reads both: the template renders a message list, and
-  `tokenizer_config.json` gives it `bos_token` and `eos_token`. The measured revision stays until the two
-  files are compared with the earlier ones and the release's template renders through
-  `NFKMLXChatTemplateEngine`, which parses `{% generation %}` blocks.
+  `tokenizer_config.json` gives it `bos_token` and `eos_token`. The release is pinned to the measured
+  commit (2026-11-22): `NFKMLXQwen4Exp.measuredRevision` holds the full SHA, the catalog's source names it,
+  and `backendWithRepo:revision:cacheDirectoryURL:…` reads it for `NFKMLXQwen4Exp.repository` when
+  `revision` is nil. Adopting `812d96e1` is a follow-up: it waits on comparing the two files with the
+  earlier ones and on the release's template rendering through `NFKMLXChatTemplateEngine`, which parses
+  `{% generation %}` blocks.
 - `NFKMLXDeepSeek` — the DeepSeek V4 decoder (`DeepseekV4ForCausalLM`): Multi-head Latent Attention
   over a mixture of experts, a third architecture family beside the dense stack and the hybrid.
   Its arithmetic is measured — at a tiny all-sliding configuration against transformers' own

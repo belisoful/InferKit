@@ -1287,6 +1287,16 @@ extension NFKMLXQwen4Exp {
     static let optionalFiles = ["vocab.json", "merges.txt", "generation_config.json", "chat_template.jinja"]
     static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
 
+    /// The repository of the released Qwen3.8-Flash-Next. Introduced in InferKit 0.4.0.
+    @objc public static let repository = "Qwen/Qwen3.8-Flash-Next"
+
+    /// The commit of ``repository`` the release was measured at, which a download that names no revision
+    /// of it reads.
+    ///
+    /// @discussion Qwen's later commit changes `chat_template.jinja` and `tokenizer_config.json`, both of
+    /// which the backend reads. Introduced in InferKit 0.4.0.
+    @objc public static let measuredRevision = "de4b8e4d43b917e7706784d8bb445c9af86a3540"
+
     /// A text-generation backend from a release directory, reading its `config.json`, weights,
     /// tokenizer, and chat template, with its routed experts held as `residency` plans them.
     ///
@@ -1307,15 +1317,22 @@ extension NFKMLXQwen4Exp {
         try backend(directoryURL: directoryURL, precision: .checkpoint, residency: .automatic)
     }
 
+    /// The revision a download of `repo` reads: `revision`, else ``measuredRevision`` for ``repository``,
+    /// else nil for the default branch.
+    static func downloadRevision(repo: String, revision: String?) -> String? {
+        revision ?? (repo == repository ? measuredRevision : nil)
+    }
+
     /// Downloads a release into the hub cache under `cacheDirectoryURL` (the default cache when nil)
-    /// and builds its text backend. A cached file is not fetched again. The call blocks on the
+    /// and builds its text backend. A nil `revision` reads ``measuredRevision`` of ``repository`` and the
+    /// default branch of any other repository. A cached file is not fetched again. The call blocks on the
     /// network; run it off the render thread. Introduced in InferKit 0.4.0.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws
         -> any NFKInferenceBackend {
         try NFKMLXBuildHolds.keeping {
             try backend(directoryURL: try NFKMLXReleaseDownload.directory(
-                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                repo: repo, revision: downloadRevision(repo: repo, revision: revision), cacheDirectoryURL: cacheDirectoryURL,
                 required: requiredFiles, optional: optionalFiles, weights: weightFiles))
         }
     }

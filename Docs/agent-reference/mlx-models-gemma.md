@@ -580,8 +580,11 @@ quarter of the floor.
   holds (SHA-256 `cc8d3a0c…`, the same file in all three). Google's next commits (`4adf1574` and
   `4ecc2ba6` on 2026-11-03, `43c9d014` on 2026-10-30, "Remediate 233 / 219 / 210 glitch tokens in
   tokenizer.json") change `tokenizer.json` and no other file. `NFKMLXGemmaTokenizer` reads that file, so
-  the measured revisions stay until the new tokenizers are in the store and the tests that tokenize a
-  Gemma 4 prompt pass on them. A download follows the default branch and fetches the new file. LTX-2.5's
+  the three releases are pinned to their measured commits (2026-11-22): `NFKMLXGemmaLanguage.measuredRevisions`
+  holds the full SHAs, the catalog's sources and the `gemma4-multimodal` variants name them, and
+  `gemmaBackendWithRepo:…` / `gemmaMultimodalBackendWithRepo:…` read them when `revision` is nil. Adopting
+  the new tokenizers is a follow-up: it waits on the new files in the store and on the tests that tokenize a
+  Gemma 4 prompt passing on them. The 26B-A4B and 31B have no later commit and name no revision. LTX-2.5's
   `tokenizer/tokenizer.json` is the earlier file.
 - Nothing remains in the Gemma 4 family. The four architectures, both towers' full forwards (the
   optional vision standardization included), the input adapters, the fusion, and the

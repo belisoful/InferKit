@@ -466,7 +466,7 @@ public final class NFKMLXSmolVLM: NSObject {
 
     /// A name for the model the factories produce.
     @objc public static let modelName = "smolvlm2-500m"
-    static let requiredFiles = ["config.json", "tokenizer.json"]
+    static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
     static let optionalFiles = ["preprocessor_config.json"]
     static let weightFiles = ["model.safetensors", "model.safetensors.index.json"]
 
@@ -509,8 +509,9 @@ public final class NFKMLXSmolVLM: NSObject {
 
     /// Downloads a release into the hub cache and builds the model.
     ///
-    /// @discussion The download fetches `config.json`, `tokenizer.json`, `preprocessor_config.json`
-    /// when the repo serves it, and the weights, single-file or sharded. A file the cache already holds
+    /// @discussion The download fetches `config.json`, `tokenizer.json`, `tokenizer_config.json` (which
+    /// carries the chat template), `preprocessor_config.json` when the repo serves it, and the weights,
+    /// single-file or sharded. A file the cache already holds
     /// is not fetched again. The call blocks on the network; call it off the render thread. The public
     /// releases are `HuggingFaceTB/SmolVLM2-256M-Video-Instruct`,
     /// `HuggingFaceTB/SmolVLM2-500M-Video-Instruct`, and `HuggingFaceTB/SmolVLM2-2.2B-Instruct`; none is

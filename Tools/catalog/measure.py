@@ -703,12 +703,14 @@ def listed_file_keys(sources):
 def merged_rows(path, sources, measured_sources, files, variants):
     """The rows of the table at `path` with the measured sources' rows replaced by `files` and
     `variants`. A file row the measured sources list and no other source lists is dropped, so a file a
-    repository stopped serving leaves the table."""
+    repository stopped serving leaves the table, and so is a row no source lists, such as one keyed by the
+    revision a source named before it was pinned."""
     kept_files, kept_variants = read_swift_rows(path)
     measured = {(source["model"], source["variant"]) for source in measured_sources}
     others = [source for source in sources if (source["model"], source["variant"]) not in measured]
     remeasured = listed_file_keys(measured_sources) - listed_file_keys(others)
-    merged_files = {key: row for key, row in kept_files.items() if key not in remeasured}
+    listed = listed_file_keys(sources)
+    merged_files = {key: row for key, row in kept_files.items() if key not in remeasured and key in listed}
     merged_files.update(files)
     merged_variants = {key: row for key, row in kept_variants.items() if key not in measured}
     merged_variants.update(variants)

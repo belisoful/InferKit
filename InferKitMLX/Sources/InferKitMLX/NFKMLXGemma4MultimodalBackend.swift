@@ -287,15 +287,15 @@ extension NFKMLXGemmaLanguage {
 
     /// Downloads a Gemma 4 release, such as `google/gemma-4-E2B-it`, and builds its multimodal backend.
     ///
-    /// @discussion The download is the one ``gemmaBackend(repo:revision:cacheDirectoryURL:)`` fetches; the
-    /// towers sit in the same weights. A cached file is not fetched again. The call blocks on the
-    /// network; call it off the render thread. Introduced in InferKit 0.4.0.
+    /// @discussion The download is the one ``gemmaBackend(repo:revision:cacheDirectoryURL:)`` fetches, at
+    /// the same revision; the towers sit in the same weights. A cached file is not fetched again. The call
+    /// blocks on the network; call it off the render thread. Introduced in InferKit 0.4.0.
     @objc(gemmaMultimodalBackendWithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func gemmaMultimodalBackend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try NFKMLXBuildHolds.keeping {
             try gemmaMultimodalBackend(directoryURL: try NFKMLXReleaseDownload.directory(
-                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                repo: repo, revision: downloadRevision(repo: repo, revision: revision), cacheDirectoryURL: cacheDirectoryURL,
                 required: requiredFiles, optional: optionalFiles, weights: weightFiles), residency: residency)
         }
     }

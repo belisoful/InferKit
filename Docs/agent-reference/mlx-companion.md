@@ -911,8 +911,10 @@ The measurement:
   measures each source without a revision at its repository's newest commit, so it moves other models'
   rows wherever their publishers committed since. A moved row that changes only files the download does
   not fetch (a README) takes the new commit; one that changes a file a loader reads (a tokenizer, a chat
-  template) keeps the measured commit until the store holds the new file and its tests pass on it, and the
-  model's entry names the commit it waits on. `NFKMLXMeasuredFile` rows are looked up by key, so their
+  template) is pinned to the measured commit until the store holds the new file and its tests pass on it:
+  the source names the commit's full SHA, the model's repo factories read it when no revision is named, the
+  table's file rows carry it as their revision, and the model's entry names the commit it waits on (Gemma 4
+  E2B, E4B, and 12B, and Qwen3.8-Flash-Next, 2026-11-22). `NFKMLXMeasuredFile` rows are looked up by key, so their
   order in the table does not matter; the script writes them sorted, 25 rows a literal.
 
 Memory facts, load options, and presets (`NFKMLXCatalogOptions.swift`, 2026-10-15):

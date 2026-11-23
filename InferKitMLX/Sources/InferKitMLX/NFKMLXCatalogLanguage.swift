@@ -231,8 +231,9 @@ extension NFKMLXCatalogLanguage {
         [("E2B", false), ("E4B", false), ("12B", false), ("26B-A4B", true), ("31B", false)].map { size, mixture in
             // The 12B is `gemma4_unified`, whose loader reads that one release.
             NFKMLXLanguageRelease(name: "gemma-4-\(size.lowercased())-it", displayName: "Gemma 4 \(size) IT",
-                                  repository: "google/gemma-4-\(size)-it", family: "gemma4", routesExperts: mixture,
-                                  modelTypes: size == "12B" ? [] : ["gemma4"])
+                                  repository: "google/gemma-4-\(size)-it",
+                                  revision: NFKMLXGemmaLanguage.measuredRevisions["google/gemma-4-\(size)-it"],
+                                  family: "gemma4", routesExperts: mixture, modelTypes: size == "12B" ? [] : ["gemma4"])
         }
     }
 
@@ -426,7 +427,7 @@ extension NFKMLXCatalogLanguage {
             return .license(nil, name: "Tongyi Qianwen License Agreement", url: repositoryLicenseURL(repository),
                             restrictsCommercialUse: true,
                             note: "A commercial product or service with more than 100 million monthly active users requests a license from Alibaba Cloud.")
-        case "Qwen/Qwen3.8-Flash-Next":
+        case NFKMLXQwen4Exp.repository:
             return .license(nil, name: "Qwen Community License 1.0", url: repositoryLicenseURL(repository),
                             restrictsCommercialUse: true,
                             note: "A Model-as-a-Service or AI work-assistant business needs a separate license from Qwen for commercial use. A product past 100 million monthly active users or US$20 million monthly revenue displays the model name.")
@@ -822,11 +823,12 @@ extension NFKMLXCatalogLanguage {
 
     fileprivate static var qwen4ExpEntry: NFKMLXCatalogEntry {
         let name = NFKMLXQwen4Exp.modelName
-        let repository = "Qwen/Qwen3.8-Flash-Next"
+        let repository = NFKMLXQwen4Exp.repository
         return decoderEntry(
             name: name, displayName: "Qwen3.8-Flash-Next", family: "qwen4-exp",
             summary: "Qwen3.8-Flash-Next, a sparse mixture-of-experts decoder with hyper-connections that writes text and calls tools.",
             variants: [familyVariant(name, repository, displayName: "Qwen3.8-Flash-Next", isDefault: true,
+                                     revision: NFKMLXQwen4Exp.measuredRevision,
                                      files: releaseFiles(required: NFKMLXQwen4Exp.requiredFiles,
                                                          optional: NFKMLXQwen4Exp.optionalFiles,
                                                          weights: NFKMLXQwen4Exp.weightFiles))],
@@ -998,8 +1000,9 @@ extension NFKMLXCatalogLanguage {
             outputs: [textOutput, usageOutput, finishReasonOutput],
             parameters: samplingOptions(gemmaSampling) + [maxTokensOption(), seedOption(), conversationKeyOption()],
             variants: [familyVariant(name, "google/gemma-4-E2B-it", displayName: "Gemma 4 E2B IT", isDefault: true,
-                                     files: files),
-                       familyVariant(name, "google/gemma-4-E4B-it", displayName: "Gemma 4 E4B IT", files: files)],
+                                     revision: NFKMLXGemmaLanguage.measuredRevisions["google/gemma-4-E2B-it"], files: files),
+                       familyVariant(name, "google/gemma-4-E4B-it", displayName: "Gemma 4 E4B IT",
+                                     revision: NFKMLXGemmaLanguage.measuredRevisions["google/gemma-4-E4B-it"], files: files)],
             license: gemma4License, load: .plain)
     }
 

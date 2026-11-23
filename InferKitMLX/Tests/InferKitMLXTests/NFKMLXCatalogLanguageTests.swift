@@ -154,6 +154,31 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
         }
     }
 
+    // Their publishers' later commits change a tokenizer or a chat template the loaders read, so the catalog and
+    // the download factories read the measured commits.
+    func testGemma4AndQwen4ExpReadTheirMeasuredCommits() throws {
+        for name in ["gemma-4-e2b-it", "gemma-4-e4b-it", "gemma-4-12b-it", NFKMLXGemmaLanguage.gemmaMultimodalModelName] {
+            for variant in try descriptor(name).variants {
+                let source = try XCTUnwrap(variant.source, name)
+                let repository = try XCTUnwrap(source.repository, name)
+                XCTAssertEqual(source.revision?.count, 40, "\(name) \(repository) pins a commit")
+                XCTAssertEqual(source.revision, NFKMLXGemmaLanguage.measuredRevisions[repository], "\(name) \(repository)")
+                XCTAssertEqual(NFKMLXGemmaLanguage.downloadRevision(repo: repository, revision: nil), source.revision,
+                               repository)
+            }
+        }
+        XCTAssertNil(NFKMLXGemmaLanguage.downloadRevision(repo: "google/gemma-4-31B-it", revision: nil))
+        XCTAssertEqual(NFKMLXGemmaLanguage.downloadRevision(repo: "google/gemma-4-E2B-it", revision: "main"), "main")
+
+        let qwen = try XCTUnwrap(try descriptor(NFKMLXQwen4Exp.modelName).defaultVariant?.source)
+        XCTAssertEqual(qwen.repository, NFKMLXQwen4Exp.repository)
+        XCTAssertEqual(qwen.revision, NFKMLXQwen4Exp.measuredRevision)
+        XCTAssertEqual(qwen.revision?.count, 40)
+        XCTAssertEqual(NFKMLXQwen4Exp.downloadRevision(repo: NFKMLXQwen4Exp.repository, revision: nil),
+                       NFKMLXQwen4Exp.measuredRevision)
+        XCTAssertNil(NFKMLXQwen4Exp.downloadRevision(repo: "org/qwen4-exp-tiny", revision: nil))
+    }
+
     func testEachOPUSMTPairCarriesTheLicenseItsModelCardStates() throws {
         let opus = try descriptor(NFKMLXMarian.modelName)
         XCTAssertEqual(opus.license?.identifier, "Apache-2.0")

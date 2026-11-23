@@ -14534,9 +14534,9 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
             "repository" : "google/gemma-4-12B-it",
-            "requiresConversion" : false
+            "requiresConversion" : false,
+            "revision" : "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
           }
         }
       ]
@@ -15818,9 +15818,9 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
             "repository" : "google/gemma-4-E2B-it",
-            "requiresConversion" : false
+            "requiresConversion" : false,
+            "revision" : "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
           }
         }
       ]
@@ -16310,9 +16310,9 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "ee0ef6023621cff504d758262d4e04895a5af4a2",
             "repository" : "google/gemma-4-E4B-it",
-            "requiresConversion" : false
+            "requiresConversion" : false,
+            "revision" : "ee0ef6023621cff504d758262d4e04895a5af4a2"
           }
         }
       ]
@@ -16542,9 +16542,9 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
             "repository" : "google/gemma-4-E2B-it",
-            "requiresConversion" : false
+            "requiresConversion" : false,
+            "revision" : "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
           }
         },
         {
@@ -16616,9 +16616,9 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "ee0ef6023621cff504d758262d4e04895a5af4a2",
             "repository" : "google/gemma-4-E4B-it",
-            "requiresConversion" : false
+            "requiresConversion" : false,
+            "revision" : "ee0ef6023621cff504d758262d4e04895a5af4a2"
           }
         }
       ]
@@ -50755,9 +50755,9 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "de4b8e4d43b917e7706784d8bb445c9af86a3540",
             "repository" : "Qwen/Qwen3.8-Flash-Next",
-            "requiresConversion" : false
+            "requiresConversion" : false,
+            "revision" : "de4b8e4d43b917e7706784d8bb445c9af86a3540"
           }
         }
       ]
@@ -66725,7 +66725,7 @@
       "variants" : [
         {
           "displayName" : "SmolVLM2 2.2B Instruct",
-          "downloadBytes" : 8990840434,
+          "downloadBytes" : 8990869148,
           "id" : "smolvlm2-2.2b-instruct",
           "isDefault" : true,
           "memoryFacts" : {
@@ -66762,6 +66762,12 @@
                 "bytes" : 3548256,
                 "optional" : false,
                 "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 28714,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
                 "role" : "tokenizer"
               },
               {
@@ -66951,7 +66957,7 @@
       "variants" : [
         {
           "displayName" : "SmolVLM2 256M Video Instruct",
-          "downloadBytes" : 1029550891,
+          "downloadBytes" : 1029579604,
           "id" : "smolvlm2-256m-video-instruct",
           "isDefault" : true,
           "memoryFacts" : {
@@ -66988,6 +66994,12 @@
                 "bytes" : 3548256,
                 "optional" : false,
                 "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 28713,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
                 "role" : "tokenizer"
               },
               {
@@ -67178,7 +67190,7 @@
       "variants" : [
         {
           "displayName" : "SmolVLM2 500M Video Instruct",
-          "downloadBytes" : 2033543246,
+          "downloadBytes" : 2033571959,
           "id" : "smolvlm2-500m-video-instruct",
           "isDefault" : true,
           "memoryFacts" : {
@@ -67215,6 +67227,12 @@
                 "bytes" : 3548256,
                 "optional" : false,
                 "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 28713,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
                 "role" : "tokenizer"
               },
               {

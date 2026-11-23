@@ -726,21 +726,39 @@ public extension NFKMLXGemmaLanguage {
     internal static let optionalFiles = ["chat_template.jinja", "tokenizer_config.json"]
     internal static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
 
+    /// The commits the Gemma 4 releases were measured at, by repository: the E2B, the E4B, and the 12B.
+    ///
+    /// @discussion A download that names no revision of one of these repositories reads the commit
+    /// listed here. Google's later commits change `tokenizer.json`, which the Gemma tokenizer reads.
+    /// Introduced in InferKit 0.4.0.
+    @objc static let measuredRevisions: [String: String] = [
+        "google/gemma-4-E2B-it": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
+        "google/gemma-4-E4B-it": "ee0ef6023621cff504d758262d4e04895a5af4a2",
+        "google/gemma-4-12B-it": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+    ]
+
+    /// The revision a download of `repo` reads: `revision`, else the commit ``measuredRevisions`` lists,
+    /// else nil for the default branch.
+    internal static func downloadRevision(repo: String, revision: String?) -> String? {
+        revision ?? measuredRevisions[repo]
+    }
+
     /// Downloads a Gemma release and builds its text-generation backend.
     ///
     /// @discussion The download fetches `config.json`, `tokenizer.json`, the chat template where the
     /// repo serves one, and the weights (a single `model.safetensors` or every shard a
     /// `model.safetensors.index.json` names) into the hub cache under `cacheDirectoryURL`, or the
-    /// default cache when nil. A cached file is not fetched again. The call blocks on the network;
-    /// call it off the render thread. It serves the Gemma 4 releases, such as `google/gemma-4-E2B-it`
-    /// and `google/gemma-4-E4B-it`, which are not gated, and the Gemma 3 releases the directory
-    /// factory dispatches to ``NFKMLXGemma3``. The `google/gemma-3-*` repos are gated: the caller
-    /// sets `NFKHFHub.defaultAccessToken` before the first download, or names the ungated
+    /// default cache when nil. A nil `revision` reads the commit ``measuredRevisions`` lists for `repo`,
+    /// and the default branch of any other repository. A cached file is not fetched again. The call
+    /// blocks on the network; call it off the render thread. It serves the Gemma 4 releases, such as
+    /// `google/gemma-4-E2B-it` and `google/gemma-4-E4B-it`, which are not gated, and the Gemma 3 releases
+    /// the directory factory dispatches to ``NFKMLXGemma3``. The `google/gemma-3-*` repos are gated: the
+    /// caller sets `NFKHFHub.defaultAccessToken` before the first download, or names the ungated
     /// `unsloth/gemma-3-*` mirrors. Introduced in InferKit 0.4.0.
     @objc(gemmaBackendWithRepo:revision:cacheDirectoryURL:error:)
     static func gemmaBackend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
         try backend(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            repo: repo, revision: downloadRevision(repo: repo, revision: revision), cacheDirectoryURL: cacheDirectoryURL,
             required: requiredFiles, optional: optionalFiles, weights: weightFiles))
     }
 
@@ -760,7 +778,7 @@ public extension NFKMLXGemmaLanguage {
     static func gemmaBackend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                              residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try backend(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            repo: repo, revision: downloadRevision(repo: repo, revision: revision), cacheDirectoryURL: cacheDirectoryURL,
             required: requiredFiles, optional: optionalFiles, weights: weightFiles), residency: residency)
     }
 

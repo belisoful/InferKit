@@ -125,6 +125,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Gemma 4 and Qwen3.8-Flash-Next download their measured commits, and SmolVLM2's download carries its chat template
+
+- The catalog's Gemma 4 E2B, E4B, and 12B sources and the `gemma4-multimodal` variants name the commits
+  they were measured at, listed in `NFKMLXGemmaLanguage.measuredRevisions`. Google's later commits change
+  `tokenizer.json`. `gemmaBackendWithRepo:…` and `gemmaMultimodalBackendWithRepo:…` read those commits
+  when `revision` is nil.
+- The catalog's `qwen4-exp` source names `NFKMLXQwen4Exp.measuredRevision` of `NFKMLXQwen4Exp.repository`,
+  which `backendWithRepo:revision:cacheDirectoryURL:…` reads when `revision` is nil. Qwen's later commit
+  changes `chat_template.jinja` and `tokenizer_config.json`.
+- SmolVLM2's download fetches `tokenizer_config.json`, which carries the release's chat template, so a
+  release downloaded from the catalog or through `smolVLMWithRepo:…` renders a message list.
+
 #### Voxtral and Granite Speech decode through a key-value cache and continue conversations about a clip
 
 - The two speech language models' shared Granite decoder runs the prompt once into a key-value cache and each new

@@ -1428,6 +1428,7 @@ python3 -I Tools/catalog/measure.py --models ltx-2.5,ltx-2.5-full
 - A source that names no revision is measured at the repository's default branch, so a full run takes
   each such repository's newest commit. `--models` re-measures the named models and keeps the other rows
   as the table holds them; a file row only the named models list and their repositories no longer serve
-  leaves the table.
+  leaves the table, as does a row no source lists (one keyed by the revision a source named before it was
+  pinned).
 - The manifest writer sorts keys and models, and the measurements carry no date or machine path, so the
   same catalog writes the same bytes on every machine.
