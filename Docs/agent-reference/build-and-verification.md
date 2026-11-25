@@ -243,7 +243,7 @@ The causes and their fixes:
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 3495 — the model and API suite
+   xcodebuild test -scheme InferKitMLXTests        …    # 3496 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  163 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   68 — the Objective-C ones
    ```

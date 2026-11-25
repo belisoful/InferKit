@@ -54,8 +54,7 @@ public enum NFKMLXFineTune {
     ///   - referenceSchedule: builds the schedule the reference runs over these steps. It is evaluated
     ///     only when it is the one that applies.
     ///   - steps: how many batches to train on.
-    ///   - arrays: supplies the per-step tensors, which the loss reads positionally. Each step's are evaluated
-    ///     before the trace.
+    ///   - arrays: supplies the per-step tensors, which the loss reads positionally.
     ///   - loss: scores the network on one step's tensors.
     ///   - clipGradientNorm: bounds the global gradient norm. Pass the reference's value; nil is the
     ///     reference setting no clip.
@@ -115,17 +114,9 @@ public enum NFKMLXFineTune {
             // A caller's optimizer with no schedule runs untouched: the trainer then never asks it for a
             // single rate, which an optimizer such as Adafactor does not have.
             let schedule = learningRateSchedule ?? (optimizer == nil ? referenceSchedule() : nil)
-            // A step's arrays enter the trace evaluated, so the backward stops at them. Drawn without a key, an
-            // array carries every unevaluated split of MLX's global random state before it, and mlx's recursive
-            // `vjp` overflows the main thread's stack on a long chain (mlx-runtime-gotchas.md).
             return try NFKMLXTrainer.train(
                 net, optimizer: optimizer ?? reference(), steps: steps,
-                arrays: { step in
-                    let batch = arrays(step)
-                    eval(batch)
-                    return batch
-                },
-                loss: loss,
+                arrays: arrays, loss: loss,
                 clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, precision: precision,
                 accumulation: accumulation,
                 learningRateSchedule: schedule,

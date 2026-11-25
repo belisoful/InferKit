@@ -11,6 +11,7 @@ import XCTest
 import MLX
 import MLXNN
 import MLXOptimizers
+import MLXRandom
 @testable import InferKitMLX
 
 final class NFKMLXTrainerTests: XCTestCase {
@@ -437,6 +438,24 @@ final class NFKMLXTrainerTests: XCTestCase {
                                 batch: { _ in self.fixedBatch() }, loss: meanSquaredError)
 
         XCTAssertFalse(model.training)
+    }
+
+    // An input drawn without a key after 40,000 unevaluated draws carries that chain of random-state splits.
+    // Unless the trainer evaluates the step's arrays before the trace, mlx's recursive `vjp` walks the chain and
+    // overflows the main thread's stack.
+    func testAStepOverAnInputDrawnAfterManyUnevaluatedDrawsTrains() throws {
+        try requireMLXRuntime()
+        let model = Linear(2, 2)
+        eval(model)
+        for _ in 0 ..< 40_000 {
+            _ = MLXRandom.uniform(0 ..< 1, [1])
+        }
+        let input = MLXRandom.normal([3, 2])
+        let history = try NFKMLXTrainer.train(model, optimizer: SGD(learningRate: 0.1), steps: 1,
+                                              arrays: { _ in [input, input * 2] },
+                                              loss: { model, arrays in self.meanSquaredError(model, arrays[0], arrays[1]) })
+        XCTAssertEqual(history.count, 1)
+        XCTAssertTrue(history.allSatisfy(\.isFinite))
     }
 
     // MARK: Bounding the update

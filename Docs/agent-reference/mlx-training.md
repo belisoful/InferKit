@@ -341,10 +341,6 @@ counts below are the ledger's, over its 169 rows.
     (`mlx-runtime-gotchas.md`, "A draw without a key is seeded from the clock"). The LTX-2, Wan, and
     Stable Audio tests `testTheSeedFixesTheAdapters…WhateverTheGlobalRandomState` train one network
     from two global states and require equal losses and adapters; Stable Audio's runs with LoRA dropout.
-  - **Each step's arrays are evaluated before the trace (2026-11-23)**, so the backward stops at them. An
-    array drawn without a key carries every unevaluated split of MLX's global random state, and mlx's
-    recursive `vjp` overflowed the stack on that chain in the whole-class TRELLIS run
-    (`mlx-runtime-gotchas.md`, "A backward overflows the stack over an input drawn after many unevaluated draws").
   - **The reference optimizer is built lazily**, so a recipe whose reference walks the parameter tree
     (SAM 2's layer decay, SegFormer's norm exemptions) does not pay for it when the caller supplied
     one.
@@ -378,7 +374,11 @@ counts below are the ledger's, over its 169 rows.
     (Laya, Open-Jev, Qwen3-VL retrieval). `NFKMLXFineTuneTests` pins the rules directly.
 - `NFKMLXTrainer` — the supervised and zero-reference training loop, for customizing a shipped model
   on a consumer's own data, in the app. Three entry points (`batch:loss:` with a target,
-  `sample:loss:` without one, `arrays:loss:` for any count) share a private loop. The loop clips
+  `sample:loss:` without one, `arrays:loss:` for any count) share a private loop. The loop evaluates
+  each step's arrays before the gradient's trace, so the backward stops at them: an array drawn without a
+  key carries every unevaluated split of MLX's global random state, and mlx's recursive `vjp` overflowed
+  the stack on that chain in the whole-class TRELLIS run (`mlx-runtime-gotchas.md`, "A backward overflows
+  the stack over an input drawn after many unevaluated draws"). The loop clips
   gradients, accumulates batches into updates, and computes in float32 or half precision. It reports
   each step to an observer that can end the run. It writes periodic checkpoints, with the optimizer's
   state when asked. The toolkit owns the loop, the caller owns the loss, mirroring

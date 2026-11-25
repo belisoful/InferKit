@@ -332,6 +332,11 @@ public enum NFKMLXTrainer {
     /// normalizes with the statistics it was released with and does not fold the training batches
     /// into them. Dropout runs everywhere, frozen parts included, as PyTorch's `model.train()` runs it.
     ///
+    /// Each step's arrays are evaluated before the gradient's trace, so the backward pass stops at them.
+    /// An array drawn without a key otherwise carries every unevaluated split of MLX's global random
+    /// state, and mlx's recursive `vjp` overflows the stack on a long chain of them. Every entry point
+    /// does this.
+    ///
     /// A run is multi-second; call it off the main thread.
     @discardableResult
     public static func train<Model: Module>(
@@ -494,6 +499,11 @@ public enum NFKMLXTrainer {
         constraint: ((Model) -> Void)? = nil,
         observer: Observer?
     ) throws -> [Float] {
+        func evaluatedArrays(_ index: Int) -> [MLXArray] {
+            let batch = arrays(index)
+            eval(batch)
+            return batch
+        }
         freezeHeldState(of: model)
         guard !model.trainableParameters().flattened().isEmpty else {
             throw NFKMLXError.nothingToTrain(
@@ -612,7 +622,7 @@ public enum NFKMLXTrainer {
                 if cachePolicy == .reclaimedEachStep {
                     NFKMLXGPU.clearCache()
                 }
-                let (values, gradients) = lossAndGradient(model, arrays(batch))
+                let (values, gradients) = lossAndGradient(model, evaluatedArrays(batch))
                 for (key, gradient) in gradients.flattened() {
                     gradientSums[key] = gradientSums[key].map { $0 + gradient } ?? gradient
                 }
@@ -648,11 +658,11 @@ public enum NFKMLXTrainer {
             let lossValue: MLXArray
             let gradients: ModuleParameters
             if accumulationSteps == 1 {
-                let (values, batchGradients) = lossAndGradient(model, arrays(step))
+                let (values, batchGradients) = lossAndGradient(model, evaluatedArrays(step))
                 (lossValue, gradients) = (values[0], batchGradients)
             } else {
                 (lossValue, gradients) = averaged(over: accumulationSteps) {
-                    lossAndGradient(model, arrays(step * accumulationSteps + $0))
+                    lossAndGradient(model, evaluatedArrays(step * accumulationSteps + $0))
                 }
             }
             _ = apply(gradients, at: step)

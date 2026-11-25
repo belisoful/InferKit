@@ -495,9 +495,9 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   `NFKMLXTrellisTests` run as a whole class crashed in `testTheRecipesRecomputeTheBlocksForTheirRunAndRestoreTheFlowsSetting`
   at a recursion depth of 13,549 to 13,553 from 8b90d6e9 on, with or without the recipe seed. The 35 tests before it
   leave random initializations unevaluated where loaded weights replace them, and that test draws its example
-  without a key. `NFKMLXFineTune.run` evaluates each step's arrays before the trace, and the class then passes 40
-  of 40 (494.5 s, peak 12.3 GB). A direct `NFKMLXTrainer.train` caller that draws its arrays without a key
-  evaluates them itself.
+  without a key. Evaluating each step's arrays before the trace in `NFKMLXFineTune.run` (11653a83) took the class
+  to 40 of 40 (494.5 s, peak 12.3 GB). The evaluation now sits in `NFKMLXTrainer`'s shared loop, so every entry
+  point does it, a direct `NFKMLXTrainer.train` caller included (`testAStepOverAnInputDrawnAfterManyUnevaluatedDrawsTrains`).
 
 - **A wrong backward pass on the GPU, fixed in mlx core 0.32.0 (2026-09-19, resolved 2026-09-20).**
   Measured on an M1 Max (macOS 26.6.2, Xcode 27, mlx-swift 0.31.6).
