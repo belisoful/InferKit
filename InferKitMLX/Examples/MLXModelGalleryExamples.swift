@@ -1241,6 +1241,32 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(clip.shape, [5, 32, 32, 3], "one frame per driving frame")
     }
 
+    // MARK: Control video, start and end images, or a camera → video (Wan 2.2 Fun)
+
+    func testControlledVideoPipeline() throws {
+        try requireMLXRuntime()
+        // The released pipelines assemble from their original-layout directories through
+        // NFKMLXWanFunGenerator.generator(directoryURL:residency:), then video(forPrompt:conditions:…) or
+        // inferenceBackend(). Here the sampler runs a tiny Control transformer, with a reference image, over a tiny
+        // autoencoder from supplied text features.
+        NFKMLXRandom.seed(15)
+        let vae = NFKMLXWanVideoVAENet(NFKMLXWanVAEConfiguration(
+            baseDim: 8, decoderBaseDim: 8, zDim: 4, dimMult: [1, 1, 1, 1], numResBlocks: 1,
+            temporalDownsample: [false, true, true], patchSize: 1, inChannels: 3, isResidual: false))
+        let transformer = NFKMLXWanTransformerNet(NFKMLXWanConfiguration(
+            inChannels: 3 * 4 + 4, heads: 2, headDim: 24, layers: 2, ffnDim: 48, textDim: 10, outChannels: 4,
+            referenceChannels: 4, formsSinusoidsInFloat64: true))
+        let pipeline = NFKMLXWanFunPipeline(transformer: transformer, highNoiseTransformer: nil, vae: vae,
+                                            latentsMean: MLXArray.zeros([4]), latentsStd: MLXArray.ones([4]))
+        let conditions = NFKMLXWanFunConditions(controlVideo: MLXRandom.uniform(low: 0, high: 1, [5, 32, 32, 3]),
+                                                referenceImage: MLXRandom.uniform(low: 0, high: 1, [32, 32, 3]))
+        let prepared = try pipeline.prepare(conditions, frames: 5, height: 32, width: 32)
+        let latents = try pipeline.denoise(text: MLXRandom.normal([6, 10]), negative: nil, prepared: prepared,
+                                           noise: pipeline.noise(frames: 5, height: 32, width: 32, seed: 0),
+                                           steps: 2, guidance: 1)
+        XCTAssertEqual(pipeline.decode(latents).shape, [5, 32, 32, 3], "one frame per conditioned frame")
+    }
+
     // MARK: Inpainting & latent diffusion (built by factory)
 
     func testInpaintingAndDiffusionModels() throws {

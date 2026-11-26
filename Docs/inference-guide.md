@@ -2136,6 +2136,10 @@ alternatives.
     last frames condition the next segment), at reference parity against diffusers' modular
     `WanAnimate2Blocks` end to end over a small random release in the released layout. The 50 GB
     release runs where the transformer streams its blocks or packs them (about 9.6 GB at 4 bits).
+    **Wan 2.2 Fun is SHIPPED** (`NFKMLXWanFunGenerator`, the six `wan2.2-fun-*` releases): Control, InP, and
+    Control-Camera at 5B and A14B, read from alibaba-pai's original-layout directories and at reference parity
+    against VideoX-Fun's own pipelines on test-dev releases, with LoRA fine-tuning against DiffSynth-Studio
+    (A14B) and VideoX-Fun (5B).
 
 One port waits on weight access here rather than on engineering: pyannote diarization (gated
 `pyannote/segmentation-3.0`). It needs a credential the way the gated Stable Diffusion 2.1 base does,

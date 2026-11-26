@@ -537,6 +537,13 @@ final class MLXCustomizationExamples: XCTestCase {
         let base = NFKMLXWanTransformerNet(.tiny)
         XCTAssertEqual(try NFKMLXWanLoRA.merge(adapterURL: adapters, into: base).mergedLayers, 2 * 10)
 
+        // A Wan 2.2 Fun release trains under its reference trainer's recipe: DiffSynth-Studio's for an A14B expert,
+        // VideoX-Fun's for a 5B release, whose examples carry their latent mask.
+        let funPreset = NFKMLXWanFunGenerator.referencePreset(variant: .control5B, expert: .highNoise)
+        XCTAssertEqual(funPreset.rank, 64)
+        XCTAssertEqual(funPreset.targets, .queryKeyValueAndFeedForward)
+        XCTAssertEqual(NFKMLXWanFunGenerator.referencePreset(variant: .controlA14B, expert: .lowNoise).rank, 32)
+
         // A Wan 2.2 A14B expert trains over its side of the release's boundary; a real run builds the expert with
         // NFKMLXWanVideoGenerator.network(directoryURL:expert:quantizationBits:).
         let expert = NFKMLXWanTrainingPreset.diffSynth(expert: .lowNoise, imageToVideo: true)

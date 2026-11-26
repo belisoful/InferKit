@@ -211,7 +211,7 @@ claims; the tables below carry the verified facts.
 | **Chatterbox Multilingual v3** — SHIPPED (`NFKMLXChatterbox`) | Resemble AI | MIT | The multilingual text layer and T3 are measured on the released weights; the backend prefers the multilingual release when a directory holds one |
 | **Gemma 4 31B** — SHIPPED (`NFKMLXGemmaLanguage`) | Google | Apache-2.0 | Structural across all 832 tensors, plus a numeric probe of the first 6 released layers and bf16 records on cuts. The whole 31B exceeds a 32 GB machine |
 | **RF-DETR segmentation** — SHIPPED (`NFKMLXRFDetrSegmentationNet`) | Roboflow | Apache-2.0 | Every released `rf-detr-seg-*` size, nano through xxlarge |
-| **Wan 2.7** | Alibaba | — | Not released as open weights. The newest open Wan is 2.2 (checked 2026-09-26) |
+| **Wan 2.5, 2.6, 2.7, 3** | Alibaba | — | Not released as open weights. The `Wan-AI` organization publishes nothing past Wan 2.2 (its newest repositories are Wan2.2-Animate-2-14B and Wan-Dancer-14B); Hub repositories named for Wan 2.5 and 2.6 hold no files (checked 2026-11-26) |
 | **LCM and SDXL-Lightning** — SHIPPED (`NFKMLXSDLoRA`, `NFKMLXSDTextToImageConfiguration.withSampler`) | Latent Consistency / ByteDance | MIT (LCM Dreamshaper full UNet), openrail++ (LCM-LoRA, Lightning) | Adapters over the shipped SD 1.5 and SDXL bodies, merged into `NFKMLXSDUNet` from the kohya and PEFT key layouts. Measured end to end against diffusers with the adapter fused: LCM-LoRA on SD 1.5 image cosine 0.99999858, SDXL-Lightning four-step on SDXL base 0.99999917, and the whole LCM Dreamshaper v7 distillation 0.99999278 (`.latentConsistency15`, the guidance projection) |
 | **SD 3.5 Large Turbo** — SHIPPED (`sd3.5-large-turbo`, `NFKMLXSD3Generator`) | Stability AI | Stability Community, gated | Shares the Large geometry, autoencoder, and text encoders byte for byte. The released transformer is measured on a four-block cut against diffusers at float32 (velocity 0.99999999999950), and the same pass records Large (0.99999999999951). The registry and catalog run it at 4 steps and a guidance of 0 |
 | **Hyper-SD** — SHIPPED (`NFKMLXSDLoRA`, `NFKTCDScheduler`, six catalog adapters) | ByteDance | The SD adapters are under ByteDance's CreativeML Open RAIL++-M License (use restrictions); the FLUX adapters carry FLUX.1 [dev] non-commercial terms and are not taken | The SD 1.5 and SDXL adapters merge through the LoRA reader: the 4-step files under trailing DDIM without guidance, the CFG-preserved 8-step files at guidance 5, and the unified files under the trajectory consistency sampler. Measured end to end against diffusers with the adapter fused: SD 1.5 4-step image cosine 0.99999862, SDXL 4-step 0.99999953, SD 1.5 8-step CFG 0.99999558, SDXL 8-step CFG 0.99999947, SD 1.5 unified 0.99999725, SDXL unified 0.99999938 |
@@ -234,6 +234,33 @@ Notes:
   the Hugging Face detail endpoint, and each `config.json` was diffed against the shipped release's.
   None is scheduled. The rest of that date's speech survey is under
   [Speech recognition, speech-to-speech, and enhancement candidates](#speech-recognition-speech-to-speech-and-enhancement-candidates).
+
+### Newer releases of the shipped video families
+
+Checked on 2026-11-26 against the Hugging Face detail endpoint and a real file of each repository. Every
+Wan release below shares umT5's `.pth`, the Wan 2.1 or 2.2 autoencoder's `.pth`, and the tokenizer with
+Wan-AI's own releases byte for byte, which `NFKMLXWanOriginalRelease` reads. Restrictive licenses go last.
+
+| Release | Repository @ commit | License | Size | Reference | Status |
+|---|---|---|---|---|---|
+| **Wan 2.2 Fun Control, InP, Control-Camera (5B, A14B)** — SHIPPED (`NFKMLXWanFunGenerator`) | `alibaba-pai/Wan2.2-Fun-5B-Control` @b8bc1a65, `-5B-InP` @d3e911d5, `-5B-Control-Camera` @4dde4056, `-A14B-Control` @297be6d5, `-A14B-InP` @2d27b954, `-A14B-Control-Camera` @da1f119d | Apache-2.0 | 24 GB (5B), 69 to 71 GB (A14B) | VideoX-Fun (diffusers has no Fun pipeline) | At reference parity on test-dev releases; LoRA against DiffSynth-Studio (A14B) and VideoX-Fun (5B) |
+| **Wan 2.2 S2V-14B** — QUEUED | `Wan-AI/Wan2.2-S2V-14B` @dab4e9c5 | Apache-2.0 | 49.2 GB (transformer 32.6 GB bf16, wav2vec2-large-xlsr-53-english) | Wan-Video/Wan2.2 `speech2video.py` (diffusers has none); DiffSynth-Studio trains it | An audio injector (`audio_inject_layers`, AdaIN), a frame packer for motion frames, and the wav2vec2 encoder over the shipped Wan network |
+| **Wan 2.2 VACE-Fun A14B** — QUEUED | `alibaba-pai/Wan2.2-VACE-Fun-A14B` @4438caab | Apache-2.0 | 81.2 GB | VideoX-Fun `pipeline_wan2_2_vace_fun.py`; DiffSynth-Studio trains it | VACE context blocks over the A14B experts; Wan 2.1 VACE is not shipped either |
+| **Wan-Dancer-14B** — QUEUED | `Wan-AI/Wan-Dancer-14B` @85ce88dd | Apache-2.0 | 85.7 GB (global and local models, 34.5 GB each bf16) | Wan-Video/Wan-Dancer; DiffSynth-Studio trains both stages | Music to dance: a music encoder and injector, a reference-image projector, and a global head over the Wan 2.1 I2V geometry |
+| **Self-Forcing (Wan 2.1 T2V 1.3B)** — QUEUED | `gdhe17/Self-Forcing` @2f8b7792 | Apache-2.0 | 5.68 GB per checkpoint (pickle `.pt`) | guandeh17/Self-Forcing; VideoX-Fun `wan2.1_self_forcing` | A block-causal autoregressive sampler with a key-value cache over the shipped 1.3B network |
+| **Krea Realtime 14B** — QUEUED | `krea/krea-realtime-video` @9a2ceea2 | Apache-2.0 | 28.6 GB transformer (bf16) | the repository's own modular blocks (`WanRTBlocks`, diffusers 0.36 or later); DiffSynth-Studio trains it | Self-Forcing's sampler at Wan 2.1 14B |
+| **SkyReels V2 DF (1.3B, 14B 540P, 14B 720P)** — QUEUED, restrictive license | `Skywork/SkyReels-V2-DF-1.3B-540P-Diffusers` @958acd63, `-14B-540P-Diffusers` @34d48e43, `-14B-720P-Diffusers` @3d2ebd78 | Skywork Community License (commercial use under its terms) | 29 GB, 80 GB, 80 GB (float32) | diffusers `SkyReelsV2DiffusionForcingPipeline` | Diffusion forcing for long video: per-frame noise levels and a frame-rate embedding |
+| **SkyReels V3 (R2V-14B, V2V-14B, A2V-19B)** — QUEUED, restrictive license | `Skywork/SkyReels-V3-R2V-14B` @8df04fa9, `-V2V-14B` @68def611, `-A2V-19B` @fdad4053 | Skywork Community License | 52 GB, 69 GB (plus a 28.6 GB shot transformer), 56 GB | SkyworkAI/SkyReels-V3 (custom classes such as `SkyReelsC1WanI2v3DModel`, not in diffusers) | Reference-, video-, and audio-to-video over Wan geometries |
+| **CausVid** — NOT PLANNED | `tianweiy/CausVid` @b545eb27 | CC-BY-NC-4.0 | 121.6 GB (`.pt` checkpoints and LMDB datasets) | tianweiy/CausVid | Self-Forcing supersedes it on the same Wan 2.1 1.3B base with an Apache-2.0 license (decision 2026-11-26) |
+| **LTX-2.3 distilled 1.1** — QUEUED, restrictive license | `Lightricks/LTX-2.3` @c1521179 (`ltx-2.3-22b-distilled-1.1.safetensors`, `-distilled-lora-384-1.1`, `ltx-2.3-spatial-upscaler-x2-1.1`, `-x1.5-1.0`, `ltx-2.3-temporal-upscaler-x2-1.0`) | LTX-2 Community License | 46.2 GB single file; LoRA 7.6 GB; upscalers 2.4 GB | diffusers `LTX2Pipeline` over a conversion | A refresh of the distilled transformer: the shipped `ltx-2.3` reads the dev transformer (`diffusers/LTX-2.3-Diffusers` equals `ltx-2.3-22b-dev` tensor for tensor), and against dev every distilled-1.1 component but the transformer is byte-identical |
+
+Notes:
+
+- No LTX-2.x point release follows LTX-2.5: the commits of 2026-11-26 on `Lightricks/LTX-2.5` and
+  `-Diffusers` change the model card only, and every Lightricks repository created since is a LoRA, an
+  IC-LoRA, or `Lightricks/LTX-2-Marking` (an MIT watermark embedder and detector, not a generator).
+- VideoX-Fun's Inpaint pipeline decides its 5B path by `transformer.config.dim == 3072`, so a test-dev
+  release that reduces the width takes the other path; the 5B InP test-dev keeps the released width.
 
 ### Tier B — same vendor, new architecture
 

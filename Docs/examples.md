@@ -3790,6 +3790,30 @@ let custom = NFKMLXVideoBackend(identifier: "my-video-model", configuration: con
 Run a clip off the render thread: it is one forward pass per frame. `NFKMLXVideoFile` is the
 decode/encode layer underneath, and is usable on its own.
 
+### Wan 2.2 Fun (`NFKMLXWanFunGenerator`)
+
+The six Wan 2.2 Fun releases film a clip from a prompt under one kind of condition each: Control follows a
+pose, depth, or edge video and an optional reference image, InP fills the frames between a start and an end
+image (or the masked part of a video), and Control-Camera follows a camera trajectory. Each comes at 5B
+(Wan 2.2 TI2V-5B's geometry) and A14B (two 14B experts). The generator reads alibaba-pai's own release
+directory, in the original Wan layout:
+
+```swift
+let fun = try NFKMLXWanFunGenerator.generator(directoryURL: funRelease, residency: .automatic)
+let clip = try fun.video(forPrompt: "a dancer on a pier at dusk",
+                         conditions: NFKMLXWanFunConditions(controlVideo: poseFrames, referenceImage: dancer),
+                         frames: 81, width: 832, height: 480)   // [frames, H, W, 3] in 0...1
+let poses = try NFKMLXWanCameraTrajectory(poseFileURL: zoomIn)   // a Control-Camera release's trajectory
+let backend = fun.inferenceBackend()   // NFKInputVideo, NFKInputImage, NFKMLXVideoInputKey.* in, NFKOutputVideo out
+```
+
+Every video and image in the conditions is `[F, H, W, 3]` or `[H, W, 3]` in `0...1` at the clip's size;
+`NFKMLXWanFunConditions.startImage(_:endImage:frames:)` builds an InP release's video and mask from two
+pictures. The defaults are VideoX-Fun's: Euler at a flow shift of 5, 50 steps, guidance 6. An A14B release is
+about 70 GB; `generator(directoryURL:residency:precision:quantizationBits:)` packs its experts, and a staged
+load holds one expert at a time. The sampler is at reference parity against VideoX-Fun's own pipelines over
+small random releases in the released layout.
+
 ### V-JEPA 2 video features (`NFKMLXVJEPA2`)
 
 V-JEPA 2 is a self-supervised video encoder: a clip (or a single image) becomes a mean-pooled feature
@@ -6168,6 +6192,20 @@ let animateNet = try NFKMLXWanAnimate.network(directoryURL: animateRelease, quan
 try NFKMLXWanAnimate.fineTune(animateNet, examples: { _ in [example] }, steps: 1_000)
 try NFKMLXWanAnimate.saveAdapters(of: animateNet, to: animateLoRAURL)
 try animator.addAdapter(at: animateLoRAURL, scale: 1)
+```
+
+A Wan 2.2 Fun release trains on examples the generator builds from a clip and its conditions. An A14B
+expert trains as DiffSynth-Studio's Fun scripts do; a 5B release as VideoX-Fun's `train_control_lora`
+does:
+
+```swift
+let funExample = try fun.trainingExample(video: clipFrames, prompt: caption,
+                                         conditions: NFKMLXWanFunConditions(controlVideo: poseFrames))
+let funPreset = NFKMLXWanFunGenerator.referencePreset(variant: fun.variant, expert: .lowNoise)
+let funNet = try NFKMLXWanFunGenerator.network(directoryURL: funRelease, expert: .lowNoise, quantizationBits: 4)
+try NFKMLXWanFunGenerator.fineTune(funNet, examples: { _ in [funExample] }, preset: funPreset, steps: 1_000)
+try NFKMLXWanFunGenerator.saveAdapters(of: funNet, to: funLoRAURL, preset: funPreset)
+try fun.addAdapter(at: funLoRAURL, scale: 1, expert: .lowNoise)  // Objective-C: addAdapterAtURL:scale:expert:error:
 ```
 
 Every preset noises the clean latent to `(1 − σ)·clean + σ·noise` and holds the prediction to

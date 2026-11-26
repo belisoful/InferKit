@@ -212,6 +212,28 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertEqual(NFKMLXWanExpert.lowNoise.rawValue, 1)
     }
 
+    // Docs/examples.md: Wan 2.2 Fun. The generator needs a release directory; the conditions and the camera
+    // trajectory build without one.
+    func testExampleWanFun() throws {
+        try requireMLXRuntime()
+        XCTAssertThrowsError(try NFKMLXWanFunGenerator.generator(
+            directoryURL: URL(fileURLWithPath: "/nonexistent-wan-fun"), residency: .automatic))
+        XCTAssertTrue(NFKMLXWanFunGenerator.instancesRespond(to: NSSelectorFromString(
+            "framesForPrompt:negativePrompt:controlFrames:startImage:endImage:referenceImage:cameraTrajectory:frames:width:height:seed:error:")))
+        XCTAssertTrue(NFKMLXWanFunGenerator.instancesRespond(to: NSSelectorFromString("addAdapterAtURL:scale:expert:error:")))
+        let start = NFKMLXWanFunConditions.startImage(MLXRandom.uniform(low: 0, high: 1, [32, 32, 3]),
+                                                      endImage: MLXRandom.uniform(low: 0, high: 1, [32, 32, 3]), frames: 9)
+        XCTAssertEqual(start.video.shape, [9, 32, 32, 3])
+        XCTAssertEqual(start.mask[0].max().item(Float.self), 0, "the start image is kept")
+        let poses = try NFKMLXWanCameraTrajectory(poseFileContents: """
+            source
+            0 0.53 0.95 0.5 0.5 0 0 1 0 0 0 0 1 0 0 0 0 1 0
+            1 0.53 0.95 0.5 0.5 0 0 1 0 0 0 0 1 0 0 0 0 1 -0.04
+            """)
+        XCTAssertEqual(try poses.plucker(width: 16, height: 16).shape, [6, 2, 16, 16])
+        XCTAssertEqual(NFKMLXWanFunVariant.cameraA14B.releaseRepo, "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera")
+    }
+
     // Docs/examples.md: Wan 2.2 Animate. The generator needs the release directory; the tiny
     // configuration stands in for the 14B transformer, whose release
     // NFKMLXWanAnimate.loadWeights(into:fromDirectory:precision:) reads (NFKMLXWanAnimateTests).

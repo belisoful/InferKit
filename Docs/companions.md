@@ -770,6 +770,16 @@ models.
   frame. The release is about 50 GB; the transformer streams the blocks a machine cannot hold or packs
   them to 2 to 8 bits (about 9.6 GB at 4). The pipeline is at reference parity end to end over a small
   random release in the released layout, and every released stage is held to its loader by shape.
+- **`NFKMLXWanFunGenerator`** — the six Wan 2.2 Fun releases (alibaba-pai, Apache-2.0): Control (a pose,
+  depth, or edge video and a reference image), InP (a start and an end image, or a masked video), and
+  Control-Camera (a CameraCtrl camera trajectory, `NFKMLXWanCameraTrajectory`), each over Wan 2.2 TI2V-5B's
+  geometry and autoencoder (`wan2.2-fun-5b-control`, `-5b-inp`, `-5b-control-camera`) or as two 14B experts
+  over the Wan 2.1 autoencoder (`wan2.2-fun-a14b-control`, `-a14b-inp`, `-a14b-control-camera`). The releases
+  ship the original Wan layout (`.pth` umT5 and autoencoder files beside the transformer), which
+  `NFKMLXWanOriginalRelease` reads. The transformer is `NFKMLXWanTransformerNet` with the Fun inputs: wider
+  condition channels, `ref_conv` tokens ahead of the clip, and a camera adapter. At reference parity against
+  VideoX-Fun's own `Wan2_2FunControlPipeline` and `Wan2_2FunInpaintPipeline`; the A14B releases fine-tune with
+  LoRA as DiffSynth-Studio does, the 5B releases as VideoX-Fun's `train_control_lora` does.
 - **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
   3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
   a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`). Released Wan LoRAs merge into

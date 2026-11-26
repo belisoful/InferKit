@@ -294,6 +294,119 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   test runs the plain arm at 1 block only, since its 2-block arm reaches the standing resident limit; its bars
   are 18 GiB for 2 recomputed blocks and 2 GiB a block. The 40-block release's step at this clip is
   unmeasured.
+- `NFKMLXWanFunGenerator` (`@objc`) — the six Wan 2.2 Fun releases (alibaba-pai, Apache-2.0), end to end from
+  their original-layout directories, at reference parity against VideoX-Fun's own `Wan2_2FunControlPipeline` and
+  `Wan2_2FunInpaintPipeline` (aigc-apps/VideoX-Fun at 98fffa9). `NFKMLXWanFunVariant` names them:
+  - 5B (`Wan2.2-Fun-5B-Control` @b8bc1a65, `-InP` @d3e911d5, `-Control-Camera` @4dde4056): Wan 2.2 TI2V-5B's
+    geometry (3072 wide, 30 blocks) and the Wan 2.2 autoencoder (48 latent channels, 16× spatially);
+  - A14B (`Wan2.2-Fun-A14B-Control` @297be6d5, `-InP` @2d27b954, `-Control-Camera` @da1f119d): two 14B experts
+    (`high_noise_model/`, `low_noise_model/`) over the Wan 2.1 autoencoder; the high-noise expert runs every step at
+    or above timestep 900, the `boundary` of VideoX-Fun's `config/wan2.2/wan_civitai_i2v.yaml`.
+  The release defaults are VideoX-Fun's examples' (`examples/wan2.2_fun/predict_*.py`), since the repositories
+  state none: Euler at a flow shift of 5 (`NFKMLXFlowMatchConfiguration.wan`), 50 steps, guidance 6, and 121
+  frames of 704 × 1280 at 24 fps (5B) or 81 of 480 × 832 at 16 fps (A14B).
+  - **The original layout** (`NFKMLXWanOriginalRelease`). The transformer's `config.json` and safetensors carry
+    the original Wan names, the autoencoder is `Wan2.2_VAE.pth` or `Wan2.1_VAE.pth`, and umT5 is
+    `models_t5_umt5-xxl-enc-bf16.pth` with its tokenizer under `google/umt5-xxl/`. The family shares these three
+    files byte for byte (LFS sha256, 2026-11-26): every Fun release, S2V, VACE-Fun, Wan-Dancer, and SkyReels V3. The
+    transformer names map as diffusers' `convert_wan_transformer_to_diffusers` maps them (`norm3` is the affine
+    cross-attention norm, `modulation` the scale-shift table); the autoencoder's as `convert_vae` (Wan 2.1, whose
+    decoder groups the flat list `numResBlocks + 1` residual blocks then an upsampler) and `convert_vae_22`; umT5's
+    original `T5Encoder` names as transformers' `UMT5EncoderModel` (`gate` is `wi_0`, `fc1` is `wi_1`). Neither
+    `.pth` carries a configuration, so the autoencoder's widths and umT5's geometry are read from the tensors.
+  - **The tokenizer** is `google/umt5-xxl/tokenizer.json`'s fast tokenizer: the SentencePiece model's Unigram
+    pieces behind a normalizer that replaces every run of two or more spaces with one and applies no character
+    map. The bare `spiece.model` keeps a double space as an extra `▁` piece. VideoX-Fun passes the prompt as
+    written, with no other cleanup.
+  - **The transformer** is `NFKMLXWanTransformerNet` with three Fun inputs and the original arithmetic
+    (`formsSinusoidsInFloat64`: the timestep sinusoid and the rotary angles in float64, as `sinusoidal_embedding_1d`
+    and `rope_params` form them). `ref_conv` patchifies a reference image's latent into a frame of tokens ahead of
+    the clip: rotary frame 0, the clip's frames shifted by one, the timestep of the last clip token, dropped before
+    the unpatchify. The camera adapter (`control_adapter`, VideoX-Fun's `SimpleAdapter`) pixel-unshuffles a
+    Plücker embedding by 8 (A14B) or 16 (5B), patchifies it, runs one residual block, and adds it to the patch
+    embedding. A 5B release reads a timestep per token (`NFKWanConditioning.tokenTimesteps`, held as distinct
+    values and an index so a clip never holds a modulation per token).
+  - **The conditions** (`NFKMLXWanFunConditions`, `NFKMLXWanFunPipeline.prepare`) follow the pipelines' code. The
+    input channels are the noise, the control latents (a Control release; zeros without a control video), the
+    mask latents, and the masked video's latents: 148 for 5B Control, 100 for 5B InP and Camera, 52 and 36 for
+    A14B. The mask repeats pixel frame 0 four times and folds every four frames into a latent frame's channels,
+    then resizes trilinearly with `align_corners=False`, the first latent frame apart (`resize_mask`). A 16×
+    autoencoder's release also forms the latent mask (trilinear, `align_corners=True`): each token's timestep is
+    the step's times the mask, subsampled by the patch, and where the first frame is wholly kept every step blends
+    the masked latents back. VideoX-Fun's Inpaint pipeline takes that path where `transformer.config.dim == 3072`,
+    and its Control pipeline where the autoencoder compresses 16×; the two agree on every release. A start and an
+    end image are the inpainting video and mask `get_image_to_video_latent` builds. `NFKMLXWanCameraTrajectory`
+    reads a CameraCtrl pose file and builds the Plücker embedding as `process_pose_file` and `ray_condition` do
+    (poses relative to the first in float64, intrinsics rescaled from 1280 × 720, normalized rays, `o × d` then
+    `d`).
+  - **Measured on test-dev releases** (`Tools/wan-fun-testdev/make_testdev.py`: each release's own `config.json`
+    with 48 wide, 2 heads, 2 blocks, ffn 96, text 32; umT5 at 32 wide over the released vocabulary; the Wan 2.2
+    encoder at 16 wide and its released 256-wide decoder, the Wan 2.1 autoencoder at its released width; the 5B InP
+    transformer keeps 3072 wide and 24 heads, the value VideoX-Fun's Inpaint pipeline reads). `run_reference.py
+    wan_fun_pipeline` (videoxfun env) runs 9 frames, three steps, guidance 4, three runs per release: every frame
+    generated (with a control video or a camera trajectory, and a reference image where the release reads one), a
+    kept start and end image, and a kept rectangle on frames 2 onward (fractional token timesteps, no blend).
+    Token ids are exact and the prompt features 0.9999999999999197. Final latents and clip, first run:
+
+    | Release | Final latents | Clip |
+    |---|---|---|
+    | 5B Control | 0.9999999999998469 | 0.9999999999799478 |
+    | 5B InP | 0.9999999999794134 | 0.9999999999484279 |
+    | 5B Control-Camera | 0.9999999999999299 | 0.9999999999801937 |
+    | A14B Control | 0.9999999999998088 | 0.9999999999964444 |
+    | A14B InP | 0.9999999999998035 | 0.9999999999962969 |
+    | A14B Control-Camera | 0.9999999999999574 | 0.9999999999967171 |
+
+    The start-image and masked runs sit at 0.99999999997 or closer on every release; the 5B InP rows are the
+    3072-wide transformer's. The condition channels read 0.9999999999972 or closer, the reference latent
+    0.9999999999988, the camera embedding from VideoX-Fun's own `asset/Zoom_In.txt` 0.9999999999999966 (largest
+    difference under 1e-5), and the A14B expert of every step matches. The generator through each residency gives
+    the pipeline's figures; a staged load and a streamed block compute exactly as held ones; an 8-bit pack holds the
+    latents above 0.999.
+  - **Released transformers held by shape** (`testEveryFunReleaseMatchesItsLoader`, `IK_SHAPES_ROOT`
+    `wan22-fun-*`): 5B Control 827, InP 825, Control-Camera 831 tensors; each A14B expert 1097, 1095, and 1101; none
+    missing, unconsumed, or mismatched. No released-weight run: a 5B release is 24 GB and an A14B release about 70 GB.
+  - Runtime: staged residency (umT5, then the autoencoder with the 5B transformer, or each A14B expert as a stage
+    of its own, held only for its own steps); a streamed transformer reads the blocks the plan cannot hold from
+    the release on every pass; `quantizationBits` 2 to 8 packs the blocks' linear layers as each block loads
+    (`NFKMLXWanBlockedLoad` with the original names); precision `.checkpoint` (bfloat16 as stored) or `.float32`.
+    umT5 widens to float32 where the plan affords it. The model has no key-value cache across requests, no draft,
+    and no streamed partial output; the backend reports progress per step. Not built: VideoX-Fun's TeaCache,
+    CFG-skip, and RIFLEx options, which change the sampling rather than reproduce it.
+- Wan 2.2 Fun LoRA fine-tuning (`NFKMLXWanFunGenerator.fineTune`, `NFKMLXWanFunTraining.swift`) — the A14B
+  releases as DiffSynth-Studio trains them (1e8ae1d, `lora/Wan2.2-Fun-A14B-Control.sh`, `-InP.sh`,
+  `-Control-Camera.sh`), the 5B releases as VideoX-Fun does (`scripts/wan2.2_fun/train_control_lora.sh`), which
+  DiffSynth-Studio does not train. `trainingExample(video:prompt:conditions:)` builds an example with the
+  generator's own encoders and the sampler's own condition preparation; DiffSynth's Fun units
+  (`WanVideoUnit_FunControl`, `_FunReference`, `_FunCameraControl`, `_ImageEmbedderVAE`) build the same channels
+  for a frame-wise mask. The objective runs the transformer's original forward over the example's conditions
+  (`NFKMLXWanObjective.prediction`).
+  - DiffSynth (`NFKMLXWanFunGenerator.diffSynthPreset(expert:)`): `NFKMLXWanTrainingPreset.diffSynth` on the
+    expert's side of 0.358 (timestep 900), rank 32 on `q,k,v,o,ffn.0,ffn.2`. Measured (`run_reference.py
+    wan_fun_lora_diffsynth`, wantrain-diffsynth env, DiffSynth's own `WanModel` with `has_ref_conv` or
+    `add_control_adapter` under its LoRA, `FlowMatchSFTLoss` over `model_fn_wan_video` with `y`,
+    `reference_latents`, and `control_camera_latents_input`): Control prediction 0.9999999999999518, loss
+    1.9878968 against 1.9878968; Camera prediction 0.9999999999998113, loss 3.8798108 against 3.8798115; every
+    adapter gradient at cosine 1.0000000000 to ten places.
+  - VideoX-Fun (`NFKMLXWanTrainingPreset.videoXFun(expert:)`): an index uniform over the scheduler's construction
+    table (`NFKMLXWanSigmaSampler.videoXFun`, diffusers' `FlowMatchEulerDiscreteScheduler` at shift 5), an A14B
+    expert's side split at the entry nearest timestep 900, no loss weight, every element whose error exceeds 50
+    dropped (`custom_mse_loss`), rank 64 at alpha 32 on `q,k,v,ffn.0,ffn.2` (`.queryKeyValueAndFeedForward`),
+    AdamW at 1e-4 with weight decay 0.03 and epsilon 1e-10, a constant rate, the gradient norm clipped to 0.05, and
+    the kohya layout VideoX-Fun saves beside its PEFT file. A 5B example carries its latent mask
+    (`NFKMLXWanTrainingExample.latentMask`): the trainer sets every frame after the first to 1, and where the first
+    is wholly kept it blends the masked latents into the noised latent and those tokens read timestep 0. The
+    step is inline in the training loop, so `run_reference.py wan_fun_lora_videoxfun` transcribes its lines over
+    VideoX-Fun's own transformer under PEFT: the 5B case (3072 wide, the first frame kept, a 12-token prompt the
+    forward pads to 512) prediction 0.9999999999969619, loss 21.845076 against 21.845083, lowest gradient
+    0.999999998378; the A14B low-noise case prediction 0.9999999999999551, loss 2.0726695 against 2.0726695,
+    lowest gradient 0.999999999951. The A14B case carries a 512-token prompt: under 12 tokens and 500 padding
+    rows its cross-attention query and key gradients fall near 1e-8, where float32 cancellation leaves them
+    at cosine 0.9999982 and they discriminate nothing.
+  - `testAFunExpertTrainsSavesAndReloadsThroughItsFactory` and `testA5BReleaseTrainsUnderVideoXFunsRecipeAndReloads`
+    train on test-dev examples the generator builds, save in each trainer's layout, merge back into a fresh network
+    from the factory (within 1e-4 at float32), and load through `addAdapter(at:scale:expert:)`. A 14B expert trains
+    over a packed base (`network(directoryURL:expert:quantizationBits:precision:)`, QLoRA).
 - `NFKMLXVJEPA2` (`@objc`) — V-JEPA 2 (`VJEPA2Model` and `VJEPA2ForVideoClassification`, Meta, MIT), a
   self-supervised video ViT that maps a clip to a per-token feature sequence for retrieval or as a video
   encoder for a vision-language model; the classification releases add an attentive pooler and a linear
