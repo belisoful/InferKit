@@ -202,12 +202,21 @@ public struct NFKMLXWanTrainingExample {
     /// The channels an image-to-video transformer reads beside the noised latent: a mask and the first
     /// frame's latents, `[4 + zDim, frames, height, width]`. Introduced in InferKit 0.4.0.
     public var condition: MLXArray?
+    /// A Wan 2.2 Fun Control release's reference image latent `[zDim, height, width]`, read through `ref_conv`.
+    /// Introduced in InferKit 0.4.0.
+    public var reference: MLXArray?
+    /// A Wan 2.2 Fun Control-Camera release's camera embedding regrouped by latent frame,
+    /// `[24, frames, H, W]` at the pixel size. Introduced in InferKit 0.4.0.
+    public var camera: MLXArray?
 
-    public init(latent: MLXArray, logVariance: MLXArray? = nil, text: MLXArray, condition: MLXArray? = nil) {
+    public init(latent: MLXArray, logVariance: MLXArray? = nil, text: MLXArray, condition: MLXArray? = nil,
+                reference: MLXArray? = nil, camera: MLXArray? = nil) {
         self.latent = latent
         self.logVariance = logVariance
         self.text = text
         self.condition = condition
+        self.reference = reference
+        self.camera = camera
     }
 }
 
@@ -245,8 +254,13 @@ public struct NFKMLXWanObjective: Sendable {
         let dtype = NFKReferenceRounding.parameterType(of: net)
         let x0 = clean(example, epsilon: epsilon)
         let noisy = (1 - draw.sigma) * x0 + draw.sigma * noise
-        let input = example.condition.map { concatenated([noisy, $0], axis: 0) } ?? noisy
-        let prediction = net(input.asType(dtype), text: example.text.asType(dtype), t: MLXArray([draw.timestep]))
+        let input = (example.condition.map { concatenated([noisy, $0], axis: 0) } ?? noisy).asType(dtype)
+        // A transformer read from the original layout runs the original forward, as DiffSynth-Studio's does.
+        let prediction = net.config.formsSinusoidsInFloat64 || example.reference != nil || example.camera != nil
+            ? net(input, text: example.text.asType(dtype), t: Double(draw.timestep),
+                  conditioning: NFKWanConditioning(reference: example.reference?.asType(dtype),
+                                                   cameraControl: example.camera?.asType(dtype)))
+            : net(input, text: example.text.asType(dtype), t: MLXArray([draw.timestep]))
         return Self.loss(prediction: prediction, clean: x0, noise: noise, weight: draw.weight)
     }
 }

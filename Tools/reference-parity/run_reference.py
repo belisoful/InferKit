@@ -32628,7 +32628,7 @@ def _wan_original_to_diffusers(name):
              "time_projection.1": "condition_embedder.time_proj", "head.head": "proj_out"}
     if name == "head.modulation":
         return "scale_shift_table"
-    if name.startswith("patch_embedding."):
+    if name.startswith(("patch_embedding.", "ref_conv.", "control_adapter.")):
         return name
     for original, converted in plain.items():
         if name.startswith(original + "."):
@@ -32954,6 +32954,99 @@ def run_wan_lora_diffsynth_experts(image):
 
 
 MODELS["wan_lora_diffsynth_experts"] = run_wan_lora_diffsynth_experts
+
+
+def run_wan_fun_lora_diffsynth(image):
+    """DiffSynth-Studio's Wan 2.2 Fun A14B LoRA objective (modelscope/DiffSynth-Studio at 1e8ae1d,
+    `lora/Wan2.2-Fun-A14B-Control.sh` and `-Control-Camera.sh`), under the `wantrain-diffsynth` env: DiffSynth's
+    own `WanModel` at the oracles' tiny width over 16 latent channels (its `ref_conv` reads 16), adapted by its
+    `add_lora_to_model` (rank 4, alpha 8, `q,k,v,o,ffn.0,ffn.2`), and its `FlowMatchSFTLoss` over
+    `model_fn_wan_video` on the low-noise expert's side of the boundary (`--min_timestep_boundary 0.358`), at
+    float32. Two cases, each its own model: `control.` reads 52 channels (the noised latent, the control latents,
+    a mask, and the masked video's latents, `y`) and the reference image's latent through `ref_conv`
+    (`reference_latents`); `camera.` reads 36 channels and a camera embedding through the control adapter
+    (`control_camera_latents_input`). The conditions are random. Each case records the weights (`w::`, under
+    diffusers names), the draws, the prediction, the loss, and each adapter's gradient, as
+    `wan_lora_diffsynth_experts` records them. `image` unused.
+    """
+    from diffsynth.diffusion.flow_match import FlowMatchScheduler
+    from diffsynth.diffusion.loss import FlowMatchSFTLoss
+    from diffsynth.diffusion.training_module import DiffusionTrainingModule
+    from diffsynth.models.wan_video_dit import WanModel
+    from diffsynth.pipelines.wan_video import model_fn_wan_video
+
+    g = _WAN_TRAIN_GEOMETRY
+    channels = 16
+    scheduler = FlowMatchScheduler("Wan")
+    scheduler.set_timesteps(1000, training=True)
+    extra = {}
+    for case, in_dim, seed in (("control", 3 * channels + 4, 121), ("camera", 2 * channels + 4, 131)):
+        model = _randomized(WanModel(dim=g["dim"], in_dim=in_dim, ffn_dim=g["ffn"], out_dim=channels,
+                                     text_dim=g["text_dim"], freq_dim=g["freq"], eps=1e-6, patch_size=(1, 2, 2),
+                                     num_heads=g["heads"], num_layers=g["layers"], has_image_input=False,
+                                     has_ref_conv=case == "control", add_control_adapter=case == "camera",
+                                     in_dim_control_adapter=24, require_vae_embedding=True,
+                                     require_clip_embedding=False), seed=seed, scale=0.1)
+        for key, value in model.state_dict().items():
+            name = _wan_original_to_diffusers(key)
+            if name is not None:
+                extra[f"{case}.w::{name}"] = value.float().contiguous()
+        model = DiffusionTrainingModule.add_lora_to_model(None, model, ["q", "k", "v", "o", "ffn.0", "ffn.2"], 4, 8)
+        generator = torch.Generator().manual_seed(seed + 1)
+        for name, parameter in model.named_parameters():
+            if "lora_B" in name:
+                parameter.data = torch.randn(parameter.shape, generator=generator) * 0.1
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad_("lora_" in name)
+        latent = torch.randn(channels, 3, 4, 4, generator=generator)
+        text = torch.randn(_WAN_TRAIN_TOKENS, g["text_dim"], generator=generator)
+        condition = torch.randn(in_dim - channels, *latent.shape[1:], generator=generator)
+        inputs = dict(input_latents=latent.unsqueeze(0), context=text.unsqueeze(0), y=condition.unsqueeze(0),
+                      max_timestep_boundary=1, min_timestep_boundary=0.358)
+        if case == "control":
+            reference = torch.randn(1, channels, 1, 4, 4, generator=generator)
+            inputs["reference_latents"] = reference
+            extra[f"{case}.reference"] = reference[0, :, 0].contiguous()
+        else:
+            camera = torch.randn(1, 24, 3, 32, 32, generator=generator)
+            inputs["control_camera_latents_input"] = camera
+            extra[f"{case}.camera"] = camera[0].contiguous()
+        pipe = type("Pipeline", (), {})()
+        pipe.scheduler, pipe.torch_dtype, pipe.device = scheduler, torch.float32, "cpu"
+        pipe.in_iteration_models, pipe.dit = ("dit",), model
+        pipe.model_fn = model_fn_wan_video
+        torch.manual_seed(seed + 2)
+        loss = FlowMatchSFTLoss(pipe, **inputs)
+        loss.backward()
+        torch.manual_seed(seed + 2)
+        index = torch.randint(int(0.358 * len(scheduler.timesteps)), len(scheduler.timesteps), (1,))
+        noise = torch.randn_like(latent.unsqueeze(0))[0]
+        timestep = scheduler.timesteps[index]
+        sigma = scheduler.sigmas[torch.argmin((scheduler.timesteps - timestep).abs())]
+        noisy = (1 - sigma) * latent + sigma * noise
+        call = {key: value for key, value in inputs.items() if key in ("y", "reference_latents", "control_camera_latents_input")}
+        with torch.no_grad():
+            prediction = model_fn_wan_video(dit=model, latents=noisy.unsqueeze(0), timestep=timestep,
+                                            context=text.unsqueeze(0), **call)[0]
+        extra.update({f"{case}.index": index.float(), f"{case}.timestep": timestep.float().reshape(1),
+                      f"{case}.sigma": sigma.float().reshape(1),
+                      f"{case}.weight": scheduler.training_weight(timestep).float().reshape(1),
+                      f"{case}.latent": latent.contiguous(), f"{case}.condition": condition.contiguous(),
+                      f"{case}.noise": noise.contiguous(), f"{case}.text": text.contiguous(),
+                      f"{case}.prediction": prediction.float().contiguous(), f"{case}.loss": loss.detach().reshape(1)})
+        for name, module in model.named_modules():
+            if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+                a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+                path = _wan_original_to_diffusers(name + ".weight").removesuffix(".weight")
+                extra[f"{case}.lora::{path}.lora_a"] = a.detach().t().contiguous().float()
+                extra[f"{case}.lora::{path}.lora_b"] = b.detach().t().contiguous().float()
+                extra[f"{case}.grad::{path}.lora_a"] = a.grad.detach().t().contiguous().float()
+                extra[f"{case}.grad::{path}.lora_b"] = b.grad.detach().t().contiguous().float()
+    globals()["_extra"] = {key: value.clone() for key, value in extra.items()}
+    return extra["control.prediction"].clone()
+
+
+MODELS["wan_fun_lora_diffsynth"] = run_wan_fun_lora_diffsynth
 
 
 def _diffsynth_dense_flex_attention():

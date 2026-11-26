@@ -140,6 +140,20 @@ public final class NFKMLXWanFunGenerator: NSObject {
         }
     }
 
+    /// The text features of `prompts` from one load of umT5.
+    func encodedFeatures(_ prompts: [String]) throws -> [MLXArray] {
+        try staging.exclusively {
+            try staging.with(textStage) { encoder in
+                prompts.map { NFKMLXWanFunRelease.features($0, encoder: encoder, segmenter: segmenter) }
+            }
+        }
+    }
+
+    /// Runs `body` with the pipeline stage (the autoencoder, and a 5B release's transformer).
+    func withPipeline<T>(_ body: (NFKMLXWanFunPipeline) throws -> T) throws -> T {
+        try staging.exclusively { try staging.use(pipelineStage, body) }
+    }
+
     var isHoldingTextEncoder: Bool { staging.exclusively { textStage.isHeld } }
     var isHoldingPipeline: Bool { staging.exclusively { pipelineStage.isHeld } }
     func isHoldingExpert(_ expert: NFKMLXWanExpert) -> Bool {

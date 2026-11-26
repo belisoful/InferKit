@@ -11,6 +11,8 @@
 import XCTest
 import InferKit
 import MLX
+import MLXNN
+import MLXOptimizers
 @testable import InferKitMLX
 
 final class NFKMLXWanFunTests: XCTestCase {
@@ -361,5 +363,116 @@ final class NFKMLXWanFunTests: XCTestCase {
         NFKMLXWanFunGenerator.register()
         XCTAssertThrowsError(try NFKMLXModelRegistry.backend(named: "wan2.2-fun-5b-inp", weightsURL: directory))
         XCTAssertNoThrow(try NFKMLXModelRegistry.backend(named: "wan2.2-fun-5b-control", weightsURL: directory))
+    }
+
+    // MARK: Training
+
+    /// The network a DiffSynth Fun record's case describes, its adapters (rank 4, alpha 8) at the recorded values.
+    private func diffSynthNetwork(_ record: [String: MLXArray], case name: String) throws -> NFKMLXWanTransformerNet {
+        let section = { (prefix: String) in
+            Dictionary(uniqueKeysWithValues: record.compactMap { key, value in
+                key.hasPrefix("\(name).\(prefix)") ? (String(key.dropFirst(name.count + 1 + prefix.count)), value) : nil
+            })
+        }
+        let weights = section("w::")
+        let inChannels = weights["patch_embedding.weight"]!.dim(1)
+        let configuration = NFKMLXWanConfiguration(
+            inChannels: inChannels, heads: 2, headDim: 24, layers: 2, ffnDim: 48, textDim: 32, patchSize: [1, 2, 2],
+            outChannels: 16, referenceChannels: weights["ref_conv.weight"] == nil ? nil : 16,
+            controlAdapterChannels: weights["control_adapter.conv.weight"] == nil ? nil : 24,
+            formsSinusoidsInFloat64: true)
+        let net = NFKMLXWanTransformerNet(configuration)
+        let adapted = try NFKMLXLoRA.apply(to: net, rank: 4, alpha: 8) { path, _ in
+            NFKMLXWanLoRATargets.attentionAndFeedForward.contains(path)
+        }
+        let adapters = section("lora::")
+        XCTAssertEqual(adapted * 2, adapters.count, "the oracle adapts DiffSynth's targets")
+        let base = weights.map { key, value -> (String, MLXArray) in
+            NFKMLXWanOriginalRelease.adaptedTransformer(key: key, value: value)
+        }
+        try NFKMLXWeights.apply(base + adapters.map { ($0.key, $0.value) }, to: net, verifyShapes: true)
+        return net
+    }
+
+    func testFunA14BLoRAMatchesDiffSynth() throws {
+        try requireMLXRuntime()
+        guard let path = NFKMLXValidationConfig.environment["IK_PARITY_WAN22_FUN_LORA_DIFFSYNTH"] else {
+            throw XCTSkip("set IK_PARITY_WAN22_FUN_LORA_DIFFSYNTH (run_reference.py wan_fun_lora_diffsynth)")
+        }
+        let record = try MLX.loadArrays(url: URL(fileURLWithPath: path))
+        let preset = NFKMLXWanFunGenerator.diffSynthPreset(expert: .lowNoise)
+        for name in ["control", "camera"] {
+            let draw = preset.objective.sampler.draw(record["\(name).index"]!.item(Float.self), weighting: preset.objective.weighting)
+            XCTAssertEqual(draw.timestep, record["\(name).timestep"]!.item(Float.self), name)
+            XCTAssertEqual(draw.sigma, record["\(name).sigma"]!.item(Float.self), name)
+            let net = try diffSynthNetwork(record, case: name)
+            let example = NFKMLXWanTrainingExample(latent: record["\(name).latent"]!, text: record["\(name).text"]!,
+                                                   condition: record["\(name).condition"], reference: record["\(name).reference"],
+                                                   camera: record["\(name).camera"])
+            let noise = record["\(name).noise"]!
+            let noisy = (1 - draw.sigma) * example.latent + draw.sigma * noise
+            let prediction = net(concatenated([noisy, example.condition!], axis: 0), text: example.text,
+                                 t: Double(draw.timestep),
+                                 conditioning: NFKWanConditioning(reference: example.reference, cameraControl: example.camera))
+            let predictionCosine = cosine(prediction, record["\(name).prediction"]!)
+            let loss = preset.objective.score(net, example: example, draw: draw, noise: noise, epsilon: nil).item(Float.self)
+            let reference = record["\(name).loss"]!.item(Float.self)
+            XCTAssertEqual(loss, reference, accuracy: 1e-5 * reference, name)
+            net.freeze()
+            for (_, layer) in net.leafModules().flattened() where layer is NFKMLXLoRALinear {
+                layer.unfreeze(recursive: false, keys: ["lora_a", "lora_b"])
+            }
+            let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, _ in
+                [preset.objective.score(net, example: example, draw: draw, noise: noise, epsilon: nil)]
+            }(net, []).1.flattened())
+            let recorded = Dictionary(uniqueKeysWithValues: record.compactMap { key, value in
+                key.hasPrefix("\(name).grad::") ? (String(key.dropFirst(name.count + 7)), value) : nil
+            })
+            XCTAssertEqual(Set(gradients.keys), Set(recorded.keys), "\(name): a gradient for every adapter")
+            let lowest = recorded.map { key, value in gradients[key].map { cosine($0, value) } ?? 0 }.min() ?? 0
+            print("wan fun lora diffsynth \(name): prediction \(String(format: "%.16f", predictionCosine)), loss \(loss) "
+                  + "vs \(reference), lowest gradient cosine \(String(format: "%.10f", lowest))")
+            XCTAssertGreaterThan(predictionCosine, 0.999999, name)
+            XCTAssertGreaterThan(lowest, 0.999999, name)
+        }
+    }
+
+    func testAFunExpertTrainsSavesAndReloadsThroughItsFactory() throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release("IK_VAL_WAN22_FUN_A14B_CONTROL_TESTDEV",
+                                              record: "IK_PARITY_WAN22_FUN_A14B_CONTROL_PIPELINE")
+        let generator = try NFKMLXWanFunGenerator.generator(directoryURL: directory, residency: .resident,
+                                                            precision: .float32, quantizationBits: 0)
+        let control = record["control_video"]!
+        let video = control[.stride(by: -1)]
+        let example = try generator.trainingExample(
+            video: video, prompt: prompt,
+            conditions: NFKMLXWanFunConditions(controlVideo: control, referenceImage: record["reference_image"]))
+        XCTAssertEqual(example.condition?.dim(0), 16 + 4 + 16)
+        XCTAssertEqual(example.reference?.shape, [16, 4, 6])
+        var preset = NFKMLXWanFunGenerator.diffSynthPreset(expert: .lowNoise)
+        preset.learningRate = 1e-2
+        preset.warmupSteps = 0
+        let net = try NFKMLXWanFunGenerator.network(directoryURL: directory, expert: .lowNoise)
+        let losses = try NFKMLXWanFunGenerator.fineTune(net, examples: { _ in [example] }, preset: preset, steps: 3, seed: 7)
+        XCTAssertEqual(losses.count, 3)
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("wan-fun-lora-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try NFKMLXWanFunGenerator.saveAdapters(of: net, to: url, preset: preset)
+        let fresh = try NFKMLXWanFunGenerator.network(directoryURL: directory, expert: .lowNoise)
+        let report = try NFKMLXWanLoRA.merge(adapterURL: url, into: fresh)
+        XCTAssertEqual(report.mergedLayers, 2 * 10)
+        let input = concatenated([example.latent, example.condition!], axis: 0)
+        let conditioning = NFKWanConditioning(reference: example.reference)
+        let trained = net(input, text: example.text, t: 500, conditioning: conditioning)
+        let merged = fresh(input, text: example.text, t: 500, conditioning: conditioning)
+        XCTAssertLessThan((trained - merged).abs().max().item(Float.self), 1e-3, "the saved adapters merge to the trained network")
+
+        let before = try generatorRun(generator, record)
+        try generator.addAdapter(at: url, scale: 1, expert: .lowNoise)
+        XCTAssertEqual(generator.adapterCount, 1)
+        XCTAssertGreaterThan((try generatorRun(generator, record) - before).abs().max().item(Float.self), 0,
+                             "the low-noise adapter changes the clip")
     }
 }
