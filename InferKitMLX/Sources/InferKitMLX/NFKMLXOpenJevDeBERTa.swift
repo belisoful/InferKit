@@ -241,7 +241,7 @@ public final class NFKMLXOpenJevDeBERTa: NSObject, NFKMLXDecisionModel {
     @objc public static let repository = "com-kotobalabs/open-jev-deberta-v3-large"
 
     /// The repository commit the reference-parity measurements were taken at.
-    @objc public static let measuredRevision = "19bf9a64815add579fbf6c907bef584d9277a8e4"
+    @objc public static let measuredRevision = "188ee67a5c93122b916e5acd5bdb0cb3623e380a"
 
     /// The files the model needs from the repository.
     @objc public static let releaseFiles = ["config.json", "open_jev_config.json", "added_tokens.json",

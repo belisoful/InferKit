@@ -1360,6 +1360,23 @@ public final class NFKMLXLanguage: NSObject {
     static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json", "chat_template.jinja", "generation_config.json"]
     static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
 
+    /// The commits the Mistral releases were measured at, by repository: Mistral Small 3 24B Instruct
+    /// and Mixtral 8x7B Instruct.
+    ///
+    /// @discussion A download that names no revision of one of these repositories reads the commit
+    /// listed here. Mistral's later commits move the chat template from `tokenizer_config.json` into
+    /// `chat_template.jinja` and change the prompt it renders. Introduced in InferKit 0.4.0.
+    @objc public static let measuredRevisions: [String: String] = [
+        "mistralai/Mistral-Small-24B-Instruct-2501": "9527884be6e5616bdd54de542f9ae13384489724",
+        "mistralai/Mixtral-8x7B-Instruct-v0.1": "eba92302a2861cdc0098cc54bc9f17cb2c47eb61",
+    ]
+
+    /// The revision a download of `repo` reads: `revision`, else the commit ``measuredRevisions`` lists,
+    /// else nil for the default branch.
+    static func downloadRevision(repo: String, revision: String?) -> String? {
+        revision ?? measuredRevisions[repo]
+    }
+
     /// A decoder at `configuration`, with random weights until a load fills it. Introduced in InferKit
     /// 0.4.0.
     public static func makeNet(_ configuration: NFKMLXLanguageConfiguration = .qwen3_0_6B) -> NFKMLXLanguageNet {
@@ -2681,10 +2698,11 @@ public final class NFKMLXLanguage: NSObject {
 
     /// The release directory a download of `repo` fills: `config.json`, `tokenizer.json`,
     /// `tokenizer_config.json`, whichever of `vocab.json`, `merges.txt`, `added_tokens.json`, and
-    /// `chat_template.jinja` the repo serves, and the weights, single-file or sharded.
+    /// `chat_template.jinja` the repo serves, and the weights, single-file or sharded. A nil `revision`
+    /// reads the commit ``measuredRevisions`` lists for `repo`, and the default branch of any other.
     static func releaseDirectory(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> URL {
         try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+            repo: repo, revision: downloadRevision(repo: repo, revision: revision), cacheDirectoryURL: cacheDirectoryURL,
             required: requiredFiles, optional: optionalFiles, weights: weightFiles)
     }
 

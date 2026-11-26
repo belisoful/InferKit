@@ -14456,7 +14456,7 @@
       "variants" : [
         {
           "displayName" : "Gemma 4 12B IT",
-          "downloadBytes" : 23951745229,
+          "downloadBytes" : 23951732764,
           "id" : "gemma-4-12b-it",
           "isDefault" : true,
           "memoryFacts" : {
@@ -14501,11 +14501,11 @@
                 "role" : "config"
               },
               {
-                "bytes" : 32169626,
+                "bytes" : 32157161,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
+                "sha256" : "9788bdb6a021b3170357cd3587b5d622b1177561ad3c5bf43d73728fd71aeacb"
               },
               {
                 "bytes" : 18683,
@@ -14536,7 +14536,7 @@
             "layout" : "directory",
             "repository" : "google/gemma-4-12B-it",
             "requiresConversion" : false,
-            "revision" : "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7"
+            "revision" : "43c9d014b231474fa7212dbb48a762566c2b255d"
           }
         }
       ]
@@ -15740,7 +15740,7 @@
       "variants" : [
         {
           "displayName" : "Gemma 4 E2B IT",
-          "downloadBytes" : 10278818149,
+          "downloadBytes" : 10278804256,
           "id" : "gemma-4-e2b-it",
           "isDefault" : true,
           "memoryFacts" : {
@@ -15785,11 +15785,11 @@
                 "role" : "config"
               },
               {
-                "bytes" : 32169626,
+                "bytes" : 32155733,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
+                "sha256" : "ab26b2add729e6f645bd869f228f14190a06615538f3be6f7786f33d13d78ad2"
               },
               {
                 "bytes" : 18569,
@@ -15820,7 +15820,7 @@
             "layout" : "directory",
             "repository" : "google/gemma-4-E2B-it",
             "requiresConversion" : false,
-            "revision" : "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+            "revision" : "4adf15748de9e1a0097b6274cee9c15836c41c37"
           }
         }
       ]
@@ -16232,7 +16232,7 @@
       "variants" : [
         {
           "displayName" : "Gemma 4 E4B IT",
-          "downloadBytes" : 16024792306,
+          "downloadBytes" : 16024779108,
           "id" : "gemma-4-e4b-it",
           "isDefault" : true,
           "memoryFacts" : {
@@ -16277,11 +16277,11 @@
                 "role" : "config"
               },
               {
-                "bytes" : 32169626,
+                "bytes" : 32156428,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
+                "sha256" : "91d9cf86906f78e197021fda88214d448e5c120665d0243a8e776e046986c6bc"
               },
               {
                 "bytes" : 18569,
@@ -16312,7 +16312,7 @@
             "layout" : "directory",
             "repository" : "google/gemma-4-E4B-it",
             "requiresConversion" : false,
-            "revision" : "ee0ef6023621cff504d758262d4e04895a5af4a2"
+            "revision" : "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c"
           }
         }
       ]
@@ -16475,7 +16475,7 @@
       "variants" : [
         {
           "displayName" : "Gemma 4 E2B IT",
-          "downloadBytes" : 10278818149,
+          "downloadBytes" : 10278804256,
           "id" : "gemma-4-e2b-it",
           "isDefault" : true,
           "memoryFacts" : {
@@ -16509,11 +16509,11 @@
                 "role" : "config"
               },
               {
-                "bytes" : 32169626,
+                "bytes" : 32155733,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
+                "sha256" : "ab26b2add729e6f645bd869f228f14190a06615538f3be6f7786f33d13d78ad2"
               },
               {
                 "bytes" : 18569,
@@ -16544,12 +16544,12 @@
             "layout" : "directory",
             "repository" : "google/gemma-4-E2B-it",
             "requiresConversion" : false,
-            "revision" : "3e22461f65e89153144f8adb70e3b8c2cc9845a7"
+            "revision" : "4adf15748de9e1a0097b6274cee9c15836c41c37"
           }
         },
         {
           "displayName" : "Gemma 4 E4B IT",
-          "downloadBytes" : 16024792306,
+          "downloadBytes" : 16024779108,
           "id" : "gemma-4-e4b-it",
           "isDefault" : false,
           "memoryFacts" : {
@@ -16583,11 +16583,11 @@
                 "role" : "config"
               },
               {
-                "bytes" : 32169626,
+                "bytes" : 32156428,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
+                "sha256" : "91d9cf86906f78e197021fda88214d448e5c120665d0243a8e776e046986c6bc"
               },
               {
                 "bytes" : 18569,
@@ -16618,7 +16618,7 @@
             "layout" : "directory",
             "repository" : "google/gemma-4-E4B-it",
             "requiresConversion" : false,
-            "revision" : "ee0ef6023621cff504d758262d4e04895a5af4a2"
+            "revision" : "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c"
           }
         }
       ]
@@ -25652,7 +25652,7 @@
             "layout" : "directory",
             "repository" : "convaiinnovations/laya",
             "requiresConversion" : false,
-            "revision" : "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
+            "revision" : "246177e5cb70334c9831c0730864a93c836aac8f"
           }
         }
       ]
@@ -25826,7 +25826,7 @@
             "layout" : "directory",
             "repository" : "convaiinnovations/laya",
             "requiresConversion" : false,
-            "revision" : "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
+            "revision" : "246177e5cb70334c9831c0730864a93c836aac8f"
           }
         }
       ]
@@ -25999,7 +25999,7 @@
             "layout" : "directory",
             "repository" : "convaiinnovations/laya",
             "requiresConversion" : false,
-            "revision" : "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
+            "revision" : "246177e5cb70334c9831c0730864a93c836aac8f"
           }
         }
       ]
@@ -31300,9 +31300,9 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "9527884be6e5616bdd54de542f9ae13384489724",
             "repository" : "mistralai/Mistral-Small-24B-Instruct-2501",
-            "requiresConversion" : false
+            "requiresConversion" : false,
+            "revision" : "9527884be6e5616bdd54de542f9ae13384489724"
           }
         }
       ]
@@ -32134,9 +32134,9 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "eba92302a2861cdc0098cc54bc9f17cb2c47eb61",
             "repository" : "mistralai/Mixtral-8x7B-Instruct-v0.1",
-            "requiresConversion" : false
+            "requiresConversion" : false,
+            "revision" : "eba92302a2861cdc0098cc54bc9f17cb2c47eb61"
           }
         }
       ]
@@ -36651,7 +36651,7 @@
             "layout" : "directory",
             "repository" : "com-kotobalabs/open-jev-deberta-v3-large",
             "requiresConversion" : false,
-            "revision" : "19bf9a64815add579fbf6c907bef584d9277a8e4"
+            "revision" : "188ee67a5c93122b916e5acd5bdb0cb3623e380a"
           }
         }
       ]
@@ -38676,7 +38676,7 @@
       "variants" : [
         {
           "displayName" : "pplx-decider-flash-v1.2",
-          "downloadBytes" : 9099990803,
+          "downloadBytes" : 9099990817,
           "id" : "pplx-decider-flash-v1.2",
           "isDefault" : true,
           "memoryFacts" : {
@@ -38730,11 +38730,11 @@
                 "sha256" : "6751578171026190d4db8078e97162b404fd984646e0e9aec13844e4dd5b1711"
               },
               {
-                "bytes" : 19989492,
+                "bytes" : 19989506,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "6f32ce20dc35f57a7f9ad1eac03525bd7d30f9df8cea6507e958279cc3657706"
+                "sha256" : "2f4dd754486e96054d0c841ddde816748be0116cbbc8ba8b5311ae4853432a21"
               },
               {
                 "bytes" : 1268,
@@ -38764,7 +38764,7 @@
             "layout" : "directory",
             "repository" : "perplexity-ai/pplx-decider-flash-v1.2",
             "requiresConversion" : false,
-            "revision" : "9ff7cf9838e59df461c276b7699d56b244d2af58"
+            "revision" : "281b36bf3a1107754a1c9ad5ae30851ac83579c3"
           }
         }
       ]
@@ -38983,7 +38983,7 @@
       "variants" : [
         {
           "displayName" : "pplx-decider-v1.2",
-          "downloadBytes" : 52193527155,
+          "downloadBytes" : 52193527169,
           "id" : "pplx-decider-v1.2",
           "isDefault" : true,
           "memoryFacts" : {
@@ -39037,11 +39037,11 @@
                 "sha256" : "3bada2dac60a9a27264f6847e00d85a81de606fbe85dcbf9a60a3f9677a0ae6b"
               },
               {
-                "bytes" : 19989492,
+                "bytes" : 19989506,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "6f32ce20dc35f57a7f9ad1eac03525bd7d30f9df8cea6507e958279cc3657706"
+                "sha256" : "2f4dd754486e96054d0c841ddde816748be0116cbbc8ba8b5311ae4853432a21"
               },
               {
                 "bytes" : 1268,
@@ -39071,7 +39071,7 @@
             "layout" : "directory",
             "repository" : "perplexity-ai/pplx-decider-v1.2",
             "requiresConversion" : false,
-            "revision" : "cce0f3f80033e9d89d80831d5281fd72124aacce"
+            "revision" : "9ae201ab9bf1314b805c19ac4e8d58edcae41a0a"
           }
         }
       ]
@@ -50666,7 +50666,7 @@
       "variants" : [
         {
           "displayName" : "Qwen3.8-Flash-Next",
-          "downloadBytes" : 360023280779,
+          "downloadBytes" : 360023272887,
           "id" : "qwen3.8-flash-next",
           "isDefault" : true,
           "memoryFacts" : {
@@ -50712,7 +50712,7 @@
                 "sha256" : "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
               },
               {
-                "bytes" : 17928,
+                "bytes" : 9984,
                 "optional" : false,
                 "path" : "tokenizer_config.json",
                 "role" : "tokenizer"
@@ -50736,7 +50736,7 @@
                 "role" : "config"
               },
               {
-                "bytes" : 8952,
+                "bytes" : 9004,
                 "optional" : true,
                 "path" : "chat_template.jinja",
                 "role" : "tokenizer"
@@ -50757,7 +50757,7 @@
             "layout" : "directory",
             "repository" : "Qwen/Qwen3.8-Flash-Next",
             "requiresConversion" : false,
-            "revision" : "de4b8e4d43b917e7706784d8bb445c9af86a3540"
+            "revision" : "812d96e10a0dd82b69d749e68693698cf6c36daa"
           }
         }
       ]
@@ -68046,7 +68046,7 @@
         "name" : "CreativeML Open RAIL++-M License",
         "note" : "Use restrictions apply.",
         "restrictsCommercialUse" : false,
-        "url" : "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"
+        "url" : "https://huggingface.co/sd2-community/stable-diffusion-2-1-base"
       },
       "memoryModel" : {
         "adapters" : "adapters",
@@ -68123,16 +68123,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 16634377492,
+                "residentBytes" : 5159810324
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 16634377492,
+                "residentBytes" : 5159810324
               },
               "title" : "Float32",
               "value" : "float32"
@@ -68190,6 +68190,7 @@
       ],
       "registryName" : "stable-diffusion-2-1-base",
       "requirements" : {
+        "minimumMemoryBytes" : 24622758575,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -68208,80 +68209,117 @@
       "variants" : [
         {
           "displayName" : "Stable Diffusion 2.1 base",
+          "downloadBytes" : 5161554104,
           "id" : "default",
           "isDefault" : true,
-          "measurement" : "unmeasurable",
-          "measurementNote" : "The publisher no longer serves stabilityai/stable-diffusion-2-1-base publicly. A local copy of the release builds under this registry name.",
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 11474567168,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2579905470,
+                  "checkpoint" : 5159810324,
+                  "float32" : 5159810324
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 24622758575,
+          "parameterCount" : 1289952504,
+          "peakBytes" : 16634377492,
+          "precision" : "float32",
           "registryName" : "stable-diffusion-2-1-base",
+          "residentBytes" : 5159810324,
           "source" : {
             "files" : [
               {
+                "bytes" : 911,
                 "optional" : false,
                 "path" : "unet/config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 553,
                 "optional" : false,
                 "path" : "vae/config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 1059962,
                 "optional" : false,
                 "path" : "tokenizer/vocab.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 524619,
                 "optional" : false,
                 "path" : "tokenizer/merges.txt",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 807,
                 "optional" : true,
                 "path" : "tokenizer/tokenizer_config.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 460,
                 "optional" : true,
                 "path" : "tokenizer/special_tokens_map.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 3463726498,
                 "optional" : true,
                 "path" : "unet/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "6dfae3e5f7d459b50f4b0850ead945972c75bb0e1897628933e169eb43974214"
               },
               {
+                "bytes" : 1731904736,
                 "optional" : true,
                 "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "28ec9cf3b239c0751c201b1f6fb46b551df5862731b30a37aa1360101cb3fbab"
               },
               {
+                "bytes" : 334643276,
                 "optional" : true,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "a1d993488569e928462932c8c38a0760b874d166399b14414135bd9c42df5815"
               },
               {
+                "bytes" : 167335342,
                 "optional" : true,
                 "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "3e4c08995484ee61270175e9e7a072b66a6e4eeb5f0c266667fe1f45b90daf9a"
               },
               {
+                "bytes" : 1361597018,
                 "optional" : true,
                 "path" : "text_encoder/model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "cce6febb0b6d876ee5eb24af35e27e764eb4f9b1d0b7c026c8c3333d4cfc916c"
               },
               {
+                "bytes" : 680821096,
                 "optional" : true,
                 "path" : "text_encoder/model.fp16.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "681c555376658c81dc273f2d737a2aeb23ddb6d1d8e5b3a7064636d359a22668"
               }
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "note" : "The publisher no longer serves stabilityai/stable-diffusion-2-1-base publicly. A local copy of the release builds under this registry name.",
-            "publiclyServed" : false,
-            "repository" : "stabilityai/stable-diffusion-2-1-base",
-            "requiresConversion" : false
+            "note" : "Stability AI withdrew stabilityai/stable-diffusion-2-1-base. This community mirror serves the same files.",
+            "repository" : "sd2-community/stable-diffusion-2-1-base",
+            "requiresConversion" : false,
+            "revision" : "4e63672c03103b6c636b8fb4119ba982469b2955"
           }
         }
       ]

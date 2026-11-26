@@ -70,6 +70,22 @@ final class NFKMLXPplxDeciderTests: XCTestCase {
 
     // MARK: - The prompt
 
+    // The ids are the tokenizers library's (0.23.1) on the measured commits' tokenizer.json, whose split pattern
+    // keeps combining marks inside a word as Qwen3.5's does; the earlier file encodes this text in 40 ids.
+    func testTheReleaseTokenizersKeepCombiningMarksInTheirWordsAsTheReference() throws {
+        let text = "नमस्ते दुनिया, यह एक परीक्षण है। สวัสดีครับ مَرْحَبًا بِالْعَالَمِ"
+        let ids = [58069, 84237, 150104, 153348, 184642, 235886, 11, 175089, 171549, 155171, 42201, 242749, 170046,
+                   154845, 245990, 153295, 22639, 164865, 28850, 150765, 150021, 222153, 187581, 155815, 152397, 50930]
+        var checked = 0
+        for key in ["IK_VAL_PPLX_DECIDER_FLASH", "IK_VAL_PPLX_DECIDER_27B"] {
+            guard let path = config[key] else { continue }
+            let (tokenizer, _) = try NFKMLXPplxDecider.tokenizer(inDirectory: URL(fileURLWithPath: path))
+            XCTAssertEqual(tokenizer.encode(text), ids, "\(key) holds the measured commit's tokenizer.json")
+            checked += 1
+        }
+        try XCTSkipIf(checked == 0, "set IK_VAL_PPLX_DECIDER_FLASH or IK_VAL_PPLX_DECIDER_27B")
+    }
+
     func testThePromptFollowsTheReferenceEncoder() {
         let specials = NFKMLXPplxDeciderPrompt.specialTokens(tokenizerConfiguration: Self.flashTokenizerConfiguration)
         XCTAssertEqual(Set(specials), ["<|vision_start|>", "<|audio_start|>", "<|fim_suffix|>", "<|vision_end|>",

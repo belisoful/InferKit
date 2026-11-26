@@ -375,9 +375,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `download(variant:revision:cacheDirectoryURL:)`, `laya(variant:…)`, and `backend(variant:…)` fetch
   them through `NFKHFHub` and build, each with a completion-handler peer. The folder returned is the
   hub cache's `<cache>/convaiinnovations/laya/<revision>/<folder>`, found from where
-  `rl_agent_config.json` landed. `measuredRevision` is `1c5edc17a7ac…`, the repository head when the
-  parity store was fetched (2026-09-22; the head commit is dated 2026-09-20), and all 15 file URLs
-  resolve at it. The three variants share one hub snapshot, so a cache size limit evicts them together.
+  `rl_agent_config.json` landed. `measuredRevision` is `246177e5cb70…` (2026-11-25). The parity store was
+  fetched at `1c5edc17a7ac…` (2026-09-22); the later commits change the model card and add a root
+  `config.json` the reader does not take, and every file the variants read is the same object at both, so
+  the records stand. All 15 file URLs resolve at it. The three variants share one hub snapshot, so a cache size limit evicts them together.
   Tested with a recording `NFKHFHub` subclass (paths fetched once, folder returned) and with the
   validation store symlinked into a cache layout (the variant factory answers exactly as the
   directory factory does).
@@ -386,7 +387,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `tokenizer_config.json` stores `extra_special_tokens` as a list, the folder's as a dictionary; the
   reader takes only the cls, sep, mask, and pad tokens, so either loads.
 - `NFKMLXOpenJevDeBERTa` (`@objc`) / `NFKMLXOpenJevDeBERTaNet` / `NFKMLXDeBERTaV2Net` —
-  open-jev-deberta-v3-large (`com-kotobalabs/open-jev-deberta-v3-large` at `19bf9a64`, Apache-2.0;
+  open-jev-deberta-v3-large (`com-kotobalabs/open-jev-deberta-v3-large` at `188ee67a`, whose only change from the measured `19bf9a64` is
+  the model card; Apache-2.0;
   base `microsoft/deberta-v3-large`, MIT), a community Jev reproduction. One pass over
   `[CLS] [STATE] state ([Q] instructions ([OPT] option)*)* [SEP]`; the head
   (`Linear(3H, H)`, GELU, `Linear(H, 1)`, saved as `head.safetensors` keys `0.*` / `2.*`, loaded through
@@ -488,11 +490,18 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   the base at `.float32`. The temperature is not refitted. The loader's prefix cache (opt-in there) is
   not ported: each candidate is its own pass.
 - `NFKMLXPplxDecider` (`@objc`) / `NFKMLXPplxDeciderNet` — pplx-decider v1.2, Perplexity's open-weight
-  decision models (`perplexity-ai/pplx-decider-flash-v1.2` at `9ff7cf98`, fine-tuned from Qwen/Qwen3.5-4B at
-  `851bf6e8`, and `perplexity-ai/pplx-decider-v1.2` at `cce0f3f8`, from Qwen/Qwen3.8-27B at `1d4bf0f2`;
+  decision models (`perplexity-ai/pplx-decider-flash-v1.2` at `281b36bf`, fine-tuned from Qwen/Qwen3.5-4B at
+  `851bf6e8`, and `perplexity-ai/pplx-decider-v1.2` at `9ae201ab`, from Qwen/Qwen3.8-27B at `1d4bf0f2`;
   Apache-2.0; public and ungated through the hub API, though each `release-manifest.json` says
   `private: true`). The reference is the release's own `source/src/pplx_decider` (`protocol.py`,
   `model.py`'s `reference_logits`).
+  **Revisions (2026-11-25).** The parity records were taken at `9ff7cf98` and `cce0f3f8`. Perplexity's
+  commits of 2026-11-25 change `tokenizer.json` alone: the pre-tokenizer's split pattern becomes Qwen3.5's,
+  which keeps combining marks (`\p{M}`) inside a word, so Devanagari, Thai, and vocalized Arabic encode in
+  fewer tokens. The reader already holds that pattern (`qwen35`). The weights and every other file are
+  unchanged, and the records' prompts encode identically under both files, so the records stand at the new
+  commits; `testTheReleaseTokenizersKeepCombiningMarksInTheirWordsAsTheReference` holds the new split to
+  the tokenizers library.
   A checkpoint is a `Qwen3_5Model` save (the decoder under `language_model.`, the vision tower under
   `visual.`) plus `readout.safetensors`, a bias-free `[255, hidden]` linear, and no output projection.
   `joint_config.json` declares protocol version 3 (`joint-question-inline-readout-v1`), which the loader

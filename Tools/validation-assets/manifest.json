@@ -2634,7 +2634,7 @@
     {
       "key": "GEMMA4_12B",
       "repo": "google/gemma-4-12B-it",
-      "revision": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+      "revision": "43c9d014b231474fa7212dbb48a762566c2b255d",
       "directory": "gemma-4-12b",
       "files": [
         "README.md",
@@ -5262,7 +5262,7 @@
       "key": "OPEN_JEV_DEBERTA",
       "directory": "open-jev-deberta-v3-large",
       "repo": "com-kotobalabs/open-jev-deberta-v3-large",
-      "revision": "19bf9a64815add579fbf6c907bef584d9277a8e4",
+      "revision": "188ee67a5c93122b916e5acd5bdb0cb3623e380a",
       "files": [
         "config.json",
         "open_jev_config.json",
@@ -5390,7 +5390,7 @@
       "key": "PPLX_DECIDER_FLASH",
       "directory": "pplx-decider-flash-v1.2",
       "repo": "perplexity-ai/pplx-decider-flash-v1.2",
-      "revision": "9ff7cf9838e59df461c276b7699d56b244d2af58",
+      "revision": "281b36bf3a1107754a1c9ad5ae30851ac83579c3",
       "files": [
         "LICENSE",
         "NOTICE",
@@ -5426,7 +5426,7 @@
       "key": "PPLX_DECIDER_27B",
       "directory": "pplx-decider-v1.2",
       "repo": "perplexity-ai/pplx-decider-v1.2",
-      "revision": "cce0f3f80033e9d89d80831d5281fd72124aacce",
+      "revision": "9ae201ab9bf1314b805c19ac4e8d58edcae41a0a",
       "files": [
         "LICENSE",
         "NOTICE",

@@ -861,10 +861,14 @@ Where the entries live:
 - A decision model's tasks are `decision`, then `classification`: Laya, Open-Jev, and the Open-Jev
   DeBERTa model.
 - A source carries a `note` a user should read (SAM 3.1's unconverted `.pt`), and
-  `publiclyServed: false` where the publisher withdrew the repository (`stabilityai/stable-diffusion-2-1-base`,
-  401 without a token since 2026-10). The entry and its registry name stay, because a local copy builds;
-  `NFKModelSource.noting(_:publiclyServed:)` writes both, `inferkit-catalog sources` passes them on, and
-  `measure.py` records such a source as unmeasurable.
+  `publiclyServed: false` where the publisher withdrew the repository and no faithful mirror serves it. The
+  entry and its registry name stay, because a local copy builds; `NFKModelSource.noting(_:publiclyServed:)`
+  writes both, `inferkit-catalog sources` passes them on, and `measure.py` records such a source as
+  unmeasurable. Stability AI withdrew every `stabilityai/stable-diffusion-2*` repository (401 since
+  2026-10). Stable Diffusion 2.1 base downloads from `sd2-community/stable-diffusion-2-1-base` at `4e63672c`:
+  its UNet, text encoder, autoencoder, tokenizer, and configurations are the same LFS objects as
+  `LanguageMachines/stable-diffusion-2-1-base`, which Hugging Face duplicated from Stability's repository on
+  2023-06-28, and as three other independent mirrors.
 - A backend reports its registry name as its identifier: each Whisper size (`whisper-base`; a `large`
   backend built outside the registry reports `whisper-large`), each wav2vec 2.0 and HuBERT release (the
   repository's name, or the configuration's `model_type` from a bare directory), and Granite's two names.

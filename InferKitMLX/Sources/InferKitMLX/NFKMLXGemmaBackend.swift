@@ -729,12 +729,12 @@ public extension NFKMLXGemmaLanguage {
     /// The commits the Gemma 4 releases were measured at, by repository: the E2B, the E4B, and the 12B.
     ///
     /// @discussion A download that names no revision of one of these repositories reads the commit
-    /// listed here. Google's later commits change `tokenizer.json`, which the Gemma tokenizer reads.
-    /// Introduced in InferKit 0.4.0.
+    /// listed here. Each is the commit whose `tokenizer.json` drops the merges that built Google's glitch
+    /// tokens. Introduced in InferKit 0.4.0.
     @objc static let measuredRevisions: [String: String] = [
-        "google/gemma-4-E2B-it": "3e22461f65e89153144f8adb70e3b8c2cc9845a7",
-        "google/gemma-4-E4B-it": "ee0ef6023621cff504d758262d4e04895a5af4a2",
-        "google/gemma-4-12B-it": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+        "google/gemma-4-E2B-it": "4adf15748de9e1a0097b6274cee9c15836c41c37",
+        "google/gemma-4-E4B-it": "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c",
+        "google/gemma-4-12B-it": "43c9d014b231474fa7212dbb48a762566c2b255d",
     ]
 
     /// The revision a download of `repo` reads: `revision`, else the commit ``measuredRevisions`` lists,

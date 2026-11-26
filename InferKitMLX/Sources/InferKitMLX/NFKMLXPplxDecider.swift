@@ -40,8 +40,8 @@ public enum NFKMLXPplxDeciderVariant: Int, Sendable, CaseIterable {
     /// The repository commit this package's measurements were taken at.
     public var measuredRevision: String {
         switch self {
-        case .flash: return "9ff7cf9838e59df461c276b7699d56b244d2af58"
-        case .twentySevenB: return "cce0f3f80033e9d89d80831d5281fd72124aacce"
+        case .flash: return "281b36bf3a1107754a1c9ad5ae30851ac83579c3"
+        case .twentySevenB: return "9ae201ab9bf1314b805c19ac4e8d58edcae41a0a"
         }
     }
 

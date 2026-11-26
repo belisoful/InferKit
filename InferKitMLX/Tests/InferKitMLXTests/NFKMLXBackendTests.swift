@@ -21,7 +21,7 @@ final class NFKMLXBackendTests: XCTestCase {
     func testEachModelResolvesToItsRelease() {
         let releases: [(NFKMLXStableDiffusionModel, String)] = [
             (.stableDiffusion15, "stable-diffusion-v1-5/stable-diffusion-v1-5"),
-            (.stableDiffusion21Base, "stabilityai/stable-diffusion-2-1-base"),
+            (.stableDiffusion21Base, "sd2-community/stable-diffusion-2-1-base"),
             (.sdxlTurbo, "stabilityai/sdxl-turbo"),
         ]
         for (model, repository) in releases {

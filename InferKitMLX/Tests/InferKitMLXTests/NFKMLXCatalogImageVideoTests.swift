@@ -285,10 +285,12 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
         XCTAssertTrue(sam31.files.contains { $0.path == NFKMLXCatalogImage.sam31Checkpoint && $0.role == NFKModelFileRoleWeights })
         XCTAssertNotNil(sam31.extensions["note"] as? String)
 
-        let withdrawn = try XCTUnwrap(try XCTUnwrap(entry("stable-diffusion-2-1-base")).descriptor().defaultVariant?.source)
-        XCTAssertEqual(withdrawn.repository, "stabilityai/stable-diffusion-2-1-base")
-        XCTAssertEqual(withdrawn.extensions["publiclyServed"] as? Bool, false)
-        XCTAssertNotNil(withdrawn.extensions["note"] as? String)
+        let mirrored = try XCTUnwrap(try XCTUnwrap(entry("stable-diffusion-2-1-base")).descriptor().defaultVariant?.source)
+        XCTAssertEqual(mirrored.repository, "sd2-community/stable-diffusion-2-1-base")
+        XCTAssertEqual(mirrored.revision, NFKMLXStableDiffusionRelease(.stableDiffusion21Base).revision)
+        XCTAssertEqual(mirrored.revision?.count, 40)
+        XCTAssertNil(mirrored.extensions["publiclyServed"])
+        XCTAssertNotNil(mirrored.extensions["note"] as? String)
     }
 
     func testEveryReleasedSizeHasItsOwnName() {

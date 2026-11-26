@@ -1293,9 +1293,9 @@ extension NFKMLXQwen4Exp {
     /// The commit of ``repository`` the release was measured at, which a download that names no revision
     /// of it reads.
     ///
-    /// @discussion Qwen's later commit changes `chat_template.jinja` and `tokenizer_config.json`, both of
-    /// which the backend reads. Introduced in InferKit 0.4.0.
-    @objc public static let measuredRevision = "de4b8e4d43b917e7706784d8bb445c9af86a3540"
+    /// @discussion Its chat template marks each assistant turn with `{% generation %}` and renders the same
+    /// prompts as the template the parity records were taken with (`de4b8e4d`). Introduced in InferKit 0.4.0.
+    @objc public static let measuredRevision = "812d96e10a0dd82b69d749e68693698cf6c36daa"
 
     /// A text-generation backend from a release directory, reading its `config.json`, weights,
     /// tokenizer, and chat template, with its routed experts held as `residency` plans them.

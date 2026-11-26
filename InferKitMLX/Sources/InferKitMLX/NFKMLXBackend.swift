@@ -162,6 +162,8 @@ public final class NFKMLXBackend: NSObject, NFKInferenceBackend {
 struct NFKMLXStableDiffusionRelease {
 
     let repository: String
+    /// The commit downloaded, or nil for the repository's default branch.
+    var revision: String? = nil
     let configuration: NFKMLXSDTextToImageConfiguration
     /// Paths within the repository, tried in order at each slot so a release published only in half
     /// precision resolves too.
@@ -174,8 +176,10 @@ struct NFKMLXStableDiffusionRelease {
             configuration = .stableDiffusion15
             weightFiles = Self.singleTowerFiles
         case .stableDiffusion21Base:
-            // A gated repository: set `NFKHFHub.accessToken`, or HF_TOKEN in the environment.
-            repository = "stabilityai/stable-diffusion-2-1-base"
+            // Stability AI withdrew the release; this mirror's files are byte for byte the ones Hugging
+            // Face duplicated from it in 2023 (LanguageMachines/stable-diffusion-2-1-base).
+            repository = Self.stableDiffusion21BaseMirror
+            revision = Self.stableDiffusion21BaseMirrorRevision
             configuration = .stableDiffusion21
             weightFiles = Self.singleTowerFiles
         case .sdxlTurbo:
@@ -194,6 +198,9 @@ struct NFKMLXStableDiffusionRelease {
             weightFiles = Self.singleTowerFiles
         }
     }
+
+    static let stableDiffusion21BaseMirror = "sd2-community/stable-diffusion-2-1-base"
+    static let stableDiffusion21BaseMirrorRevision = "4e63672c03103b6c636b8fb4119ba982469b2955"
 
     private static let singleTowerFiles = [
         ["unet/diffusion_pytorch_model.safetensors", "unet/diffusion_pytorch_model.fp16.safetensors"],
@@ -232,7 +239,7 @@ struct NFKMLXStableDiffusionRelease {
     func download(cacheDirectoryURL: URL?) throws -> URL {
         let cache = cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL()
         let hub = NFKHFHub(cacheDirectoryURL: cache)
-        let hold = try hub.holdRelease(repo: repository, revision: nil)
+        let hold = try hub.holdRelease(repo: repository, revision: revision)
         defer { hold?.invalidate() }
         var root: URL?
         for file in vocabularyFiles {
@@ -261,6 +268,6 @@ struct NFKMLXStableDiffusionRelease {
     }
 
     private func fetch(_ path: String, from hub: NFKHFHub) throws -> URL {
-        try hub.fetchFile(repo: repository, revision: nil, path: path)
+        try hub.fetchFile(repo: repository, revision: revision, path: path)
     }
 }

@@ -125,6 +125,23 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Released models follow their publishers' newest commits where measured, Mistral Small 3 and Mixtral keep their measured commits, and Stable Diffusion 2.1 base downloads from a mirror
+
+- `NFKMLXGemmaLanguage.measuredRevisions` names the Gemma 4 E2B, E4B, and 12B commits whose `tokenizer.json`
+  drops the merges behind Google's glitch tokens. A word one of those merges built encodes as Google's fixed
+  tokenizer encodes it; every other text encodes as before.
+- `NFKMLXPplxDeciderVariant.measuredRevision` names the pplx-decider commits whose `tokenizer.json` splits words
+  as Qwen3.5 does, keeping combining marks inside a word.
+- `NFKMLXLanguage.measuredRevisions` lists the commits Mistral Small 3 24B Instruct and Mixtral 8x7B Instruct were
+  measured at. The catalog's sources name them, and `backendWithRepo:…` reads them when `revision` is nil.
+  Mistral's later commits move the chat template into `chat_template.jinja` and change the prompt it renders.
+- Stable Diffusion 2.1 base downloads from `sd2-community/stable-diffusion-2-1-base`, pinned to a commit whose files
+  are the ones Stability AI published, since Stability AI withdrew `stabilityai/stable-diffusion-2-1-base`. The
+  catalog entry is served and measured again.
+- Qwen3.8-Flash-Next reads Qwen's commit that marks assistant turns for training; it renders the same prompts.
+  Laya and the Open-Jev DeBERTa model read their repositories' newest commits, which change only the model cards
+  and add a configuration file the readers do not take.
+
 #### Gemma 4 and Qwen3.8-Flash-Next download their measured commits, and SmolVLM2's download carries its chat template
 
 - The catalog's Gemma 4 E2B, E4B, and 12B sources and the `gemma4-multimodal` variants name the commits

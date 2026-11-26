@@ -179,6 +179,20 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
         XCTAssertNil(NFKMLXQwen4Exp.downloadRevision(repo: "org/qwen4-exp-tiny", revision: nil))
     }
 
+    // Mistral's later commits move the chat template into chat_template.jinja and change the prompt it renders.
+    func testMistralSmall3AndMixtralReadTheirMeasuredCommits() throws {
+        for name in ["mistral-small-24b-instruct-2501", "mixtral-8x7b-instruct"] {
+            let source = try XCTUnwrap(try descriptor(name).defaultVariant?.source, name)
+            let repository = try XCTUnwrap(source.repository, name)
+            XCTAssertEqual(source.revision?.count, 40, "\(name) pins a commit")
+            XCTAssertEqual(source.revision, NFKMLXLanguage.measuredRevisions[repository], name)
+            XCTAssertEqual(NFKMLXLanguage.downloadRevision(repo: repository, revision: nil), source.revision, repository)
+        }
+        XCTAssertNil(NFKMLXLanguage.downloadRevision(repo: "Qwen/Qwen3-0.6B", revision: nil))
+        XCTAssertEqual(NFKMLXLanguage.downloadRevision(repo: "mistralai/Mixtral-8x7B-Instruct-v0.1", revision: "main"),
+                       "main")
+    }
+
     func testEachOPUSMTPairCarriesTheLicenseItsModelCardStates() throws {
         let opus = try descriptor(NFKMLXMarian.modelName)
         XCTAssertEqual(opus.license?.identifier, "Apache-2.0")

@@ -582,10 +582,18 @@ quarter of the floor.
   tokenizer.json") change `tokenizer.json` and no other file. `NFKMLXGemmaTokenizer` reads that file, so
   the three releases are pinned to their measured commits (2026-11-22): `NFKMLXGemmaLanguage.measuredRevisions`
   holds the full SHAs, the catalog's sources and the `gemma4-multimodal` variants name them, and
-  `gemmaBackendWithRepo:…` / `gemmaMultimodalBackendWithRepo:…` read them when `revision` is nil. Adopting
-  the new tokenizers is a follow-up: it waits on the new files in the store and on the tests that tokenize a
-  Gemma 4 prompt passing on them. The 26B-A4B and 31B have no later commit and name no revision. LTX-2.5's
-  `tokenizer/tokenizer.json` is the earlier file.
+  `gemmaBackendWithRepo:…` / `gemmaMultimodalBackendWithRepo:…` read them when `revision` is nil. The 26B-A4B
+  and 31B have no later commit and name no revision. LTX-2.5's `tokenizer/tokenizer.json` is the earlier file.
+- **Glitch-token tokenizers adopted (2026-11-25).** `measuredRevisions` names `4adf1574`, `4ecc2ba6`, and
+  `43c9d014`. Each new `tokenizer.json` removes merges (E2B 267, E4B 253, 12B 239) and renames one piece
+  (id 249788 becomes `<glitch_pruned_249788>`); the ids, the added tokens, and the weights are unchanged.
+  Under the tokenizers library, 33,293 strings (every test and example literal and every document under
+  `Docs/`) and the 16,678 literals of the oracle scripts under `Tools/` encode identically under both
+  files, so the parity records stand; only a word that one of the
+  removed merges built encodes differently. `NFKMLXGemmaTokenizer` reads the merges as the file lists them,
+  and `testTheGemma4TokenizersEncodeTheGlitchTokenWordsAsTheReference` holds it to the tokenizers library on
+  ten such words per release, read from the store's `IK_VAL_GEMMA4`, `IK_VAL_GEMMA4_E4B`, and
+  `IK_VAL_GEMMA4_12B` directories, which hold the new files.
 - Nothing remains in the Gemma 4 family. The four architectures, both towers' full forwards (the
   optional vision standardization included), the input adapters, the fusion, and the
   conditional-generation chain are all at reference parity on the released weights; the text decoders

@@ -37,7 +37,7 @@ extension NFKMLXLaya {
 
     /// The repository commit the reference-parity measurements were taken at. Passing it as the
     /// revision pins a download to the measured weights; nil follows `main`.
-    @objc public static let measuredRevision = "1c5edc17a7acd8701df6fc341c0d179f1c62c982"
+    @objc public static let measuredRevision = "246177e5cb70334c9831c0730864a93c836aac8f"
 
     /// The files a variant needs, relative to the repository root.
     @objc(releaseFilesForVariant:)

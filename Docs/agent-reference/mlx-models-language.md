@@ -270,6 +270,12 @@ attention and feed-forward.
   A dense release larger than the working set streams the decoder layers it cannot hold
   (`NFKMLXResidency.streamed`, and `.automatic` where `verifyFits` fails; `mlx-companion.md`
   "Streaming"), so the 14B, the 32B, and Mistral Small 24B run whole on this machine.
+  **Catalog revisions (2026-11-25).** Mistral Small 3 and Mixtral 8x7B Instruct were measured at
+  `9527884b` and `eba92302`. Mistral's commits of 2026-11-24 (`8f4e4ef3`, `602298b3`) move the chat template
+  from `tokenizer_config.json` into `chat_template.jinja`; Mistral Small 3's new template adds tool calling and
+  rewords the default system prompt. `NFKMLXLanguage.measuredRevisions` holds the measured commits, the
+  catalog's sources name them, and `releaseDirectory(repo:revision:cacheDirectoryURL:)` reads them when
+  `revision` is nil, so every `backendWithRepo:…` factory downloads them.
   A `mistral` release that states `sliding_window` bands every layer to it (`slidingWindows`), as
   transformers does at any context length; Mistral Small 3 states null and is unchanged. A windowed
   layer takes the fused attention while a pass's positions all fall inside the window and the
@@ -858,9 +864,13 @@ attention and feed-forward.
   `tokenizer_config.json` gives it `bos_token` and `eos_token`. The release is pinned to the measured
   commit (2026-11-22): `NFKMLXQwen4Exp.measuredRevision` holds the full SHA, the catalog's source names it,
   and `backendWithRepo:revision:cacheDirectoryURL:…` reads it for `NFKMLXQwen4Exp.repository` when
-  `revision` is nil. Adopting `812d96e1` is a follow-up: it waits on comparing the two files with the
-  earlier ones and on the release's template rendering through `NFKMLXChatTemplateEngine`, which parses
-  `{% generation %}` blocks.
+  `revision` is nil. **Adopted `812d96e1` (2026-11-25).** Its `tokenizer_config.json` differs from the earlier
+  one only in `chat_template` (moved out) and a new `response_template`, which nothing here reads; `bos_token`
+  and `eos_token` are unchanged. The new template wraps each assistant turn in `{% generation %}` and moves
+  `<|im_end|>`'s newline outside it. Rendered by transformers 5.17.0 over 20 cases (one turn, a system turn
+  with history, `reasoning_content`, `<think>` history, and a tool call, each with and without the
+  generation prompt and thinking), both templates write the same prompt. `NFKMLXChatTemplateEngine`
+  renders a `generation` block's body unchanged. The measured commit is now `812d96e1`.
 - `NFKMLXDeepSeek` — the DeepSeek V4 decoder (`DeepseekV4ForCausalLM`): Multi-head Latent Attention
   over a mixture of experts, a third architecture family beside the dense stack and the hybrid.
   Its arithmetic is measured — at a tiny all-sliding configuration against transformers' own

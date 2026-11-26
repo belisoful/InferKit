@@ -2007,7 +2007,7 @@ enum NFKMLXCatalogImage {
                                     note: "Use restrictions apply."))
             case .stableDiffusion21Base:
                 details = ("Stable Diffusion 2.1 base", "A latent-diffusion generator of 512-pixel images from a prompt.",
-                           openRAILPlusPlus(url: "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"))
+                           openRAILPlusPlus(url: "https://huggingface.co/\(NFKMLXStableDiffusionRelease.stableDiffusion21BaseMirror)"))
             case .sdxlTurbo:
                 details = ("SDXL-Turbo", "A distilled latent-diffusion generator of 512-pixel images in one step.",
                            stabilityCommunity)
@@ -2020,11 +2020,10 @@ enum NFKMLXCatalogImage {
                            .mit(url: "https://huggingface.co/SimianLuo/LCM_Dreamshaper_v7",
                                 note: "Distilled from Dreamshaper v7, a Stable Diffusion 1.5 fine-tune under the CreativeML Open RAIL-M License."))
             }
-            var source = NFKModelSource.hub(release.repository, layout: NFKModelSourceLayoutDirectory,
-                                            files: stableDiffusionFiles(release))
+            var source = NFKModelSource.hub(release.repository, revision: release.revision,
+                                            layout: NFKModelSourceLayoutDirectory, files: stableDiffusionFiles(release))
             if sdModel == .stableDiffusion21Base {
-                source = source.noting("The publisher no longer serves \(release.repository) publicly. A local copy of the release builds under this registry name.",
-                                       publiclyServed: false)
+                source = source.noting("Stability AI withdrew stabilityai/stable-diffusion-2-1-base. This community mirror serves the same files.")
             }
             var entry = stableDiffusionEntry(stableDiffusionName(sdModel), details.displayName, summary: details.summary,
                                              configuration: release.configuration, license: details.license,

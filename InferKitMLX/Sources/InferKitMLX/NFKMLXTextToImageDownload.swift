@@ -42,8 +42,8 @@ extension NFKMLXTextToImage {
     /// ``backend(model:directoryURL:)`` does.
     ///
     /// @discussion The download is the UNet, the autoencoder, each text tower, and each tokenizer's
-    /// vocabulary, from `stable-diffusion-v1-5/stable-diffusion-v1-5`, `stabilityai/stable-diffusion-2-1-base`
-    /// (gated: set `NFKHFHub.defaultAccessToken` after accepting its license), `stabilityai/sdxl-turbo`,
+    /// vocabulary, from `stable-diffusion-v1-5/stable-diffusion-v1-5`, `sd2-community/stable-diffusion-2-1-base`
+    /// (a mirror of the withdrawn `stabilityai/stable-diffusion-2-1-base`), `stabilityai/sdxl-turbo`,
     /// `stabilityai/stable-diffusion-xl-base-1.0` (its half-precision files), or `SimianLuo/LCM_Dreamshaper_v7`.
     /// A file already in the cache is not fetched again. The call blocks on the network, so run it off
     /// the main and render threads. Introduced in InferKit 0.4.0.

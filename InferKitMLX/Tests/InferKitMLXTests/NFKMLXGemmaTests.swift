@@ -48,6 +48,33 @@ final class NFKMLXGemmaTests: XCTestCase {
 
     // MARK: Configuration
 
+    // The ids are the tokenizers library's (0.23.1) on each release's tokenizer.json at its measured commit,
+    // which drops the merges behind Google's glitch tokens; the earlier file encodes each text differently.
+    func testTheGemma4TokenizersEncodeTheGlitchTokenWordsAsTheReference() throws {
+        let cases: [(key: String, text: String, ids: [Int])] = [
+            ("IK_VAL_GEMMA4",
+             "Glitch words: AWSJavaScript AdxRtList AllFilesInMkvDir CYCLONEDB CaseMissense CasePTV CollinToDO ConsecHtIdx ControlPTV CustomGlare.",
+             [22297, 2694, 4171, 236787, 30365, 44195, 2341, 117022, 2343, 151685, 147845, 9547, 32931, 5094, 183870,
+              15316, 98508, 15316, 42732, 169524, 165099, 1700, 4706, 61262, 9463, 42732, 13287, 60212, 236761]),
+            ("IK_VAL_GEMMA4_E4B",
+             "Glitch words: AWSJavaScript AllFilesInMkvDir CYCLONEDB CaseMissense CasePTV CollinToDO ConsecHtIdx ControlPTV CustomGlare CustomGlareDef.",
+             [22297, 2694, 4171, 236787, 30365, 44195, 2343, 151685, 147845, 9547, 32931, 5094, 183870, 15316, 98508,
+              15316, 42732, 169524, 165099, 1700, 4706, 61262, 9463, 42732, 13287, 60212, 13287, 60212, 4222, 236761]),
+            ("IK_VAL_GEMMA4_12B",
+             "Glitch words: AllFilesInMkvDir CBCPksc CYCLONEDB CaseMissense CasePTV CollinToDO ConsecHtIdx ControlPTV CustomGlare CustomGlareDef.",
+             [22297, 2694, 4171, 236787, 2343, 151685, 147845, 9547, 87134, 187998, 32931, 5094, 183870, 15316, 98508,
+              15316, 42732, 169524, 165099, 1700, 4706, 61262, 9463, 42732, 13287, 60212, 13287, 60212, 4222, 236761]),
+        ]
+        var checked = 0
+        for (key, text, ids) in cases {
+            guard let path = config[key] else { continue }
+            let tokenizer = try XCTUnwrap(NFKMLXGemmaTokenizer(directoryURL: URL(fileURLWithPath: path)), key)
+            XCTAssertEqual(tokenizer.encode(text), ids, "\(key) holds the measured commit's tokenizer.json")
+            checked += 1
+        }
+        try XCTSkipIf(checked == 0, "set IK_VAL_GEMMA4, IK_VAL_GEMMA4_E4B, or IK_VAL_GEMMA4_12B")
+    }
+
     func testTheReleasedConfigurationIsRead() throws {
         let (geometry, _) = try released()
         XCTAssertEqual(geometry.hiddenSize, 1536)

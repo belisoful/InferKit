@@ -20,10 +20,7 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
     ]
 
     /// The variant sources the measurement does not size, by `model/variant`, with the reason.
-    private static let unsizedSources: [String: String] = [
-        "stable-diffusion-2-1-base/default":
-            "the publisher no longer serves stabilityai/stable-diffusion-2-1-base publicly; a local copy still builds",
-    ]
+    private static let unsizedSources: [String: String] = [:]
 
     /// The provider classes `swift run inferkit-catalog export` links: the core's Apple engines and this
     /// package's models.

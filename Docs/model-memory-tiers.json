@@ -1777,6 +1777,12 @@
       "24" : "resident 11736855048 refused",
       "32" : "resident 11736855048 fits"
     },
+    "stable-diffusion-2-1-base/default" : {
+      "8" : "resident 16634377492 refused",
+      "16" : "resident 16634377492 refused",
+      "24" : "resident 16634377492 refused",
+      "32" : "resident 16634377492 fits"
+    },
     "stable-diffusion-v1-5/default" : {
       "8" : "resident 8730827028 refused",
       "16" : "resident 8730827028 refused",
