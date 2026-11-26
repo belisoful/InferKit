@@ -81038,6 +81038,2695 @@
       ]
     },
     {
+      "displayName" : "Wan 2.2 Fun 5B Control",
+      "engine" : "mlx",
+      "family" : "wan-fun-5b",
+      "id" : "wan2.2-fun-5b-control",
+      "inputModalities" : [
+        "text",
+        "image",
+        "video"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A start image the clip keeps as its first frame.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Start image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "An end image the clip keeps as its last frame, after a start image.",
+          "key" : "NFKMLXInputLastImage",
+          "required" : false,
+          "title" : "End image"
+        },
+        {
+          "help" : "A video whose frames the mask keeps, resampled to the frame rate.",
+          "key" : "NFKMLXInputInpaintVideo",
+          "required" : false,
+          "title" : "Inpainting video"
+        },
+        {
+          "help" : "A video, white where the clip is generated and black where the inpainting video is kept.",
+          "key" : "NFKMLXInputInpaintMask",
+          "required" : false,
+          "title" : "Inpainting mask"
+        },
+        {
+          "help" : "The pose, depth, or edge video the clip follows, resampled to the frame rate.",
+          "key" : "video",
+          "required" : false,
+          "title" : "Control video",
+          "valueType" : "video"
+        },
+        {
+          "help" : "A picture whose subject and style the clip takes.",
+          "key" : "NFKMLXInputReferenceImage",
+          "required" : false,
+          "title" : "Reference image"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 121,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 1280,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 704,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 24,
+          "help" : "The rate every video is resampled to and the clip plays at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 50,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 6,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 24183978404,
+                "residentBytes" : 24183978404
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 22825276802,
+                "residentBytes" : 22825276802
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12822057986,
+                "residentBytes" : 12822057986
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-fun-5b-control",
+      "requirements" : {
+        "minimumMemoryBytes" : 20137676803,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that films a clip following a pose, depth, or edge video.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 Fun 5B Control",
+          "downloadBytes" : 24205517250,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11361920418
+                },
+                "id" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "title" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 12822057986,
+                  "checkpoint" : 12822057986,
+                  "float32" : 22825276802
+                },
+                "id" : "model",
+                "title" : "root, Wan2.2_VAE.pth"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 20137676803,
+          "peakBytes" : 12822057986,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-fun-5b-control",
+          "residentBytes" : 12822057986,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 11361920418,
+                "optional" : false,
+                "path" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "role" : "weights",
+                "sha256" : "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "google/umt5-xxl/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 16837417,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+              },
+              {
+                "bytes" : 61728,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6623,
+                "optional" : true,
+                "path" : "google/umt5-xxl/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 301,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2818839170,
+                "optional" : false,
+                "path" : "Wan2.2_VAE.pth",
+                "role" : "weights",
+                "sha256" : "20eb789667fa5e60e7516bf509512f6cb61f01b0aa0695eadaea930c13892b36"
+              },
+              {
+                "bytes" : 10003303280,
+                "optional" : false,
+                "path" : "diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "ace4718a7c87ee3e5606a68ab79142c4395e81aece76b8120bc886f0fbbe1d16"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "b8bc1a65ab71d054ba4636dc0dac104aa4df2686",
+            "repository" : "alibaba-pai/Wan2.2-Fun-5B-Control",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Wan 2.2 Fun 5B Control-Camera",
+      "engine" : "mlx",
+      "family" : "wan-fun-5b",
+      "id" : "wan2.2-fun-5b-control-camera",
+      "inputModalities" : [
+        "text",
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A start image the clip keeps as its first frame.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Start image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "An end image the clip keeps as its last frame, after a start image.",
+          "key" : "NFKMLXInputLastImage",
+          "required" : false,
+          "title" : "End image"
+        },
+        {
+          "help" : "A video whose frames the mask keeps, resampled to the frame rate.",
+          "key" : "NFKMLXInputInpaintVideo",
+          "required" : false,
+          "title" : "Inpainting video"
+        },
+        {
+          "help" : "A video, white where the clip is generated and black where the inpainting video is kept.",
+          "key" : "NFKMLXInputInpaintMask",
+          "required" : false,
+          "title" : "Inpainting mask"
+        },
+        {
+          "help" : "A CameraCtrl pose file's text: the camera of every frame.",
+          "key" : "NFKMLXInputCameraTrajectory",
+          "required" : true,
+          "title" : "Camera trajectory"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 121,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 1280,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 704,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 24,
+          "help" : "The rate every video is resampled to and the clip plays at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 50,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 6,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 24672364964,
+                "residentBytes" : 24672364964
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 23802049922,
+                "residentBytes" : 23802049922
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13310444546,
+                "residentBytes" : 13310444546
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-fun-5b-control-camera",
+      "requirements" : {
+        "minimumMemoryBytes" : 20712249226,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that films a clip along a camera trajectory.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 Fun 5B Control-Camera",
+          "downloadBytes" : 24693904450,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11361920418
+                },
+                "id" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "title" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 13310444546,
+                  "checkpoint" : 13310444546,
+                  "float32" : 23802049922
+                },
+                "id" : "model",
+                "title" : "root, Wan2.2_VAE.pth"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 20712249226,
+          "peakBytes" : 13310444546,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-fun-5b-control-camera",
+          "residentBytes" : 13310444546,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 11361920418,
+                "optional" : false,
+                "path" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "role" : "weights",
+                "sha256" : "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "google/umt5-xxl/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 16837417,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+              },
+              {
+                "bytes" : 61728,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6623,
+                "optional" : true,
+                "path" : "google/umt5-xxl/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 381,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2818839170,
+                "optional" : false,
+                "path" : "Wan2.2_VAE.pth",
+                "role" : "weights",
+                "sha256" : "20eb789667fa5e60e7516bf509512f6cb61f01b0aa0695eadaea930c13892b36"
+              },
+              {
+                "bytes" : 10491690400,
+                "optional" : false,
+                "path" : "diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "5d85c374cc1ccef0ce4347a934ea23ce2ff58e9f621891c1385c029e47c2b75b"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "4dde4056e00166c04fe5bebe48ca04575c6c58ea",
+            "repository" : "alibaba-pai/Wan2.2-Fun-5B-Control-Camera",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Wan 2.2 Fun 5B InP",
+      "engine" : "mlx",
+      "family" : "wan-fun-5b",
+      "id" : "wan2.2-fun-5b-inp",
+      "inputModalities" : [
+        "text",
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A start image the clip keeps as its first frame.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Start image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "An end image the clip keeps as its last frame, after a start image.",
+          "key" : "NFKMLXInputLastImage",
+          "required" : false,
+          "title" : "End image"
+        },
+        {
+          "help" : "A video whose frames the mask keeps, resampled to the frame rate.",
+          "key" : "NFKMLXInputInpaintVideo",
+          "required" : false,
+          "title" : "Inpainting video"
+        },
+        {
+          "help" : "A video, white where the clip is generated and black where the inpainting video is kept.",
+          "key" : "NFKMLXInputInpaintMask",
+          "required" : false,
+          "title" : "Inpainting mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 121,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 1280,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 704,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 24,
+          "help" : "The rate every video is resampled to and the clip plays at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 50,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 6,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 24181612964,
+                "residentBytes" : 24181612964
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 22820545922,
+                "residentBytes" : 22820545922
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12819692546,
+                "residentBytes" : 12819692546
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-fun-5b-inp",
+      "requirements" : {
+        "minimumMemoryBytes" : 20134893932,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that films a clip between a start and an end image, or fills a masked video.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 Fun 5B InP",
+          "downloadBytes" : 24203151576,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11361920418
+                },
+                "id" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "title" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 12819692546,
+                  "checkpoint" : 12819692546,
+                  "float32" : 22820545922
+                },
+                "id" : "model",
+                "title" : "root, Wan2.2_VAE.pth"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 20134893932,
+          "peakBytes" : 12819692546,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-fun-5b-inp",
+          "residentBytes" : 12819692546,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 11361920418,
+                "optional" : false,
+                "path" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "role" : "weights",
+                "sha256" : "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "google/umt5-xxl/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 16837417,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+              },
+              {
+                "bytes" : 61728,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6623,
+                "optional" : true,
+                "path" : "google/umt5-xxl/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 251,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2818839170,
+                "optional" : false,
+                "path" : "Wan2.2_VAE.pth",
+                "role" : "weights",
+                "sha256" : "20eb789667fa5e60e7516bf509512f6cb61f01b0aa0695eadaea930c13892b36"
+              },
+              {
+                "bytes" : 10000937656,
+                "optional" : false,
+                "path" : "diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "680a45b769e2e6ed0ef3710a32ad824baa85d546e534b6f49adcd2b32d42d29a"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "d3e911d57ec9e44f1f06dc565387afbe8d28f25f",
+            "repository" : "alibaba-pai/Wan2.2-Fun-5B-InP",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Wan 2.2 Fun A14B Control",
+      "engine" : "mlx",
+      "family" : "wan-fun-a14b",
+      "id" : "wan2.2-fun-a14b-control",
+      "inputModalities" : [
+        "text",
+        "image",
+        "video"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A start image the clip keeps as its first frame.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Start image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "An end image the clip keeps as its last frame, after a start image.",
+          "key" : "NFKMLXInputLastImage",
+          "required" : false,
+          "title" : "End image"
+        },
+        {
+          "help" : "A video whose frames the mask keeps, resampled to the frame rate.",
+          "key" : "NFKMLXInputInpaintVideo",
+          "required" : false,
+          "title" : "Inpainting video"
+        },
+        {
+          "help" : "A video, white where the clip is generated and black where the inpainting video is kept.",
+          "key" : "NFKMLXInputInpaintMask",
+          "required" : false,
+          "title" : "Inpainting mask"
+        },
+        {
+          "help" : "The pose, depth, or edge video the clip follows, resampled to the frame rate.",
+          "key" : "video",
+          "required" : false,
+          "title" : "Control video",
+          "valueType" : "video"
+        },
+        {
+          "help" : "A picture whose subject and style the clip takes.",
+          "key" : "NFKMLXInputReferenceImage",
+          "required" : false,
+          "title" : "Reference image"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 81,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 832,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 480,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 16,
+          "help" : "The rate every video is resampled to and the clip plays at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 50,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 6,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 69027776954,
+                "residentBytes" : 69027776954
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 28579123328,
+                "residentBytes" : 28579123328
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 28579123328,
+                "residentBytes" : 28579123328
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 57158246656,
+                "residentBytes" : 57158246656
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 28579123328,
+                "residentBytes" : 28579123328
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 15258624128,
+                "residentBytes" : 15258624128
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11706491008,
+                "residentBytes" : 11706491008
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-fun-a14b-control",
+      "requirements" : {
+        "minimumMemoryBytes" : 38675400735,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Two diffusion transformers that films a clip following a pose, depth, or edge video.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 Fun A14B Control",
+          "downloadBytes" : 69049459719,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11361920418
+                },
+                "id" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "title" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 507609880
+                },
+                "id" : "Wan2.1_VAE.pth",
+                "title" : "Wan2.1_VAE.pth"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 28579123328,
+                  "checkpoint" : 28579123328,
+                  "float32" : 57158246656
+                },
+                "id" : "high_noise_model",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 702788608,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 28111544320,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14208532480,
+                "title" : "high_noise_model"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 28579123328,
+                  "checkpoint" : 28579123328,
+                  "float32" : 57158246656
+                },
+                "id" : "low_noise_model",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 702788608,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 28111544320,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14208532480,
+                "title" : "low_noise_model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 38675400735,
+          "peakBytes" : 28579123328,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-fun-a14b-control",
+          "residentBytes" : 28579123328,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 11361920418,
+                "optional" : false,
+                "path" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "role" : "weights",
+                "sha256" : "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "google/umt5-xxl/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 16837417,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+              },
+              {
+                "bytes" : 61728,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6623,
+                "optional" : true,
+                "path" : "google/umt5-xxl/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 507609880,
+                "optional" : false,
+                "path" : "Wan2.1_VAE.pth",
+                "role" : "weights",
+                "sha256" : "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"
+              },
+              {
+                "bytes" : 606,
+                "optional" : false,
+                "path" : "high_noise_model/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 28579237064,
+                "optional" : false,
+                "path" : "high_noise_model/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "e4be07ca25d67aaf3461ef87fbb5ad8762f602a5efa620aea9dc250ac2747a9d"
+              },
+              {
+                "bytes" : 606,
+                "optional" : false,
+                "path" : "low_noise_model/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 28579237064,
+                "optional" : false,
+                "path" : "low_noise_model/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "d82bc21cd703e089eee4f6fabc25e90ebbd00965623fdc5e83d46d01dbeac2c3"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "297be6d520f54908e124be0298e2317ee50ffdf4",
+            "repository" : "alibaba-pai/Wan2.2-Fun-A14B-Control",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Wan 2.2 Fun A14B Control-Camera",
+      "engine" : "mlx",
+      "family" : "wan-fun-a14b",
+      "id" : "wan2.2-fun-a14b-control-camera",
+      "inputModalities" : [
+        "text",
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A start image the clip keeps as its first frame.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Start image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "An end image the clip keeps as its last frame, after a start image.",
+          "key" : "NFKMLXInputLastImage",
+          "required" : false,
+          "title" : "End image"
+        },
+        {
+          "help" : "A video whose frames the mask keeps, resampled to the frame rate.",
+          "key" : "NFKMLXInputInpaintVideo",
+          "required" : false,
+          "title" : "Inpainting video"
+        },
+        {
+          "help" : "A video, white where the clip is generated and black where the inpainting video is kept.",
+          "key" : "NFKMLXInputInpaintMask",
+          "required" : false,
+          "title" : "Inpainting mask"
+        },
+        {
+          "help" : "A CameraCtrl pose file's text: the camera of every frame.",
+          "key" : "NFKMLXInputCameraTrajectory",
+          "required" : true,
+          "title" : "Camera trajectory"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 81,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 832,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 480,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 16,
+          "help" : "The rate every video is resampled to and the clip plays at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 50,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 6,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 71038462394,
+                "residentBytes" : 71038462394
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 29584466048,
+                "residentBytes" : 29584466048
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 29584466048,
+                "residentBytes" : 29584466048
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 59168932096,
+                "residentBytes" : 59168932096
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 29584466048,
+                "residentBytes" : 29584466048
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16263966848,
+                "residentBytes" : 16263966848
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12711833728,
+                "residentBytes" : 12711833728
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-fun-a14b-control-camera",
+      "requirements" : {
+        "minimumMemoryBytes" : 39858156876,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Two diffusion transformers that films a clip along a camera trajectory.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 Fun A14B Control-Camera",
+          "downloadBytes" : 71060146215,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11361920418
+                },
+                "id" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "title" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 507609880
+                },
+                "id" : "Wan2.1_VAE.pth",
+                "title" : "Wan2.1_VAE.pth"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 29584466048,
+                  "checkpoint" : 29584466048,
+                  "float32" : 59168932096
+                },
+                "id" : "high_noise_model",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 702788608,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 28111544320,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14208532480,
+                "title" : "high_noise_model"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 29584466048,
+                  "checkpoint" : 29584466048,
+                  "float32" : 59168932096
+                },
+                "id" : "low_noise_model",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 702788608,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 28111544320,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14208532480,
+                "title" : "low_noise_model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 39858156876,
+          "peakBytes" : 29584466048,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-fun-a14b-control-camera",
+          "residentBytes" : 29584466048,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 11361920418,
+                "optional" : false,
+                "path" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "role" : "weights",
+                "sha256" : "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "google/umt5-xxl/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 16837417,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+              },
+              {
+                "bytes" : 61728,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6623,
+                "optional" : true,
+                "path" : "google/umt5-xxl/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 507609880,
+                "optional" : false,
+                "path" : "Wan2.1_VAE.pth",
+                "role" : "weights",
+                "sha256" : "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"
+              },
+              {
+                "bytes" : 606,
+                "optional" : false,
+                "path" : "high_noise_model/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 29584580312,
+                "optional" : false,
+                "path" : "high_noise_model/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "b242a310d161460d3ecf8430d4f8ee01398bebc3925a479c267b71318e8e30ad"
+              },
+              {
+                "bytes" : 606,
+                "optional" : false,
+                "path" : "low_noise_model/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 29584580312,
+                "optional" : false,
+                "path" : "low_noise_model/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "277a7b0374f9d0d5ba0e769fa9648687301cfff8b32d32c9b57d122dbea24c02"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "da1f119dcf5626b2fa41219ce42ac175752f3892",
+            "repository" : "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Wan 2.2 Fun A14B InP",
+      "engine" : "mlx",
+      "family" : "wan-fun-a14b",
+      "id" : "wan2.2-fun-a14b-inp",
+      "inputModalities" : [
+        "text",
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A start image the clip keeps as its first frame.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Start image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "An end image the clip keeps as its last frame, after a start image.",
+          "key" : "NFKMLXInputLastImage",
+          "required" : false,
+          "title" : "End image"
+        },
+        {
+          "help" : "A video whose frames the mask keeps, resampled to the frame rate.",
+          "key" : "NFKMLXInputInpaintVideo",
+          "required" : false,
+          "title" : "Inpainting video"
+        },
+        {
+          "help" : "A video, white where the clip is generated and black where the inpainting video is kept.",
+          "key" : "NFKMLXInputInpaintMask",
+          "required" : false,
+          "title" : "Inpainting mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 81,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 832,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 480,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 16,
+          "help" : "The rate every video is resampled to and the clip plays at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 50,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 6,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 69025135034,
+                "residentBytes" : 69025135034
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 28577802368,
+                "residentBytes" : 28577802368
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 28577802368,
+                "residentBytes" : 28577802368
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 57155604736,
+                "residentBytes" : 57155604736
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 28577802368,
+                "residentBytes" : 28577802368
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 15257303168,
+                "residentBytes" : 15257303168
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11705170048,
+                "residentBytes" : 11705170048
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-fun-a14b-inp",
+      "requirements" : {
+        "minimumMemoryBytes" : 38673846664,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Two diffusion transformers that films a clip between a start and an end image, or fills a masked video.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 Fun A14B InP",
+          "downloadBytes" : 69046817417,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11361920418
+                },
+                "id" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "title" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 507609880
+                },
+                "id" : "Wan2.1_VAE.pth",
+                "title" : "Wan2.1_VAE.pth"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 28577802368,
+                  "checkpoint" : 28577802368,
+                  "float32" : 57155604736
+                },
+                "id" : "high_noise_model",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 702788608,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 28111544320,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14208532480,
+                "title" : "high_noise_model"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 28577802368,
+                  "checkpoint" : 28577802368,
+                  "float32" : 57155604736
+                },
+                "id" : "low_noise_model",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 702788608,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 28111544320,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 14208532480,
+                "title" : "low_noise_model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 38673846664,
+          "peakBytes" : 28577802368,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-fun-a14b-inp",
+          "residentBytes" : 28577802368,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 11361920418,
+                "optional" : false,
+                "path" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "role" : "weights",
+                "sha256" : "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "google/umt5-xxl/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 16837417,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+              },
+              {
+                "bytes" : 61728,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6623,
+                "optional" : true,
+                "path" : "google/umt5-xxl/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 507609880,
+                "optional" : false,
+                "path" : "Wan2.1_VAE.pth",
+                "role" : "weights",
+                "sha256" : "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"
+              },
+              {
+                "bytes" : 607,
+                "optional" : false,
+                "path" : "high_noise_model/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 28577915912,
+                "optional" : false,
+                "path" : "high_noise_model/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "c5629ded970ac8070f7b0cadf4249060710e384e2a7724fe5f5d1e2714fe9c60"
+              },
+              {
+                "bytes" : 607,
+                "optional" : false,
+                "path" : "low_noise_model/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 28577915912,
+                "optional" : false,
+                "path" : "low_noise_model/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "67408d1a1a577b4d0257b57c31093fdc4b3ebcdef27fbfd354cfc7dbcec3b1a7"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "2d27b954ae261511085d2c98365729b15d2a235a",
+            "repository" : "alibaba-pai/Wan2.2-Fun-A14B-InP",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "Wan 2.2 I2V A14B",
       "engine" : "mlx",
       "family" : "wan-a14b",

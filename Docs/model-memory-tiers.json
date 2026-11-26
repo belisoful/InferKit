@@ -2143,6 +2143,42 @@
       "24" : "streamed 12623352832 refused",
       "32" : "streamed 17951466060 fits"
     },
+    "wan2.2-fun-5b-control-camera/default" : {
+      "8" : "staged 13310444546 refused",
+      "16" : "staged 13310444546 refused",
+      "24" : "staged 13310444546 refused",
+      "32" : "staged 13310444546 fits"
+    },
+    "wan2.2-fun-5b-control/default" : {
+      "8" : "staged 12822057986 refused",
+      "16" : "staged 12822057986 refused",
+      "24" : "staged 12822057986 refused",
+      "32" : "staged 12822057986 fits"
+    },
+    "wan2.2-fun-5b-inp/default" : {
+      "8" : "staged 12819692546 refused",
+      "16" : "staged 12819692546 refused",
+      "24" : "staged 12819692546 refused",
+      "32" : "staged 12819692546 fits"
+    },
+    "wan2.2-fun-a14b-control-camera/default" : {
+      "8" : "streamed 11361920418 refused",
+      "16" : "streamed 11361920418 refused",
+      "24" : "streamed 11361920418 refused",
+      "32" : "streamed 18339848320 fits"
+    },
+    "wan2.2-fun-a14b-control/default" : {
+      "8" : "streamed 11361920418 refused",
+      "16" : "streamed 11361920418 refused",
+      "24" : "streamed 11361920418 refused",
+      "32" : "streamed 18037294208 fits"
+    },
+    "wan2.2-fun-a14b-inp/default" : {
+      "8" : "streamed 11361920418 refused",
+      "16" : "streamed 11361920418 refused",
+      "24" : "streamed 11361920418 refused",
+      "32" : "streamed 18035973248 fits"
+    },
     "wan2.2-i2v-a14b/default" : {
       "8" : "streamed 11361820672 refused",
       "16" : "streamed 11361820672 refused",

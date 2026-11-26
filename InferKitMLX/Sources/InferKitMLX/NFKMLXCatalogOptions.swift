@@ -320,6 +320,16 @@ struct NFKMLXLoadProfile {
         "wan-a14b": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint], defaultPrecision: NFKModelPrecisionCheckpoint,
                                        quantizes: true, widenedStages: ["text_encoder": NFKModelPrecisionFloat32],
                                        streamedStages: ["transformer", "transformer_2"], halvesSteps: true)],
+        // The Wan 2.2 Fun releases widen umT5 where the budget holds it, widen the transformers to float32, stream
+        // the blocks of a transformer they cannot hold, or pack the blocks' linear layers to 2 to 8 bits.
+        "wan-fun-5b": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                         defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true,
+                                         widenedStages: [NFKMLXWanOriginalRelease.textEncoderFile: NFKModelPrecisionFloat32],
+                                         streamedStages: [""], halvesSteps: true)],
+        "wan-fun-a14b": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                           defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true,
+                                           widenedStages: [NFKMLXWanOriginalRelease.textEncoderFile: NFKModelPrecisionFloat32],
+                                           streamedStages: ["high_noise_model", "low_noise_model"], halvesSteps: true)],
         "minimax-music": [.diffusionPipeline()],
         "stable-audio": [.diffusionPipeline()],
     ]

@@ -301,6 +301,20 @@ extension NFKMLXLoadPlan {
         // Each expert is a stage of its own after the autoencoder's, and umT5 counts as Wan's does.
         "wan-a14b": NFKMLXLoadPlan(precision: .stored, directories: ["text_encoder": .bfloat16, "vae": .float32],
                                    stages: [["text_encoder"], ["vae"], ["transformer"], ["transformer_2"]]),
+        // The original layout keeps umT5 and the autoencoder as root files, each its own directory to the
+        // measurement; a 5B release's transformer is the root's safetensors and shares its stage with the
+        // autoencoder, and each A14B expert is a stage of its own.
+        "wan-fun-5b": NFKMLXLoadPlan(precision: .stored,
+                                     directories: [NFKMLXWanOriginalRelease.textEncoderFile: .bfloat16,
+                                                   NFKMLXWanOriginalRelease.wan22AutoencoderFile: .float32],
+                                     stages: [[NFKMLXWanOriginalRelease.textEncoderFile],
+                                              ["", NFKMLXWanOriginalRelease.wan22AutoencoderFile]]),
+        "wan-fun-a14b": NFKMLXLoadPlan(precision: .stored,
+                                       directories: [NFKMLXWanOriginalRelease.textEncoderFile: .bfloat16,
+                                                     NFKMLXWanOriginalRelease.wan21AutoencoderFile: .float32],
+                                       stages: [[NFKMLXWanOriginalRelease.textEncoderFile],
+                                                [NFKMLXWanOriginalRelease.wan21AutoencoderFile],
+                                                ["high_noise_model"], ["low_noise_model"]]),
         "wan-animate": NFKMLXLoadPlan(precision: .stored,
                                       stages: [["text_encoder", "image_encoder"], ["transformer", "vae"]]),
         "minimax-music": NFKMLXLoadPlan(precision: .stored, directories: ["transformer": .float32],

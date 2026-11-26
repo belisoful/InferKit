@@ -199,7 +199,7 @@ enum NFKMLXCatalogVideo {
     // MARK: - Video generation
 
     static var generators: [NFKMLXCatalogEntry] {
-        [ltxVideo] + ltx2Entries + wanEntries + wanExpertEntries + wanAnimateEntries
+        [ltxVideo] + ltx2Entries + wanEntries + wanExpertEntries + wanAnimateEntries + wanFunEntries
     }
 
     /// The options a text-to-video generator reads.
@@ -444,6 +444,55 @@ enum NFKMLXCatalogVideo {
                 ],
                 license: .apache2(),
                 source: NFKMLXCatalogImage.hubRelease(variant.repository, components: NFKMLXWanAnimateGenerator.releaseComponents),
+                residencies: NFKMLXCatalogImage.streamedStageResidencies)
+        }
+    }
+
+    /// The six Wan 2.2 Fun releases, one per ``NFKMLXWanFunVariant``. ``NFKMLXWanFunGenerator/register()``
+    /// registers them all.
+    static var wanFunEntries: [NFKMLXCatalogEntry] {
+        NFKMLXWanFunVariant.allCases.map { variant in
+            let kind = variant.rawValue % 3
+            let size = variant.hasExperts ? "A14B" : "5B"
+            let displayName = "Wan 2.2 Fun \(size) " + ["Control", "InP", "Control-Camera"][kind]
+            var inputs = promptInputs + [
+                .input(NFKInputImage, title: "Start image", help: "A start image the clip keeps as its first frame."),
+                .input(NFKMLXVideoInputKey.lastImage, title: "End image",
+                       help: "An end image the clip keeps as its last frame, after a start image."),
+                .input(NFKMLXVideoInputKey.inpaintVideo, title: "Inpainting video",
+                       help: "A video whose frames the mask keeps, resampled to the frame rate."),
+                .input(NFKMLXVideoInputKey.inpaintMask, title: "Inpainting mask",
+                       help: "A video, white where the clip is generated and black where the inpainting video is kept."),
+            ]
+            let summary: String
+            switch kind {
+            case 0:
+                inputs += [.input(NFKInputVideo, title: "Control video",
+                                  help: "The pose, depth, or edge video the clip follows, resampled to the frame rate."),
+                           .input(NFKMLXVideoInputKey.referenceImage, title: "Reference image",
+                                  help: "A picture whose subject and style the clip takes.")]
+                summary = "A diffusion transformer that films a clip following a pose, depth, or edge video."
+            case 1:
+                summary = "A diffusion transformer that films a clip between a start and an end image, or fills a masked video."
+            default:
+                inputs.append(.input(NFKMLXVideoInputKey.cameraTrajectory, required: true, title: "Camera trajectory",
+                                     help: "A CameraCtrl pose file's text: the camera of every frame."))
+                summary = "A diffusion transformer that films a clip along a camera trajectory."
+            }
+            let defaults = variant.hasExperts ? (81, 832, 480, 16.0) : (121, 1280, 704, 24.0)
+            return NFKMLXCatalogImage.model(
+                variant.modelName, displayName, family: variant.hasExperts ? "wan-fun-a14b" : "wan-fun-5b",
+                summary: variant.hasExperts ? summary.replacingOccurrences(of: "A diffusion transformer",
+                                                                          with: "Two diffusion transformers") : summary,
+                tasks: [NFKModelTaskVideoGeneration],
+                inputs: inputs,
+                outputs: [clipOutput("The generated clip as a QuickTime movie.")],
+                parameters: videoOptions(frames: defaults.0, width: defaults.1, height: defaults.2,
+                                         framesPerSecond: defaults.3,
+                                         frameRateHelp: "The rate every video is resampled to and the clip plays at.",
+                                         steps: 50, guidance: 6),
+                license: .apache2(),
+                source: NFKMLXCatalogImage.hubRelease(variant.releaseRepo, components: variant.releaseComponents),
                 residencies: NFKMLXCatalogImage.streamedStageResidencies)
         }
     }

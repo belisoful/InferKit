@@ -366,7 +366,14 @@ def geometry(repo, revision, files):
 
 # MARK: - One variant
 
+# The original Wan layout keeps umT5 and the autoencoder as files at the release's root beside its
+# transformer (`NFKMLXWanOriginalRelease`); each loads as a stage of its own, so each is its own directory.
+ROOT_FILE_DIRECTORIES = {"models_t5_umt5-xxl-enc-bf16.pth", "Wan2.1_VAE.pth", "Wan2.2_VAE.pth"}
+
+
 def directory_of(path):
+    if path in ROOT_FILE_DIRECTORIES:
+        return path
     return path.split("/", 1)[0] if "/" in path else ""
 
 

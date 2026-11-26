@@ -436,6 +436,19 @@ enum NFKMLXOptionRegistrations {
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }
+        registerDirectoryModels(registryNames(families: ["wan-fun-5b", "wan-fun-a14b"]),
+                                consumes: residency.union([NFKModelLoadOptionPrecision]).union(quantizationKeys)) {
+            url, name, options in
+            let generator = try NFKMLXWanFunGenerator.generator(
+                directoryURL: url, residency: options.residency, precision: options.precision ?? .checkpoint,
+                bits: (options.quantizationBits ?? 0) == 0 ? nil : options.quantizationBits,
+                groupSize: options.quantizationGroupSize)
+            guard generator.variant.modelName == name else {
+                throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) holds \(generator.variant.modelName), not \(name)")
+            }
+            report(generator.holdsStagesResident, to: options)
+            return generator.inferenceBackend()
+        }
         registerDirectoryModels(registryNames(families: ["ltx-video"]), consumes: adapted) { url, _, options in
             let generator = try NFKMLXLTXVideoGenerator.generator(directoryURL: url, residency: options.residency,
                                                                   adapters: options.adapters())
