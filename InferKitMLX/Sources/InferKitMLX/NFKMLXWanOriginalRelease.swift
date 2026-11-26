@@ -214,7 +214,7 @@ enum NFKMLXWanOriginalRelease {
     /// states.
     static func autoencoder(from url: URL, precision: NFKMLXWeightPrecision = .float32) throws
         -> (net: NFKMLXWanVideoVAENet, mean: MLXArray, std: MLXArray) {
-        let stored = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        let stored = try NFKMLXWeights.materializedCheckpoint(url: url).arrays
         let wan22 = url.lastPathComponent == wan22AutoencoderFile
         var configuration: NFKMLXWanVAEConfiguration = wan22 ? .wan22 : .wan21
         guard let encoderIn = stored["encoder.conv1.weight"], let decoderIn = stored["decoder.conv1.weight"] else {
@@ -280,7 +280,7 @@ enum NFKMLXWanOriginalRelease {
 
     /// The umT5 encoder from an original file, its geometry read from the tensors.
     static func textEncoder(from url: URL, precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXT5EncoderNet {
-        let stored = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        let stored = try NFKMLXWeights.materializedCheckpoint(url: url).arrays
         let net = NFKMLXT5Encoder.makeNet(try textEncoderConfiguration(of: stored))
         let arrays = stored.map { key, value -> (String, MLXArray) in
             (textEncoderModuleKey(forRelease: key),
