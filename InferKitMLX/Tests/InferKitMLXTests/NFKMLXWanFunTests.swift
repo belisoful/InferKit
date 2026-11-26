@@ -241,7 +241,7 @@ final class NFKMLXWanFunTests: XCTestCase {
             }
             var steps = [MLXArray]()
             let final = try pipeline.denoise(text: text, negative: negativeText, prepared: prepared,
-                                             noise: record["latents"]!, steps: 3, guidance: 4) { steps.append($1) }
+                                             noise: record["latents"]!, steps: 3, guidance: 4, onStep: { steps.append($1) })
             for (index, latents) in steps.enumerated() {
                 measured["\(prefix)step \(index)"] = cosine(latents, record["\(prefix)step.\(index)"]!)
             }

@@ -349,9 +349,9 @@ public final class NFKMLXWanFunGenerator: NSObject {
                 NFKMLXGPU.clearCache()
             } else if stageHeld {
                 if expertStages.isEmpty {
-                    try staging.use(pipelineStage) { try NFKMLXWanLoRA.apply(deltas, to: $0.transformer!) }
+                    _ = try staging.use(pipelineStage) { try NFKMLXWanLoRA.apply(deltas, to: $0.transformer!) }
                 } else {
-                    try staging.use(expertStages[index]) { try NFKMLXWanLoRA.apply(deltas, to: $0) }
+                    _ = try staging.use(expertStages[index]) { try NFKMLXWanLoRA.apply(deltas, to: $0) }
                 }
             }
             adapters[index].add(url, scale: scale)
