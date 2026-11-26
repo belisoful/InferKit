@@ -61,6 +61,27 @@ public struct NFKMLXUniPCScheduler {
         }
         timesteps = s.map { Float(Int(train * $0)) }
         sigmas = s.map { Float($0) } + [0]
+        restart()
+    }
+
+    /// Sets the schedule for `steps` steps as Wan-Video/Wan2.2's own `FlowUniPCMultistepScheduler` does, built with
+    /// `shift=1` and given `shift` at `set_timesteps`: `σᵢ = linspace(σ_max, 0, steps + 1)[:-1]` in float64, where
+    /// `σ_max` is the float32 training table's first entry (`1 − 1/train`), shifted to `shift·σ/(1 + (shift − 1)σ)`,
+    /// each timestep `⌊train·σ⌋`. Introduced in InferKit 0.4.0.
+    public mutating func setOriginalTimesteps(_ steps: Int, shift: Double) {
+        let train = Double(configuration.trainTimesteps)
+        let maximum = Double(Float(1 - 1 / train))
+        let step = -maximum / Double(steps)
+        let s = (0 ..< steps).map { index -> Double in
+            let raw = Double(index) * step + maximum
+            return shift * raw / (1 + (shift - 1) * raw)
+        }
+        timesteps = s.map { Float(Int(train * $0)) }
+        sigmas = s.map { Float($0) } + [0]
+        restart()
+    }
+
+    private mutating func restart() {
         stepIndex = 0
         modelOutputs = Array(repeating: nil, count: configuration.solverOrder)
         lastSample = nil

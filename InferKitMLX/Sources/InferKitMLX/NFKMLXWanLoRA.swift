@@ -73,6 +73,13 @@ public enum NFKMLXWanLoRA {
         return Report(mergedLayers: try apply(deltas, to: net), droppedKeys: dropped)
     }
 
+    /// Merges the adapter at `url` into a Wan 2.2 S2V transformer at `scale`. Introduced in InferKit 0.4.0.
+    @discardableResult
+    public static func merge(adapterURL url: URL, into net: NFKMLXWanS2VNet, scale: Float = 1) throws -> Report {
+        let (deltas, dropped) = try deltas(adapterURL: url, naming: speechToVideoPath(original:), scale: scale)
+        return Report(mergedLayers: try apply(deltas, to: net), droppedKeys: dropped)
+    }
+
     /// Merges the adapter at `url` into a Wan Animate transformer at `scale`.
     @discardableResult
     public static func merge(adapterURL url: URL, into net: NFKMLXWanAnimateNet, scale: Float = 1) throws -> Report {
@@ -103,6 +110,17 @@ public enum NFKMLXWanLoRA {
                 "time_embedding.2": "condition_embedder.time_embedder.linear_2",
                 "img_emb.proj.1": "condition_embedder.image_embedder.ff.net.0.proj",
                 "img_emb.proj.3": "condition_embedder.image_embedder.ff.net.2"][name]
+    }
+
+    /// The S2V transformer's module path for an original Wan layer name: the blocks' and embedders' as
+    /// ``textToVideoPath(original:)`` names them, the audio injector's attentions as released.
+    static func speechToVideoPath(original name: String) -> String? {
+        let parts = name.split(separator: ".")
+        if parts.count == 4, parts[0] == "audio_injector", parts[1] == "injector", Int(parts[2]) != nil,
+           ["q", "k", "v", "o"].contains(parts[3]) {
+            return name
+        }
+        return textToVideoPath(original: name)
     }
 
     /// The Animate transformer's module path for an original Wan layer name: its modules keep the original

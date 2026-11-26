@@ -28089,6 +28089,240 @@ def run_wan_fun_pipeline(image, checkpoint):
 CHECKPOINT_MODELS["wan_fun_pipeline"] = run_wan_fun_pipeline
 
 
+def _wan22_official():
+    """Wan-Video/Wan2.2's own package, from `IK_WAN22_SRC`, with `Tools/wan-s2v-testdev/wan_shims.py` letting it
+    run on the CPU at float32 (placeholders for two readers it imports, and a float `flash_attention`)."""
+    source = os.environ.get("IK_WAN22_SRC")
+    if not source:
+        raise SystemExit("set IK_WAN22_SRC")
+    sys.path.insert(0, source)
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "wan-s2v-testdev"))
+    import wan_shims
+    wan_shims.install()
+    import wan
+    return wan
+
+
+def run_wan_s2v_pipeline(image, checkpoint):
+    """Wan 2.2 S2V-14B end to end through Wan-Video/Wan2.2's own `WanS2V.generate` (1ea34ff), over a test-dev
+    release directory (`Tools/wan-s2v-testdev/make_testdev.py`) in the release's original layout.
+
+    `WanS2V.__init__` places every component on CUDA and builds umT5 at its XXL geometry, so the instance is made
+    with `__new__` and given the attributes `__init__` sets, each component built by the class `__init__` uses:
+    `T5EncoderModel` holding the test-dev's `T5Encoder` and the release's `HuggingfaceTokenizer(clean="whitespace")`,
+    `Wan2_1_VAE`, `WanModel_S2V` built from the directory's `config.json` and loaded from its safetensors (as
+`from_pretrained` does, except that `from_pretrained` drops `text_dim`, which the class lists in
+`ignore_for_config`, and the test-dev's umT5 is 32 wide), and `AudioEncoder` over the release's wav2vec2 directory, with
+    `config.s2v_14B`'s values (73 motion frames, the first segment's motion dropped, 16 fps, `audio_sample_m` 0, the
+    S2V negative prompt). Everything runs at float32 on the CPU (`param_dtype` and `t5_dtype` float32), and
+    `flash_attention` is the shims' float substitute. It runs under transformers 4.51.3, the newest the official
+    `requirements.txt` admits (the `wans2v` env, transformers pinned over the `videoxfun` env): transformers 5 lists
+    the last wav2vec2 layer's output as the last hidden state where 4.x lists the encoder's final layer norm of it,
+    which the release was trained on.
+
+    The run is `generate()` unchanged: a 64 × 128 reference image (a PNG of seeded bytes) at `max_area` 64 · 128,
+    0.8 s of seeded 16 kHz audio (a float WAV), which buckets into two 8-frame segments, the official flow UniPC
+    at shift 3 over 3 steps, guidance 4.5, the default negative prompt, seed 61, no pose video. The prompt keeps a
+    doubled space and an HTML entity, which the tokenizer's whitespace cleaning removes.
+
+    The record holds the inputs (`ref_image` `[H, W, 3]` in 0...1, `audio` as `librosa.load` reads it), the audio
+    front end (`audio.input_values`, the 25 hidden states at 30 fps `audio.features` `[25, T, C]`, the buckets
+    `audio.buckets` `[1, 25, C, F]`, `audio.repeats`), the prompt (`prompt_ids`, `negative_ids`, `prompt_embeds`,
+    `negative_embeds` cut at their lengths), the latents the loop reads (`ref_latents`, `motion_latents.<r>`, the motion clip segment `r` reads and, last,
+the one after the final segment),
+    and per segment `r`: its first call's inputs (`<r>.input.motion_latents`, `.audio`, `.cond`, `.t`), the noise (`noise.<r>`), the schedule (`timesteps.<r>`, `sigmas.<r>`), every transformer
+    call's prediction (`<r>.call.<k>`, conditional then unconditional per step), the latents after each step
+    (`<r>.step.<i>`), and the decoded clip (`<r>.video` `[F, H, W, 3]` in 0...1); the first call's audio tokens
+    (`seam.<r>.audio.<i>`, the audio encoder's outputs), and each block's output on it (`seam.<r>.block.<n>`). `video` is the
+    concatenated clip. A second run (`pose.`) drives the same segments with a pose video (`pose_video`
+    `[N, H, W, 3]` in 0...1, three frames short of the segments' frames, read in place of the official reader's
+    decord `VideoReader`) and starts from the reference image (`init_first_frame`), and records the same keys under
+    its prefix. `image` unused.
+    """
+    import copy
+    import tempfile
+
+    import soundfile
+    from PIL import Image
+
+    import transformers
+    if not transformers.__version__.startswith("4."):
+        raise SystemExit("run under transformers 4.49-4.51.3 (the `wans2v` env), as Wan2.2's requirements.txt pins it: "
+                         "transformers 5 drops wav2vec2's final layer norm from `hidden_states`")
+    wan = _wan22_official()
+    from wan.configs import WAN_CONFIGS
+    from wan.modules.s2v.audio_encoder import AudioEncoder
+    from wan.modules.s2v.model_s2v import WanModel_S2V
+    from wan.modules.t5 import T5Encoder, T5EncoderModel
+    from wan.modules.tokenizers import HuggingfaceTokenizer
+    from wan.modules.vae2_1 import Wan2_1_VAE
+
+    config = copy.deepcopy(WAN_CONFIGS["s2v-14B"])
+    config.param_dtype = torch.float32
+    config.t5_dtype = torch.float32
+    cpu = torch.device("cpu")
+
+    text_encoder = T5EncoderModel.__new__(T5EncoderModel)
+    text_encoder.text_len, text_encoder.dtype, text_encoder.device = config.text_len, torch.float32, cpu
+    text_encoder.checkpoint_path = os.path.join(checkpoint, config.t5_checkpoint)
+    text_encoder.tokenizer_path = os.path.join(checkpoint, config.t5_tokenizer)
+    encoder = T5Encoder(vocab=256384, dim=32, dim_attn=32, dim_ffn=64, num_heads=2, num_layers=2, num_buckets=32,
+                        shared_pos=False, dropout=0.0)
+    encoder.load_state_dict({k: v.float() for k, v in torch.load(text_encoder.checkpoint_path,
+                                                                 map_location="cpu").items()})
+    text_encoder.model = encoder.eval().requires_grad_(False)
+    text_encoder.tokenizer = HuggingfaceTokenizer(name=text_encoder.tokenizer_path, seq_len=config.text_len,
+                                                  clean="whitespace")
+
+    pipeline = wan.WanS2V.__new__(wan.WanS2V)
+    pipeline.device, pipeline.config, pipeline.rank = cpu, config, 0
+    pipeline.t5_cpu, pipeline.init_on_cpu = False, False
+    pipeline.num_train_timesteps, pipeline.param_dtype = config.num_train_timesteps, config.param_dtype
+    pipeline.text_encoder = text_encoder
+    pipeline.vae = Wan2_1_VAE(vae_pth=os.path.join(checkpoint, config.vae_checkpoint), dtype=torch.float32,
+                              device=cpu)
+    with open(os.path.join(checkpoint, "config.json")) as handle:
+        model_config = {k: v for k, v in json.load(handle).items() if not k.startswith("_")}
+    noise_model = WanModel_S2V(**model_config)
+    from safetensors.torch import load_file
+    noise_model.load_state_dict({k: v.float() for k, v in load_file(
+        os.path.join(checkpoint, "diffusion_pytorch_model.safetensors")).items()})
+    pipeline.noise_model = noise_model.float().eval().requires_grad_(False)
+    pipeline.audio_encoder = AudioEncoder(model_id=os.path.join(checkpoint, config.wav2vec))
+    pipeline.sp_size = 1
+    pipeline.sample_neg_prompt = config.sample_neg_prompt
+    pipeline.motion_frames = config.transformer.motion_frames
+    pipeline.drop_first_motion = config.drop_first_motion
+    pipeline.fps = config.sample_fps
+    pipeline.audio_sample_m = 0
+
+    height, width, infer_frames, steps, guidance, shift, seed = 64, 128, 8, 3, 4.5, 3.0, 61
+    prompt = "A woman  singing on a stage &amp; smiling, cinematic"
+    generator = np.random.default_rng(62)
+    pixels = generator.integers(0, 256, (height, width, 3), dtype=np.uint8)
+    waveform = (0.3 * generator.standard_normal(12800)).astype(np.float32)
+    scratch = tempfile.mkdtemp(prefix=f"wan-s2v-oracle-{os.getpid()}-")
+    image_path, audio_path = os.path.join(scratch, "reference.png"), os.path.join(scratch, "speech.wav")
+    Image.fromarray(pixels).save(image_path)
+    soundfile.write(audio_path, waveform, 16000, subtype="FLOAT")
+
+    import librosa
+    loaded, _ = librosa.load(audio_path, sr=16000)
+    processor_values = pipeline.audio_encoder.processor(loaded, sampling_rate=16000, return_tensors="pt").input_values
+    with torch.no_grad():
+        features = pipeline.audio_encoder.extract_audio_feat(audio_path, return_all_layers=True)
+        buckets, repeats = pipeline.encode_audio(audio_path, infer_frames=infer_frames)
+    extra = {"ref_image": torch.from_numpy(pixels.astype(np.float32) / 255).contiguous(),
+             "audio": torch.from_numpy(loaded).contiguous(), "audio.input_values": processor_values[0].contiguous(),
+             "audio.features": features.contiguous(), "audio.buckets": buckets.contiguous(),
+             "audio.repeats": torch.tensor([repeats], dtype=torch.int32),
+             "geometry": torch.tensor([height, width, infer_frames, steps, seed], dtype=torch.int32),
+             "guidance": torch.tensor([guidance, shift], dtype=torch.float64)}
+    tokenizer = text_encoder.tokenizer
+    for name, text in (("prompt", prompt), ("negative", config.sample_neg_prompt)):
+        ids, _ = tokenizer([text], return_mask=True, add_special_tokens=True)
+        extra[f"{name}_ids"] = ids[0].to(torch.int32)
+        with torch.no_grad():
+            extra[f"{name}_embeds"] = text_encoder([text], cpu)[0].contiguous()
+
+    noise_model = pipeline.noise_model
+    state = {"prefix": "", "segment": 0, "call": 0, "step": 0}
+    seams = {}
+
+    def key(name):
+        return f"{state['prefix']}{state['segment']}.{name}"
+
+    def model_hook(module, args, kwargs, output):
+        extra[key(f"call.{state['call']}")] = output[0].detach().clone().contiguous()
+        if state["call"] == 0:
+            extra[key("input.motion_latents")] = kwargs["motion_latents"].detach().clone()[0].contiguous()
+            extra[key("input.audio")] = kwargs["audio_input"].detach().clone().contiguous()
+            extra[key("input.cond")] = kwargs["cond_states"].detach().clone()[0].contiguous()
+            extra[key("input.t")] = kwargs["t"].detach().clone().double()
+        state["call"] += 1
+    noise_model.register_forward_hook(model_hook, with_kwargs=True)
+
+    def first_call_hook(name):
+        def hook(module, args, output):
+            if state["call"] == 0:
+                seams.setdefault(f"{state['prefix']}{state['segment']}.{name}", output)
+        return hook
+    noise_model.casual_audio_encoder.register_forward_hook(first_call_hook("audio"))
+    for index, block in enumerate(noise_model.blocks):
+        block.register_forward_hook(first_call_hook(f"block.{index}"))
+
+    scheduler_class = sys.modules["wan.speech2video"].FlowUniPCMultistepScheduler
+    original_step = scheduler_class.step
+
+    def recording_step(self, model_output, timestep, sample, *args, **kwargs):
+        if self.step_index is None:
+            extra[key("timesteps")] = self.timesteps.clone().double()
+            extra[key("sigmas")] = self.sigmas.clone().double()
+            extra[key("noise")] = sample[0].detach().clone().contiguous()
+        result = original_step(self, model_output, timestep, sample, *args, **kwargs)
+        extra[key(f"step.{state['step']}")] = result[0][0].detach().clone().contiguous()
+        state["step"] += 1
+        if state["step"] == steps:
+            state.update(segment=state["segment"] + 1, call=0, step=0)
+        return result
+    scheduler_class.step = recording_step
+
+    vae = pipeline.vae
+    original_encode, original_decode, encoded, decoded = vae.encode, vae.decode, [], []
+
+    def recording_encode(videos):
+        result = original_encode(videos)
+        encoded.append((videos[0].shape, result[0].detach().clone()))
+        return result
+
+    def recording_decode(latents):
+        result = original_decode(latents)
+        decoded.append(result[0].detach().clone())
+        return result
+    vae.encode, vae.decode = recording_encode, recording_decode
+
+    # The pose run's pose video: three frames short of the segments' frames, so the reader's padding with −1
+    # frames is exercised, at the clip's size, so `Resize` and `CenterCrop` leave it as read.
+    pose_frames = generator.integers(0, 256, (repeats * infer_frames - 3, height, width, 3), dtype=np.uint8)
+    extra["pose_video"] = torch.from_numpy(pose_frames.astype(np.float32) / 255).contiguous()
+    pipeline.read_last_n_frames = lambda video_path, n_frames, target_fps=16, reverse=False: pose_frames[:n_frames]
+    runs = [("", None, False), ("pose.", "pose.mp4", True)]
+    for prefix, pose_video, from_reference in runs:
+        state.update(prefix=prefix, segment=0, call=0, step=0)
+        encoded.clear()
+        decoded.clear()
+        with torch.no_grad():
+            video = pipeline.generate(input_prompt=prompt, ref_image_path=image_path, audio_path=audio_path,
+                                      enable_tts=False, tts_prompt_audio=None, tts_prompt_text=None, tts_text=None,
+                                      num_repeat=None, pose_video=pose_video, max_area=height * width,
+                                      infer_frames=infer_frames, shift=shift, sample_solver="unipc",
+                                      sampling_steps=steps, guide_scale=guidance, n_prompt="", seed=seed,
+                                      offload_model=False, init_first_frame=from_reference)
+        # The encodes run in order: the reference, the first motion clip, one pose condition per segment (one
+        # without a pose video), then each segment's next motion clip.
+        conditions = repeats if pose_video else 1
+        extra[prefix + "ref_latents"] = encoded[0][1].contiguous()
+        for index, (_, latents) in enumerate([encoded[1]] + encoded[2 + conditions:]):
+            extra[f"{prefix}motion_latents.{index}"] = latents.contiguous()
+        extra[prefix + "encode_shapes"] = torch.tensor([list(shape) for shape, _ in encoded], dtype=torch.int32)
+        for index, clip in enumerate(decoded):
+            extra[f"{prefix}{index}.decoded"] = clip.contiguous()
+        extra[prefix + "video"] = (video / 2 + 0.5).clamp(0, 1).permute(1, 2, 3, 0).contiguous()
+    scheduler_class.step = original_step
+    for name, value in seams.items():
+        if isinstance(value, (list, tuple)):
+            for index, part in enumerate(value):
+                extra[f"seam.{name}.{index}"] = part.contiguous()
+        else:
+            extra[f"seam.{name}"] = value.contiguous()
+    extra["repeats"] = torch.tensor([repeats], dtype=torch.int32)
+    globals()["_extra"] = extra
+    return extra[f"{repeats - 1}.step.{steps - 1}"].clone()
+
+
+CHECKPOINT_MODELS["wan_s2v_pipeline"] = run_wan_s2v_pipeline
+
+
 def run_wan_animate_pipeline(image, checkpoint):
     """Wan 2.2 Animate 2's character-animation glue, from diffusers' own modular `WanAnimate2Blocks` (or
     `WanAnimate2DistilledBlocks` for a distilled release), end to end over a release directory.
@@ -33047,6 +33281,98 @@ def run_wan_fun_lora_diffsynth(image):
 
 
 MODELS["wan_fun_lora_diffsynth"] = run_wan_fun_lora_diffsynth
+
+
+def run_wan_s2v_lora_diffsynth(image, checkpoint):
+    """DiffSynth-Studio's Wan 2.2 S2V-14B LoRA objective (modelscope/DiffSynth-Studio at 1e8ae1d,
+    `lora/Wan2.2-S2V-14B.sh`), under the `wantrain-diffsynth` env, over a test-dev release directory
+    (`Tools/wan-s2v-testdev/make_testdev.py`): DiffSynth's own `WanS2VModel` built from the directory's
+    `config.json` and loaded from its safetensors (DiffSynth reads the release's names unconverted), adapted by its
+    `add_lora_to_model` (rank 4, alpha 8, the script's `q,k,v,o,ffn.0,ffn.2`, which also reach the audio injector's
+    attentions), and its `FlowMatchSFTLoss` over `model_fn_wan_video` (which hands an `audio_embeds` call to
+    `model_fn_wans2v`), at float32. The inputs are as `WanVideoUnit_S2V` and `WanVideoUnit_ImageEmbedderFused`
+    leave them for a 9-frame clip: the latents' first frame is the reference image's latent
+    (`first_frame_latents`, which the loss also leaves out), one segment of audio buckets (`audio_embeds`
+    `[1, 25, C, 8]`), the blank motion clip's latents dropped (`drop_motion_frames`), and a pose latent
+    (`s2v_pose_latents`), each random, under a 512-token prompt. The record holds the inputs, the draws, the
+    prediction, the loss, and each adapter's initialization and gradient under the release's names
+    (`lora::<name>.lora_a` `[in, rank]`, `lora_b` `[rank, out]`). `image` unused.
+    """
+    import json as json_module
+
+    from diffsynth.diffusion.flow_match import FlowMatchScheduler
+    from diffsynth.diffusion.loss import FlowMatchSFTLoss
+    from diffsynth.diffusion.training_module import DiffusionTrainingModule
+    from diffsynth.models.wan_video_dit_s2v import WanS2VModel
+    from diffsynth.pipelines.wan_video import model_fn_wan_video
+    from safetensors.torch import load_file
+
+    with open(os.path.join(checkpoint, "config.json")) as handle:
+        config = json_module.load(handle)
+    model = WanS2VModel(dim=config["dim"], in_dim=config["in_dim"], ffn_dim=config["ffn_dim"], out_dim=config["out_dim"],
+                        text_dim=config["text_dim"], freq_dim=config["freq_dim"], eps=config["eps"], patch_size=(1, 2, 2),
+                        num_heads=config["num_heads"], num_layers=config["num_layers"], cond_dim=config["cond_dim"],
+                        audio_dim=config["audio_dim"], num_audio_token=config["num_audio_token"],
+                        audio_inject_layers=config["audio_inject_layers"])
+    model.load_state_dict({k: v.float() for k, v in load_file(
+        os.path.join(checkpoint, "diffusion_pytorch_model.safetensors")).items()})
+    model = model.float()
+    model = DiffusionTrainingModule.add_lora_to_model(None, model, ["q", "k", "v", "o", "ffn.0", "ffn.2"], 4, 8)
+    seed = 161
+    generator = torch.Generator().manual_seed(seed)
+    for name, parameter in model.named_parameters():
+        if "lora_B" in name:
+            parameter.data = torch.randn(parameter.shape, generator=generator) * 0.1
+    for name, parameter in model.named_parameters():
+        parameter.requires_grad_("lora_" in name)
+
+    channels, frames, height, width = config["in_dim"], 2, 8, 16
+    latent = torch.randn(channels, 1 + frames, height, width, generator=generator)
+    text = torch.randn(512, config["text_dim"], generator=generator)
+    audio = 0.5 * torch.randn(1, 25, config["audio_dim"], 4 * frames, generator=generator)
+    pose = torch.randn(1, config["cond_dim"], frames, height, width, generator=generator)
+    motion = torch.zeros(1, channels, 19, height, width)
+    scheduler = FlowMatchScheduler("Wan")
+    scheduler.set_timesteps(1000, training=True)
+    inputs = dict(input_latents=latent.unsqueeze(0), first_frame_latents=latent[:, 0:1].unsqueeze(0).clone(),
+                  context=text.unsqueeze(0), audio_embeds=audio, motion_latents=motion, s2v_pose_latents=pose,
+                  drop_motion_frames=True, max_timestep_boundary=1, min_timestep_boundary=0)
+    pipe = type("Pipeline", (), {})()
+    pipe.scheduler, pipe.torch_dtype, pipe.device = scheduler, torch.float32, "cpu"
+    pipe.in_iteration_models, pipe.dit = ("dit",), model
+    pipe.model_fn = model_fn_wan_video
+    torch.manual_seed(seed + 1)
+    loss = FlowMatchSFTLoss(pipe, **inputs)
+    loss.backward()
+
+    torch.manual_seed(seed + 1)
+    index = torch.randint(0, len(scheduler.timesteps), (1,))
+    noise = torch.randn_like(latent.unsqueeze(0))[0]
+    timestep = scheduler.timesteps[index]
+    sigma = scheduler.sigmas[torch.argmin((scheduler.timesteps - timestep).abs())]
+    noisy = (1 - sigma) * latent + sigma * noise
+    noisy[:, 0:1] = latent[:, 0:1]
+    with torch.no_grad():
+        prediction = model_fn_wan_video(dit=model, latents=noisy.unsqueeze(0), timestep=timestep, context=text.unsqueeze(0),
+                                        audio_embeds=audio, motion_latents=motion, s2v_pose_latents=pose,
+                                        drop_motion_frames=True)[0]
+    extra = {"index": index.float(), "timestep": timestep.float().reshape(1), "sigma": sigma.float().reshape(1),
+             "weight": scheduler.training_weight(timestep).float().reshape(1), "latent": latent.contiguous(),
+             "noise": noise.contiguous(), "text": text.contiguous(), "audio": audio[0].contiguous(),
+             "pose": pose[0].contiguous(), "prediction": prediction[:, 1:].float().contiguous(),
+             "loss": loss.detach().reshape(1)}
+    for name, module in model.named_modules():
+        if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+            a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+            extra[f"lora::{name}.lora_a"] = a.detach().t().contiguous().float()
+            extra[f"lora::{name}.lora_b"] = b.detach().t().contiguous().float()
+            extra[f"grad::{name}.lora_a"] = a.grad.detach().t().contiguous().float()
+            extra[f"grad::{name}.lora_b"] = b.grad.detach().t().contiguous().float()
+    globals()["_extra"] = {key: value.clone() for key, value in extra.items()}
+    return extra["prediction"].clone()
+
+
+CHECKPOINT_MODELS["wan_s2v_lora_diffsynth"] = run_wan_s2v_lora_diffsynth
 
 
 def run_wan_fun_lora_videoxfun(image):
