@@ -99,6 +99,12 @@ public enum NFKMLXWanSigmaSampler: Sendable, Equatable {
     /// `shift·t/(1 + (shift − 1)t)`, stretched onto `[minimum, maximum]` (fractions), `σ = t`, and the
     /// timestep `1000t + 1`. The raw draw is `n`.
     case musubiShift(shift: Float, sigmoidScale: Float, minimum: Float, maximum: Float)
+    /// VideoX-Fun's `--uniform_sampling`: an index uniform on `[low, high)` into the table diffusers'
+    /// `FlowMatchEulerDiscreteScheduler` builds at construction (``videoXFunTable(shift:)``), the timestep and
+    /// `σ` the table's entries at that index. The raw draw is the index. An A14B expert trains on its side of
+    /// the table entry nearest timestep `1000 · boundary` (``videoXFunBoundaryIndex(shift:boundary:)``).
+    /// Introduced in InferKit 0.4.0.
+    case videoXFun(shift: Float, low: Int, high: Int)
 
     /// The DiffSynth-Studio Wan table and its loss weights.
     static func diffSynthTable(shift: Float) -> (sigmas: [Float], timesteps: [Float], weights: [Float]) {
@@ -113,6 +119,22 @@ public enum NFKMLXWanSigmaSampler: Sendable, Equatable {
         let shifted = y.map { $0 - floor }
         let total = NFKReferenceRounding.torchLastAxisSum(MLXArray(shifted)).item(Float.self)
         return (sigmas, timesteps, shifted.map { $0 * (1000 / total) })
+    }
+
+    /// The table diffusers' `FlowMatchEulerDiscreteScheduler` holds after construction, VideoX-Fun's training
+    /// table: `timesteps = linspace(1, 1000, 1000)[::-1]` (NumPy, float32), `σ = shift·s/(1 + (shift − 1)s)` for
+    /// `s = timesteps/1000`, and the timestep `1000σ`, in float32.
+    static func videoXFunTable(shift: Float) -> (sigmas: [Float], timesteps: [Float]) {
+        let s = (0 ..< 1000).map { Float(1000 - $0) / 1000 }
+        let sigmas = s.map { shift * $0 / (1 + (shift - 1) * $0) }
+        return (sigmas, sigmas.map { $0 * 1000 })
+    }
+
+    /// The table index VideoX-Fun splits an A14B release's experts at: the entry nearest `1000 · boundary`.
+    public static func videoXFunBoundaryIndex(shift: Float, boundary: Double) -> Int {
+        let timesteps = videoXFunTable(shift: shift).timesteps
+        let target = Float(1000 * boundary)
+        return timesteps.indices.min { abs(timesteps[$0] - target) < abs(timesteps[$1] - target) }!
     }
 
     /// The musubi-tuner and finetrainers unshifted table, float32.
@@ -144,6 +166,11 @@ public enum NFKMLXWanSigmaSampler: Sendable, Equatable {
             t = t * shift / (1 + (shift - 1) * t)
             t = t * (maximum - minimum) + minimum
             return NFKMLXWanTrainingDraw(sigma: t, timestep: t * 1000 + 1, weight: weighting.weight(t))
+        case .videoXFun(let shift, _, _):
+            let table = Self.videoXFunTable(shift: shift)
+            let index = min(max(Int(raw), 0), 999)
+            return NFKMLXWanTrainingDraw(sigma: table.sigmas[index], timestep: table.timesteps[index],
+                                         weight: weighting.weight(table.sigmas[index]))
         }
     }
 
@@ -163,6 +190,8 @@ public enum NFKMLXWanSigmaSampler: Sendable, Equatable {
             values = MLXRandom.randInt(low: low, high: max(high, low + 1), [count], key: key).asType(.float32)
         case .musubiShift:
             values = MLXRandom.normal([count], key: key)
+        case .videoXFun(_, let low, let high):
+            values = MLXRandom.randInt(low: low, high: max(high, low + 1), [count], key: key).asType(.float32)
         }
         return values.asArray(Float.self)
     }
@@ -208,9 +237,14 @@ public struct NFKMLXWanTrainingExample {
     /// A Wan 2.2 Fun Control-Camera release's camera embedding regrouped by latent frame,
     /// `[24, frames, H, W]` at the pixel size. Introduced in InferKit 0.4.0.
     public var camera: MLXArray?
+    /// A Wan 2.2 Fun 5B release's latent mask `[frames, height, width]`, 1 where the clip is generated. VideoX-Fun's
+    /// trainer reads its first frame: where that frame is wholly kept, the noised latent keeps the masked video's
+    /// latents there and those tokens read timestep 0; every later frame is generated. Introduced in InferKit 0.4.0.
+    public var latentMask: MLXArray?
 
     public init(latent: MLXArray, logVariance: MLXArray? = nil, text: MLXArray, condition: MLXArray? = nil,
-                reference: MLXArray? = nil, camera: MLXArray? = nil) {
+                reference: MLXArray? = nil, camera: MLXArray? = nil, latentMask: MLXArray? = nil) {
+        self.latentMask = latentMask
         self.latent = latent
         self.logVariance = logVariance
         self.text = text
@@ -229,8 +263,13 @@ public struct NFKMLXWanObjective: Sendable {
     /// Whether the clean latent is a sample of the encoder's posterior, `μ + exp(½·clamp(logσ², −30, 20))·ε`
     /// (finetrainers), rather than its mean.
     public var samplesPosterior: Bool
+    /// The error past which an element leaves the loss (VideoX-Fun's `custom_mse_loss` drops every element
+    /// whose `|prediction − target|` exceeds 50); nil keeps every element. Introduced in InferKit 0.4.0.
+    public var lossThreshold: Float?
 
-    public init(sampler: NFKMLXWanSigmaSampler, weighting: NFKMLXWanLossWeighting, samplesPosterior: Bool) {
+    public init(sampler: NFKMLXWanSigmaSampler, weighting: NFKMLXWanLossWeighting, samplesPosterior: Bool,
+                lossThreshold: Float? = nil) {
+        self.lossThreshold = lossThreshold
         self.sampler = sampler
         self.weighting = weighting
         self.samplesPosterior = samplesPosterior
@@ -243,25 +282,45 @@ public struct NFKMLXWanObjective: Sendable {
     }
 
     /// The loss of one example: `weight · mean((prediction − (noise − clean))²)` in float32.
-    public static func loss(prediction: MLXArray, clean: MLXArray, noise: MLXArray, weight: Float) -> MLXArray {
+    public static func loss(prediction: MLXArray, clean: MLXArray, noise: MLXArray, weight: Float,
+                            threshold: Float? = nil) -> MLXArray {
         let target = noise.asType(.float32) - clean.asType(.float32)
-        return (prediction.asType(.float32) - target).square().mean() * weight
+        let difference = prediction.asType(.float32) - target
+        guard let threshold else { return difference.square().mean() * weight }
+        return (difference.square() * (abs(difference) .<= threshold).asType(.float32) * weight).mean()
     }
 
     /// The loss of `net` on one example at `draw`, with `noise` and the posterior draw `epsilon`.
     public func score(_ net: NFKMLXWanTransformerNet, example: NFKMLXWanTrainingExample, draw: NFKMLXWanTrainingDraw,
                       noise: MLXArray, epsilon: MLXArray?) -> MLXArray {
+        let x0 = clean(example, epsilon: epsilon)
+        let predicted = prediction(net, example: example, draw: draw, noise: noise, epsilon: epsilon)
+        return Self.loss(prediction: predicted, clean: x0, noise: noise, weight: draw.weight, threshold: lossThreshold)
+    }
+
+    /// The prediction ``score(_:example:draw:noise:epsilon:)`` scores: `net` on the noised latent at `draw`,
+    /// read beside the example's conditions. Introduced in InferKit 0.4.0.
+    public func prediction(_ net: NFKMLXWanTransformerNet, example: NFKMLXWanTrainingExample, draw: NFKMLXWanTrainingDraw,
+                           noise: MLXArray, epsilon: MLXArray?) -> MLXArray {
         let dtype = NFKReferenceRounding.parameterType(of: net)
         let x0 = clean(example, epsilon: epsilon)
-        let noisy = (1 - draw.sigma) * x0 + draw.sigma * noise
+        var noisy = (1 - draw.sigma) * x0 + draw.sigma * noise
+        var conditioning = NFKWanConditioning(reference: example.reference?.asType(dtype),
+                                              cameraControl: example.camera?.asType(dtype))
+        if let mask = example.latentMask, let condition = example.condition, !(mask[0] .!= 0).any().item(Bool.self) {
+            let z = x0.dim(0)
+            let kept = concatenated([mask[0 ..< 1], MLXArray.ones([mask.dim(0) - 1, mask.dim(1), mask.dim(2)])], axis: 0)
+            noisy = (1 - kept) * condition[(condition.dim(0) - z)...] + kept * noisy
+            let ph = net.config.patchSize[1], pw = net.config.patchSize[2]
+            let scale = NFKMLXWanFunPipeline.distinct(kept[0..., .stride(by: ph), .stride(by: pw)].reshaped([-1]))
+            conditioning.tokenTimesteps = (scale.values.map { Double($0 * draw.timestep) }, scale.index)
+        }
         let input = (example.condition.map { concatenated([noisy, $0], axis: 0) } ?? noisy).asType(dtype)
-        // A transformer read from the original layout runs the original forward, as DiffSynth-Studio's does.
-        let prediction = net.config.formsSinusoidsInFloat64 || example.reference != nil || example.camera != nil
-            ? net(input, text: example.text.asType(dtype), t: Double(draw.timestep),
-                  conditioning: NFKWanConditioning(reference: example.reference?.asType(dtype),
-                                                   cameraControl: example.camera?.asType(dtype)))
+        // A transformer read from the original layout runs the original forward, as DiffSynth-Studio's and
+        // VideoX-Fun's do.
+        return net.config.formsSinusoidsInFloat64 || example.reference != nil || example.camera != nil
+            ? net(input, text: example.text.asType(dtype), t: Double(draw.timestep), conditioning: conditioning)
             : net(input, text: example.text.asType(dtype), t: MLXArray([draw.timestep]))
-        return Self.loss(prediction: prediction, clean: x0, noise: noise, weight: draw.weight)
     }
 }
 
@@ -275,14 +334,19 @@ public enum NFKMLXWanLoRATargets: Sendable, Equatable {
     /// Those and both feed-forward projections (DiffSynth-Studio's `q,k,v,o,ffn.0,ffn.2`; musubi-tuner's every
     /// linear layer of a block, which for text-to-video is the same set).
     case attentionAndFeedForward
+    /// The query, key, and value projections of both attentions and both feed-forward projections, no output
+    /// projection (VideoX-Fun's Wan 2.2 Fun recipes: `q,k,v,ffn.0,ffn.2`). Introduced in InferKit 0.4.0.
+    case queryKeyValueAndFeedForward
 
     func contains(_ path: String) -> Bool {
         guard path.hasPrefix("blocks.") else { return false }
-        let attention = ["to_q", "to_k", "to_v"].contains { path.hasSuffix(".\($0)") } || path.hasSuffix(".to_out.0")
+        let projections = ["to_q", "to_k", "to_v"].contains { path.hasSuffix(".\($0)") }
+        let attention = projections || path.hasSuffix(".to_out.0")
+        let feedForward = path.hasSuffix(".ffn.net.0.proj") || path.hasSuffix(".ffn.net.2")
         switch self {
         case .attention: return attention
-        case .attentionAndFeedForward:
-            return attention || path.hasSuffix(".ffn.net.0.proj") || path.hasSuffix(".ffn.net.2")
+        case .attentionAndFeedForward: return attention || feedForward
+        case .queryKeyValueAndFeedForward: return projections || feedForward
         }
     }
 }
@@ -306,6 +370,8 @@ public struct NFKMLXWanTrainingPreset: Sendable {
     /// (`(step + 1) / warmup`).
     public var warmupStartsAtZero: Bool
     public var clipGradientNorm: Float?
+    /// AdamW's epsilon. Introduced in InferKit 0.4.0.
+    public var epsilon: Float = 1e-8
     /// The file layout ``NFKMLXWanVideoGenerator/saveAdapters(of:to:preset:)`` writes.
     public var format: NFKMLXWanLoRAFormat
 
@@ -350,6 +416,26 @@ public struct NFKMLXWanTrainingPreset: Sendable {
         targets: .attentionAndFeedForward, rank: 32, alpha: 1, keepsPaddedText: false, learningRate: 2e-4,
         betas: (0.9, 0.999), weightDecay: 0.01, warmupSteps: 0, warmupStartsAtZero: false, clipGradientNorm: 1,
         format: .musubi)
+
+    /// VideoX-Fun's Wan 2.2 Fun LoRA recipe (`scripts/wan2.2_fun/train_control_lora.sh` at 98fffa9): an index
+    /// uniform over the scheduler's shift-5 table (``NFKMLXWanSigmaSampler/videoXFun(shift:low:high:)``), on an
+    /// A14B expert's side of the entry nearest timestep 900 where `expert` is given; no loss weight, every
+    /// element past an error of 50 dropped; the posterior mean; rank 64 at alpha 32 on `q,k,v,ffn.0,ffn.2`;
+    /// AdamW at 1e-4 with weight decay 0.03 and epsilon 1e-10; a constant rate; the gradient norm clipped to
+    /// 0.05. The adapters save in the kohya layout VideoX-Fun writes beside its PEFT file
+    /// (`lora_diffusion_pytorch_model_compatible_with_comfyui.safetensors`). Introduced in InferKit 0.4.0.
+    public static func videoXFun(expert: NFKMLXWanExpert? = nil) -> NFKMLXWanTrainingPreset {
+        let split = NFKMLXWanSigmaSampler.videoXFunBoundaryIndex(shift: 5, boundary: 0.9)
+        let range = expert.map { $0 == .highNoise ? (0, split) : (split, 1000) } ?? (0, 1000)
+        var preset = NFKMLXWanTrainingPreset(
+            objective: .init(sampler: .videoXFun(shift: 5, low: range.0, high: range.1), weighting: .none,
+                             samplesPosterior: false, lossThreshold: 50),
+            targets: .queryKeyValueAndFeedForward, rank: 64, alpha: 32, keepsPaddedText: false, learningRate: 1e-4,
+            betas: (0.9, 0.999), weightDecay: 0.03, warmupSteps: 0, warmupStartsAtZero: false, clipGradientNorm: 0.05,
+            format: .musubi)
+        preset.epsilon = 1e-10
+        return preset
+    }
 
     public init(objective: NFKMLXWanObjective, targets: NFKMLXWanLoRATargets, rank: Int, alpha: Float,
                 keepsPaddedText: Bool, learningRate: Float, betas: (Float, Float), weightDecay: Float, warmupSteps: Int,
@@ -473,7 +559,7 @@ extension NFKMLXWanVideoGenerator {
                 optimizer: optimizer,
                 reference: {
                     NFKMLXReferenceOptimizers.adamW(learningRate: preset.learningRate, betas: preset.betas,
-                                                    weightDecay: preset.weightDecay)
+                                                    eps: preset.epsilon, weightDecay: preset.weightDecay)
                 },
                 referenceSchedule: { preset.schedule },
                 steps: steps,

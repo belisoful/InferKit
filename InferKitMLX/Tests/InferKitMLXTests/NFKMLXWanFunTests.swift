@@ -475,4 +475,106 @@ final class NFKMLXWanFunTests: XCTestCase {
         XCTAssertGreaterThan((try generatorRun(generator, record) - before).abs().max().item(Float.self), 0,
                              "the low-noise adapter changes the clip")
     }
+
+    func testA5BReleaseTrainsUnderVideoXFunsRecipeAndReloads() throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release("IK_VAL_WAN22_FUN_5B_CONTROL_TESTDEV",
+                                              record: "IK_PARITY_WAN22_FUN_5B_CONTROL_PIPELINE")
+        let generator = try NFKMLXWanFunGenerator.generator(directoryURL: directory, residency: .resident,
+                                                            precision: .float32, quantizationBits: 0)
+        let control = record["control_video"]!
+        let start = NFKMLXWanFunConditions.startImage(record["start_image"]!, frames: control.dim(0))
+        let example = try generator.trainingExample(
+            video: control[.stride(by: -1)], prompt: prompt,
+            conditions: NFKMLXWanFunConditions(controlVideo: control, inpaintVideo: start.video, inpaintMask: start.mask,
+                                               referenceImage: record["reference_image"]))
+        XCTAssertNotNil(example.latentMask, "a 5B release's example carries its latent mask")
+        var preset = NFKMLXWanFunGenerator.referencePreset(variant: .control5B, expert: .highNoise)
+        XCTAssertEqual(preset.format, .musubi)
+        preset.learningRate = 1e-2
+        preset.clipGradientNorm = nil
+        let net = try NFKMLXWanFunGenerator.network(directoryURL: directory, precision: .float32)
+        XCTAssertEqual(try NFKMLXWanFunGenerator.fineTune(net, examples: { _ in [example] }, preset: preset, steps: 2,
+                                                          seed: 3).count, 2)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("wan-fun-5b-lora-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try NFKMLXWanFunGenerator.saveAdapters(of: net, to: url, preset: preset)
+        let fresh = try NFKMLXWanFunGenerator.network(directoryURL: directory, precision: .float32)
+        XCTAssertEqual(try NFKMLXWanLoRA.merge(adapterURL: url, into: fresh).mergedLayers, 2 * 8)
+        let draw = preset.objective.sampler.draw(500)
+        let noise = MLXArray.zeros(example.latent.shape)
+        let trained = preset.objective.prediction(net, example: example, draw: draw, noise: noise, epsilon: nil)
+        let merged = preset.objective.prediction(fresh, example: example, draw: draw, noise: noise, epsilon: nil)
+        XCTAssertLessThan((trained - merged).abs().max().item(Float.self), 1e-4, "the saved adapters merge to the trained network")
+        try generator.addAdapter(at: url, scale: 1, expert: .highNoise)
+        XCTAssertEqual(generator.adapterCount, 1)
+    }
+
+    func testFunLoRAMatchesVideoXFun() throws {
+        try requireMLXRuntime()
+        guard let path = NFKMLXValidationConfig.environment["IK_PARITY_WAN22_FUN_LORA_VIDEOXFUN"] else {
+            throw XCTSkip("set IK_PARITY_WAN22_FUN_LORA_VIDEOXFUN (run_reference.py wan_fun_lora_videoxfun)")
+        }
+        let record = try MLX.loadArrays(url: URL(fileURLWithPath: path))
+        let table = NFKMLXWanSigmaSampler.videoXFunTable(shift: 5)
+        XCTAssertEqual(table.timesteps, record["sampler.timestep"]!.asArray(Float.self), "the scheduler's table")
+        XCTAssertEqual(table.sigmas, record["sampler.sigma"]!.asArray(Float.self))
+        for (name, expert, heads, width) in [("5b", NFKMLXWanExpert?.none, 24, 3072), ("a14b", .lowNoise, 2, 48)] {
+            let preset = NFKMLXWanTrainingPreset.videoXFun(expert: expert)
+            guard case let .videoXFun(_, low, high) = preset.objective.sampler else { return XCTFail("\(name) sampler") }
+            XCTAssertEqual([low, high], record["\(name).range"]!.asArray(Int32.self).map(Int.init), name)
+            let draw = preset.objective.sampler.draw(record["\(name).index"]!.item(Float.self))
+            XCTAssertEqual(draw.timestep, record["\(name).timestep"]!.item(Float.self), name)
+            XCTAssertEqual(draw.sigma, record["\(name).sigma"]!.item(Float.self), name)
+            let weights = Dictionary(uniqueKeysWithValues: record.compactMap { key, value in
+                key.hasPrefix("\(name).w::") ? (String(key.dropFirst(name.count + 4)), value) : nil
+            })
+            let latent = record["\(name).latent"]!
+            let configuration = NFKMLXWanConfiguration(
+                inChannels: weights["patch_embedding.weight"]!.dim(1), heads: heads, headDim: width / heads, layers: 2,
+                ffnDim: name == "5b" ? 96 : 48, textDim: 32, patchSize: [1, 2, 2], outChannels: latent.dim(0),
+                referenceChannels: latent.dim(0), formsSinusoidsInFloat64: true)
+            let net = NFKMLXWanTransformerNet(configuration)
+            let adapted = try NFKMLXLoRA.apply(to: net, rank: 4, alpha: 8) { path, _ in preset.targets.contains(path) }
+            let adapters = record.filter { $0.key.hasPrefix("\(name).lora::") }
+            XCTAssertEqual(adapted * 2, adapters.count, "\(name): the oracle adapts the recipe's targets")
+            try NFKMLXWeights.apply(weights.map { NFKMLXWanOriginalRelease.adaptedTransformer(key: $0.key, value: $0.value) }
+                                    + adapters.map { (String($0.key.dropFirst(name.count + 7)), $0.value) },
+                                    to: net, verifyShapes: true)
+            // VideoX-Fun's forward pads the prompt to its 512 tokens with zeros, as the generator's features are padded.
+            let prompt = record["\(name).text"]!
+            let text = concatenated([prompt, MLXArray.zeros([512 - prompt.dim(0), prompt.dim(1)])], axis: 0)
+            let example = NFKMLXWanTrainingExample(latent: latent, text: text,
+                                                   condition: record["\(name).condition"], reference: record["\(name).reference"],
+                                                   latentMask: record["\(name).latent_mask"])
+            let noise = record["\(name).noise"]!
+            let predictionCosine = cosine(preset.objective.prediction(net, example: example, draw: draw, noise: noise, epsilon: nil),
+                                          record["\(name).prediction"]!)
+            let loss = preset.objective.score(net, example: example, draw: draw, noise: noise, epsilon: nil).item(Float.self)
+            let reference = record["\(name).loss"]!.item(Float.self)
+            XCTAssertEqual(loss, reference, accuracy: 1e-5 * reference, name)
+            net.freeze()
+            for (_, layer) in net.leafModules().flattened() where layer is NFKMLXLoRALinear {
+                layer.unfreeze(recursive: false, keys: ["lora_a", "lora_b"])
+            }
+            let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, _ in
+                [preset.objective.score(net, example: example, draw: draw, noise: noise, epsilon: nil)]
+            }(net, []).1.flattened())
+            let recorded = Dictionary(uniqueKeysWithValues: record.compactMap { key, value in
+                key.hasPrefix("\(name).grad::") ? (String(key.dropFirst(name.count + 7)), value) : nil
+            })
+            XCTAssertEqual(Set(gradients.keys), Set(recorded.keys), "\(name): a gradient for every adapter")
+            let lowest = recorded.map { key, value in gradients[key].map { cosine($0, value) } ?? 0 }.min() ?? 0
+            for (key, value) in recorded.sorted(by: { $0.key < $1.key }) {
+                if let ours = gradients[key], cosine(ours, value) < 0.9999999 {
+                    print("wan fun lora videoxfun \(name) gradient \(key): cosine \(cosine(ours, value)), norm "
+                          + "\(sqrt((value * value).sum()).item(Float.self)), largest \(value.abs().max().item(Float.self))")
+                }
+            }
+            print("wan fun lora videoxfun \(name): prediction \(String(format: "%.16f", predictionCosine)), loss \(loss) "
+                  + "vs \(reference), lowest gradient cosine \(String(format: "%.12f", lowest))")
+            XCTAssertGreaterThan(predictionCosine, 0.999999, name)
+            XCTAssertGreaterThan(lowest, 0.999999, name)
+        }
+    }
 }

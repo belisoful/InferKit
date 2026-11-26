@@ -14,6 +14,14 @@ import MLXOptimizers
 
 extension NFKMLXWanFunGenerator {
 
+    /// The recipe of the trainer this package holds each release to: DiffSynth-Studio's for an A14B expert
+    /// (``diffSynthPreset(expert:)``), VideoX-Fun's for a 5B release
+    /// (``NFKMLXWanTrainingPreset/videoXFun(expert:)``), which DiffSynth-Studio does not train. Introduced in
+    /// InferKit 0.4.0.
+    public static func referencePreset(variant: NFKMLXWanFunVariant, expert: NFKMLXWanExpert) -> NFKMLXWanTrainingPreset {
+        variant.hasExperts ? diffSynthPreset(expert: expert) : .videoXFun()
+    }
+
     /// DiffSynth-Studio's LoRA recipe for one expert of a Fun A14B release (`lora/Wan2.2-Fun-A14B-Control.sh`,
     /// `-InP.sh`, and `-Control-Camera.sh` at 1e8ae1d): ``NFKMLXWanTrainingPreset/diffSynth`` with the index drawn
     /// from the expert's side of the boundary 0.358 (timestep 900), rank 32 on `q,k,v,o,ffn.0,ffn.2`, AdamW at
@@ -25,9 +33,10 @@ extension NFKMLXWanFunGenerator {
     /// Builds one transformer of a release directory, ready to fine-tune: a 5B release's only one, or an
     /// A14B release's `high_noise_model/` (``NFKMLXWanExpert/highNoise``) or `low_noise_model/`. A
     /// `quantizationBits` of 2 to 8 packs the blocks' linear layers as each loads, so the adapters train over a
-    /// packed base (QLoRA); 0 keeps the stored type. Introduced in InferKit 0.4.0.
-    public static func network(directoryURL: URL, expert: NFKMLXWanExpert = .highNoise,
-                               quantizationBits: Int = 0) throws -> NFKMLXWanTransformerNet {
+    /// packed base (QLoRA); 0 keeps the weights at `precision`, the stored bfloat16 by default. Introduced in
+    /// InferKit 0.4.0.
+    public static func network(directoryURL: URL, expert: NFKMLXWanExpert = .highNoise, quantizationBits: Int = 0,
+                               precision: NFKMLXWeightPrecision = .checkpoint) throws -> NFKMLXWanTransformerNet {
         let directory = NFKMLXWanFunRelease.hasExperts(directoryURL)
             ? directoryURL.appendingPathComponent(expert == .highNoise ? "high_noise_model" : "low_noise_model")
             : directoryURL
@@ -35,11 +44,11 @@ extension NFKMLXWanFunGenerator {
             fromConfigURL: directory.appendingPathComponent("config.json")))
         if quantizationBits != 0 {
             net.layerStream = try NFKMLXWanBlockedLoad.load(
-                into: net, blocks: net.blocks, fromDirectory: directory, precision: .checkpoint, bits: quantizationBits,
+                into: net, blocks: net.blocks, fromDirectory: directory, precision: precision, bits: quantizationBits,
                 rename: NFKMLXWanOriginalRelease.transformerModuleKey(forRelease:),
                 adapt: NFKMLXWanOriginalRelease.adaptedTransformer)
         } else {
-            try NFKMLXWanOriginalRelease.loadTransformer(into: net, fromDirectory: directory, precision: .checkpoint)
+            try NFKMLXWanOriginalRelease.loadTransformer(into: net, fromDirectory: directory, precision: precision)
         }
         return net
     }
@@ -69,7 +78,8 @@ extension NFKMLXWanFunGenerator {
              try pipeline.prepare(conditions, frames: frames, height: height, width: width))
         }
         return NFKMLXWanTrainingExample(latent: latent, text: features, condition: prepared.channels,
-                                        reference: prepared.reference, camera: prepared.camera)
+                                        reference: prepared.reference, camera: prepared.camera,
+                                        latentMask: prepared.latentMask)
     }
 
     /// Fine-tunes one transformer with LoRA as `preset`'s trainer does, returning each step's loss: the Wan

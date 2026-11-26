@@ -33049,6 +33049,135 @@ def run_wan_fun_lora_diffsynth(image):
 MODELS["wan_fun_lora_diffsynth"] = run_wan_fun_lora_diffsynth
 
 
+def run_wan_fun_lora_videoxfun(image):
+    """VideoX-Fun's Wan 2.2 Fun LoRA objective (aigc-apps/VideoX-Fun at 98fffa9, `IK_VIDEOX_FUN_SRC`,
+    `scripts/wan2.2_fun/train_control_lora.py`), under the `videoxfun` env with PEFT: VideoX-Fun's own
+    `Wan2_2Transformer3DModel` at a tiny random geometry adapted as the script adapts it (`LoraConfig` with
+    `inject_adapter_in_model`, rank 4, alpha 8, `q,k,v,ffn.0,ffn.2`), at float32. The script's step is inline in
+    its training loop, so the lines from the timestep draw to the loss are transcribed here: the uniform index
+    (`DiscreteSampling`), `get_sigmas`, the noised latent, `target = noise - latents`, the 5B branch
+    (`mask_conditions[:, :, 1:] = 1`, the blend with the masked latents and the per-token timesteps where the
+    first frame is kept), the transformer call, `custom_mse_loss` (elements past an error of 50 dropped) with the
+    `"none"` weighting, and the gradients. The scheduler is `FlowMatchEulerDiscreteScheduler` at
+    `config/wan2.2/wan_civitai_5b.yaml`'s kwargs. Two cases: `5b.` is a 5B Control release (3072 wide, the value
+    the script's `is_5b` reads, 24 heads, 2 blocks) whose first frame is kept, reading 48 latent channels, the
+    control, mask, and masked latents, and the reference latent, under a 12-token prompt the forward pads to 512;
+    `a14b.` is an A14B low-noise expert at the oracles' width, its index drawn on its side of the entry nearest
+    timestep 900, under a 512-token prompt, so its cross-attention gradients are not padding-flattened noise. Each records the weights under
+    diffusers names, the draws, the inputs, the prediction, the loss, and each adapter's gradient. `image` unused.
+    """
+    import math as math_module
+
+    import torch.nn.functional as F
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    from peft import LoraConfig, inject_adapter_in_model
+
+    models, _ = _videox_fun()
+    from videox_fun.utils.discrete_sampler import DiscreteSampling
+
+    scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=5.0, use_dynamic_shifting=False,
+                                                base_shift=0.5, max_shift=1.15, base_image_seq_len=256,
+                                                max_image_seq_len=4096)
+    extra = {"sampler.timestep": scheduler.timesteps.float().contiguous(), "sampler.sigma": scheduler.sigmas.float().contiguous()}
+    cases = {
+        "5b": dict(dim=3072, num_heads=24, ffn_dim=96, latent=48, in_dim=148, frames=3, size=(4, 4)),
+        "a14b": dict(dim=48, num_heads=2, ffn_dim=48, latent=16, in_dim=52, frames=3, size=(4, 4)),
+    }
+    for case, c in cases.items():
+        seed = 141 if case == "5b" else 151
+        model = models.Wan2_2Transformer3DModel(
+            model_type="ti2v" if case == "5b" else "i2v", dim=c["dim"], in_dim=c["in_dim"], in_channels=c["in_dim"],
+            hidden_size=c["dim"], ffn_dim=c["ffn_dim"], freq_dim=256, text_dim=32, out_dim=c["latent"],
+            num_heads=c["num_heads"], num_layers=2, eps=1e-6, add_ref_conv=True,
+            in_dim_ref_conv=c["latent"])
+        model = _randomized(model.float(), seed=seed, scale=0.05)
+        for key, value in model.state_dict().items():
+            name = _wan_original_to_diffusers(key)
+            if name is not None and not key.startswith("img_emb."):
+                extra[f"{case}.w::{name}"] = value.float().contiguous()
+        model = inject_adapter_in_model(LoraConfig(r=4, lora_alpha=8, target_modules=["q", "k", "v", "ffn.0", "ffn.2"]),
+                                        model)
+        generator = torch.Generator().manual_seed(seed + 1)
+        for name, parameter in model.named_parameters():
+            if "lora_B" in name:
+                parameter.data = torch.randn(parameter.shape, generator=generator) * 0.1
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad_("lora_" in name)
+
+        z, frames, (h, w) = c["latent"], c["frames"], c["size"]
+        latents = torch.randn(1, z, frames, h, w, generator=generator)
+        control_latents = torch.randn(1, c["in_dim"] - z, frames, h, w, generator=generator)
+        full_ref = torch.randn(1, z, h, w, generator=generator)
+        # A14B's prompt fills the 512 positions, so no padding row flattens its cross-attention gradients to
+        # float32 noise; 5B's 12 tokens keep the padding the forward adds.
+        prompt_embeds = [torch.randn(12 if case == "5b" else 512, 32, generator=generator)]
+        if case == "5b":
+            boundary_type, mask_conditions = "full", torch.ones(1, 1, frames, h, w)
+            mask_conditions[:, :, 0] = 0
+        else:
+            boundary_type, mask_conditions = "low", None
+        # From the script: the boundary index, the index sampler, and the step.
+        split_timesteps = 1000 * 0.900
+        closest_index = torch.argmin(torch.abs(scheduler.timesteps - split_timesteps)).item()
+        start_num_idx, train_sampling_steps = (closest_index, 1000 - closest_index) if boundary_type == "low" else (0, 1000)
+        idx_sampling = DiscreteSampling(train_sampling_steps, start_num_idx=start_num_idx, uniform_sampling=True)
+        torch_rng = torch.Generator().manual_seed(seed + 2)
+        noise = torch.randn(latents.size(), generator=torch_rng)
+        indices = idx_sampling(1, generator=torch_rng).long().cpu()
+        timesteps = scheduler.timesteps[indices]
+        step_index = [(scheduler.timesteps == t).nonzero().item() for t in timesteps]
+        sigmas = scheduler.sigmas[step_index].flatten().reshape(-1, 1, 1, 1, 1)
+        noisy_latents = (1.0 - sigmas) * latents + sigmas * noise
+        target = noise - latents
+        seq_len = math_module.ceil((h * w) / 4 * frames)
+        if case == "5b":
+            mask_conditions[:, :, 1:, :, :] = 1
+            if not mask_conditions[:, :, 0, :, :].any():
+                noisy_latents = (1 - mask_conditions) * control_latents[:, -z:] + mask_conditions * noisy_latents
+                temp_ts = (mask_conditions[:, 0, :, ::2, ::2] * timesteps[:, None, None, None]).flatten(1)
+                timesteps = torch.cat([temp_ts, temp_ts.new_ones(1, seq_len - temp_ts.size(1)) * timesteps[:, None]], dim=1)
+            else:
+                timesteps = mask_conditions.new_ones(1, seq_len) * timesteps[:, None]
+        noise_pred = model(x=noisy_latents, context=prompt_embeds, t=timesteps, seq_len=seq_len, y=control_latents,
+                           full_ref=full_ref)
+
+        def custom_mse_loss(noise_pred, target, weighting=None, threshold=50):
+            noise_pred = noise_pred.float()
+            target = target.float()
+            diff = noise_pred - target
+            mse_loss = F.mse_loss(noise_pred, target, reduction="none")
+            mask = (diff.abs() <= threshold).float()
+            masked_loss = mse_loss * mask
+            if weighting is not None:
+                masked_loss = masked_loss * weighting
+            return masked_loss.mean()
+        weighting = torch.ones_like(sigmas)
+        loss = custom_mse_loss(noise_pred.float(), target.float(), weighting.float()).mean()
+        loss.backward()
+        extra.update({f"{case}.index": indices.float(), f"{case}.timestep": scheduler.timesteps[indices].float().reshape(1),
+                      f"{case}.sigma": sigmas.float().reshape(1), f"{case}.latent": latents[0].contiguous(),
+                      f"{case}.condition": control_latents[0].contiguous(), f"{case}.reference": full_ref[0].contiguous(),
+                      f"{case}.noise": noise[0].contiguous(), f"{case}.text": prompt_embeds[0].contiguous(),
+                      f"{case}.prediction": noise_pred[0].detach().float().contiguous(),
+                      f"{case}.loss": loss.detach().reshape(1),
+                      f"{case}.range": torch.tensor([start_num_idx, start_num_idx + train_sampling_steps], dtype=torch.int32)})
+        if mask_conditions is not None:
+            extra[f"{case}.latent_mask"] = mask_conditions[0, 0].contiguous()
+        for name, module in model.named_modules():
+            if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+                a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+                path = _wan_original_to_diffusers(name + ".weight").removesuffix(".weight")
+                extra[f"{case}.lora::{path}.lora_a"] = a.detach().t().contiguous().float()
+                extra[f"{case}.lora::{path}.lora_b"] = b.detach().t().contiguous().float()
+                extra[f"{case}.grad::{path}.lora_a"] = a.grad.detach().t().contiguous().float()
+                extra[f"{case}.grad::{path}.lora_b"] = b.grad.detach().t().contiguous().float()
+    globals()["_extra"] = {key: value.clone() for key, value in extra.items()}
+    return extra["a14b.prediction"].clone()
+
+
+MODELS["wan_fun_lora_videoxfun"] = run_wan_fun_lora_videoxfun
+
+
 def _diffsynth_dense_flex_attention():
     """Replaces DiffSynth-Studio's compiled flex attention with the same computation in dense form, which
     runs on a CPU and differentiates there: `create_block_mask` returns the mask function itself, and the
