@@ -3,6 +3,7 @@
 
     python3 -I Tools/catalog/overhead.py plan --output PLAN.json [--locations LOCATIONS.json] [--options OPTIONS.json]
     python3 -I Tools/catalog/overhead.py run --plan PLAN.json --results DIR [--only KEY,...] [--families F,...]
+        [--input PORT]
     python3 -I Tools/catalog/overhead.py table --plan PLAN.json --results DIR [--results DIR ...]
 
 `plan` lists every MLX catalog variant with the stored release that holds its files, found by matching the
@@ -13,13 +14,16 @@ built past the budget check, for a variant its own overhead refuses on the measu
 float32 bytes are at most `--initial-limit`.
 
 `run` measures the selected variants one process each through `NFKMLXLoadOverheadTests`, smallest first,
-writing `DIR/<model>__<variant>.json`. A measurement whose MLX active memory passes `--memory-cap` ends with
+writing `DIR/<model>__<variant>.json`. `--input` names the input port the reference request fills in place
+of the one it picks, for a variant whose optional inputs take different paths, and writes
+`DIR/<model>__<variant>__<port>.json`. A measurement whose MLX active memory passes `--memory-cap` ends with
 a record that names the phase it reached. `run` skips a variant whose record exists without an error unless
 `--retry` is given. It builds nothing: build the tests first, and run it under the Large Model Coordination
 lock (`Tools/lmc/lmc.py`).
 
 `table` turns the records into `NFKMLXCatalogLoadOverheads.swift`. A later `--results` directory's record
-replaces an earlier one's. A measured variant's overhead is the larger of its load transient and its request
+replaces an earlier one's for the same variant and input. A variant measured through more than one input
+takes the largest of their figures. A measured variant's overhead is the larger of its load transient and its request
 peak less the bytes the memory facts already count that the request allocates (the key-value cache at the
 prompt's positions, an expert cache, and, where the residency holds less than the weights after the load,
 the weights it brings in during the request). A variant without a measurement takes its family's largest
@@ -172,8 +176,8 @@ def plan(arguments):
     print(f"{len(rows)} variants: {counts}; stored releases cover {len(families)} families")
 
 
-def record_path(results, key):
-    return os.path.join(results, key.replace("/", "__") + ".json")
+def record_path(results, key, port=None):
+    return os.path.join(results, key.replace("/", "__") + (f"__{port}" if port else "") + ".json")
 
 
 def group_resident_bytes(group):
@@ -212,7 +216,7 @@ def run(arguments):
     os.makedirs(arguments.results, exist_ok=True)
     package = os.path.join(arguments.root or ROOT, "InferKitMLX")
     for index, row in enumerate(selected, 1):
-        output = record_path(arguments.results, row["key"])
+        output = record_path(arguments.results, row["key"], arguments.input)
         if os.path.exists(output) and not arguments.retry:
             with open(output) as handle:
                 if "error" not in json.load(handle):
@@ -220,7 +224,8 @@ def run(arguments):
         environment = dict(os.environ, IK_LOAD_OVERHEAD_VARIANT=row["key"], IK_LOAD_OVERHEAD_OUTPUT=output,
                            IK_LOAD_OVERHEAD_LOCATION=row["location"] or "",
                            IK_LOAD_OVERHEAD_CAP=str(arguments.memory_cap),
-                           IK_LOAD_OVERHEAD_OPTIONS=json.dumps(row["options"]) if row.get("options") else "")
+                           IK_LOAD_OVERHEAD_OPTIONS=json.dumps(row["options"]) if row.get("options") else "",
+                           IK_LOAD_OVERHEAD_INPUT=arguments.input or "")
         log = output[:-5] + ".log"
         started = time.time()
         print(f"[{index}/{len(selected)}] {row['key']} ({row['weights']}, {row['residentBytes'] / 2**30:.2f} GiB)",
@@ -232,7 +237,8 @@ def run(arguments):
             status = watch(process, arguments.timeout, arguments.memory_cap)
         if not os.path.exists(output) or os.path.getmtime(output) < started:
             with open(output, "w") as handle:
-                json.dump({"variantKey": row["key"], "weights": row["weights"],
+                json.dump({"variantKey": row["key"], "weights": row["weights"], **({"input": arguments.input}
+                                                                                     if arguments.input else {}),
                            "error": f"the process ended ({status}) without a record"}, handle, indent=1)
         print(f"    {status} in {time.time() - started:.0f} s", flush=True)
 
@@ -305,28 +311,33 @@ def table(arguments):
             with open(path) as handle:
                 record = json.load(handle)
             if record.get("variantKey") in variants:
-                records[record["variantKey"]] = (record, path)
+                records[(record["variantKey"], record.get("input"))] = (record, path)
     geometry = hidden_sizes()
     measured, failures, exceeds, remeasure = {}, {}, {}, {}
-    for key, (record, path) in records.items():
+    for (key, port), (record, path) in records.items():
+        label = f"{key} ({port})" if port else key
         weights = record.get("weights") or planned.get(key, {}).get("weights")
         limit = exceeding_buffer(record, path)
         if record.get("overCap") and (weights == "initial" or record.get("capBytes", 0) >= LARGEST_WORKING_SET):
-            exceeds[key] = f"{record['activeBytes'] / 1e9:.1f} GB active in the {record.get('phase')}, past the cap"
+            exceeds[label] = f"{record['activeBytes'] / 1e9:.1f} GB active in the {record.get('phase')}, past the cap"
             continue
         if limit:
-            exceeds[key] = limit[limit.find("Attempting"):][:120] if "Attempting" in limit else limit[:120]
+            exceeds[label] = limit[limit.find("Attempting"):][:120] if "Attempting" in limit else limit[:120]
             continue
         if record.get("overCap"):
-            remeasure[key] = f"{record['activeBytes'] / 1e9:.1f} GB active in the {record.get('phase')}"
+            remeasure[label] = f"{record['activeBytes'] / 1e9:.1f} GB active in the {record.get('phase')}"
             continue
         if "error" in record or "requestPeak" not in record:
-            failures[key] = record.get("error", "no request peak")
+            failures[label] = record.get("error", "no request peak")
             continue
         facts = variants[key][1].get("memoryFacts") or {}
         overhead, load, request = figure(record, facts)
-        measured[key] = {"bytes": round_up(overhead), "load": round_up(load), "request": round_up(request),
-                         "weights": record["weights"]}
+        row = {"bytes": round_up(overhead), "load": round_up(load), "request": round_up(request),
+               "weights": record["weights"]}
+        if key not in measured or row["bytes"] > measured[key]["bytes"]:
+            measured[key] = row
+    excluded = {label.split(" (")[0] for label in list(exceeds) + list(remeasure)}
+    measured = {key: row for key, row in measured.items() if key not in excluded}
     by_family = {}
     for key in measured:
         by_family.setdefault(variants[key][0]["family"], []).append(key)
@@ -342,7 +353,7 @@ def table(arguments):
                          f'weights: .{row["weights"]})')
             continue
         sources = by_family.get(entry["family"], [])
-        if not sources or key in exceeds or key in remeasure:
+        if not sources or key in excluded:
             basis_counts["none"] += 1
             continue
         source = max(sources, key=lambda k: measured[k]["bytes"])
@@ -428,6 +439,7 @@ def main():
     running.add_argument("--max-bytes", type=int)
     running.add_argument("--timeout", type=int, default=1800)
     running.add_argument("--retry", action="store_true")
+    running.add_argument("--input", help="the input port the reference request fills in place of the one it picks")
     running.add_argument("--memory-cap", type=int, default=18 << 30,
                          help="MLX's active bytes, or the group's resident bytes, at which a measurement ends "
                               "(default 18 GiB; one allocation can pass it by several GiB)")

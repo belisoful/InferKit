@@ -127,6 +127,9 @@ SDXL and its LoRAs 10.6 GiB, HT Demucs 6s 9.8 GiB.
   (`plan --options`).
 - Qwen3 14B is measured at the options its refusal names (5-bit, a 1792-token context), resident: a
   quantized decoder packs its layers as it reads them and never streams (`mlx-companion.md`).
+- CLIP is measured through its image and its text input (`run --input prompt`). The text tower's 77-token
+  request peaks at 36 to 61 MB, under each size's 1024² image figure, so every CLIP row states its image
+  figure.
 
 With the figures, the variants refused at their defaults went from 145 / 80 / 41 / 13 of 409 to
 251 / 143 / 98 / 58 of 411 at 8 / 16 / 24 / 32 GB.

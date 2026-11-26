@@ -12,7 +12,9 @@
 //  The suite runs only when `IK_LOAD_OVERHEAD_VARIANT` names a variant as `model/variant` and
 //  `IK_LOAD_OVERHEAD_OUTPUT` names the JSON file to write. `IK_LOAD_OVERHEAD_LOCATION` names the
 //  release to load; an empty or absent location builds the network on initial values through the
-//  registry, which measures activations and leaves the load transient unmeasured. Large releases run
+//  registry, which measures activations and leaves the load transient unmeasured. `IK_LOAD_OVERHEAD_INPUT`
+//  names the input port the reference request fills in place of the one it picks, for a variant whose
+//  optional inputs take different paths. Large releases run
 //  under the Large Model Coordination lock (`overhead.py run` behind `Tools/lmc/lmc.py`).
 //
 
@@ -46,6 +48,9 @@ final class NFKMLXLoadOverheadTests: XCTestCase {
             }
             record.overrides = options
         }
+        if let input = environment["IK_LOAD_OVERHEAD_INPUT"], !input.isEmpty {
+            record.input = input
+        }
         let cap = environment["IK_LOAD_OVERHEAD_CAP"].flatMap(Int.init) ?? 18 << 30
         NFKMLXOverheadWatchdog.start(name: name, weights: location == nil ? "initial" : "stored", cap: cap,
                                      output: URL(fileURLWithPath: output))
@@ -71,6 +76,8 @@ private struct NFKMLXOverheadRecord {
     /// before its own overhead was counted, for a variant whose overhead now refuses it on the measuring
     /// machine.
     var overrides: [String: Any] = [:]
+    /// The input port the reference request fills in place of the one it picks.
+    var input: String?
 
     init(name: String, location: URL?) {
         self.name = name
@@ -93,6 +100,9 @@ private struct NFKMLXOverheadRecord {
             throw Self.failure("the catalog has no variant \(name)")
         }
         fields["family"] = descriptor.family
+        if let input {
+            fields["input"] = input
+        }
         fields["tasks"] = descriptor.tasks
         var options: [String: Any] = descriptor.variants.count > 1 ? [NFKModelLoadOptionVariant: variant.identifier] : [:]
         if !overrides.isEmpty {
@@ -144,7 +154,7 @@ private struct NFKMLXOverheadRecord {
 
         var reference = try NFKMLXReferenceRequest(descriptor: descriptor, variant: variant, backend: backend,
                                                     defaults: request.requestDefaults, loadOptions: request.loadOptions,
-                                                    repeats: location == nil)
+                                                    repeats: location == nil, input: input)
         var settled = loaded
         if location == nil {
             // A network on initial values creates its parameters on first use, so a first request
@@ -384,9 +394,10 @@ private struct NFKMLXReferenceRequest {
     private var promptKey: String?
     private var promptWords = 0
 
-    /// `repeats` is true for a request run twice, which reads no kept prompt cache.
+    /// `repeats` is true for a request run twice, which reads no kept prompt cache. `input` names the port
+    /// filled in place of the one `ports(of:)` picks.
     init(descriptor: NFKModelDescriptor, variant: NFKModelVariant, backend: any NFKInferenceBackend,
-         defaults: [String: Any], loadOptions: [String: Any], repeats: Bool) throws {
+         defaults: [String: Any], loadOptions: [String: Any], repeats: Bool, input: String? = nil) throws {
         let tasks = Set(descriptor.tasks)
         var parameters = defaults
         var summary = [String: Any]()
@@ -422,7 +433,7 @@ private struct NFKMLXReferenceRequest {
         var inputs = [String: Any]()
         var files = [URL]()
         var promptKeys = [String]()
-        for port in Self.ports(of: descriptor) {
+        for port in try Self.ports(of: descriptor, input: input) {
             switch port.valueType {
             case "image":
                 inputs[port.key] = Self.image(side: Self.imageSide)
@@ -499,9 +510,17 @@ private struct NFKMLXReferenceRequest {
     }
 
     /// The required inputs, or, where none is required (a prompt or messages, either one), the first the
-    /// descriptor takes of an image for an image task, else of a prompt, an image, audio, and a video.
-    private static func ports(of descriptor: NFKModelDescriptor) -> [NFKModelPort] {
+    /// descriptor takes of an image for an image task, else of a prompt, an image, audio, and a video. A
+    /// named input joins the required ones in place of that pick.
+    private static func ports(of descriptor: NFKModelDescriptor, input: String?) throws -> [NFKModelPort] {
         let required = descriptor.inputs.filter(\.isRequired)
+        if let input {
+            guard let port = descriptor.inputs.first(where: { $0.key == input }) else {
+                throw NSError(domain: "NFKMLXLoadOverheadTests", code: 3, userInfo: [
+                    NSLocalizedDescriptionKey: "\(descriptor.identifier) takes no input \(input)"])
+            }
+            return required.contains(where: { $0.key == input }) ? required : required + [port]
+        }
         guard required.isEmpty else {
             return required
         }

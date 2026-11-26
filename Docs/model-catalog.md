@@ -458,6 +458,10 @@ descriptor's required inputs and its default request options:
 | Video | 1280×720 at 24 frames per second, the default frame count, else 16 frames |
 | A speech synthesizer | About 30 s of speech |
 
+A variant whose inputs are all optional takes an image for an image task, else a prompt. Where its optional
+inputs take different paths through the network, as CLIP's image and text towers do, each path is measured
+and the variant states the larger figure.
+
 A variant without its own measurement takes its family's largest measured figure. A decoder's figure
 scales by its hidden size, else its vocabulary. A variant whose reference request outgrows the
 measurement's memory cap, or asks Metal for a buffer past its limit, states no figure and lends none to
