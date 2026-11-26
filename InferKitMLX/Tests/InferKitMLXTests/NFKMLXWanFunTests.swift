@@ -9,6 +9,7 @@
 //
 
 import XCTest
+import InferKit
 import MLX
 @testable import InferKitMLX
 
@@ -123,6 +124,41 @@ final class NFKMLXWanFunTests: XCTestCase {
             .asArray(Float.self), [1.5, 5.5])
         XCTAssertEqual(NFKMLXWanFunPipeline.linearResized(row, size: [1, 1, 3], alignCorners: true).reshaped([-1])
             .asArray(Float.self), [0, 3.5, 7])
+    }
+
+    // MARK: The released transformers, held by shape
+
+    /// Every released Fun transformer's header (`Tools/validation-assets/shapes.py`) against the module its
+    /// `config.json` builds, the released names mapped as the loader maps them: none missing, none left
+    /// over, none at another shape.
+    func testEveryFunReleaseMatchesItsLoader() throws {
+        try requireMLXRuntime()
+        guard let root = NFKMLXValidationConfig.environment["IK_SHAPES_ROOT"] else { throw XCTSkip("set IK_SHAPES_ROOT") }
+        let names = ["wan22-fun-5b-control", "wan22-fun-5b-inp", "wan22-fun-5b-control-camera"]
+            + ["control", "inp", "control-camera"].flatMap { ["wan22-fun-a14b-\($0)-high", "wan22-fun-a14b-\($0)-low"] }
+        for name in names {
+            let directory = URL(fileURLWithPath: root).appendingPathComponent(name)
+            guard let data = try? Data(contentsOf: directory.appendingPathComponent("shapes.json")) else {
+                throw XCTSkip("fetch \(name) with Tools/validation-assets/shapes.py")
+            }
+            let released = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: [Int]])
+            let configuration = try NFKMLXWanOriginalRelease.transformerConfiguration(
+                fromConfigURL: directory.appendingPathComponent("config.json"))
+            let net = NFKMLXWanTransformerNet(configuration)
+            let built = Dictionary(net.parameters().flattened().map { ($0.0, $0.1.shape) }, uniquingKeysWith: { a, _ in a })
+            let mapped = Dictionary(released.map { key, shape -> (String, [Int]) in
+                let name = NFKMLXWanOriginalRelease.transformerModuleKey(forRelease: key)
+                return (name, shape.count >= 4 ? [shape[0]] + shape.dropFirst(2) + [shape[1]] : shape)
+            }, uniquingKeysWith: { a, _ in a })
+            let missing = built.keys.filter { mapped[$0] == nil }.sorted()
+            let unconsumed = mapped.keys.filter { built[$0] == nil }.sorted()
+            let mismatched = built.compactMap { key, shape in mapped[key].flatMap { $0 == shape ? nil : "\(key) \(shape) vs \($0)" } }
+            print("VALIDATION structure \(name): \(built.count) built, \(released.count) released, \(missing.count) missing, "
+                  + "\(unconsumed.count) unconsumed, \(mismatched.count) mismatched")
+            XCTAssertTrue(missing.isEmpty, "\(name) lacks \(missing.prefix(5))")
+            XCTAssertTrue(unconsumed.isEmpty, "\(name) ships \(unconsumed.prefix(5)) nothing reads")
+            XCTAssertTrue(mismatched.isEmpty, "\(name): \(mismatched.prefix(5))")
+        }
     }
 
     // MARK: Against VideoX-Fun
@@ -256,5 +292,74 @@ final class NFKMLXWanFunTests: XCTestCase {
         try requireMLXRuntime()
         try assertMatchesVideoXFun(testDevKey: "IK_VAL_WAN22_FUN_A14B_CAMERA_TESTDEV",
                                    recordKey: "IK_PARITY_WAN22_FUN_A14B_CAMERA_PIPELINE")
+    }
+
+    // MARK: The generator
+
+    /// The generator over a test-dev release, its run from the record's noise and conditions against the
+    /// record's final latents.
+    private func generatorRun(_ generator: NFKMLXWanFunGenerator, _ record: [String: MLXArray]) throws -> MLXArray {
+        generator.steps = 3
+        generator.guidance = 4
+        let control = record["control_video"]!
+        let frames = control.dim(0), height = control.dim(1), width = control.dim(2)
+        var conditions = NFKMLXWanFunConditions()
+        if generator.variant.rawValue % 3 == 0 {
+            conditions.controlVideo = control
+            conditions.referenceImage = record["reference_image"]
+        }
+        if generator.variant.rawValue % 3 == 2 {
+            conditions.cameraEmbedding = record["camera"]
+        }
+        return try generator.generate(prompt: prompt, negativePrompt: negative, conditions: conditions, frames: frames,
+                                      width: width, height: height, seed: 0, noise: record["latents"]!).latent
+    }
+
+    func testTheGeneratorMatchesVideoXFunThroughEveryResidency() throws {
+        try requireMLXRuntime()
+        for (key, recordKey) in [("IK_VAL_WAN22_FUN_5B_CONTROL_TESTDEV", "IK_PARITY_WAN22_FUN_5B_CONTROL_PIPELINE"),
+                                 ("IK_VAL_WAN22_FUN_A14B_CONTROL_TESTDEV", "IK_PARITY_WAN22_FUN_A14B_CONTROL_PIPELINE")] {
+            let (directory, record) = try release(key, record: recordKey)
+            let resident = try NFKMLXWanFunGenerator.generator(directoryURL: directory, residency: .resident,
+                                                               precision: .float32, quantizationBits: 0)
+            XCTAssertTrue(resident.holdsStagesResident)
+            let held = try generatorRun(resident, record)
+            let measured = cosine(held, record["final_latents"]!)
+            print("wan fun generator \(key): \(String(format: "%.16f", measured))")
+            XCTAssertGreaterThan(measured, 0.9999999, key)
+
+            let staged = try NFKMLXWanFunGenerator.generator(directoryURL: directory, residency: .staged,
+                                                             precision: .float32, quantizationBits: 0)
+            XCTAssertFalse(staged.holdsStagesResident)
+            XCTAssertEqual((try generatorRun(staged, record) - held).abs().max().item(Float.self), 0, "\(key) staged")
+
+            let streamed = try NFKMLXWanFunGenerator.generator(directoryURL: directory, residency: .resident,
+                                                              precision: .float32, bits: nil, streamedBlocks: [1])
+            XCTAssertGreaterThan(streamed.streamedLayerCount, 0)
+            XCTAssertEqual((try generatorRun(streamed, record) - held).abs().max().item(Float.self), 0, "\(key) streamed")
+
+            let packed = try NFKMLXWanFunGenerator.generator(directoryURL: directory, residency: .resident,
+                                                            precision: .float32, quantizationBits: 8)
+            XCTAssertEqual(packed.quantizationBits, 8)
+            XCTAssertGreaterThan(cosine(try generatorRun(packed, record), held), 0.999, "\(key) 8-bit")
+        }
+    }
+
+    func testTheBackendReturnsAClipAndTheRegistryRefusesAnotherVariant() throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release("IK_VAL_WAN22_FUN_5B_CONTROL_TESTDEV",
+                                              record: "IK_PARITY_WAN22_FUN_5B_CONTROL_PIPELINE")
+        let generator = try NFKMLXWanFunGenerator.generator(directoryURL: directory)
+        XCTAssertEqual(generator.variant, .control5B)
+        let reference = try NFKMLXImageBridge.cgImage(from: record["reference_image"]!, options: NFKMLXImageOptions())
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: prompt, NFKMLXVideoInputKey.referenceImage: reference],
+                                          parameters: [NFKParameterFrameCount: 5, NFKParameterWidth: 64,
+                                                       NFKParameterHeight: 64, NFKParameterSteps: 2])
+        let result = try generator.inferenceBackend().runInference(for: request)
+        let asset = try XCTUnwrap(result.output(forKey: NFKOutputVideo) as? NFKVideoAsset)
+        XCTAssertEqual(asset.dimensions, CGSize(width: 64, height: 64))
+        NFKMLXWanFunGenerator.register()
+        XCTAssertThrowsError(try NFKMLXModelRegistry.backend(named: "wan2.2-fun-5b-inp", weightsURL: directory))
+        XCTAssertNoThrow(try NFKMLXModelRegistry.backend(named: "wan2.2-fun-5b-control", weightsURL: directory))
     }
 }

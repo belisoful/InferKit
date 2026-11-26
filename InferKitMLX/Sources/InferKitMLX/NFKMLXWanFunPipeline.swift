@@ -62,10 +62,13 @@ public struct NFKMLXWanFunConditions {
 
 /// The Wan 2.2 Fun sampler over one or two transformers and the autoencoder.
 public final class NFKMLXWanFunPipeline {
-    /// The transformer every step runs, or the low-noise expert of an A14B release.
-    let transformer: NFKMLXWanTransformerNet
+    /// The transformer every step runs, or the low-noise expert of an A14B release; nil where a generator
+    /// stages the experts apart and hands each phase its own.
+    let transformer: NFKMLXWanTransformerNet?
     /// The high-noise expert of an A14B release, which runs every step at or above the boundary.
     let highNoiseTransformer: NFKMLXWanTransformerNet?
+    /// The geometry of the transformers the conditions are prepared for.
+    let configuration: NFKMLXWanConfiguration
     let vae: NFKMLXWanVideoVAENet
     let latentsMean: MLXArray
     let latentsStd: MLXArray
@@ -74,11 +77,13 @@ public final class NFKMLXWanFunPipeline {
     let boundary: Float
     let schedule: NFKMLXFlowMatchConfiguration
 
-    init(transformer: NFKMLXWanTransformerNet, highNoiseTransformer: NFKMLXWanTransformerNet?,
+    init(transformer: NFKMLXWanTransformerNet?, highNoiseTransformer: NFKMLXWanTransformerNet?,
+         configuration: NFKMLXWanConfiguration? = nil,
          vae: NFKMLXWanVideoVAENet, latentsMean: MLXArray, latentsStd: MLXArray, boundary: Float = 0.9,
          schedule: NFKMLXFlowMatchConfiguration = .wan) {
         self.transformer = transformer
         self.highNoiseTransformer = highNoiseTransformer
+        self.configuration = configuration ?? transformer?.config ?? highNoiseTransformer!.config
         self.vae = vae
         self.latentsMean = latentsMean
         self.latentsStd = latentsStd
@@ -122,7 +127,7 @@ public final class NFKMLXWanFunPipeline {
     func prepare(_ conditions: NFKMLXWanFunConditions, frames: Int, height: Int, width: Int) throws -> Prepared {
         let s = spatialCompression, z = latentChannels
         let latentFrames = (frames - 1) / 4 + 1, h = height / s, w = width / s
-        let config = transformer.config
+        let config = configuration
 
         var maskLatents = MLXArray.zeros([4, latentFrames, h, w])
         var maskedLatents = MLXArray.zeros([z, latentFrames, h, w])
@@ -238,30 +243,47 @@ public final class NFKMLXWanFunPipeline {
 
     // MARK: Sampling
 
-    /// The latents `[z, F', h, w]` after `steps` Euler steps over the release's flow schedule from `noise`.
+    /// The timesteps of a schedule of `steps`.
+    func timesteps(_ steps: Int) -> [Float] {
+        var scheduler = NFKMLXFlowMatchScheduler(schedule)
+        scheduler.setTimesteps(steps, sequenceLength: 0)
+        return scheduler.timesteps
+    }
+
+    /// Whether the step at timestep `t` runs on the high-noise expert of an A14B release.
+    func usesHighNoiseExpert(_ t: Float) -> Bool { t >= boundary * Float(schedule.trainTimesteps) }
+
+    /// The latents `[z, F', h, w]` after the Euler steps `indices` (every one by default) of a `steps`-step
+    /// schedule over the release's flow, from `latents`: the noise at the first step, the previous phase's
+    /// latents after it.
     ///
     /// @discussion Each step forms the transformer's input as the latents followed by the prepared
     /// channels, runs the conditioned and unconditioned passes where `guidance` is above 1, combines them
     /// as `uncond + guidance · (cond − uncond)`, and steps. A 16× autoencoder's release scales each token's
-    /// timestep by the latent mask, subsampled by the patch. An A14B release runs `highNoiseTransformer`
-    /// on every step whose timestep is at least `boundary · 1000`. `onStep` reports each step's latents.
-    func denoise(text: MLXArray, negative: MLXArray?, prepared: Prepared, noise: MLXArray, steps: Int,
-                 guidance: Float, onStep: ((Int, MLXArray) -> Void)? = nil) throws -> MLXArray {
+    /// timestep by the latent mask, subsampled by the patch. An A14B release runs the high-noise expert on
+    /// every step whose timestep is at least `boundary · 1000`; `net`, where given, hands the step at a
+    /// timestep its transformer instead. `onStep` reports each step's latents.
+    func denoise(text: MLXArray, negative: MLXArray?, prepared: Prepared, noise latents: MLXArray, steps: Int,
+                 guidance: Float, indices: Range<Int>? = nil, net chosen: ((Float) -> NFKMLXWanTransformerNet)? = nil,
+                 onStep: ((Int, MLXArray) -> Void)? = nil) throws -> MLXArray {
         var scheduler = NFKMLXFlowMatchScheduler(schedule)
         scheduler.setTimesteps(steps, sequenceLength: 0)
-        var latents = noise.asType(.float32)
-        if prepared.blends, let mask = prepared.latentMask {
+        let indices = indices ?? 0 ..< steps
+        var latents = latents.asType(.float32)
+        if indices.lowerBound == 0, prepared.blends, let mask = prepared.latentMask {
             latents = (1 - mask) * prepared.maskedLatents + mask * latents
         }
         let tokenScale = prepared.latentMask.map { mask -> (values: [Float], index: MLXArray) in
-            let ph = transformer.config.patchSize[1], pw = transformer.config.patchSize[2]
+            let ph = configuration.patchSize[1], pw = configuration.patchSize[2]
             let sampled = mask[0..., .stride(by: ph), .stride(by: pw)].reshaped([-1])
             return Self.distinct(sampled)
         }
-        for index in 0 ..< steps {
+        for index in indices {
             let t = scheduler.timesteps[index]
-            let net = highNoiseTransformer.flatMap { Float(t) >= boundary * Float(schedule.trainTimesteps) ? $0 : nil }
-                ?? transformer
+            guard let net = chosen?(t)
+                ?? (usesHighNoiseExpert(t) ? highNoiseTransformer ?? transformer : transformer ?? highNoiseTransformer) else {
+                throw NFKMLXError.unsupportedConfiguration("the pipeline holds no transformer for timestep \(t)")
+            }
             let dtype = NFKReferenceRounding.parameterType(of: net)
             let input = concatenated([latents, prepared.channels], axis: 0).asType(dtype)
             var conditioning = NFKWanConditioning(
