@@ -80,6 +80,46 @@ arithmetic as before.
   ltx_transformer`, the `ltx` oracle env, recorded random latent/text/timestep): every seam exact (rope
   cos/sin ≥ 0.9999999, proj_in and first block ≥ 0.99999999999) and the full 28-layer velocity cosine
   0.99999999999. The 2B weights are ~7.7 GB sharded.
+
+  **Customization** (`NFKMLXLTXVideoTraining.swift`), against Lightricks/LTX-Video-Trainer at e055182, whose
+  `LtxvModelVersion.LTXV_2B_090` loads this release and whose `ltxv_2b_lora.yaml` is the reference recipe. The
+  trainer's model is diffusers' `LTXVideoTransformer3DModel` (its `uv.lock` pins diffusers 0.33.1; that file's
+  forward differs from 0.41's only in the attention dispatch and the LoRA-scale decorator).
+  - Targets (`NFKMLXLTXVideoTrainable`): LoRA rank 32, alpha 32, dropout 0 on `to_k`, `to_q`, `to_v`, `to_out.0`,
+    which in this model are both attentions of every block (224 layers, 29.4M parameters).
+  - Objective (`NFKMLXLTXVideoObjective`, `StandardTrainingStrategy`): sigma `sigmoid(n + μ)` with `μ` the same
+    line in the token count as LTX-2's (`NFKMLXLTXVideoSigmaSampler`, no stretch, no uniform mix);
+    `(1 − σ)·clean + σ·noise`; target `noise − clean`; a timestep per token, `round(1000·σ)` as an integer and
+    0 on conditioning tokens, so the transformer takes `[B, S]` timesteps and modulates each token by its own;
+    first-frame conditioning drawn once per batch (`random.random() < 0.1`); loss `mean(err²·mask) / mean(mask)`
+    over the whole batch. The caption's padding is masked out of the cross-attention; the rotary reads
+    `(8 / fps, 32, 32)`, fps 24 where a clip states none.
+  - Optimizer: AdamW (torch defaults, weight decay 0.01) at 2e-4, clip 1, `LinearLR` 1 → 0.1. The reference
+    trains a bfloat16 transformer under bfloat16 autocast; the recipe runs at the loaded type (float32 for the
+    release, or a 4/8-bit QLoRA base through `network(directoryURL:quantizationBits:)`, which quantizes block by
+    block). The low-VRAM recipe's gradient checkpointing is `recomputesBlocksInBackward` (on by default, the
+    gradients bit-identical); attention runs through `NFKMLXBlockedAttention` in training.
+  - Data adapter `trainingExample(video:frameRate:prompt:seed:)`: the trainer's preprocessing, a posterior draw
+    (`latent_dist.sample()`: the encoder's one log-variance channel shared by every channel, clamped to
+    [−30, 20]) normalized by the stored mean and std without the scaling factor, and T5 at 256 tokens with no
+    mask into the encoder and the mask kept for the cross-attention.
+  - Saved file (`saveAdapters(of:to:)`): the trainer's `_save_checkpoint` layout,
+    `transformer.<module>.lora_A.weight` / `lora_B.weight`, plus diffusers' `lora_adapter_metadata` with the
+    rank, alpha, and targets. The trainer's own file carries no alpha (diffusers 0.33's `save_lora_weights`
+    writes only `format`), so it reads back at alpha = rank, which equals the reference's alpha 32 / rank 32.
+    `NFKMLXLTXTransformer.holdAdapters(at:strengths:in:)` and the backend's `adapterURLs:` factory hold either.
+  - Oracle `ltxv_loss` (the trainer's own `_setup_lora`, `_training_step`, `_save_checkpoint` over a tiny
+    random transformer, rank 4, alpha 8, both matrices drawn): plain prediction
+    0.9999999999397, loss 4.55191 against 4.551896, worst of 32 adapter gradients 0.9999999977; first frame
+    conditioned 0.9999999999758, loss 2.7230802 against 2.723077, worst gradient 0.9999999992; sampler within
+    5.97e-8 at 100 and 6000 tokens. The control, one timestep per clip, falls to 0.5879 against the trainer's
+    prediction and holds 0.9999999999440 against the reference's own per-clip prediction. The trainer's saved
+    file held beside the base reads 0.9999999999999998 against the alpha-equals-rank prediction; the recipe's
+    file holds the trainer's keys and values exactly and reads back 0.9999999999397.
+  - Released 0.9.0 transformer (`IK_VAL_LTX_TF`), three reference-recipe steps over a 49-frame 512×320 grid
+    (1,120 tokens) and 256 caption tokens: float32 base build 7.69 GB, step peak
+    9.92 GB, 4.8–6.0 s a step; 4-bit QLoRA build 1.62 GB peak, step peak 3.58 GB, 4.1–4.6 s a step, 29,360,128
+    trainable parameters either way (2026-11-26, M1 Max).
 - `NFKMLXLTX2TransformerNet` — the LTX-2 audio-video transformer (`LTX2VideoTransformer3DModel`,
   Lightricks). One transformer denoises a video latent and an AUDIO latent together, so a generated
   clip carries its own sound. The LTX-Video DiT above is the video-only ancestor; this is a different

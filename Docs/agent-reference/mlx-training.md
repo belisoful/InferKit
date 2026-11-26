@@ -169,8 +169,8 @@ inputs, and chained at 4.97 GB. Its gradients match MLX's within 1e-5 relative, 
 
 `NFKMLXBlockedAttention.isTraining`, a task-local, routes `NFKReferenceRounding.flashAttention`'s float32
 path, and TRELLIS's dense attention, through it for an attention longer than two blocks; an inference on
-another task keeps MLX's attention. The recipes that set it for their run: Wan, Wan Animate, LTX-2, TRELLIS
-(both flows), and Stable Audio. A backward's peak above its inputs, measured at each release's geometry:
+another task keeps MLX's attention. The recipes that set it for their run: Wan, Wan Animate, LTX-2, LTX-Video,
+TRELLIS (both flows), and Stable Audio. A backward's peak above its inputs, measured at each release's geometry:
 
 | Geometry | One score matrix | MLX | Blocked |
 |---|---|---|---|
@@ -335,7 +335,7 @@ counts below are the ledger's, over its 169 rows.
   - **A recipe's seed seeds the draws that carry no key (2026-11-22).** `run(…seed:)` runs the freezing
     and the loop under a `RandomState` seeded with it, so the adapters' `lora_a` and any dropout mask
     repeat across processes, as the reference trainers' `set_seed` makes them. A recipe that takes a
-    `seed` passes it: LTX-2, Wan, Wan Animate, Stable Audio, and both TRELLIS flows. A recipe with no
+    `seed` passes it: LTX-2, LTX-Video, Wan, Wan Animate, Stable Audio, and both TRELLIS flows. A recipe with no
     `seed` leaves nil, and its adapters follow MLX's global state, which mlx-swift seeds from the clock.
     The released LTX-2.5 and Wan steps drifted from step 2 on until the seed reached the adapters
     (`mlx-runtime-gotchas.md`, "A draw without a key is seeded from the clock"). The LTX-2, Wan, and

@@ -60,10 +60,10 @@ public final class NFKMLXLTXVideoGenerator: NSObject {
     /// The caption length the pipeline pads and truncates to.
     static let maximumSequenceLength = 128
 
-    private let staging: NFKMLXStagedModel
-    private let textStage: NFKMLXStage<NFKLTXTextStage>
-    private let pipelineStage: NFKMLXStage<NFKMLXLTXPipeline>
-    private let segmenter: NFKMLXSentencePieceSegmenter
+    let staging: NFKMLXStagedModel
+    let textStage: NFKMLXStage<NFKLTXTextStage>
+    let pipelineStage: NFKMLXStage<NFKMLXLTXPipeline>
+    let segmenter: NFKMLXSentencePieceSegmenter
 
     /// The denoising steps, 50 by the reference's default.
     @objc public var steps: Int = 50

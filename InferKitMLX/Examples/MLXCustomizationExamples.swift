@@ -516,6 +516,43 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: adapters.path))
     }
 
+    // Docs/examples.md: Fine-tuning LTX-Video on your own clips
+    func testExampleFineTuningLTXVideoOnOwnClips() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let adapters = FileManager.default.temporaryDirectory.appendingPathComponent("ltxv-lora-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: adapters) }
+        // A real run builds from the release with NFKMLXLTXVideoGenerator.network(directoryURL:quantizationBits:) and
+        // makes each example with generator.trainingExample(video:frameRate:prompt:seed:); the tiny geometry keeps
+        // this free of downloads.
+        let net = NFKMLXLTXTransformerNet(.tiny)
+        let base = net.parameters()
+        let myClips = [NFKMLXLTXVideoTrainingExample(latents: MLXRandom.normal([12, 16]), text: MLXRandom.normal([5, 32]),
+                                                     textMask: MLXArray([Float(1), 1, 1, 0, 0]), frames: 2, height: 2,
+                                                     width: 3)]
+        let history = try NFKMLXLTXVideoGenerator.fineTune(net, examples: { _ in myClips },
+                                                           trainable: .lora(rank: 4, alpha: 4), learningRate: 1e-2,
+                                                           steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        // The file is in the trainer's layout; the backend's adapter factory,
+        // NFKMLXLTXVideoBackend.backend(directoryURL:residency:adapterURLs:strengths:), holds it beside the release.
+        try NFKMLXLTXVideoGenerator.saveAdapters(of: net, to: adapters)
+        let reloaded = NFKMLXLTXTransformerNet(.tiny)
+        reloaded.update(parameters: base)
+        try NFKMLXLTXTransformer.holdAdapters(at: [adapters], strengths: [1], in: reloaded)
+        let inputs = NFKMLXLTXVideoObjective.inputs(latents: myClips[0].latents.expandedDimensions(axis: 0),
+                                                    sigma: MLXArray([Float(0.5)]), noise: MLXRandom.normal([1, 12, 16]),
+                                                    conditioned: MLXArray([Float(0)]), tokensPerFrame: 6)
+        func prediction(_ net: NFKMLXLTXTransformerNet) -> MLXArray {
+            NFKMLXLTXVideoObjective.prediction(net, inputs: inputs, text: myClips[0].text.expandedDimensions(axis: 0),
+                                               textMask: myClips[0].textMask.expandedDimensions(axis: 0), frames: 2,
+                                               height: 2, width: 3, frameRate: 24)
+        }
+        let trained = prediction(net), held = prediction(reloaded)
+        XCTAssertLessThan((trained - held).abs().max().item(Float.self), 1e-4, "the saved adapters reload as trained")
+    }
+
     // Docs/examples.md: Fine-tuning Wan on your own clips
     func testExampleFineTuningWanOnOwnClips() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

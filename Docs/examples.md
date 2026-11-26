@@ -6179,6 +6179,36 @@ linear decay to a tenth of the rate. A batch holds clips of the same latent grid
 block's activations are recomputed in the backward pass, as the trainer's recipes do, so a 4-bit step on the
 22B transformer fits a 32 GB Mac: about 24.5 GB at its peak and 80 seconds for a 49-frame 512×320 clip.
 
+### Fine-tuning LTX-Video on your own clips
+
+Lightricks' LTX-Video-Trainer fine-tunes the LTX-Video 0.9.0 transformer with LoRA: rank-32 adapters on the
+query, key, value, and output projections of both attentions in every block, everything else frozen. Each
+clip becomes an example through the release's own stages: its frames through the autoencoder, a draw from the
+posterior normalized by the stored latent statistics, and its caption through T5, padded to 256 tokens. The
+2B transformer trains over its float32 release or over a 4-bit build that loads and quantizes it one block at
+a time (QLoRA):
+
+```swift
+let generator = try NFKMLXLTXVideoGenerator.generator(directoryURL: release, residency: .staged)
+let examples = try myClips.map { try generator.trainingExample(video: $0.frames, frameRate: 24, prompt: $0.caption) }
+let net = try NFKMLXLTXVideoGenerator.network(directoryURL: release, quantizationBits: 4)
+try NFKMLXLTXVideoGenerator.fineTune(net, examples: { _ in [examples.randomElement()!] }, steps: 1_500)
+
+// The adapters are the whole run, written in the trainer's own layout; the base stays as the release ships it.
+try NFKMLXLTXVideoGenerator.saveAdapters(of: net, to: adaptersURL)
+let tuned = try NFKMLXLTXVideoBackend.backend(directoryURL: release, residency: .staged,
+                                              adapterURLs: [adaptersURL], strengths: [1])
+```
+
+The objective is the trainer's flow matching: each clip noised at a sigma from its shifted logit-normal
+sampler, the transformer reading `round(1000·σ)` as its timestep, and the velocity `noise − clean` held to
+its target by the mean squared error. One batch in ten keeps its first latent frame clean, at timestep zero
+and out of the loss. The optimizer is the trainer's: AdamW at 2e-4 with the gradient norm clipped to 1, under
+a linear decay to a tenth of the rate. A batch holds clips of the same latent grid. Each block's activations
+are recomputed in the backward pass, as the trainer's low-memory recipe does. A file the trainer wrote loads
+the same way, and `NFKMLXLTXTransformer.holdAdapters(at:strengths:in:)` holds one beside a transformer the
+caller built.
+
 ### Fine-tuning Wan on your own clips
 
 Wan-Video publishes no training code, so the Wan text-to-video transformer fine-tunes as a community

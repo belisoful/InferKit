@@ -122,6 +122,19 @@ public final class NFKMLXLTXPipeline {
         return latent
     }
 
+    /// A clip `[1, frames, height, width, 3]` in −1…1 → the latents the trainer's preprocessing stores: a draw
+    /// from the autoencoder's posterior with `key`, normalized by the stored statistics, packed token-major
+    /// `[frames′ · height′ · width′, latentChannels]`, with the latent grid.
+    func trainingLatents(_ clip: MLXArray, key: MLXArray) -> (latents: MLXArray, frames: Int, height: Int, width: Int) {
+        let vae = holder.vae
+        let sampled = vae.sample(clip) { MLXRandom.normal($0, key: key) }
+        let normalized = (sampled - vae.latentsMean.reshaped([1, 1, 1, 1, -1])) / vae.latentsStd.reshaped([1, 1, 1, 1, -1])
+        let (frames, height, width) = (normalized.dim(1), normalized.dim(2), normalized.dim(3))
+        let latents = normalized[0].reshaped([frames * height * width, normalized.dim(4)])
+        eval(latents)
+        return (latents, frames, height, width)
+    }
+
     /// Decodes packed latents into a clip `[1, (frames − 1) · 8 + 1, height · 32, width · 32, 3]` in
     /// −1…1, after denormalizing them by the autoencoder's stored statistics.
     public func decode(_ latents: MLXArray, frames: Int, height: Int, width: Int) -> MLXArray {

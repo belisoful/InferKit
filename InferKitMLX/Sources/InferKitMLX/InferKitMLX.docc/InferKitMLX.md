@@ -563,6 +563,10 @@ The figures have three limits:
 - ``NFKMLXLTXVideoVAENet``
 - ``NFKMLXLTXTransformer``
 - ``NFKMLXLTXTransformerNet``
+- ``NFKMLXLTXVideoObjective``
+- ``NFKMLXLTXVideoSigmaSampler``
+- ``NFKMLXLTXVideoTrainingExample``
+- ``NFKMLXLTXVideoTrainable``
 - ``NFKMLXLTX2Generator``
 - ``NFKMLXLTX2Variant``
 - ``NFKMLXLTX2ParameterKey``

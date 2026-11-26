@@ -44,9 +44,9 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 67 |
+| `ships` | 68 |
 | `trainable`, no recipe yet | 42 |
-| `offline` | 40 |
+| `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 19 |
 | Shared infrastructure, no objective of its own | 1 |
@@ -216,7 +216,7 @@ residual or the velocity objective is known, and the working set is what rules i
 | Model | Outcome | Level | Reach | What decides it |
 | --- | --- | --- | --- | --- |
 | `NFKMLXSANATransformerNet` | trainable | LoRA | partial | The measured `Sana_600M` release holds with the backbone frozen. NVlabs' own script is unread, which item 5 of the minimum set needs. |
-| `NFKMLXLTXTransformer` | offline | — | internal | 2B at ~7.7 GB sharded, before a video-length activation stack. |
+| `NFKMLXLTXTransformer` | ships | LoRA | public | Lightricks' LTX-Video-Trainer recipe (`ltxv_2b_lora.yaml`, `LTXV_2B_0.9.0`): LoRA rank 32 on `to_q`/`to_k`/`to_v`/`to_out.0` of both attentions, over the float32 release or a 4/8-bit base (QLoRA), the trainer's shifted logit-normal sampler, integer per-token timesteps, masked MSE, and AdamW at 2e-4. The objective, gradients, and saved file are held to the trainer's own code (`ltxv_loss`). On the released transformer, a 49-frame 512×320 step peaks at 9.92 GB at float32 and 3.58 GB at 4 bits, about 5 s a step, with each block recomputed in the backward pass. |
 | `NFKMLXLTX2TransformerNet` | ships | LoRA | public | Lightricks' `ltx-trainer` recipe: LoRA on `to_q`/`to_k`/`to_v`/`to_out.0` of all six attentions, over a float or 4/8-bit base (QLoRA, `NFKMLXQuantizedLoRALinear`), the trainer's own sampler, objective, and AdamW. The objective is held to `ltx_core`'s model under peft (`ltx2_loss`). On the released `transformer_full/` at 4 bits a 32 GB machine trains it: build 11.3 GB, step peak 17.5 GB, 36–61 s a step for a 49-frame 512×320 clip, with each block recomputed in the backward pass as the trainer's recipes do. |
 | `NFKMLXLTX2ConnectorsNet` | offline | — | public | 3.2B; the trainer holds it frozen and trains only through the transformer it conditions. |
 | `NFKMLXLTX2VideoDecoderNet`, `NFKMLXLTX2AudioDecoderNet`, `NFKMLXLTX2VideoEncoderNet`, `NFKMLXLTX2AudioEncoderNet` | untrainable | — | public | Lightricks publishes no autoencoder training code; `ltx-trainer` freezes both autoencoders and encodes its data through them, which the encoders do here (`trainingExample`). |
@@ -368,6 +368,7 @@ the recipe detail.
 | `NFKMLXMarigold`, `NFKMLXSDUpscaler` | trainable, LoRA | prs-eth/Marigold at 2bfbdea; the upscaler's `ddpm.py` from a mirror of the deleted Stability-AI/stablediffusion, unpinned. |
 | `NFKMLXTAESD` | untrainable | madebyollin/taesd at 401ce45, the whole tree. |
 | `NFKMLXLTXVideoVAE` | untrainable | Lightricks/LTX-Video at 4b2d053 and LTX-Video-Trainer at e055182. |
+| `NFKMLXLTXTransformer` | ships, LoRA | Lightricks/LTX-Video-Trainer at e055182 (the repository's head on 2026-11-26), `src/ltxv_trainer/` (`trainer.py`, `training_strategies.py`, `timestep_samplers.py`, `ltxv_utils.py`, `config.py`), `scripts/process_videos.py` and `process_captions.py`, and `configs/ltxv_2b_lora.yaml` and `ltxv_2b_lora_low_vram.yaml`; `uv.lock` pins diffusers 0.33.1, peft 0.14.0, torch 2.6.0. |
 | `NFKMLXLTX2TransformerNet` | ships, LoRA | Lightricks/LTX-2 at e98f6d9, `packages/ltx-trainer` (`trainer.py`, `timestep_samplers.py`, `training_strategies/`, `configs/t2v_lora.yaml`) and `packages/ltx-core` (`model/transformer/`). |
 | `NFKMLXWanTransformerNet` | ships, LoRA | huggingface/finetrainers at 684c0db (`finetrainers/models/wan/`, `utils/diffusion.py`, `trainer/sft_trainer/`); modelscope/DiffSynth-Studio at 1e8ae1d (`diffsynth/diffusion/`, `models/wan_video_dit.py`, `utils/lora/`); kohya-ss/musubi-tuner at f8a1b03 (`training/trainer_base.py`, `networks/lora_wan.py`, `wan/modules/`). |
 | `NFKMLXWanAnimate` | ships, LoRA | modelscope/DiffSynth-Studio at 1e8ae1d (`examples/wanvideo/model_training/lora/Wan2.2-Animate-2-14B.sh`, `diffsynth/models/wan_animate_2_dit.py`, `pipelines/wan_video.py`, `diffusion/loss.py`). |

@@ -226,12 +226,17 @@ final class NFKLTXEncoder: Module {
 
     /// A video `[B, T, H, W, 3]` → the latent mean `[B, t, h, w, latentChannels]`.
     func callAsFunction(_ video: MLXArray) -> MLXArray {
+        moments(video)[0..., 0..., 0..., 0..., 0 ..< configuration.latentChannels]
+    }
+
+    /// A video `[B, T, H, W, 3]` → the posterior's mean channels followed by its one log-variance channel,
+    /// `[B, t, h, w, latentChannels + 1]`.
+    func moments(_ video: MLXArray) -> MLXArray {
         var h = patchify(video)
         h = convIn(h)
         for block in downBlocks { h = block(h) }
         h = midBlock(h)
-        h = convOut(silu(ltxRMSNorm(h)))
-        return h[0..., 0..., 0..., 0..., 0 ..< configuration.latentChannels]   // the latent mean
+        return convOut(silu(ltxRMSNorm(h)))
     }
 
     /// Folds each `patchSizeT × patchSize × patchSize` block into the channel axis, in the reference's
@@ -320,6 +325,17 @@ public final class NFKMLXLTXVideoVAENet: Module {
 
     /// A latent → the reconstructed video `[B, T, H, W, 3]`. Introduced in InferKit 0.4.0.
     public func decode(_ latent: MLXArray) -> MLXArray { decoder(latent) }
+
+    /// A draw from the posterior of `video` `[B, T, H, W, 3]`: `mean + exp(logvar / 2)·noise`, where every
+    /// channel shares the encoder's one log-variance channel, clamped to `[−30, 20]`, as diffusers'
+    /// `latent_dist.sample()` draws it. `noise` is a standard normal of the latent's shape.
+    func sample(_ video: MLXArray, noise: (_ shape: [Int]) -> MLXArray) -> MLXArray {
+        let moments = encoder.moments(video)
+        let channels = configuration.latentChannels
+        let mean = moments[0..., 0..., 0..., 0..., 0 ..< channels]
+        let logVariance = clip(moments[0..., 0..., 0..., 0..., channels ..< (channels + 1)], min: -30, max: 20)
+        return mean + exp(0.5 * logVariance) * noise(mean.shape)
+    }
 }
 
 /// Holds the network for capture across an isolation boundary.

@@ -6903,7 +6903,8 @@
         "ltx2_real_prompt_enhancer",
         "wan_lora",
         "ltx2_dfr",
-        "ltx2_real_dfr_lora"
+        "ltx2_real_dfr_lora",
+        "ltxv_loss"
       ]
     },
     "wantrain_finetrainers": {
@@ -8158,6 +8159,12 @@
       "record": "reference/ltx2-loss.safetensors",
       "environment": "ltxtrain",
       "command": "ltx2_loss (t2v.* and flex.*: the trainer's text_to_video and flexible strategies over ltx_core's tiny LTXModel under peft LoRA; loss, per-example loss, predictions, and every adapter's gradient in lora_a/lora_b layout; sampler.* the raw sampler draws at 100 and 6000 tokens)"
+    },
+    {
+      "key": "IK_PARITY_LTXV_LOSS",
+      "record": "reference/ltxv-loss.safetensors",
+      "environment": "ltxtrain",
+      "command": "ltxv_loss with IK_LTXV_TRAINER_SRC at Lightricks/LTX-Video-Trainer e055182's src/ (default sources/refsrc/ltx-video-trainer-e055182/src; a git clone with GIT_LFS_SKIP_SMUDGE=1, the repository's only LFS files being README media) (plain.* and first_frame.*: LtxvTrainer._setup_lora, _training_step through StandardTrainingStrategy and ShiftedLogitNormalTimestepSampler over a tiny diffusers LTXVideoTransformer3DModel; draws, noised latents, targets, integer per-token timesteps, conditioning mask, prediction, loss, and every adapter's gradient in lora_a/lora_b layout; control.per_clip the first-frame prediction at one timestep per clip; saved:: every tensor of the file _save_checkpoint writes; sampler.* 64 draws at 100 and 6000 tokens)"
     },
     {
       "key": "IK_PARITY_WAN_LORA_FINETRAINERS",

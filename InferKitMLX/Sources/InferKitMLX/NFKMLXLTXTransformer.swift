@@ -203,9 +203,11 @@ final class NFKLTXAttention: Module {
         func split(_ t: MLXArray) -> MLXArray {
             t.reshaped([t.shape[0], t.shape[1], heads, headDim]).transposed(0, 2, 1, 3)
         }
-        let attended = MLXFast.scaledDotProductAttention(
-            queries: split(query), keys: split(key), values: split(value),
-            scale: 1 / sqrt(Float(headDim)), mask: bias)
+        let (queries, keys, values) = (split(query), split(key), split(value))
+        let scale = 1 / sqrt(Float(headDim))
+        let attended = NFKMLXBlockedAttention.applies(to: queries, mask: bias)
+            ? NFKMLXBlockedAttention.attention(queries: queries, keys: keys, values: values, scale: scale, mask: bias)
+            : MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale, mask: bias)
         let merged = attended.transposed(0, 2, 1, 3).reshaped([x.shape[0], x.shape[1], heads * headDim])
         return toOut[0](merged)
     }
@@ -256,7 +258,8 @@ final class NFKLTXBlock: Module {
 
     func callAsFunction(_ x: MLXArray, context: MLXArray, temb: MLXArray, rotary: (MLXArray, MLXArray),
                         textBias: MLXArray? = nil) -> MLXArray {
-        // temb is [B, 1, 6·inner]; the block adds its table and splits into the six modulation tensors.
+        // temb is [B, 1, 6·inner], or [B, S, 6·inner] with a timestep per token; the block adds its table and
+        // splits into the six modulation tensors.
         let ada = scaleShiftTable.reshaped([1, 1, 6, scaleShiftTable.shape[1]])
             + temb.reshaped([temb.shape[0], temb.shape[1], 6, -1])
         let shiftMSA = ada[0..., 0..., 0], scaleMSA = ada[0..., 0..., 1], gateMSA = ada[0..., 0..., 2]
@@ -294,6 +297,18 @@ public final class NFKMLXLTXTransformerNet: Module {
     public let configuration: NFKMLXLTXTransformerConfiguration
     let rotary: NFKLTXRotary
 
+    /// Whether a block's activations are recomputed from its inputs in the backward pass rather than held
+    /// from the forward one (gradient checkpointing, the trainer's `enable_gradient_checkpointing`). A
+    /// training step then holds one block's activations at a time, at the cost of a second forward pass. The
+    /// forward's values and the gradients are unchanged. Off by default.
+    ///
+    /// @discussion Each block runs as a custom function over its trainable arrays and its input whose
+    /// backward reruns the block. The modulation, the projected text, the text bias, and the rotary tables
+    /// the block reads depend on nothing a LoRA trains and enter as constants.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public var recomputesBlocksInBackward = false
+
     /// A DiT at `c`, with random weights until ``NFKMLXLTXTransformer/loadWeights(into:from:)`` fills it.
     /// Introduced in InferKit 0.4.0.
     public init(_ c: NFKMLXLTXTransformerConfiguration) {
@@ -310,6 +325,9 @@ public final class NFKMLXLTXTransformerNet: Module {
     /// Latent tokens `[B, S, inChannels]`, text `[B, L, captionChannels]`, a timestep, and the latent grid
     /// `(frames, height, width)` → the predicted velocity `[B, S, inChannels]`.
     ///
+    /// `timestep` is `[B]`, one per clip, or `[B, S]`, one per token, as the trainer passes it with zero on
+    /// the conditioning tokens; each token's modulation then reads its own.
+    ///
     /// `textMask` `[B, L]` is 1 for a caption token and 0 for padding. The reference turns it into an
     /// additive `(1 − mask) · −10000` bias on the cross-attention, and so does this; nil attends to every
     /// caption position. Introduced in InferKit 0.4.0.
@@ -318,17 +336,21 @@ public final class NFKMLXLTXTransformerNet: Module {
                         textMask: MLXArray? = nil) -> MLXArray {
         let rope = rotary.embedding(frames: grid.0, height: grid.1, width: grid.2, scale: ropeScale)
         var hidden = projIn(latent)
-        let (temb, embedded) = timeEmbed(timestep)
-        let tembTokens = temb.reshaped([latent.shape[0], 1, temb.shape[temb.ndim - 1]])
+        let (temb, embedded) = timeEmbed(timestep.reshaped([-1]))
+        let tembTokens = temb.reshaped([latent.shape[0], -1, temb.shape[temb.ndim - 1]])
         let context = captionProjection(text)
         let textBias = textMask.map {
             ((1 - $0.asType(.float32)) * -10000).reshaped([$0.dim(0), 1, 1, $0.dim(-1)]).asType(hidden.dtype)
         }
         for block in blocks {
-            hidden = block(hidden, context: context, temb: tembTokens, rotary: rope, textBias: textBias)
+            let run = { (x: MLXArray) in
+                block(x, context: context, temb: tembTokens, rotary: rope, textBias: textBias)
+            }
+            hidden = recomputesBlocksInBackward
+                ? NFKMLXCustomFunction.recomputed(block) { [run($0[0])] }([hidden])[0] : run(hidden)
         }
         let ada = scaleShiftTable.reshaped([1, 1, 2, configuration.innerDim])
-            + embedded.reshaped([latent.shape[0], 1, 1, configuration.innerDim])
+            + embedded.reshaped([latent.shape[0], -1, 1, configuration.innerDim])
         let shift = ada[0..., 0..., 0], scale = ada[0..., 0..., 1]
         hidden = ltxLayerNorm(hidden) * (1 + scale) + shift
         return projOut(hidden)
@@ -357,6 +379,52 @@ public final class NFKMLXLTXTransformer: NSObject {
     public static func loadWeights(into net: NFKMLXLTXTransformerNet, from directory: URL) throws {
         let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, remap: remapReferenceKey)
         try NFKMLXWeights.apply(arrays, to: net)
+    }
+
+    /// Holds LoRA files beside `net`'s layers, unmerged, each at the strength in `strengths` at its index: the
+    /// reader ``NFKMLXLTXVideoBackend/backend(directoryURL:residency:adapterURLs:strengths:)`` holds its adapters
+    /// with, for diffusers' layout, kohya's, and the trainer's (``NFKMLXLTXVideoGenerator/saveAdapters(of:to:)``).
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` when the counts differ, and `NFKMLXError.loRANotApplicable`
+    ///   when an adapter does not fit the transformer.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func holdAdapters(at urls: [URL], strengths: [Float], in net: NFKMLXLTXTransformerNet) throws {
+        try NFKMLXDiTAdapters.hold(NFKMLXDiTAdapters.adapters(urls, strengths: strengths.map { NSNumber(value: $0) }),
+                                   in: net)
+    }
+
+    /// Loads a checkpoint one block at a time, packing each block's linear layers to `bits` as it arrives, so
+    /// the float32 transformer is never resident whole. The layers outside the blocks keep the stored type.
+    static func loadQuantizedWeights(into net: NFKMLXLTXTransformerNet, from directory: URL, bits: Int,
+                                     groupSize: Int) throws {
+        // Evaluating the whole network would materialize every block's initial weights, so the layers outside
+        // the blocks are placed and evaluated by themselves, and each block on its own.
+        let outside = try NFKMLXReleaseWeights.materializedArrays(
+            inDirectory: directory, precision: .checkpoint, remap: { block(ofKey: $0) == nil ? $0 : nil })
+        let provided = Set(outside.map(\.0))
+        let missing = net.parameters().flattened().map(\.0)
+            .filter { !$0.hasPrefix("transformer_blocks.") && !provided.contains($0) }
+        guard missing.isEmpty else {
+            throw NFKMLXError.weightsMismatch("the release lacks \(missing.count) transformer weight(s): "
+                                              + missing.prefix(3).joined(separator: ", "))
+        }
+        net.update(parameters: ModuleParameters.unflattened(outside))
+        eval(outside.map(\.1))
+        for (index, layer) in net.blocks.enumerated() {
+            let arrays = try NFKMLXReleaseWeights.materializedArrays(
+                inDirectory: directory, precision: .checkpoint,
+                remap: { key in block(ofKey: key).flatMap { $0.layer == index ? $0.name : nil } })
+            try NFKMLXWeights.apply(arrays, to: layer, verifyShapes: true)
+            try NFKMLXQuantization.quantize(module: layer, bits: bits, groupSize: groupSize)
+            eval(layer)
+        }
+    }
+
+    /// The block a released transformer key belongs to and its name inside the block, or nil for a key
+    /// outside `transformer_blocks`.
+    static func block(ofKey key: String) -> (layer: Int, name: String)? {
+        NFKMLXLayerStream.layer(ofDecoderName: key, layersKey: "transformer_blocks")
     }
 
     /// The reference keys mirror the module names; finalized against the released checkpoint.

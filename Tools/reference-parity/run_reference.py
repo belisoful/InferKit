@@ -27283,6 +27283,205 @@ def run_ltx2_loss(image):
 MODELS["ltx2_loss"] = run_ltx2_loss
 
 
+def _ltxv_trainer():
+    """Lightricks/LTX-Video-Trainer's `ltxv_trainer` package, imported from its source at e055182
+    (`IK_LTXV_TRAINER_SRC`, default `<validation root>/sources/refsrc/ltx-video-trainer-e055182/src`). The
+    trainer module imports wandb, imageio, and decord for logging and video reading, which no mode here reaches;
+    each one the environment lacks is stood in by a mock."""
+    import importlib.machinery
+    import importlib.util
+    from unittest.mock import MagicMock
+
+    source = os.environ.get("IK_LTXV_TRAINER_SRC") or os.path.join(
+        VALIDATION_ROOT, "sources", "refsrc", "ltx-video-trainer-e055182", "src")
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    for name in ("wandb", "imageio", "decord"):
+        if importlib.util.find_spec(name) is None:
+            stub = MagicMock()
+            stub.__spec__ = importlib.machinery.ModuleSpec(name, None)
+            sys.modules[name] = stub
+    from ltxv_trainer import config, timestep_samplers, trainer, training_strategies
+    return config, timestep_samplers, trainer, training_strategies
+
+
+def run_ltxv_loss(image):
+    """The LTX-Video LoRA training step as Lightricks' trainer runs it (Lightricks/LTX-Video-Trainer at
+    e055182, the recipe `ltxv_2b_lora.yaml` trains `LTXV_2B_0.9.0` with), through the trainer's own code:
+    `LtxvTrainer._setup_lora` adapts the transformer, `LtxvTrainer._training_step` runs
+    `StandardTrainingStrategy.prepare_batch` with `ShiftedLogitNormalTimestepSampler`, the transformer, and
+    `compute_loss`, and `LtxvTrainer._save_checkpoint` writes the adapters.
+
+    The transformer is diffusers' `LTXVideoTransformer3DModel` at the tiny random configuration of
+    `NFKMLXLTXTransformerConfiguration.tiny` (16 channels, 2 heads of 8, 2 layers, captions of 32), so the
+    rotary leaves 4 of its 16 channels unrotated as the released one does none of. LoRA rank 4, alpha 8 over
+    the trainer's `to_k`, `to_q`, `to_v`, `to_out.0`. Two sections, each a batch of two clips of a 3 × 2 × 3
+    latent grid with captions of 5 tokens, the first's last two padding:
+    - `plain`: no first-frame conditioning (p 0, so no draw), 24 fps.
+    - `first_frame`: p 1, so the trainer's `random.random()` conditions the batch's first latent frame:
+      timestep 0 and out of the loss there. 25 fps.
+
+    Records: the transformer (`w::`), every adapter in InferKit's layout (`lora::<path>.lora_a` `[in, rank]`,
+    `.lora_b` `[rank, out]`), the clean latents, text, and masks, each section's raw draws, the strategy's noised
+    latents, targets, integer timesteps, and conditioning mask, the prediction, the loss, and each adapter's
+    gradient (`grad::`); a control prediction (`control.per_clip`) with the first-frame section's timestep one
+    per clip, the timestep a port without per-token modulation would read; `sampler.<tokens>.*` the raw
+    sampler draws at 100 and 6000 tokens, either side of the shift's interpolation; and `saved::<key>` every
+    tensor of the file `_save_checkpoint` writes, under its own key. Runs under the `ltxtrain` oracle env.
+    `image` unused.
+    """
+    import random
+    import tempfile
+    from types import SimpleNamespace
+    from diffusers import LTXVideoTransformer3DModel
+    from safetensors import safe_open
+
+    config, samplers, trainer, strategies = _ltxv_trainer()
+
+    model = LTXVideoTransformer3DModel(
+        in_channels=16, out_channels=16, patch_size=1, patch_size_t=1, num_attention_heads=2, attention_head_dim=8,
+        cross_attention_dim=16, num_layers=2, caption_channels=32, qk_norm="rms_norm_across_heads")
+    _randomized(model, seed=43, scale=0.2)
+    extra = {f"w::{k}": v.float().clone().contiguous() for k, v in model.state_dict().items()}
+
+    rank, alpha = 4, 8
+    host = SimpleNamespace(
+        _transformer=model,
+        _config=SimpleNamespace(
+            lora=config.LoraConfig(rank=rank, alpha=alpha, dropout=0.0),
+            output_dir=tempfile.mkdtemp(prefix=f"ltxv-loss-{os.getpid()}-"),
+            model=SimpleNamespace(training_mode="lora"), checkpoints=SimpleNamespace(keep_last_n=-1)),
+        _timestep_sampler=samplers.ShiftedLogitNormalTimestepSampler(),
+        _accelerator=SimpleNamespace(unwrap_model=lambda module: module),
+        _checkpoint_paths=[], _cleanup_checkpoints=lambda: None, _global_step=1)
+    assert list(host._config.lora.target_modules) == ["to_k", "to_q", "to_v", "to_out.0"], host._config.lora.target_modules
+    trainer.LtxvTrainer._setup_lora(host)
+    # peft starts B at zero, which leaves A's gradient zero; both are drawn so every gradient discriminates.
+    torch.manual_seed(47)
+    adapters = {}
+    for name, module in model.named_modules():
+        if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+            a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+            with torch.no_grad():
+                a.copy_(torch.randn(a.shape) * 0.2)
+                b.copy_(torch.randn(b.shape) * 0.2)
+            adapters[name] = (a, b)
+            extra[f"lora::{name}.lora_a"] = a.detach().t().contiguous().clone()
+            extra[f"lora::{name}.lora_b"] = b.detach().t().contiguous().clone()
+    assert len(adapters) == 2 * 2 * 4, sorted(adapters)
+    model.train()
+
+    batch_size, frames, height, width = 2, 3, 2, 3
+    generator = torch.Generator().manual_seed(5)
+    clean = torch.randn(batch_size, frames * height * width, 16, generator=generator)
+    text = torch.randn(batch_size, 5, 32, generator=generator)
+    mask = torch.tensor([[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]], dtype=torch.bool)
+    extra.update({"clean": clean.contiguous(), "text": text.contiguous(), "text_mask": mask.float().contiguous()})
+
+    real_randn, real_randn_like = torch.randn, torch.randn_like
+
+    def logged(function, kind, draws):
+        def draw(*args, **kwargs):
+            value = function(*args, **kwargs)
+            draws.append((kind, value))
+            return value
+        return draw
+
+    captured = {}
+    model.register_forward_hook(lambda m, i, o: captured.__setitem__("prediction", o[0]))
+
+    def section(prefix, probability, fps, seed):
+        strategy = strategies.StandardTrainingStrategy(
+            config.ConditioningConfig(mode="none", first_frame_conditioning_p=probability))
+        prepare = strategy.prepare_batch
+
+        def prepared(*args, **kwargs):
+            captured["batch"] = prepare(*args, **kwargs)
+            return captured["batch"]
+
+        strategy.prepare_batch = prepared
+        host._training_strategy = strategy
+        batch = {"latents": {"latents": clean, "num_frames": torch.tensor([frames] * batch_size),
+                             "height": torch.tensor([height] * batch_size), "width": torch.tensor([width] * batch_size),
+                             "fps": torch.tensor([float(fps)] * batch_size)},
+                 "conditions": {"prompt_embeds": text, "prompt_attention_mask": mask}}
+        draws = []
+        torch.manual_seed(seed)
+        random.seed(seed)
+        real_random = random.random
+        conditions = []
+
+        def condition():
+            value = real_random()
+            conditions.append(value)
+            return value
+
+        random.random = condition
+        torch.randn, torch.randn_like = logged(real_randn, "randn", draws), logged(real_randn_like, "randn_like", draws)
+        model.zero_grad()
+        try:
+            loss = trainer.LtxvTrainer._training_step(host, batch)
+        finally:
+            torch.randn, torch.randn_like, random.random = real_randn, real_randn_like, real_random
+        assert [kind for kind, _ in draws] == ["randn", "randn_like"], [kind for kind, _ in draws]
+        assert len(conditions) == (1 if probability > 0 else 0), conditions
+        loss.backward()
+        prepared_batch = captured["batch"]
+        extra.update({
+            f"{prefix}.draw.normal": draws[0][1].contiguous(), f"{prefix}.draw.noise": draws[1][1].contiguous(),
+            f"{prefix}.conditioned": torch.tensor([float(prepared_batch.conditioning_mask.any())]),
+            f"{prefix}.fps": torch.tensor([float(fps)]),
+            f"{prefix}.sigma": prepared_batch.sigmas.reshape(-1).contiguous(),
+            f"{prefix}.noisy": prepared_batch.latents.contiguous(),
+            f"{prefix}.targets": prepared_batch.targets.contiguous(),
+            f"{prefix}.timesteps": prepared_batch.timesteps.float().contiguous(),
+            f"{prefix}.conditioning_mask": prepared_batch.conditioning_mask.float().contiguous(),
+            f"{prefix}.prediction": captured["prediction"].detach().contiguous(),
+            f"{prefix}.loss": loss.detach().reshape(1).contiguous()})
+        for path, (a, b) in adapters.items():
+            extra[f"{prefix}.grad::{path}.lora_a"] = a.grad.detach().t().contiguous().clone()
+            extra[f"{prefix}.grad::{path}.lora_b"] = b.grad.detach().t().contiguous().clone()
+        print(f"  {prefix}: loss {float(loss):.8f}, sigma {prepared_batch.sigmas.reshape(-1).tolist()}, "
+              f"conditioned {bool(prepared_batch.conditioning_mask.any())}")
+        return prepared_batch, loss
+
+    section("plain", 0.0, 24, seed=16)
+    conditioned, loss = section("first_frame", 1.0, 25, seed=17)
+    assert bool(conditioned.conditioning_mask[:, :height * width].all())
+    assert not bool(conditioned.conditioning_mask[:, height * width:].any())
+
+    with torch.no_grad():
+        per_clip = model(hidden_states=conditioned.latents, encoder_hidden_states=text,
+                         timestep=conditioned.timesteps[:, -1], encoder_attention_mask=mask,
+                         num_frames=frames, height=height, width=width,
+                         rope_interpolation_scale=conditioned.rope_interpolation_scale, return_dict=False)[0]
+    extra["control.per_clip"] = per_clip.contiguous()
+
+    saved = trainer.LtxvTrainer._save_checkpoint(host)
+    with safe_open(str(saved), framework="pt") as handle:
+        print(f"  saved {saved.name}: {len(list(handle.keys()))} tensors, metadata {handle.metadata()}")
+        for key in handle.keys():
+            extra[f"saved::{key}"] = handle.get_tensor(key).contiguous()
+
+    sampler = samplers.ShiftedLogitNormalTimestepSampler()
+    for tokens in (100, 6000):
+        draws = []
+        torch.manual_seed(tokens)
+        torch.randn = logged(real_randn, "randn", draws)
+        try:
+            sigmas = sampler.sample(64, tokens)
+        finally:
+            torch.randn = real_randn
+        extra[f"sampler.{tokens}.normal"] = draws[0][1].contiguous()
+        extra[f"sampler.{tokens}.sigma"] = sigmas.contiguous()
+
+    globals()["_extra"] = extra
+    return loss.detach().reshape(1).clone().contiguous()
+
+
+MODELS["ltxv_loss"] = run_ltxv_loss
+
+
 def run_ltx2_video_encoder(image):
     """The LTX-2 video autoencoder's ENCODER (`LTX2VideoEncoder3d` inside `AutoencoderKLLTX2Video`), the
     stage Lightricks' trainer runs over each clip before training, at the tiny random configuration of
