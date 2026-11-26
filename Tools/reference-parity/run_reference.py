@@ -27896,6 +27896,199 @@ def run_wan22_a14b_pipeline(image, checkpoint):
 CHECKPOINT_MODELS["wan22_a14b_pipeline"] = run_wan22_a14b_pipeline
 
 
+def _videox_fun():
+    """VideoX-Fun's modules, from `IK_VIDEOX_FUN_SRC`, with `Tools/wan-fun-testdev/vfun_shims.py` standing in
+    for its one CUDA-only module (fused sparse-attention kernels the float path never calls)."""
+    source = os.environ.get("IK_VIDEOX_FUN_SRC")
+    if not source:
+        raise SystemExit("set IK_VIDEOX_FUN_SRC")
+    sys.path.insert(0, source)
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "wan-fun-testdev"))
+    import vfun_shims  # noqa: F401
+    import videox_fun.models as models
+    import videox_fun.pipeline as pipelines
+    return models, pipelines
+
+
+def run_wan_fun_pipeline(image, checkpoint):
+    """The Wan 2.2 Fun releases' glue, from VideoX-Fun's own `Wan2_2FunControlPipeline` (Control and
+    Control-Camera releases) or `Wan2_2FunInpaintPipeline` (InP releases), end to end over a release
+    directory, loaded as VideoX-Fun's `examples/wan2.2_fun/predict_*.py` load one.
+
+    `--checkpoint` is a test-dev release (`Tools/wan-fun-testdev/make_testdev.py`): the original Wan layout
+    the Fun releases ship, at a small geometry with seeded random weights. The kind of release is read
+    from it: two experts (`high_noise_model/`) make an A14B release, at VideoX-Fun's `boundary` 0.900;
+    `add_ref_conv` a reference-image release; `add_control_adapter` a camera release; any other input width
+    of twice the latent width plus 4 an InP release. The Inpaint pipeline takes its 5B path where
+    `transformer.config.dim == 3072`, which the 5B InP test-dev keeps. Everything runs at float32 on the CPU, three Euler steps
+    at VideoX-Fun's flow shift of 5 and guidance 4. The examples' sampler, shift, and guidance are the
+    `sampler_name = "Flow"`, `shift = 5`, and `guidance_scale` lines of `predict_v2v_control_5b.py` /
+    `predict_v2v_control.py`; the boundary is `config/wan2.2/wan_civitai_i2v.yaml`'s.
+
+    Two runs per release: `` (no prefix) generates every frame (the examples' all-255 mask without a start
+    image), with a control video or a camera embedding and, where the release reads one, a reference
+    image; `start.` keeps a start and an end image under the mask `get_image_to_video_latent` builds;
+    `mask.` keeps a rectangle of the time-reversed control video on frames 2 onward (`region_mask`, 1 where
+    generated), so frame 0 is generated and nothing blends while the tokens' timesteps vary. The
+    record carries the inputs (`control_video`, `camera`, `reference_image`, `start_image`, `end_image`,
+    `[F, H, W, 3]` / `[H, W, 3]` in 0...1, the camera `[6, F, H, W]`, for a camera release the Plücker
+    embedding `process_pose_file` builds from VideoX-Fun's own `asset/Zoom_In.txt`, whose bytes are kept as
+    `pose_file`), the starting latents, the prompt
+    features cut at their lengths (`prompt_embeds`, `negative_embeds`) with their token ids, and per run
+    the first call's transformer inputs (`<run>input.x`, `.y`, `.t`, `.full_ref`, `.y_camera`), the latents
+    after each step (`<run>step.<i>`), each transformer call's prediction (`<run>call.<k>`), which expert
+    ran each step (`<run>experts`, 1 for the high-noise expert), the final latents, and the decoded clip
+    (`<run>video`, `[F, H, W, 3]` in 0...1). `torch.cuda.device` is held to a no-op context: the pipeline
+    enters it around every call, and it refuses the CPU. `image` unused.
+    """
+    import contextlib
+    import json as json_module
+
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    from transformers import AutoTokenizer
+
+    models, pipelines = _videox_fun()
+    torch.cuda.device = lambda device=None: contextlib.nullcontext()
+
+    a14b = os.path.isdir(os.path.join(checkpoint, "high_noise_model"))
+    config_dir = os.path.join(checkpoint, "low_noise_model") if a14b else checkpoint
+    with open(os.path.join(config_dir, "config.json")) as handle:
+        config = json_module.load(handle)
+    in_channels = config.get("in_dim", config.get("in_channels"))
+    latent_channels = 16 if a14b else 48
+    camera = bool(config.get("add_control_adapter", False))
+    inpaint = in_channels == 2 * latent_channels + 4 and not camera
+    reference = bool(config.get("add_ref_conv", False))
+
+    def transformer(directory):
+        return models.Wan2_2Transformer3DModel.from_pretrained(
+            directory, transformer_additional_kwargs={"dict_mapping": {"in_dim": "in_channels", "dim": "hidden_size"}},
+            torch_dtype=torch.float32).float().eval()
+    text_kwargs = {"vocab": 256384, "dim": 32, "dim_attn": 32, "dim_ffn": 64, "num_heads": 2, "num_layers": 2,
+                   "num_buckets": 32, "shared_pos": False, "dropout": 0.0}
+    text_encoder = models.WanT5EncoderModel.from_pretrained(
+        os.path.join(checkpoint, "models_t5_umt5-xxl-enc-bf16.pth"), additional_kwargs=text_kwargs,
+        torch_dtype=torch.float32).float().eval()
+    if a14b:
+        vae = models.AutoencoderKLWan.from_pretrained(
+            os.path.join(checkpoint, "Wan2.1_VAE.pth"),
+            additional_kwargs={"temporal_compression_ratio": 4, "spatial_compression_ratio": 8}).float().eval()
+    else:
+        vae = models.AutoencoderKLWan3_8.from_pretrained(
+            os.path.join(checkpoint, "Wan2.2_VAE.pth"),
+            additional_kwargs={"c_dim": 16, "latent_channels": 48, "temporal_compression_ratio": 4,
+                               "spatial_compression_ratio": 16}).float().eval()
+    scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=5.0, use_dynamic_shifting=False,
+                                                base_shift=0.5, max_shift=1.15, base_image_seq_len=256,
+                                                max_image_seq_len=4096)
+    tokenizer = AutoTokenizer.from_pretrained(os.path.join(checkpoint, "google", "umt5-xxl"))
+    pipeline_class = pipelines.Wan2_2FunInpaintPipeline if inpaint else pipelines.Wan2_2FunControlPipeline
+    nets = ([transformer(os.path.join(checkpoint, "low_noise_model")),
+             transformer(os.path.join(checkpoint, "high_noise_model"))] if a14b else [transformer(checkpoint)])
+    pipeline = pipeline_class(tokenizer=tokenizer, text_encoder=text_encoder, vae=vae, transformer=nets[0],
+                              transformer_2=nets[1] if a14b else None, scheduler=scheduler)
+
+    frames, height, width = 9, (32 if a14b else 96), (48 if a14b else 128)
+    steps, guidance, boundary = 3, 4.0, 0.900
+    generator = np.random.default_rng(51)
+    control = torch.from_numpy(generator.random((frames, height, width, 3)).astype(np.float32))
+    reference_image = torch.from_numpy(generator.random((height, width, 3)).astype(np.float32))
+    start_image = torch.from_numpy(generator.random((height, width, 3)).astype(np.float32))
+    end_image = torch.from_numpy(generator.random((height, width, 3)).astype(np.float32))
+    camera_embedding = torch.from_numpy(generator.standard_normal((6, frames, height, width)).astype(np.float32))
+    pose_file = os.path.join(os.environ["IK_VIDEOX_FUN_SRC"], "asset", "Zoom_In.txt")
+    if camera:
+        from videox_fun.data import process_pose_file
+        camera_embedding = process_pose_file(pose_file, width, height)[:frames].permute(3, 0, 1, 2).contiguous()
+    prompt, negative = "A red fox  walking through fresh snow, cinematic", "worst quality, blurry"
+    torch.manual_seed(52)
+    latents = torch.randn(1, latent_channels, (frames - 1) // 4 + 1, height // (8 if a14b else 16),
+                          width // (8 if a14b else 16))
+
+    extra = {"latents": latents[0].contiguous(), "control_video": control, "reference_image": reference_image,
+             "start_image": start_image, "end_image": end_image, "camera": camera_embedding,
+             "kind": torch.tensor([int(a14b), int(inpaint), int(camera), int(reference)], dtype=torch.int32)}
+    if camera:
+        with open(pose_file, "rb") as handle:
+            extra["pose_file"] = torch.frombuffer(bytearray(handle.read()), dtype=torch.uint8).clone()
+
+    def video_tensor(clip):                                                     # [F, H, W, 3] → [1, 3, F, H, W]
+        return clip.permute(3, 0, 1, 2).unsqueeze(0).contiguous()
+    calls, experts, first = [], [], {}
+    for index, net in enumerate(nets):
+        def hook(module, args, kwargs, output, index=index):
+            if not first:
+                for key in ("x", "y", "t", "full_ref", "y_camera"):
+                    value = kwargs.get(key)
+                    if value is not None:
+                        first[key] = value.detach().clone()
+            experts.append(index)
+            calls.append(output.detach().clone())                               # [uncond, cond]
+        net.register_forward_hook(hook, with_kwargs=True)
+
+    full_mask = torch.full((1, 1, frames, height, width), 255.0)
+    zeros = torch.zeros(1, 3, frames, height, width)
+    start_video = video_tensor(start_image.unsqueeze(0).expand(frames, -1, -1, -1).clone())
+    start_video[:, :, -1] = end_image.permute(2, 0, 1)
+    start_mask = torch.full((1, 1, frames, height, width), 255.0)
+    start_mask[:, :, 0] = 0
+    start_mask[:, :, -1] = 0
+    region_mask = torch.full((1, 1, frames, height, width), 255.0)
+    region_mask[:, :, 2:, height // 4:height // 2 + height // 8, width // 8:width // 2] = 0
+    region_video = video_tensor(control.flip(0).contiguous())
+    extra["region_mask"] = (region_mask[0, 0] / 255).contiguous()
+    runs = [("", zeros, full_mask), ("start.", start_video, start_mask), ("mask.", region_video, region_mask)]
+    for prefix, video, mask in runs:
+        calls.clear()
+        experts.clear()
+        first.clear()
+        stepped = []
+
+        def recording_step(pipe, index, timestep, values):
+            stepped.append(values["latents"][0].detach().clone())
+            return {}
+        arguments = dict(prompt=prompt, negative_prompt=negative, height=height, width=width, num_frames=frames,
+                         num_inference_steps=steps, guidance_scale=guidance, video=video, mask_video=mask,
+                         latents=latents.clone(), output_type="latent", callback_on_step_end=recording_step,
+                         shift=5)
+        if not inpaint:
+            if camera:
+                arguments["control_camera_video"] = camera_embedding.unsqueeze(0)
+            else:
+                arguments["control_video"] = video_tensor(control)
+            if reference:
+                arguments["ref_image"] = reference_image.permute(2, 0, 1)[:, None].unsqueeze(0)
+        if a14b:
+            arguments["boundary"] = boundary
+        with torch.no_grad():
+            final = pipeline(**arguments).videos
+        for key, value in first.items():
+            extra[f"{prefix}input.{key}"] = value.contiguous()
+        for index, value in enumerate(stepped):
+            extra[f"{prefix}step.{index}"] = value.contiguous()
+        for index, value in enumerate(calls):
+            extra[f"{prefix}call.{index}"] = value.contiguous()
+        extra[f"{prefix}experts"] = torch.tensor(experts, dtype=torch.int32)
+        extra[f"{prefix}final_latents"] = final[0].contiguous()
+        with torch.no_grad():
+            decoded = pipeline.vae.decode(final.to(pipeline.vae.dtype)).sample
+        extra[f"{prefix}video"] = (decoded[0] / 2 + 0.5).clamp(0, 1).permute(1, 2, 3, 0).contiguous()
+    for name, text in (("prompt", prompt), ("negative", negative)):
+        tokens = tokenizer(text, padding="max_length", max_length=512, truncation=True, add_special_tokens=True,
+                           return_tensors="pt")
+        extra[f"{name}_ids"] = tokens.input_ids[0].to(torch.int32)
+    with torch.no_grad():
+        embeds, negative_embeds = pipeline.encode_prompt(prompt=prompt, negative_prompt=negative,
+                                                         do_classifier_free_guidance=True, max_sequence_length=512,
+                                                         device=torch.device("cpu"))
+    extra.update({"prompt_embeds": embeds[0].contiguous(), "negative_embeds": negative_embeds[0].contiguous()})
+    globals()["_extra"] = extra
+    return extra["final_latents"].clone()
+
+
+CHECKPOINT_MODELS["wan_fun_pipeline"] = run_wan_fun_pipeline
+
+
 def run_wan_animate_pipeline(image, checkpoint):
     """Wan 2.2 Animate 2's character-animation glue, from diffusers' own modular `WanAnimate2Blocks` (or
     `WanAnimate2DistilledBlocks` for a distilled release), end to end over a release directory.

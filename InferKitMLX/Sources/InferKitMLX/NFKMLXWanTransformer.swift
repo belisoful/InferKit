@@ -36,11 +36,30 @@ public struct NFKMLXWanConfiguration: Sendable {
     public var patchSize: [Int]                                            // (t, h, w)
     public var eps: Float
     public var ropeTheta: Float
+    /// The latent width `ref_conv` patchifies into one frame of tokens ahead of the video, as the Wan 2.2
+    /// Fun Control releases read a reference image (`in_dim_ref_conv`); nil for a transformer without
+    /// one. Introduced in InferKit 0.4.0.
+    public var referenceChannels: Int?
+    /// The input width of the camera control adapter (`in_dim_control_adapter`, 24 for the Fun
+    /// Control-Camera releases), nil for a transformer without one. Introduced in InferKit 0.4.0.
+    public var controlAdapterChannels: Int?
+    /// The pixel unshuffle factor of the camera control adapter (`downscale_factor_control_adapter`).
+    /// Introduced in InferKit 0.4.0.
+    public var controlAdapterDownscale: Int
+    /// Whether the timestep sinusoid and the rotary angles form in float64, as the original Wan
+    /// implementation computes them (Wan-Video, VideoX-Fun); diffusers forms them in float32.
+    /// Introduced in InferKit 0.4.0.
+    public var formsSinusoidsInFloat64: Bool
 
     public init(inChannels: Int = 16, heads: Int = 40, headDim: Int = 128, layers: Int = 40,
                 ffnDim: Int = 13824, textDim: Int = 4096, freqDim: Int = 256,
                 patchSize: [Int] = [1, 2, 2], eps: Float = 1e-6, ropeTheta: Float = 10000.0,
-                outChannels: Int? = nil) {
+                outChannels: Int? = nil, referenceChannels: Int? = nil, controlAdapterChannels: Int? = nil,
+                controlAdapterDownscale: Int = 8, formsSinusoidsInFloat64: Bool = false) {
+        self.referenceChannels = referenceChannels
+        self.controlAdapterChannels = controlAdapterChannels
+        self.controlAdapterDownscale = controlAdapterDownscale
+        self.formsSinusoidsInFloat64 = formsSinusoidsInFloat64
         self.inChannels = inChannels
         self.outChannels = outChannels ?? inChannels
         self.heads = heads
@@ -165,13 +184,17 @@ final class NFKWanBlock: Module {
 
     /// `x` `[N, inner]`, `context` `[Lc, inner]`, `temb` `[6, inner]`. `firstFrame`, where given, is the
     /// modulation `[6, inner]` of the tokens `mask` (`[N, 1]`) marks, which read another timestep.
+    /// `tokens`, where given, replaces `temb` with a modulation per token: row `index[n]` of `proj`
+    /// (`[K, 6, inner]`) for token `n`.
     func callAsFunction(_ x: MLXArray, context: MLXArray, temb: MLXArray, cos c: MLXArray, sin s: MLXArray,
-                        firstFrame: (temb: MLXArray, mask: MLXArray)? = nil) -> MLXArray {
+                        firstFrame: (temb: MLXArray, mask: MLXArray)? = nil,
+                        tokens: NFKWanTokenModulation? = nil) -> MLXArray {
         if NFKReferenceRounding.isReduced(x) {
-            return reduced(x, context: context, temb: temb, cos: c, sin: s, firstFrame: firstFrame)
+            return reduced(x, context: context, temb: temb, cos: c, sin: s, firstFrame: firstFrame, tokens: tokens)
         }
-        let mod = Self.modulation(scaleShiftTable[0] + temb,
-                                  firstFrame: firstFrame.map { (scaleShiftTable[0] + $0.temb, $0.mask) })
+        let mod = tokens.map { $0.rows(adding: scaleShiftTable[0]) }
+            ?? Self.modulation(scaleShiftTable[0] + temb,
+                               firstFrame: firstFrame.map { (scaleShiftTable[0] + $0.temb, $0.mask) })
         let shiftMSA = mod(0), scaleMSA = mod(1), gateMSA = mod(2)
         let cShiftMSA = mod(3), cScaleMSA = mod(4), cGateMSA = mod(5)
 
@@ -184,11 +207,12 @@ final class NFKWanBlock: Module {
     /// The block on a half-precision stream, rounded where the reference rounds: the modulation, the
     /// norms, and the gated residual sums are float32, each step rounded once to the stream's type.
     private func reduced(_ x: MLXArray, context: MLXArray, temb: MLXArray, cos c: MLXArray, sin s: MLXArray,
-                         firstFrame: (temb: MLXArray, mask: MLXArray)?) -> MLXArray {
+                         firstFrame: (temb: MLXArray, mask: MLXArray)?, tokens: NFKWanTokenModulation?) -> MLXArray {
         let dtype = x.dtype
         let table = scaleShiftTable[0].asType(.float32)
-        let row = Self.modulation(table + temb.asType(.float32),
-                                  firstFrame: firstFrame.map { (table + $0.temb.asType(.float32), $0.mask) })
+        let row = tokens.map { $0.rows(adding: table, as: .float32) }
+            ?? Self.modulation(table + temb.asType(.float32),
+                               firstFrame: firstFrame.map { (table + $0.temb.asType(.float32), $0.mask) })
         func normed(_ y: MLXArray) -> MLXArray {
             NFKReferenceRounding.layerNorm(y.asType(.float32), weight: nil, bias: nil, eps: eps)
         }
@@ -211,6 +235,22 @@ extension NFKWanBlock {
             let row = mod[index].reshaped([1, inner])
             guard let (first, mask) = firstFrame else { return row }
             return which(mask, first[index].reshaped([1, inner]), row)
+        }
+    }
+}
+
+/// A modulation per token: `proj` holds the modulation of each distinct timestep (`[K, rows, inner]`), and
+/// `index` (`[N]`) names the timestep each token reads, so a clip whose tokens read a few timesteps never
+/// holds a modulation per token.
+struct NFKWanTokenModulation {
+    let proj: MLXArray
+    let index: MLXArray
+
+    /// Row `i` of every token's modulation plus `table` (`[rows, inner]`), as `[N, inner]`.
+    func rows(adding table: MLXArray, as dtype: DType? = nil) -> (Int) -> MLXArray {
+        { i in
+            let row = dtype.map { proj[0..., i, 0...].asType($0) } ?? proj[0..., i, 0...]
+            return take(table[i].reshaped([1, -1]) + row, index, axis: 0)
         }
     }
 }
@@ -241,6 +281,82 @@ final class NFKWanConditionEmbedder: Module {
         let proj = timeProj(NFKReferenceRounding.silu(temb))              // [1, 6·inner]
         return (temb[0], proj[0])
     }
+
+    /// The timestep embeddings `[K, inner]` and projections `[K, 6·inner]` of `timesteps`, their sinusoids
+    /// formed in float64 as the original Wan implementation forms them (`sinusoidal_embedding_1d`) and
+    /// rounded to float32.
+    func timesteps(float64 timesteps: [Double], dtype: DType, freqDim: Int) -> (temb: MLXArray, proj: MLXArray) {
+        let half = freqDim / 2
+        let frequencies = (0 ..< half).map { Foundation.pow(10000.0, -Double($0) / Double(half)) }
+        var sinusoid = [Float]()
+        sinusoid.reserveCapacity(timesteps.count * freqDim)
+        for t in timesteps {
+            sinusoid += frequencies.map { Float(Foundation.cos(t * $0)) }
+            sinusoid += frequencies.map { Float(Foundation.sin(t * $0)) }
+        }
+        let embedded = MLXArray(sinusoid).reshaped([timesteps.count, freqDim])
+        let temb = timeEmbedder(embedded.asType(timeEmbedder.linear1.weight.dtype)).asType(dtype)
+        return (temb, timeProj(NFKReferenceRounding.silu(temb)))
+    }
+}
+
+/// A residual block of two 3 × 3 convolutions around a ReLU, the camera control adapter's
+/// feature extractor (VideoX-Fun `wan_camera_adapter.ResidualBlock`).
+final class NFKWanAdapterResidualBlock: Module {
+    @ModuleInfo(key: "conv1") var conv1: Conv2d
+    @ModuleInfo(key: "conv2") var conv2: Conv2d
+
+    init(_ dim: Int) {
+        _conv1.wrappedValue = Conv2d(inputChannels: dim, outputChannels: dim, kernelSize: 3, padding: 1)
+        _conv2.wrappedValue = Conv2d(inputChannels: dim, outputChannels: dim, kernelSize: 3, padding: 1)
+    }
+
+    /// `x` `[B, H, W, C]`.
+    func callAsFunction(_ x: MLXArray) -> MLXArray { conv2(relu(conv1(x))) + x }
+}
+
+/// The camera control adapter (VideoX-Fun `SimpleAdapter`): each frame of the camera embedding is pixel
+/// unshuffled by `downscale`, patchified to the transformer's width, and passed through one residual
+/// block. Its output adds to the patch embedding token for token.
+final class NFKWanControlAdapter: Module {
+    @ModuleInfo(key: "conv") var conv: Conv2d
+    @ModuleInfo(key: "residual_blocks") var residualBlocks: [NFKWanAdapterResidualBlock]
+
+    let downscale: Int
+
+    init(inChannels: Int, dim: Int, patch: (Int, Int), downscale: Int) {
+        self.downscale = downscale
+        _conv.wrappedValue = Conv2d(inputChannels: inChannels * downscale * downscale, outputChannels: dim,
+                                    kernelSize: IntOrPair([patch.0, patch.1]), stride: IntOrPair([patch.0, patch.1]))
+        _residualBlocks.wrappedValue = [NFKWanAdapterResidualBlock(dim)]
+    }
+
+    /// `x` `[C, F, H, W]` → `[F, H / (downscale · patch), W / (downscale · patch), dim]`.
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        let c = x.dim(0), f = x.dim(1), h = x.dim(2), w = x.dim(3), r = downscale
+        // torch's PixelUnshuffle orders the unshuffled channels (c, ry, rx).
+        let unshuffled = x.transposed(1, 0, 2, 3).reshaped([f, c, h / r, r, w / r, r])
+            .transposed(0, 2, 4, 1, 3, 5).reshaped([f, h / r, w / r, c * r * r])
+        var out = conv(unshuffled)
+        for block in residualBlocks {
+            out = block(out)
+        }
+        return out
+    }
+}
+
+/// What a conditioned Wan pass reads beyond the latent, the text, and the timestep: the VideoX-Fun
+/// Fun releases' conditions.
+struct NFKWanConditioning {
+    /// The timestep of each video token, as distinct values and each token's index into them; nil for one
+    /// timestep for every token.
+    var tokenTimesteps: (values: [Double], index: MLXArray)?
+    /// The reference image's latent `[referenceChannels, H, W]`, patchified by `ref_conv` into a frame of
+    /// tokens ahead of the video.
+    var reference: MLXArray?
+    /// The camera embedding `[controlAdapterChannels, F, H · downscale, W · downscale]` the control
+    /// adapter reads.
+    var cameraControl: MLXArray?
 }
 
 /// The Wan transformer.
@@ -250,6 +366,8 @@ public final class NFKMLXWanTransformerNet: Module {
     @ModuleInfo(key: "blocks") var blocks: [NFKWanBlock]
     @ParameterInfo(key: "scale_shift_table") var scaleShiftTable: MLXArray
     @ModuleInfo(key: "proj_out") var projOut: Linear
+    @ModuleInfo(key: "ref_conv") var refConv: Conv2d?
+    @ModuleInfo(key: "control_adapter") var controlAdapter: NFKWanControlAdapter?
 
     let config: NFKMLXWanConfiguration
     let rope: NFKZImageRope
@@ -281,6 +399,15 @@ public final class NFKMLXWanTransformerNet: Module {
         _scaleShiftTable.wrappedValue = MLXArray.zeros([1, 2, config.innerDim])
         _projOut.wrappedValue = Linear(config.innerDim, config.outChannels * config.patchSize.reduce(1, *))
         self.normOut = LayerNorm(dimensions: config.innerDim, eps: config.eps, affine: false)
+        let spatialPatch = [config.patchSize[1], config.patchSize[2]]
+        _refConv.wrappedValue = config.referenceChannels.map {
+            Conv2d(inputChannels: $0, outputChannels: config.innerDim, kernelSize: IntOrPair(spatialPatch),
+                   stride: IntOrPair(spatialPatch))
+        }
+        _controlAdapter.wrappedValue = config.controlAdapterChannels.map {
+            NFKWanControlAdapter(inChannels: $0, dim: config.innerDim, patch: (spatialPatch[0], spatialPatch[1]),
+                                 downscale: config.controlAdapterDownscale)
+        }
     }
 
     /// The patch embedding; on a half-precision input the convolution and its bias are summed in float32
@@ -373,6 +500,122 @@ public final class NFKMLXWanTransformerNet: Module {
         // Unpatchify: [ft·ht·wt, C·pt·ph·pw] -> [C, F, H, W].
         let grid = out.reshaped([ft, ht, wt, pt, ph, pw, c])
         // f h w pt ph pw c -> c (f pt) (h ph) (w pw)
+        return grid.transposed(6, 0, 3, 1, 4, 2, 5).reshaped([c, f, h, w])
+    }
+
+    /// The (frame, height, width) position of every token of a `frames × height × width` grid, `[N, 3]`.
+    static func gridPositions(frames: Int, height: Int, width: Int) -> MLXArray {
+        let n = frames * height * width
+        let index = MLXArray(0 ..< n).asType(.int32)
+        let hw = height * width
+        return stacked([index / hw, (index % hw) / width, index % width], axis: 1).asType(.float32)
+    }
+
+    /// The rotary tables of a `frames × height × width` grid with the angles formed in float64, as the
+    /// original implementation's `rope_params` forms them.
+    func float64RopeTables(frames: Int, height: Int, width: Int) -> (cos: MLXArray, sin: MLXArray) {
+        let axes = config.ropeAxes
+        let inverse = axes.map { d in
+            stride(from: 0, to: d, by: 2).map { 1.0 / Foundation.pow(Double(config.ropeTheta), Double($0) / Double(d)) }
+        }
+        let width64 = inverse.reduce(0) { $0 + $1.count }
+        var cosines = [Float](), sines = [Float]()
+        cosines.reserveCapacity(frames * height * width * width64)
+        sines.reserveCapacity(frames * height * width * width64)
+        for fi in 0 ..< frames {
+            for hi in 0 ..< height {
+                for wi in 0 ..< width {
+                    for (axis, position) in [fi, hi, wi].enumerated() {
+                        for frequency in inverse[axis] {
+                            let angle = Double(position) * frequency
+                            cosines.append(Float(Foundation.cos(angle)))
+                            sines.append(Float(Foundation.sin(angle)))
+                        }
+                    }
+                }
+            }
+        }
+        let n = frames * height * width
+        return (MLXArray(cosines).reshaped([n, width64]), MLXArray(sines).reshaped([n, width64]))
+    }
+
+    /// Velocity prediction under the VideoX-Fun Fun releases' conditions, the original implementation's
+    /// forward. `x` `[inChannels, F, H, W]` (the noise and every condition channel), `text` `[Lc, textDim]`;
+    /// the prediction is `[outChannels, F, H, W]`.
+    ///
+    /// @discussion The reference image's tokens, where given, form a frame ahead of the video: they take
+    /// rotary frame 0, shift the video's frames by one, read the timestep of the last video token (the
+    /// original pads the per-token timesteps by repeating the last), and leave before the head's output is
+    /// unpatchified. The camera adapter's output adds to the patch embedding.
+    func callAsFunction(_ x: MLXArray, text: MLXArray, t: Double, conditioning: NFKWanConditioning) -> MLXArray {
+        let c = config.outChannels, f = x.dim(1), h = x.dim(2), w = x.dim(3)
+        let pt = config.patchSize[0], ph = config.patchSize[1], pw = config.patchSize[2]
+        let ft = f / pt, ht = h / ph, wt = w / pw
+        let inner = config.innerDim
+        let videoTokens = ft * ht * wt
+
+        var embeddedVideo = embedded(x.transposed(1, 2, 3, 0).expandedDimensions(axis: 0))   // [1, ft, ht, wt, inner]
+        if let controlAdapter, let camera = conditioning.cameraControl {
+            embeddedVideo = embeddedVideo + controlAdapter(camera).expandedDimensions(axis: 0)
+        }
+        var hidden = embeddedVideo.reshaped([videoTokens, inner])
+
+        var values = [t]
+        var index = MLXArray.zeros([videoTokens], dtype: .int32)
+        if let tokenTimesteps = conditioning.tokenTimesteps {
+            values = tokenTimesteps.values
+            index = tokenTimesteps.index.asType(.int32)
+        }
+        var frames = ft
+        var referenceTokens = 0
+        if let refConv, let reference = conditioning.reference {
+            referenceTokens = ht * wt
+            let tokens = refConv(reference.transposed(1, 2, 0).expandedDimensions(axis: 0)).reshaped([referenceTokens, inner])
+            hidden = concatenated([tokens, hidden], axis: 0)
+            index = concatenated([repeated(index[(videoTokens - 1) ..< videoTokens], count: referenceTokens, axis: 0), index])
+            frames += 1
+        }
+
+        let (cosT, sinT) = config.formsSinusoidsInFloat64
+            ? float64RopeTables(frames: frames, height: ht, width: wt)
+            : rope.table(positions: Self.gridPositions(frames: frames, height: ht, width: wt))
+
+        let (temb, proj): (MLXArray, MLXArray)
+        if config.formsSinusoidsInFloat64 {
+            (temb, proj) = conditionEmbedder.timesteps(float64: values, dtype: text.dtype, freqDim: config.freqDim)
+        } else {
+            let each = values.map { conditionEmbedder.timestep(MLXArray(Float($0)), dtype: text.dtype, freqDim: config.freqDim) }
+            (temb, proj) = (stacked(each.map(\.temb)), stacked(each.map(\.proj)))
+        }
+        let tokens = NFKWanTokenModulation(proj: proj.reshaped([values.count, 6, inner]), index: index)
+        let context = conditionEmbedder.textEmbedder(text)
+
+        for (blockIndex, block) in blocks.enumerated() {
+            let input = hidden
+            let run = { (x: MLXArray) in
+                block(x, context: context, temb: proj, cos: cosT, sin: sinT, tokens: tokens)
+            }
+            guard let output = NFKMLXLayerStream.run(layerStream, layer: block, index: blockIndex, {
+                recomputesBlocksInBackward && layerStream == nil
+                    ? NFKMLXCustomFunction.recomputed(block) { [run($0[0])] }([input])[0] : run(input)
+            }, keeping: { [$0] }) else {
+                continue
+            }
+            hidden = output
+        }
+
+        let head = NFKWanTokenModulation(proj: temb.reshaped([values.count, 1, inner]), index: index)
+        let shift = head.rows(adding: scaleShiftTable[0][0 ..< 1])(0)
+        let scale = head.rows(adding: scaleShiftTable[0][1 ..< 2])(0)
+        if NFKReferenceRounding.isReduced(hidden) {
+            hidden = (NFKReferenceRounding.layerNorm(hidden.asType(.float32), weight: nil, bias: nil, eps: config.eps)
+                * (1.0 + scale.asType(.float32)) + shift.asType(.float32)).asType(hidden.dtype)
+        } else {
+            hidden = normOut(hidden) * (1.0 + scale) + shift
+        }
+        let out = projOut(hidden[referenceTokens...])
+
+        let grid = out.reshaped([ft, ht, wt, pt, ph, pw, c])
         return grid.transposed(6, 0, 3, 1, 4, 2, 5).reshaped([c, f, h, w])
     }
 }

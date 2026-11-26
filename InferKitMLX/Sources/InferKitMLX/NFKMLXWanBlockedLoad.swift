@@ -64,10 +64,15 @@ enum NFKMLXWanBlockedLoad {
     ///     form is never held whole; nil keeps them at `precision`. A packed transformer streams nothing.
     ///   - adapters: released LoRA deltas (``NFKMLXWanLoRA``) merged in order, each block's before it packs.
     ///     A streamed transformer takes none: its blocks are read from the release on every pass.
+    ///   - rename: the module key a stored key maps to, for a release in the original Wan layout
+    ///     (``NFKMLXWanOriginalRelease/transformerModuleKey(forRelease:)``).
+    ///   - adapt: a tensor outside the blocks in the module's layout.
     static func load(into net: Module, blocks: [Module], fromDirectory directory: URL,
                      precision: NFKMLXWeightPrecision, streamed: Set<Int> = [], bits: Int? = nil,
                      groupSize: Int = NFKMLXLoadOptions.defaultQuantizationGroupSize,
-                     adapters: [[String: NFKMLXWanLoRA.Delta]] = []) throws -> NFKMLXLayerStream? {
+                     adapters: [[String: NFKMLXWanLoRA.Delta]] = [],
+                     rename: @escaping (String) -> String = { $0 },
+                     adapt: @escaping (String, MLXArray) -> (String, MLXArray) = adapted) throws -> NFKMLXLayerStream? {
         guard adapters.isEmpty || streamed.isEmpty else {
             throw NFKMLXError.unsupportedConfiguration(
                 "a streamed transformer reads \(streamed.count) blocks from the release on every pass and takes no "
@@ -76,11 +81,14 @@ enum NFKMLXWanBlockedLoad {
         guard let bits else {
             let vacated = try NFKMLXLayerStream.vacating(streamed, of: blocks, prefix: "blocks.",
                                                          directory: directory, precision: precision,
-                                                         layerOf: block(ofKey:))
+                                                         layerOf: { block(ofKey: rename($0)) })
             let arrays = try NFKMLXReleaseWeights.materializedArrays(
                 inDirectory: directory, precision: precision,
-                remap: { key in block(ofKey: key).map { streamed.contains($0.layer) } == true ? nil : key },
-                transform: adapted)
+                remap: { stored in
+                    let key = rename(stored)
+                    return block(ofKey: key).map { streamed.contains($0.layer) } == true ? nil : key
+                },
+                transform: adapt)
             try NFKMLXWeights.apply(arrays + (vacated?.placeholders ?? []), to: net, verifyShapes: true)
             for deltas in adapters {
                 try NFKMLXWanLoRA.apply(deltas, to: net)
@@ -100,13 +108,15 @@ enum NFKMLXWanBlockedLoad {
         var unread = Set(expected.filter { block(ofKey: $0) != nil })
         for url in try NFKMLXReleaseWeights.files(inDirectory: directory) {
             var read = [Int: [(String, MLXArray)]]()
-            for (key, value) in try NFKMLXWeights.loadCheckpoint(url: url).arrays where expected.contains(key) {
+            for (stored, value) in try NFKMLXWeights.loadCheckpoint(url: url).arrays {
+                let key = rename(stored)
+                guard expected.contains(key) else { continue }
                 let typed = precision == .float32 && value.dtype.isFloatingPoint ? value.asType(.float32) : value
                 if let (layer, name) = block(ofKey: key) {
                     read[layer, default: []].append((name, typed))
                     unread.remove(key)
                 } else {
-                    outside.append(adapted(key: key, value: typed))
+                    outside.append(adapt(key, typed))
                 }
             }
             // A block whose tensors span two shards packs once its last shard is read.
