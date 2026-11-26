@@ -330,6 +330,12 @@ struct NFKMLXLoadProfile {
                                            defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true,
                                            widenedStages: [NFKMLXWanOriginalRelease.textEncoderFile: NFKModelPrecisionFloat32],
                                            streamedStages: ["high_noise_model", "low_noise_model"], halvesSteps: true)],
+        // Wan 2.2 S2V widens umT5 where the budget holds it, widens the transformer to float32, streams the blocks of
+        // a transformer it cannot hold, or packs the blocks' linear layers to 2 to 8 bits.
+        "wan-s2v": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                      defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true,
+                                      widenedStages: [NFKMLXWanOriginalRelease.textEncoderFile: NFKModelPrecisionFloat32],
+                                      streamedStages: [""], halvesSteps: true)],
         "minimax-music": [.diffusionPipeline()],
         "stable-audio": [.diffusionPipeline()],
     ]

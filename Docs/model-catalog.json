@@ -84191,6 +84191,482 @@
       ]
     },
     {
+      "displayName" : "Wan 2.2 S2V 14B",
+      "engine" : "mlx",
+      "family" : "wan-s2v",
+      "id" : "wan2.2-s2v-14b",
+      "inputModalities" : [
+        "image",
+        "audio",
+        "text",
+        "video"
+      ],
+      "inputs" : [
+        {
+          "help" : "The person to animate; the clip takes its aspect.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Reference image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "The speech or song the clip follows, 16 kHz audio; the clip is as long as it.",
+          "key" : "audio",
+          "required" : true,
+          "title" : "Speech",
+          "valueType" : "audio"
+        },
+        {
+          "help" : "A description of the clip.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from, read where the guidance is above 1; the release's own by default.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A pose sequence the body follows, read at 16 frames per second.",
+          "key" : "video",
+          "required" : false,
+          "title" : "Pose video",
+          "valueType" : "video"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 1280,
+          "help" : "With the height, the clip's largest area; the reference image sets its shape.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 720,
+          "help" : "With the width, the clip's largest area.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 40,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 4.5,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt over silence.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 3,
+          "help" : "The shift of the sampler's schedule.",
+          "key" : "NFKMLXParameterFlowShift",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Flow shift"
+        },
+        {
+          "default" : 80,
+          "help" : "The frames each segment generates, a multiple of 4.",
+          "key" : "NFKMLXParameterSegmentLength",
+          "kind" : "json",
+          "minimum" : 4,
+          "stage" : "request",
+          "step" : 4,
+          "title" : "Segment length"
+        },
+        {
+          "help" : "The most segments generated; absent, as many as the speech covers.",
+          "key" : "NFKMLXParameterSegmentCount",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Segments"
+        },
+        {
+          "default" : false,
+          "help" : "Whether the clip starts from the reference image.",
+          "key" : "NFKMLXParameterStartsFromReference",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Start from the reference"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 45722931696,
+                "residentBytes" : 45722931696
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 65690632316,
+                "residentBytes" : 65690632316
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 33099121098,
+                "residentBytes" : 33099121098
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The clip as a QuickTime movie at 16 frames per second.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 20 in place of 40: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 20
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-s2v-14b",
+      "requirements" : {
+        "minimumMemoryBytes" : 43993045170,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that films the person in a reference image speaking or singing a speech track.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 S2V 14B",
+          "downloadBytes" : 45744685187,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11361920418
+                },
+                "id" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "title" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 630945090,
+                  "checkpoint" : 1261890180,
+                  "float32" : 1261890180
+                },
+                "id" : "wav2vec2-large-xlsr-53-english",
+                "title" : "wav2vec2-large-xlsr-53-english"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 33099121098,
+                  "checkpoint" : 33099121098,
+                  "float32" : 65690632316
+                },
+                "id" : "model",
+                "title" : "root, Wan2.1_VAE.pth"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 43993045170,
+          "peakBytes" : 33099121098,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-s2v-14b",
+          "residentBytes" : 33099121098,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 11361920418,
+                "optional" : false,
+                "path" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "role" : "weights",
+                "sha256" : "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "google/umt5-xxl/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 16837417,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+              },
+              {
+                "bytes" : 61728,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6623,
+                "optional" : true,
+                "path" : "google/umt5-xxl/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 890,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 507609880,
+                "optional" : false,
+                "path" : "Wan2.1_VAE.pth",
+                "role" : "weights",
+                "sha256" : "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"
+              },
+              {
+                "bytes" : 113150,
+                "optional" : false,
+                "path" : "diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 1531,
+                "optional" : false,
+                "path" : "wav2vec2-large-xlsr-53-english/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 262,
+                "optional" : false,
+                "path" : "wav2vec2-large-xlsr-53-english/preprocessor_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 300,
+                "optional" : true,
+                "path" : "wav2vec2-large-xlsr-53-english/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 85,
+                "optional" : true,
+                "path" : "wav2vec2-large-xlsr-53-english/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 1261942732,
+                "optional" : true,
+                "path" : "wav2vec2-large-xlsr-53-english/model.safetensors",
+                "role" : "weights",
+                "sha256" : "6144f8464c6aaa220dd57c5a2ad4039b5710dcf8ee6e67057675f76597c19875"
+              },
+              {
+                "bytes" : 1262069143,
+                "optional" : true,
+                "path" : "wav2vec2-large-xlsr-53-english/pytorch_model.bin",
+                "role" : "weights",
+                "sha256" : "7b7688644eeefe1f5760bb4c4a61d085793a3740159fdbf19fd37c5d4f3729bf"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "dab4e9c55bbe4c8c4d03db1c2c98c7f0ac9c454b",
+            "repository" : "Wan-AI/Wan2.2-S2V-14B",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "Wan 2.2 T2V A14B",
       "engine" : "mlx",
       "family" : "wan-a14b",

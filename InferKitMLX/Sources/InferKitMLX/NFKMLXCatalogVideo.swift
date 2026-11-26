@@ -199,7 +199,7 @@ enum NFKMLXCatalogVideo {
     // MARK: - Video generation
 
     static var generators: [NFKMLXCatalogEntry] {
-        [ltxVideo] + ltx2Entries + wanEntries + wanExpertEntries + wanAnimateEntries + wanFunEntries
+        [ltxVideo] + ltx2Entries + wanEntries + wanExpertEntries + wanAnimateEntries + wanFunEntries + [wanS2V]
     }
 
     /// The options a text-to-video generator reads.
@@ -495,6 +495,44 @@ enum NFKMLXCatalogVideo {
                 source: NFKMLXCatalogImage.hubRelease(variant.releaseRepo, components: variant.releaseComponents),
                 residencies: NFKMLXCatalogImage.streamedStageResidencies)
         }
+    }
+
+    /// Wan 2.2 S2V-14B, ``NFKMLXWanS2VGenerator``.
+    static var wanS2V: NFKMLXCatalogEntry {
+        NFKMLXCatalogImage.model(
+            NFKMLXWanS2VGenerator.modelName, "Wan 2.2 S2V 14B", family: "wan-s2v",
+            summary: "A diffusion transformer that films the person in a reference image speaking or singing a speech track.",
+            tasks: [NFKModelTaskVideoGeneration],
+            inputs: [NFKMLXCatalogImage.imageInput("The person to animate; the clip takes its aspect.", title: "Reference image"),
+                     .input(NFKInputAudio, required: true, title: "Speech",
+                            help: "The speech or song the clip follows, 16 kHz audio; the clip is as long as it."),
+                     .input(NFKInputPrompt, required: true, title: "Prompt", help: "A description of the clip."),
+                     .input(NFKInputNegativePrompt, title: "Negative prompt",
+                            help: "What to steer away from, read where the guidance is above 1; the release's own by default."),
+                     .input(NFKInputVideo, title: "Pose video",
+                            help: "A pose sequence the body follows, read at 16 frames per second.")],
+            outputs: [clipOutput("The clip as a QuickTime movie at 16 frames per second.")],
+            parameters: [
+                NFKMLXCatalogImage.widthOption(1280, help: "With the height, the clip's largest area; the reference image sets its shape."),
+                NFKMLXCatalogImage.heightOption(720, help: "With the width, the clip's largest area."),
+                NFKMLXCatalogImage.seedOption(0), NFKMLXCatalogImage.stepsOption(40),
+                NFKMLXCatalogImage.guidanceOption(4.5, help: "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt over silence."),
+                .option(NFKMLXGenerationParameterKey.flowShift, kind: NFKModelOptionKindNumber,
+                        title: "Flow shift",
+                        help: "The shift of the sampler's schedule.", defaultValue: 3.0, minimum: 1),
+                .option(NFKMLXGenerationParameterKey.segmentLength, title: "Segment length",
+                        help: "The frames each segment generates, a multiple of 4.", defaultValue: 80, minimum: 4, step: 4),
+                .option(NFKMLXGenerationParameterKey.segmentCount, kind: NFKModelOptionKindNumber,
+                        title: "Segments",
+                        help: "The most segments generated; absent, as many as the speech covers.", minimum: 1, step: 1),
+                .option(NFKMLXGenerationParameterKey.startsFromReference, kind: NFKModelOptionKindBoolean,
+                        title: "Start from the reference", help: "Whether the clip starts from the reference image.",
+                        defaultValue: false),
+            ],
+            license: .apache2(),
+            source: NFKMLXCatalogImage.hubRelease(NFKMLXWanS2VGenerator.releaseRepo,
+                                                  components: NFKMLXWanS2VGenerator.releaseComponents),
+            residencies: NFKMLXCatalogImage.streamedStageResidencies)
     }
 
     // MARK: - Video tokenization

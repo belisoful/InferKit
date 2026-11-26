@@ -315,6 +315,14 @@ extension NFKMLXLoadPlan {
                                        stages: [[NFKMLXWanOriginalRelease.textEncoderFile],
                                                 [NFKMLXWanOriginalRelease.wan21AutoencoderFile],
                                                 ["high_noise_model"], ["low_noise_model"]]),
+        // S2V keeps the Fun releases' root files and adds wav2vec2's directory, a stage of its own; the transformer
+        // is the root's shards and shares its stage with the autoencoder.
+        "wan-s2v": NFKMLXLoadPlan(precision: .stored,
+                                  directories: [NFKMLXWanOriginalRelease.textEncoderFile: .bfloat16,
+                                                NFKMLXWanS2VGenerator.wav2vec2Directory: .float32,
+                                                NFKMLXWanOriginalRelease.wan21AutoencoderFile: .float32],
+                                  stages: [[NFKMLXWanOriginalRelease.textEncoderFile], [NFKMLXWanS2VGenerator.wav2vec2Directory],
+                                           ["", NFKMLXWanOriginalRelease.wan21AutoencoderFile]]),
         "wan-animate": NFKMLXLoadPlan(precision: .stored,
                                       stages: [["text_encoder", "image_encoder"], ["transformer", "vae"]]),
         "minimax-music": NFKMLXLoadPlan(precision: .stored, directories: ["transformer": .float32],

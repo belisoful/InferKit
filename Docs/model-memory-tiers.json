@@ -2185,6 +2185,12 @@
       "24" : "streamed 11361820672 refused",
       "32" : "streamed 17799442688 fits"
     },
+    "wan2.2-s2v-14b/default" : {
+      "8" : "staged 33099121098 refused",
+      "16" : "staged 33099121098 refused",
+      "24" : "staged 33099121098 refused",
+      "32" : "staged 33099121098 refused"
+    },
     "wan2.2-t2v-a14b/default" : {
       "8" : "streamed 11361820672 refused",
       "16" : "streamed 11361820672 refused",
