@@ -6196,8 +6196,8 @@ try NFKMLXLTXVideoGenerator.fineTune(net, examples: { _ in [examples.randomEleme
 
 // The adapters are the whole run, written in the trainer's own layout; the base stays as the release ships it.
 try NFKMLXLTXVideoGenerator.saveAdapters(of: net, to: adaptersURL)
-let tuned = try NFKMLXLTXVideoBackend.backend(directoryURL: release, residency: .staged,
-                                              adapterURLs: [adaptersURL], strengths: [1])
+let tuned = try NFKMLXLTXVideoGenerator.backend(directoryURL: release, residency: .staged,
+                                                adapterURLs: [adaptersURL], strengths: [1])
 ```
 
 The objective is the trainer's flow matching: each clip noised at a sigma from its shifted logit-normal

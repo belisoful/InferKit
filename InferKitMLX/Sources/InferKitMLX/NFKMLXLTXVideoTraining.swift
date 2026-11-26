@@ -220,7 +220,7 @@ extension NFKMLXLTXVideoGenerator {
     /// The customization path is four calls: ``trainingExample(video:frameRate:prompt:seed:)`` for each clip,
     /// ``network(directoryURL:quantizationBits:quantizationGroupSize:)`` to build, this to train, and
     /// ``saveAdapters(of:to:)`` to write the adapters in the trainer's own layout, which
-    /// ``NFKMLXLTXVideoBackend/backend(directoryURL:residency:adapterURLs:strengths:)`` holds beside the
+    /// ``NFKMLXLTXVideoGenerator/backend(directoryURL:residency:adapterURLs:strengths:)`` holds beside the
     /// released transformer.
     ///
     /// - Parameters:

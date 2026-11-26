@@ -382,7 +382,7 @@ public final class NFKMLXLTXTransformer: NSObject {
     }
 
     /// Holds LoRA files beside `net`'s layers, unmerged, each at the strength in `strengths` at its index: the
-    /// reader ``NFKMLXLTXVideoBackend/backend(directoryURL:residency:adapterURLs:strengths:)`` holds its adapters
+    /// reader ``NFKMLXLTXVideoGenerator/backend(directoryURL:residency:adapterURLs:strengths:)`` holds its adapters
     /// with, for diffusers' layout, kohya's, and the trainer's (``NFKMLXLTXVideoGenerator/saveAdapters(of:to:)``).
     ///
     /// - Throws: `NFKMLXError.unsupportedConfiguration` when the counts differ, and `NFKMLXError.loRANotApplicable`

@@ -536,7 +536,7 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(history.count, 2)
 
         // The file is in the trainer's layout; the backend's adapter factory,
-        // NFKMLXLTXVideoBackend.backend(directoryURL:residency:adapterURLs:strengths:), holds it beside the release.
+        // NFKMLXLTXVideoGenerator.backend(directoryURL:residency:adapterURLs:strengths:), holds it beside the release.
         try NFKMLXLTXVideoGenerator.saveAdapters(of: net, to: adapters)
         let reloaded = NFKMLXLTXTransformerNet(.tiny)
         reloaded.update(parameters: base)
