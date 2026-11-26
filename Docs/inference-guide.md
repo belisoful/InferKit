@@ -2140,6 +2140,10 @@ alternatives.
     Control-Camera at 5B and A14B, read from alibaba-pai's original-layout directories and at reference parity
     against VideoX-Fun's own pipelines on test-dev releases, with LoRA fine-tuning against DiffSynth-Studio
     (A14B) and VideoX-Fun (5B).
+    **Wan 2.2 S2V is SHIPPED** (`NFKMLXWanS2VGenerator`, `wan2.2-s2v-14b`): a reference image speaking or singing a
+    speech track, read from Wan-AI's original-layout directory and at reference parity against Wan-Video/Wan2.2's own
+    `WanS2V.generate` on a test-dev release, pose-driven segments included, with LoRA fine-tuning against
+    DiffSynth-Studio.
 
 One port waits on weight access here rather than on engineering: pyannote diarization (gated
 `pyannote/segmentation-3.0`). It needs a credential the way the gated Stable Diffusion 2.1 base does,

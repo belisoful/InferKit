@@ -3814,6 +3814,38 @@ about 70 GB; `generator(directoryURL:residency:precision:quantizationBits:)` pac
 load holds one expert at a time. The sampler is at reference parity against VideoX-Fun's own pipelines over
 small random releases in the released layout.
 
+### Wan 2.2 S2V (`NFKMLXWanS2VGenerator`)
+
+Wan 2.2 S2V-14B films the person in a reference image speaking or singing a speech track. The clip is as long
+as the speech, generated segment after segment, and a pose video can drive the body. The generator reads
+Wan-AI's own release directory, in the original Wan layout:
+
+```swift
+let s2v = try NFKMLXWanS2VGenerator.generator(directoryURL: s2vRelease, residency: .automatic)
+let talking = try s2v.video(forPrompt: "a singer on a stage, warm light", referenceImage: portrait,
+                            audio: speechSamples)   // mono 16 kHz; [frames, H, W, 3] in 0...1
+let posed = try s2v.video(forPrompt: "a dancer", referenceImage: portrait, audio: speechSamples,
+                          poseFrames: poseVideoFrames, startsFromReference: true)
+let backend = s2v.inferenceBackend()   // NFKInputImage, NFKInputAudio, NFKInputVideo (pose) in, NFKOutputVideo out
+```
+
+The defaults are the release's: segments of 80 frames at 16 fps, 40 UniPC steps at a flow shift of 3,
+guidance 4.5, and a clip within 1280 × 720 pixels shaped like the reference image (`maximumArea`). The
+release is 49 GB; `generator(directoryURL:residency:precision:quantizationBits:)` packs the transformer, and a
+staged load holds umT5, wav2vec2, and the transformer one at a time. The sampler is at reference parity against
+Wan-Video/Wan2.2's own `WanS2V.generate` over a small random release in the released layout.
+
+The transformer trains with LoRA as DiffSynth-Studio's `Wan2.2-S2V-14B.sh` trains it, on examples the
+generator builds from a clip, its caption, and its speech:
+
+```swift
+let s2vExample = try s2v.trainingExample(video: clipFrames, prompt: caption, audio: clipSpeech)
+let s2vNet = try NFKMLXWanS2VGenerator.network(directoryURL: s2vRelease, quantizationBits: 4)
+try NFKMLXWanS2VGenerator.fineTune(s2vNet, examples: { _ in [s2vExample] }, steps: 1_000)
+try NFKMLXWanS2VGenerator.saveAdapters(of: s2vNet, to: s2vLoRAURL)
+try s2v.addAdapter(at: s2vLoRAURL, scale: 1)  // Objective-C: addAdapterAtURL:scale:error:
+```
+
 ### V-JEPA 2 video features (`NFKMLXVJEPA2`)
 
 V-JEPA 2 is a self-supervised video encoder: a clip (or a single image) becomes a mean-pooled feature

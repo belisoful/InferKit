@@ -780,6 +780,12 @@ models.
   condition channels, `ref_conv` tokens ahead of the clip, and a camera adapter. At reference parity against
   VideoX-Fun's own `Wan2_2FunControlPipeline` and `Wan2_2FunInpaintPipeline`; the A14B releases fine-tune with
   LoRA as DiffSynth-Studio does, the 5B releases as VideoX-Fun's `train_control_lora` does.
+- **`NFKMLXWanS2VGenerator`** — Wan 2.2 S2V-14B (Wan-AI, Apache-2.0, `wan2.2-s2v-14b`): a reference image of a
+  person speaking or singing a speech track, segment after segment as long as the speech, optionally driven by a
+  pose video or started from the reference image. wav2vec2-large-xlsr-53 reads the speech; the transformer
+  (`NFKMLXWanS2VNet`) adds the reference image's tokens, the previous segment's frame-packed motion, and per-frame
+  audio cross-attention to the Wan block. Read from the original-layout release directory, at reference parity
+  against Wan-Video/Wan2.2's own `WanS2V.generate`; LoRA fine-tuning as DiffSynth-Studio trains it.
 - **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
   3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
   a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`). Released Wan LoRAs merge into

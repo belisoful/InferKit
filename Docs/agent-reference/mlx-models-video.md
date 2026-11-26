@@ -407,6 +407,89 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     train on test-dev examples the generator builds, save in each trainer's layout, merge back into a fresh network
     from the factory (within 1e-4 at float32), and load through `addAdapter(at:scale:expert:)`. A 14B expert trains
     over a packed base (`network(directoryURL:expert:quantizationBits:precision:)`, QLoRA).
+- `NFKMLXWanS2VGenerator` (`@objc`) — Wan 2.2 S2V-14B (`Wan-AI/Wan2.2-S2V-14B` @dab4e9c5, Apache-2.0), speech-to-video:
+  a reference image of a person speaking or singing a speech track, optionally driven by a pose video. Measured at
+  reference parity against Wan-Video/Wan2.2's own `WanS2V.generate` (1ea34ff). The release is the original layout
+  (`NFKMLXWanOriginalRelease`): umT5, `Wan2.1_VAE.pth`, the transformer's `config.json` and four bfloat16 shards
+  (32.6 GB), and `wav2vec2-large-xlsr-53-english/` (1.3 GB at float32). The defaults are the release
+  configuration's and `generate.py`'s: segments of 80 frames at 16 fps, as many as the speech covers, each over
+  the official flow UniPC at a shift of 3 for 40 steps, guidance 4.5, the S2V negative prompt, and a clip within
+  1280 × 720 pixels whose shape follows the reference image (`get_size_less_than_area`, sides multiples of 64).
+  - **The transformer** (`NFKMLXWanS2VNet`, `WanModel_S2V`) runs the Wan block over three token kinds, marked by
+    a learned embedding (`trainable_cond_mask`). The clip's tokens carry the pose latents' patches added
+    (`cond_encoder`). The reference image's tokens sit at rotary frame 30. The previous segment's last 19 latent
+    frames are frame-packed (`FramePackMotioner`, buckets 1, 2, and 16 patchified at 1×, 2×, and 4×), and their
+    rotary frames run negative through `np.linspace(...).astype(int)` spreads with the conjugate rotation. The clip
+    modulates at the step's timestep and every other token at timestep 0 (`zero_timestep`, two modulation rows).
+    After each of the 12 `audio_inject_layers`, each latent frame's clip tokens pass an AdaIN on that frame's global
+    audio token (diffusers' `AdaLayerNorm` with `chunk_dim=1`: shift first, then scale, eps 1e-5) and attend over its
+    five audio tokens. The audio encoder (`CausalAudioEncoder`) weighs wav2vec2's 25 hidden states by a SiLU of
+    learned weights and runs causal replicate-padded convolutions (`MotionEncoder_tc`) over the 73 motion frames'
+    copies of the first bucket ahead of the segment's.
+  - **The audio front end** (`NFKMLXWanS2VPipeline.audio`) follows `AudioEncoder`: the waveform normalized per
+    utterance, wav2vec2's hidden states as transformers 4.51 lists them for a stable-layer-norm encoder (the
+    encoder's input, each layer's output but the last, and the final layer norm's output), linear interpolation
+    from 50 to 30 fps (`align_corners=True`, the positions in float32 as torch's CPU kernel forms them), and
+    `get_audio_embed_bucket_fps`, which reads the feature frame nearest each video frame (NumPy's round half to
+    even) and zeros past the speech. The official `requirements.txt` pins transformers 4.49 to 4.51.3.
+    transformers 5 lists the last layer's raw output as the last hidden state, so a 5.x oracle's audio features
+    read 0.987 against the release's arithmetic.
+  - **The prompt** passes the official tokenizer's cleanup (`NFKMLXWanPromptCleaning`, `whitespace_clean(basic_clean(text))`):
+    the character-level fixes of ftfy 6.3's `fix_text`, HTML unescaped twice, and whitespace collapsed. ftfy's
+    fullwidth-to-halfwidth fix turns the S2V negative prompt's `，` into `,`. Mojibake repair and all named HTML
+    references but six are not applied.
+  - **The sampler** (`NFKMLXWanS2VPipeline.generate`) follows `generate()`. The first segment's motion frames are
+    blank and dropped: it decodes from the reference latent and drops its first three frames. Each later segment
+    reads the latents of the last 73 decoded frames. `startsFromReference` (`--start_from_ref`) puts the reference
+    in the last six motion frames and keeps the first segment's. A pose video's frames are padded with −1 to the
+    segments' length, and each segment encodes with its first frame ahead (`load_pose_cond`); without one the pose
+    latents are zeros. The unconditional pass reads the negative prompt and silent audio. The schedule is
+    `FlowUniPCMultistepScheduler`'s (`NFKMLXUniPCScheduler.setOriginalTimesteps`): `linspace(float32(0.999), 0)`
+    shifted, each timestep truncated, under the same predictor-corrector diffusers' solver runs.
+  - **Measured on a test-dev release** (`Tools/wan-s2v-testdev/make_testdev.py`). It uses the release's own
+    `config.json` at 48 wide, 2 heads, and 2 blocks, both injecting audio, ffn 96, text 32. Alongside: umT5 at 32
+    wide over the released vocabulary, the Wan 2.1 autoencoder at its released width, and wav2vec2 at 32 wide over
+    the released 24 layers with the release's `weight_g`/`weight_v` names. `run_reference.py wan_s2v_pipeline` (the
+    `wans2v` env) runs the official `generate()` unchanged. Its setup is a 64 × 128 reference, 0.8 s of 16 kHz
+    speech (two 8-frame segments), three steps, guidance 4.5, and shift 3. On the CPU at float32,
+    `flash_attention` becomes a float substitute (`Tools/wan-s2v-testdev/wan_shims.py`). The run is plain, then
+    repeated with a pose video three frames short and `init_first_frame`. Results:
+    - token ids exact, including the cleaned negative prompt;
+    - prompt features 0.9999999999999358 and negative features 0.9999999999999095;
+    - audio input values 0.9999999999999958, audio features 0.9999999999997524, audio buckets 0.9999999999997777;
+    - audio local tokens 0.9999999999998374 and global tokens 0.9999999999999027;
+    - reference latent 0.9999999999983651, and pose latents 0.9999999999966728 or closer;
+    - every transformer call 0.9999999999992459 or closer;
+    - clip 0.9999999999707869, and the pose run's clip 0.9999999999442221.
+
+    The released transformer is held by shape (`testTheReleasedTransformerMatchesItsLoader`, `IK_SHAPES_ROOT`
+    `wan22-s2v-14b`): 1260 tensors, none missing, unconsumed, or mismatched. The generator gives the pipeline's clip
+    through every residency. A staged load and a streamed block compute
+    exactly as held ones, and an 8-bit pack holds the clip above 0.999. No released-weight run: the release is
+    49 GB.
+  - Runtime: staged residency (umT5, then wav2vec2, then the transformer with the autoencoder, which every segment
+    reads in turn). A streamed transformer reads the blocks the plan cannot hold from the release on every pass,
+    and `quantizationBits` 2 to 8 packs the blocks' linear layers as each loads. Precision is `.checkpoint`
+    (bfloat16 as stored) or `.float32`, and umT5 widens to float32 where the plan affords it. The model has no
+    key-value cache across requests, no draft, and no streamed partial output; the backend reports progress per
+    step. Not built: the CosyVoice text-to-speech front end (`--enable_tts`), a separate model, and the
+    sequence-parallel path. The backend reads 16 kHz speech and refuses other rates (the reference resamples with
+    librosa).
+- Wan 2.2 S2V LoRA fine-tuning (`NFKMLXWanS2VGenerator.fineTune`, `NFKMLXWanS2VTraining.swift`) — DiffSynth-Studio's
+  recipe (1e8ae1d, `lora/Wan2.2-S2V-14B.sh`): `NFKMLXWanTrainingPreset.diffSynth` (an index uniform over the shift-5
+  table, its Gaussian loss weight, AdamW at 1e-4), rank 32 at alpha 32 on `q,k,v,o,ffn.0,ffn.2`. PEFT's name match
+  takes both attentions and the feed-forward of every block and the audio injector's four projections. The
+  example (`trainingExample(video:prompt:audio:pose:)`) is what `WanVideoUnit_S2V` and
+  `WanVideoUnit_ImageEmbedderFused` leave: the clip's latents with its first frame, the reference image, kept
+  clean (`first_frame_latents`) and left out of the loss; the speech's first segment of buckets; the blank motion
+  clip dropped; and a pose video's latents where given. The loss runs the transformer as `model_fn_wans2v` does.
+  Measured (`run_reference.py wan_s2v_lora_diffsynth`, wantrain-diffsynth env, DiffSynth's own `WanS2VModel` over
+  the test-dev weights under its LoRA, `FlowMatchSFTLoss` over `model_fn_wan_video`): prediction
+  0.9999999999999570, loss 4.2902217 against 4.2902217, and the lowest adapter gradient cosine 0.999999999862 over
+  the 28 adapters (2 blocks × 10, 2 audio injectors × 4).
+  `testS2VTrainsSavesAndReloadsThroughItsFactory` trains on an example the generator builds, saves in DiffSynth's
+  layout (the release's names, `.default`, the scale in the up projection), merges back into a fresh network from
+  the factory (`NFKMLXWanLoRA.merge(adapterURL:into:)`, 28 layers), and loads through `addAdapter(at:scale:)`.
 - `NFKMLXVJEPA2` (`@objc`) — V-JEPA 2 (`VJEPA2Model` and `VJEPA2ForVideoClassification`, Meta, MIT), a
   self-supervised video ViT that maps a clip to a per-token feature sequence for retrieval or as a video
   encoder for a vision-language model; the classification releases add an attentive pooler and a linear

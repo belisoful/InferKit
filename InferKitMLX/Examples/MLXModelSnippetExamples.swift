@@ -214,6 +214,21 @@ final class MLXModelSnippetExamples: XCTestCase {
 
     // Docs/examples.md: Wan 2.2 Fun. The generator needs a release directory; the conditions and the camera
     // trajectory build without one.
+    // Docs/examples.md: Wan 2.2 S2V. The generator needs a release directory; the clip size and the prompt cleanup
+    // compute without one.
+    func testExampleWanS2V() throws {
+        try requireMLXRuntime()
+        XCTAssertThrowsError(try NFKMLXWanS2VGenerator.generator(
+            directoryURL: URL(fileURLWithPath: "/nonexistent-wan-s2v"), residency: .automatic))
+        XCTAssertTrue(NFKMLXWanS2VGenerator.instancesRespond(to: NSSelectorFromString(
+            "framesForPrompt:negativePrompt:referenceImage:audio:poseFrames:startsFromReference:segments:seed:error:")))
+        XCTAssertTrue(NFKMLXWanS2VGenerator.instancesRespond(to: NSSelectorFromString("addAdapterAtURL:scale:error:")))
+        let size = NFKMLXWanS2VGenerator.clipSize(imageWidth: 1920, imageHeight: 1080, maximumArea: 1280 * 720)
+        XCTAssertEqual(size.width, 1280)
+        XCTAssertEqual(size.height, 704)
+        XCTAssertEqual(NFKMLXWanS2VGenerator.releaseRepo, "Wan-AI/Wan2.2-S2V-14B")
+    }
+
     func testExampleWanFun() throws {
         try requireMLXRuntime()
         XCTAssertThrowsError(try NFKMLXWanFunGenerator.generator(

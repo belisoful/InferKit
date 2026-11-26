@@ -544,6 +544,10 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(funPreset.targets, .queryKeyValueAndFeedForward)
         XCTAssertEqual(NFKMLXWanFunGenerator.referencePreset(variant: .controlA14B, expert: .lowNoise).rank, 32)
 
+        // Wan 2.2 S2V trains under DiffSynth-Studio's recipe, whose `q,k,v,o` also reach the audio injector.
+        XCTAssertEqual(NFKMLXWanS2VGenerator.diffSynthPreset.rank, 32)
+        XCTAssertEqual(NFKMLXWanS2VGenerator.diffSynthPreset.targets, .attentionAndFeedForward)
+
         // A Wan 2.2 A14B expert trains over its side of the release's boundary; a real run builds the expert with
         // NFKMLXWanVideoGenerator.network(directoryURL:expert:quantizationBits:).
         let expert = NFKMLXWanTrainingPreset.diffSynth(expert: .lowNoise, imageToVideo: true)

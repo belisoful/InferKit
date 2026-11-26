@@ -1241,6 +1241,30 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(clip.shape, [5, 32, 32, 3], "one frame per driving frame")
     }
 
+    // MARK: A reference image and speech → video (Wan 2.2 S2V)
+
+    func testSpeechToVideoPipeline() throws {
+        try requireMLXRuntime()
+        // The released pipeline assembles from its original-layout directory through
+        // NFKMLXWanS2VGenerator.generator(directoryURL:residency:), then video(forPrompt:referenceImage:audio:…) or
+        // inferenceBackend(). Here the sampler runs a tiny S2V transformer over a tiny autoencoder from supplied text
+        // features and audio buckets.
+        NFKMLXRandom.seed(16)
+        let vae = NFKMLXWanVideoVAENet(NFKMLXWanVAEConfiguration(
+            baseDim: 8, decoderBaseDim: 8, zDim: 4, dimMult: [1, 1, 1, 1], numResBlocks: 1,
+            temporalDownsample: [false, true, true], patchSize: 1, inChannels: 3, isResidual: false))
+        let net = NFKMLXWanS2VNet(NFKMLXWanS2VConfiguration(
+            base: NFKMLXWanConfiguration(inChannels: 4, heads: 2, headDim: 24, layers: 2, ffnDim: 48, textDim: 10,
+                                         outChannels: 4, formsSinusoidsInFloat64: true),
+            conditionChannels: 4, audioDim: 8, audioInjectLayers: [0, 1]))
+        let pipeline = NFKMLXWanS2VPipeline(net: net, vae: vae, latentsMean: MLXArray.zeros([4]), latentsStd: MLXArray.ones([4]))
+        let audio = NFKMLXWanS2VAudio(buckets: MLXRandom.normal([25, 8, 8]), segments: 1, framesPerSegment: 8)
+        let clip = try pipeline.generate(text: MLXRandom.normal([512, 10]), negative: nil,
+                                         reference: MLXRandom.uniform(low: 0, high: 1, [32, 32, 3]), audio: audio,
+                                         noise: { _ in MLXRandom.normal([4, 2, 4, 4]) }, steps: 2, guidance: 1, shift: 3)
+        XCTAssertEqual(clip.shape, [5, 32, 32, 3], "the first segment drops its first three frames")
+    }
+
     // MARK: Control video, start and end images, or a camera → video (Wan 2.2 Fun)
 
     func testControlledVideoPipeline() throws {

@@ -1878,6 +1878,79 @@
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:NFKMLXWanAnimateGenerator.distilledModelName]);
 }
 
+// Docs/examples.md: Wan 2.2 Fun. The generator assembles an original-layout release directory; its backend reads
+// NFKInputPrompt with a control video, start and end images, a reference image, or a camera trajectory:
+//   NFKMLXWanFunGenerator *fun = [NFKMLXWanFunGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic
+//                                                                           error:&error];
+//   NSArray *frames = [fun framesForPrompt:@"..." negativePrompt:nil controlFrames:poses startImage:NULL endImage:NULL
+//                           referenceImage:dancer cameraTrajectory:nil frames:81 width:832 height:480 seed:0 error:&error];
+- (void)testObjectiveCReachesWanFun
+{
+	for (NSString *selector in @[ @"generatorWithDirectoryURL:error:", @"generatorWithDirectoryURL:residency:error:",
+								  @"generatorWithDirectoryURL:residency:precision:quantizationBits:error:",
+								  @"generatorWithVariant:repo:revision:cacheDirectoryURL:residency:error:",
+								  @"generatorWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:",
+								  @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:",
+								  @"backendWithDirectoryURL:residency:precision:quantizationBits:error:",
+								  @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:error:",
+								  @"backendWithVariant:repo:revision:cacheDirectoryURL:residency:completionHandler:",
+								  @"register" ]) {
+		XCTAssertTrue([NFKMLXWanFunGenerator respondsToSelector:NSSelectorFromString(selector)], @"+%@", selector);
+	}
+	for (NSString *selector in @[ @"inferenceBackend",
+								  @"framesForPrompt:negativePrompt:controlFrames:startImage:endImage:referenceImage:cameraTrajectory:frames:width:height:seed:error:",
+								  @"setSteps:", @"setGuidance:", @"streamedLayerCount", @"quantizationBits", @"holdsStagesResident",
+								  @"addAdapterAtURL:scale:expert:error:", @"removeAdapters", @"adapterCount" ]) {
+		XCTAssertTrue([NFKMLXWanFunGenerator instancesRespondToSelector:NSSelectorFromString(selector)], @"-%@", selector);
+	}
+	NSError *error = nil;
+	NFKMLXWanCameraTrajectory *trajectory = [[NFKMLXWanCameraTrajectory alloc]
+		initWithPoseFileContents:@"source\n0 0.53 0.95 0.5 0.5 0 0 1 0 0 0 0 1 0 0 0 0 1 0\n" error:&error];
+	XCTAssertEqual(trajectory.frameCount, 1);
+	XCTAssertNil([NFKMLXWanFunGenerator generatorWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent-wan-fun"]
+														 residency:NFKMLXResidencyAutomatic error:&error]);
+	XCTAssertNotNil(error);
+	[NFKMLXReferenceModels registerAll];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"wan2.2-fun-a14b-control-camera"]);
+}
+
+// Docs/examples.md: Wan 2.2 S2V. The generator assembles the original-layout release directory; its backend reads
+// NFKInputPrompt, NFKInputImage (the reference), NFKInputAudio (16 kHz speech), and a pose video under NFKInputVideo:
+//   NFKMLXWanS2VGenerator *s2v = [NFKMLXWanS2VGenerator generatorWithDirectoryURL:dir residency:NFKMLXResidencyAutomatic
+//                                                                           error:&error];
+//   NSArray *frames = [s2v framesForPrompt:@"..." negativePrompt:nil referenceImage:portrait audio:wavData poseFrames:nil
+//                      startsFromReference:NO segments:0 seed:0 error:&error];
+- (void)testObjectiveCReachesWanS2V
+{
+	for (NSString *selector in @[ @"generatorWithDirectoryURL:error:", @"generatorWithDirectoryURL:residency:error:",
+								  @"generatorWithDirectoryURL:residency:precision:quantizationBits:error:",
+								  @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:",
+								  @"generatorWithRepo:revision:cacheDirectoryURL:residency:completionHandler:",
+								  @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:",
+								  @"backendWithDirectoryURL:residency:precision:quantizationBits:error:",
+								  @"backendWithRepo:revision:cacheDirectoryURL:residency:error:",
+								  @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:",
+								  @"register" ]) {
+		XCTAssertTrue([NFKMLXWanS2VGenerator respondsToSelector:NSSelectorFromString(selector)], @"+%@", selector);
+	}
+	for (NSString *selector in @[ @"inferenceBackend",
+								  @"framesForPrompt:negativePrompt:referenceImage:audio:poseFrames:startsFromReference:segments:seed:error:",
+								  @"setSteps:", @"setGuidance:", @"setShift:", @"setFramesPerSegment:", @"setMaximumArea:",
+								  @"streamedLayerCount", @"quantizationBits", @"holdsStagesResident", @"addAdapterAtURL:scale:error:",
+								  @"removeAdapters", @"adapterCount" ]) {
+		XCTAssertTrue([NFKMLXWanS2VGenerator instancesRespondToSelector:NSSelectorFromString(selector)], @"-%@", selector);
+	}
+	XCTAssertEqualObjects(NFKMLXGenerationParameterKey.segmentCount, @"NFKMLXParameterSegmentCount");
+	XCTAssertEqualObjects(NFKMLXGenerationParameterKey.startsFromReference, @"NFKMLXParameterStartsFromReference");
+	XCTAssertEqualObjects(NFKMLXGenerationParameterKey.flowShift, @"NFKMLXParameterFlowShift");
+	NSError *error = nil;
+	XCTAssertNil([NFKMLXWanS2VGenerator generatorWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent-wan-s2v"]
+														 residency:NFKMLXResidencyAutomatic error:&error]);
+	XCTAssertNotNil(error);
+	[NFKMLXReferenceModels registerAll];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:NFKMLXWanS2VGenerator.modelName]);
+}
+
 // LTX-2: each release by its variant, the registry name and the repository its download factories read.
 - (void)testLTX2VariantsNameTheirReleases
 {

@@ -3750,6 +3750,29 @@
       "note": "Wan2.2-Fun-A14B-Control-Camera in the original Wan layout (Apache-2.0): only the small files are fetched; the transformer is held by shape under shapes/wan22-fun-*. The end-to-end parity runs on a test-dev release, the release's own layout, names and stored types at a small geometry with seeded random weights: Tools/wan-fun-testdev/make_testdev.py --release <this directory> --out <dir> -> IK_VAL_WAN22_FUN_A14B_CAMERA_TESTDEV. Record: run_reference.py wan_fun_pipeline --checkpoint <test-dev dir> -> IK_PARITY_WAN22_FUN_A14B_CAMERA_PIPELINE, under the videoxfun oracle env with IK_VIDEOX_FUN_SRC set."
     },
     {
+      "key": "WAN22_S2V",
+      "repo": "Wan-AI/Wan2.2-S2V-14B",
+      "directory": "../InferKit/Wan2.2-S2V-14B",
+      "files": [
+        "config.json",
+        "configuration.json",
+        "diffusion_pytorch_model.safetensors.index.json",
+        "google/umt5-xxl/spiece.model",
+        "google/umt5-xxl/tokenizer.json",
+        "google/umt5-xxl/tokenizer_config.json",
+        "google/umt5-xxl/special_tokens_map.json",
+        "wav2vec2-large-xlsr-53-english/config.json",
+        "wav2vec2-large-xlsr-53-english/preprocessor_config.json",
+        "wav2vec2-large-xlsr-53-english/vocab.json",
+        "wav2vec2-large-xlsr-53-english/special_tokens_map.json",
+        "wav2vec2-large-xlsr-53-english/alphabet.json"
+      ],
+      "config": {
+        "IK_VAL_WAN22_S2V_FILES": ""
+      },
+      "note": "Wan2.2-S2V-14B in the original Wan layout (Apache-2.0, @dab4e9c5): only the small files are fetched; the transformer is held by shape under shapes/wan22-s2v-14b. The end-to-end parity runs on a test-dev release, the release's own layout, names and stored types at a small geometry with seeded random weights: Tools/wan-s2v-testdev/make_testdev.py --release <this directory> --out <dir> (with IK_WAN22_SRC set) -> IK_VAL_WAN22_S2V_TESTDEV. Record: run_reference.py wan_s2v_pipeline --checkpoint <test-dev dir> -> IK_PARITY_WAN22_S2V_PIPELINE, under the wans2v oracle env with IK_WAN22_SRC set."
+    },
+    {
       "key": "QWEN_IMAGE",
       "repo": "Qwen/Qwen-Image-2.1",
       "directory": "qwen-image-2.1",
@@ -6572,6 +6595,14 @@
         "wan_fun_lora_videoxfun"
       ]
     },
+    "wans2v": {
+      "path": "wans2vvenv",
+      "create": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/wans2vvenv && echo ~/.inferkit-validation/videoxfunvenv/lib/python3.12/site-packages > ~/.inferkit-validation/wans2vvenv/lib/python3.12/site-packages/videoxfun-base.pth && echo ~/.inferkit-validation/wananimatevenv/lib/python3.12/site-packages > ~/.inferkit-validation/wans2vvenv/lib/python3.12/site-packages/wananimate-base.pth && ~/.inferkit-validation/wans2vvenv/bin/pip install --no-deps transformers==4.51.3 tokenizers==0.21.4 huggingface_hub==0.30.2 && ~/.inferkit-validation/videoxfunvenv/bin/pip install easydict",
+      "note": "Wan-Video/Wan2.2 at 1ea34ff (IK_WAN22_SRC) over the videoxfun env's packages, with transformers pinned to 4.51.3, the newest the official requirements.txt admits (>=4.49.0,<=4.51.3): transformers 5 lists the last wav2vec2 layer's raw output as the last hidden state where 4.x lists the encoder's final layer norm of it, which moves S2V's audio features to a cosine of 0.987. Tools/wan-s2v-testdev/wan_shims.py places decord and dashscope modules that raise when used, answers torch.cuda.current_device on a machine without CUDA, and gives flash_attention an exact float substitute (torch's attention over the keys k_lens keeps).",
+      "modes": [
+        "wan_s2v_pipeline"
+      ]
+    },
     "wananimate": {
       "path": "wananimatevenv",
       "create": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wananimatevenv && ~/.inferkit-validation/wananimatevenv/bin/pip install 'diffusers>=0.40' 'transformers>=4.57' torch safetensors accelerate scipy",
@@ -6889,6 +6920,7 @@
       "rebuild": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wantrain-diffsynthvenv && ~/.inferkit-validation/wantrain-diffsynthvenv/bin/pip install torch==2.15.0 transformers==5.22.1 peft==0.21.2 accelerate==1.15.0 safetensors einops; git clone https://github.com/modelscope/DiffSynth-Studio $IK_DIFFSYNTH_SRC && git -C $IK_DIFFSYNTH_SRC checkout 1e8ae1d",
       "modes": [
         "wan_fun_lora_diffsynth",
+        "wan_s2v_lora_diffsynth",
         "wan_lora_diffsynth",
         "wan_lora_diffsynth_experts",
         "wan_animate_lora_diffsynth"
@@ -6936,6 +6968,11 @@
       "repo": "alibaba-pai/Wan2.2-Fun-5B-Control",
       "directory": "wan22-fun-5b-control",
       "note": "The Wan 2.2 Fun transformers in the original Wan layout (bf16): 5B Control 827, InP 825, Control-Camera 831 tensors; each A14B expert 1097 (Control), 1095 (InP), 1101 (Control-Camera). NFKMLXWanFunTests.testEveryFunReleaseMatchesItsLoader holds each to the module its config.json builds."
+    },
+    {
+      "repo": "Wan-AI/Wan2.2-S2V-14B",
+      "directory": "wan22-s2v-14b",
+      "note": "The Wan 2.2 S2V-14B transformer in the original Wan layout (bf16): 1260 tensors. NFKMLXWanS2VTests.testTheReleasedTransformerMatchesItsLoader holds it to the module its config.json builds."
     },
     {
       "repo": "alibaba-pai/Wan2.2-Fun-5B-InP",
@@ -8157,6 +8194,12 @@
       "record": "records/wan-fun-lora-videoxfun.safetensors",
       "environment": "videoxfun",
       "command": "IK_VIDEOX_FUN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/VideoX-Fun\" wan_fun_lora_videoxfun (train_control_lora.py's step transcribed over VideoX-Fun's own Wan2_2Transformer3DModel under PEFT q,k,v,ffn.0,ffn.2: a 3072-wide 5B case with its first frame kept and an A14B low-noise case)"
+    },
+    {
+      "key": "IK_PARITY_WAN22_S2V_LORA_DIFFSYNTH",
+      "record": "reference/wan-s2v-lora-diffsynth.safetensors",
+      "environment": "wantrain_diffsynth",
+      "command": "wan_s2v_lora_diffsynth --checkpoint $IK_VAL_WAN22_S2V_TESTDEV (DiffSynth's FlowMatchSFTLoss over model_fn_wan_video, which hands the audio_embeds call to model_fn_wans2v, on its own WanS2VModel over the test-dev weights under its q,k,v,o,ffn.0,ffn.2 LoRA at rank 4, alpha 8: the first frame kept clean as the reference, one segment of audio buckets, the blank motion clip dropped, a pose latent; the draws, the prediction, the loss, and each adapter's initialization and gradient under the release's names)"
     },
     {
       "key": "IK_PARITY_WAN_LORA_MUSUBI",
