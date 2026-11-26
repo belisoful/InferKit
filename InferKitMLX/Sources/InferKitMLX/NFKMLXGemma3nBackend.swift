@@ -148,9 +148,10 @@ extension NFKMLXGemma3n {
         let fresh = Array(tokens[start...])
         let stops: Set<Int> = [endOfTurn, endOfSequence]
         do {
-            var logits = try model(MLXArray(fresh.map(Int32.init)).reshaped([1, fresh.count]),
-                                   image: fresh.contains(model.tokens.imageToken) ? pixels : nil,
-                                   audioMel: fresh.contains(model.tokens.audioToken) ? mel : nil, cache: cache)[0, -1]
+            var logits = try model.lastLogits(MLXArray(fresh.map(Int32.init)).reshaped([1, fresh.count]),
+                                              image: fresh.contains(model.tokens.imageToken) ? pixels : nil,
+                                              audioMel: fresh.contains(model.tokens.audioToken) ? mel : nil,
+                                              cache: cache)[0]
             promptCache?.record(Array(key[start...]))
             for _ in 0 ..< max(options.maxTokens, 1) {
                 let next = NFKMLXLanguageNet.sample(logits, options: options)

@@ -58,6 +58,24 @@ final class NFKMLXGemma3nConversationTests: XCTestCase {
         return (start, logits)
     }
 
+    // The prefill's last-position logits are the whole call's last row, and the cache each leaves continues the
+    // same way.
+    func testThePrefillsLastLogitsAreTheWholeCallsLastRow() throws {
+        try requireMLXRuntime()
+        let model = NFKMLXGemma3nModel(decoder: net(), vision: nil, audio: nil, visionEmbedder: nil, audioEmbedder: nil)
+        let prompt = MLXArray(tokens(20, seed: 6).map(Int32.init)).reshaped([1, 20])
+        let next = MLXArray([Int32(9)]).reshaped([1, 1])
+        let wholeCache = NFKMLXGemma3nCache(layerCount: configuration.layerCount)
+        let whole = try model(prompt, cache: wholeCache)[0..., 19]
+        let wholeNext = try model(next, cache: wholeCache)[0..., 0]
+        let lastCache = NFKMLXGemma3nCache(layerCount: configuration.layerCount)
+        let last = try model.lastLogits(prompt, cache: lastCache)
+        let lastNext = try model.lastLogits(next, cache: lastCache)
+        XCTAssertEqual(last.shape, [1, configuration.vocabularySize])
+        XCTAssertLessThan(worst(last, whole), 1e-4)
+        XCTAssertLessThan(worst(lastNext, wholeNext), 1e-4)
+    }
+
     // A follow-up that parts in the reply resumes at the end of the last prompt, and one that parts further
     // back than the sliding window resumes there; each gives the whole sequence's logits at every position.
     func testAFollowUpRollsBackPastTheWindowAndGivesTheFullLogits() throws {

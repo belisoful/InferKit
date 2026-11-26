@@ -58,6 +58,43 @@ final class NFKMLXMambaTests: XCTestCase {
         try NFKMLXWeights.apply(weights, to: net)
     }
 
+    /// A long scan holds one window of states at a time, with a cache and without. At 1,024 positions of a
+    /// 32-head, 64-wide, 128-state layer each state is 1 MiB, so holding every position's state, or forming
+    /// every position's written input at once, takes 1 GiB. Afterwards the cache holds its 1 MiB state and its
+    /// last three inputs alone, not the 17 MiB input projection they were cut from.
+    func testALongScanHoldsOneWindowOfStatesAtATime() throws {
+        try requireMLXRuntime()
+        let configuration = NFKMLXMamba2Configuration(
+            hiddenSize: 256, layerCount: 1, vocabularySize: 16, intermediateSize: 2048, headCount: 32,
+            headDimensions: 64, stateSize: 128, groupCount: 1)
+        MLXRandom.seed(7)
+        let mixer = NFKMLXMamba2Mixer(configuration)
+        try NFKMLXWeights.apply(mixer.parameters().flattened().map { ($0.0, MLXRandom.normal($0.1.shape) * 0.05) },
+                                to: mixer)
+        let hidden = MLXRandom.normal([1, 1024, configuration.hiddenSize])
+        eval(mixer.parameters().flattened().map(\.1) + [hidden])
+        for cached in [false, true] {
+            var cache: NFKMLXMamba2Cache? = cached ? NFKMLXMamba2Cache() : nil
+            NFKMLXGPU.clearCache()
+            let before = NFKMLXGPU.activeMemory
+            NFKMLXGPU.resetPeakMemory()
+            do {
+                let output = mixer(hidden, cache: cache)
+                eval(output)
+            }
+            NFKMLXGPU.synchronize()
+            let held = NFKMLXGPU.peakMemory - before
+            let withCache = NFKMLXGPU.activeMemory
+            cache = nil
+            NFKMLXGPU.synchronize()
+            let kept = withCache - NFKMLXGPU.activeMemory
+            print("VALIDATION mamba2 long scan cached=\(cached) peak above inputs \(held >> 20) MiB, "
+                  + "the cache holds \(kept >> 10) KiB")
+            XCTAssertLessThan(held, 512 << 20, "cached: \(cached)")
+            XCTAssertLessThan(kept, 2 << 20, "cached: \(cached)")
+        }
+    }
+
     func testParameterNamesFollowTheModuleLayout() throws {
         try requireMLXRuntime()
         let names = Set(NFKMLXMamba.makeNet(tinyConfiguration).parameters().flattened().map(\.0))

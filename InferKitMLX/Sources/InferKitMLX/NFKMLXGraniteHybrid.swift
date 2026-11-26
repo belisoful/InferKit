@@ -528,6 +528,17 @@ public final class NFKMLXGraniteHybridNet: Module {
         return logits(fromHidden: model.norm(hidden))
     }
 
+    /// The logits `[batch, vocabulary]` at the last of `tokens`, which continue the positions `cache` has
+    /// seen; the cache advances past them. The head runs over the last position alone.
+    func lastLogits(_ tokens: MLXArray, cache: NFKMLXGraniteCache) -> MLXArray {
+        let length = tokens.dim(1)
+        var hidden = model.embedTokens(tokens) * config.embeddingMultiplier
+        for (index, layer) in model.layers.enumerated() {
+            hidden = layer(hidden, mambaCache: cache.mamba[index], attentionCache: cache.attention[index])
+        }
+        return logits(fromHidden: model.norm(hidden[0..., (length - 1)...]))[0..., 0]
+    }
+
     private func logits(fromHidden hidden: MLXArray) -> MLXArray {
         let logits = lmHead.map { $0(hidden) } ?? model.embedTokens.asLinear(hidden)
         return logits / config.logitsScaling

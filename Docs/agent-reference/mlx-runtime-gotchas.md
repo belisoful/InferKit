@@ -111,6 +111,21 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   +1.97 GB of float32 scores unsplit and +2.87 GB split into 512-row query blocks; evaluating each block
   in turn (`flashAttention(…, queryBlock:)`) took it to +0.88 GB, and splitting a layer's graph by
   evaluating after each layer moved nothing, since the peak sits inside one.
+- **MLX orders its tape breadth first, so a long recurrence holds every step's state (2026-11-25).** `eval`
+  builds its tape breadth first from the outputs (`eval_impl`, mlx `transforms.cpp`). A scan whose per-step
+  outputs feed one `stacked` therefore runs every state step before any output reads them, and holds all L
+  states at once. A slice shares its source's buffer, and a lazy slice that the forward does not evaluate keeps
+  its source's graph alive until something reads it. Measured on the Mamba-2 mixer at a 4096-token prefill:
+  - the written input `dt · outer(x, B)` formed for every position at once is `[L, heads, headDim, state]`
+    float32: Nemotron Nano 2's one 21.1 GB buffer (4032 · 128 · 80 · 128 · 4 bytes)
+  - every state held at once is as large again
+  - a convolution cache kept as an unevaluated slice of its window holds the layer's whole input
+    projection: 152 MB a layer in Codestral Mamba, 9.3 GB over its 64 layers
+  `depends(inputs:dependencies:)` orders the graph without an evaluation and holds under a gradient. Every 64
+  steps the state depends on the window's outputs, and a layer's output depends on its cache's last inputs,
+  kept as an exact copy (`x * 1`; MLX donates an input buffer only within 16 KB of the output's size). The
+  values are unchanged, and the six decoders' request peaks fell to 1.9 to 2.4 GiB above their weights
+  (`hardware-and-model-sizing.md`, "Load overhead").
 - Never pass `padding:` to an mlx-swift pooling layer. `Pool.callAsFunction` (mlx-swift 0.31.6)
   builds its pad widths as `[0, 0] + padding + [0, 0]`, two entries too many: a four-axis input gets the
   first four, so a 2-D pool pads width and channels instead of height and width. It raises nothing —

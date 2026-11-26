@@ -298,25 +298,38 @@ final class NFKMLXMamba2Mixer: Module {
         super.init()
     }
 
+    /// The steps between the points where the scan's state waits on the outputs before it.
+    static let scanWindow = 64
+
     /// The selective state-space scan. `x` `[B, L, heads, headDim]`, `b`/`c` `[B, L, heads, state]`,
     /// `dt` `[B, L, heads]`, `a` `[heads]` (already negative). Returns `[B, L, heads, headDim]` and the
     /// state after the last position. `initial` is the state before the first, zero by default.
+    ///
+    /// @discussion The scan holds at most one window of states at a time. MLX orders its tape breadth
+    /// first, so without an ordering every step's `[B, heads, headDim, state]` state is evaluated before
+    /// the output that reads it, and a 4,032-position prefill of a Granite 4.0-H 1B layer holds them all,
+    /// 6.3 GB. Every ``scanWindow`` steps the state therefore depends on the window's outputs, which
+    /// releases the window's states before the next window runs. The input written at each step is
+    /// formed at that step, since forming it for every position at once is the same size again.
     private func selectiveScan(x: MLXArray, b: MLXArray, c: MLXArray, dt: MLXArray,
                                a: MLXArray, initial: MLXArray? = nil) -> (MLXArray, MLXArray) {
         let batch = x.dim(0), length = x.dim(1), heads = x.dim(2), headDim = x.dim(3)
         let state = b.dim(3)
         // dA `[B, L, heads]` = exp(dt · A); the decay applied at each step before reading the state.
         let dA = exp(dt * a.reshaped([1, 1, heads]))
-        // dBx `[B, L, heads, headDim, state]` = dt · outer(x, B): the input written into the state.
-        let dBx = dt.reshaped([batch, length, heads, 1, 1])
-            * x.reshaped([batch, length, heads, headDim, 1])
-            * b.reshaped([batch, length, heads, 1, state])
         var current = initial ?? MLXArray.zeros([batch, heads, headDim, state], dtype: x.dtype)
         var outputs = [MLXArray]()
         outputs.reserveCapacity(length)
         for t in 0 ..< length {
+            if t > 0 && t % Self.scanWindow == 0 {
+                current = depends(inputs: [current], dependencies: Array(outputs[(t - Self.scanWindow)...]))[0]
+            }
             let decay = dA[0..., t, 0...].reshaped([batch, heads, 1, 1])
-            current = decay * current + dBx[0..., t, 0..., 0..., 0...]
+            // dBx_t `[B, heads, headDim, state]` = dt · outer(x, B): the input written into the state.
+            let written = dt[0..., t, 0...].reshaped([batch, heads, 1, 1])
+                * x[0..., t, 0..., 0...].reshaped([batch, heads, headDim, 1])
+                * b[0..., t, 0..., 0...].reshaped([batch, heads, 1, state])
+            current = decay * current + written
             // y_t `[B, heads, headDim]` = (state · C_t) summed over the state axis.
             let ct = c[0..., t, 0..., 0...].reshaped([batch, heads, 1, state])
             outputs.append((current * ct).sum(axis: -1))
@@ -344,10 +357,14 @@ final class NFKMLXMamba2Mixer: Module {
 
         let convolved = conv1d(convInput, history: cache?.convolutionInputs)    // [B, L, convDim]
         if let cache {
-            let window = concatenated([cache.convolutionInputs ?? MLXArray.zeros(
-                [batch, config.convolutionKernel - 1, config.convolutionWidth], dtype: convInput.dtype),
-                                       convInput], axis: 1)
-            cache.convolutionInputs = window[0..., (window.dim(1) - (config.convolutionKernel - 1))..., 0...]
+            let kept = config.convolutionKernel - 1
+            let recent = length >= kept ? convInput[0..., (length - kept)..., 0...]
+                : concatenated([cache.convolutionInputs ?? MLXArray.zeros([batch, kept, config.convolutionWidth],
+                                                                          dtype: convInput.dtype), convInput],
+                               axis: 1)[0..., length..., 0...]
+            // A slice shares its source's buffer: kept as a slice, the last inputs would hold the layer's
+            // whole input projection. The product is an exact copy in a buffer of its own.
+            cache.convolutionInputs = (recent * 1).asType(recent.dtype)
         }
         var offset = 0
         let xPart = convolved[0..., 0..., offset ..< (offset + intermediate)]
@@ -396,7 +413,13 @@ final class NFKMLXMamba2Mixer: Module {
             y = selectiveScan(x: xHeads, b: bHeads, c: cHeads, dt: dt, a: a).0 + skip
         }
         let normalized = norm(y.reshaped([batch, length, intermediate]), gate: gate, dtype: hidden.dtype)
-        return outProjection(normalized)
+        let output = outProjection(normalized)
+        // The output waits on the cache's last inputs, so they are copied while the layer runs rather than
+        // when the cache is next read, and the projection they come from is released with the layer.
+        guard let lastInputs = cache?.convolutionInputs else {
+            return output
+        }
+        return depends(inputs: [output], dependencies: [lastInputs])[0]
     }
 }
 

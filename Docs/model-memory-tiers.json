@@ -116,10 +116,10 @@
       "32" : "resident 3931310538 fits"
     },
     "codestral-mamba/mamba-codestral-7b-v0.1" : {
-      "8" : "streamed 2291120128 fits",
-      "16" : "streamed 5361041920 fits",
-      "24" : "streamed 10185204736 fits",
-      "32" : "resident 14570807296 fits"
+      "8" : "streamed 4344231936 refused",
+      "16" : "streamed 7414153728 refused",
+      "24" : "streamed 12238316544 refused",
+      "32" : "resident 16623919104 fits"
     },
     "colorizer-eccv16/default" : {
       "8" : "resident 599786789 fits",
@@ -440,16 +440,16 @@
       "32" : "resident 3110450432 fits"
     },
     "gemma-3n-e2b-it/gemma-3n-e2b-it" : {
-      "8" : "resident 20287748992 refused",
-      "16" : "resident 20287748992 refused",
-      "24" : "resident 20287748992 refused",
-      "32" : "resident 20287748992 refused"
+      "8" : "resident 13233978240 refused",
+      "16" : "resident 13233978240 refused",
+      "24" : "resident 13233978240 refused",
+      "32" : "resident 13233978240 fits"
     },
     "gemma-3n-e4b-it/gemma-3n-e4b-it" : {
-      "8" : "resident 24472343200 refused",
-      "16" : "resident 24472343200 refused",
-      "24" : "resident 24472343200 refused",
-      "32" : "resident 24472343200 refused"
+      "8" : "resident 18123215520 refused",
+      "16" : "resident 18123215520 refused",
+      "24" : "resident 18123215520 refused",
+      "32" : "resident 18123215520 fits"
     },
     "gemma-4-12b-it/gemma-4-12b-it" : {
       "8" : "streamed 10159603720 refused",
@@ -500,16 +500,16 @@
       "32" : "resident 18846858368 refused"
     },
     "granite-4.0-h-tiny/granite-4.0-h-tiny" : {
-      "8" : "paged 17738880712 refused",
-      "16" : "paged 19242119265 refused",
-      "24" : "paged 21675934067 refused",
-      "32" : "resident 29500808320 refused"
+      "8" : "paged 4711372488 refused",
+      "16" : "paged 6214611041 refused",
+      "24" : "paged 8648425843 fits",
+      "32" : "resident 16473300096 fits"
     },
     "granite-4.0-h/granite-4.0-h-1b" : {
-      "8" : "resident 18545810560 refused",
-      "16" : "resident 18545810560 refused",
-      "24" : "resident 18545810560 refused",
-      "32" : "resident 18545810560 refused"
+      "8" : "resident 5518302336 refused",
+      "16" : "resident 5518302336 refused",
+      "24" : "resident 5518302336 fits",
+      "32" : "resident 5518302336 fits"
     },
     "granite-speech-3.3-2b/3.3-2b" : {
       "8" : "resident 7821073024 refused",
@@ -866,10 +866,10 @@
       "32" : "resident 2437360529 fits"
     },
     "nemotron-3-nano-4b/nvidia-nemotron-3-nano-4b-bf16" : {
-      "8" : "streamed 20700719940 refused",
-      "16" : "streamed 23694116513 refused",
-      "24" : "resident 26221696192 refused",
-      "32" : "resident 26221696192 refused"
+      "8" : "streamed 4579912516 refused",
+      "16" : "streamed 7573309089 refused",
+      "24" : "resident 10100888768 fits",
+      "32" : "resident 10100888768 fits"
     },
     "nemotron-asr-streaming/en-0.6b" : {
       "8" : "resident 3538741252 refused",
@@ -878,10 +878,10 @@
       "32" : "resident 3538741252 fits"
     },
     "nemotron-nano-2/nvidia-nemotron-nano-9b-v2" : {
-      "8" : "streamed 2938621696 refused",
-      "16" : "streamed 5177072296 fits",
-      "24" : "streamed 10123016608 fits",
-      "32" : "resident 17776454656 fits"
+      "8" : "streamed 5370269440 refused",
+      "16" : "streamed 7608720040 refused",
+      "24" : "streamed 12554664352 refused",
+      "32" : "resident 20208102400 refused"
     },
     "nllb-200-1.3b/nllb-200-1.3b" : {
       "8" : "resident 8631755964 refused",

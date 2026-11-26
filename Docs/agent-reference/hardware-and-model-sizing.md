@@ -116,11 +116,25 @@ states. `NFKMLXLoadOverheadTests` measures one variant per process from MLX's ow
   wait and fails no allocation, so it cannot bound the peak.
 - Records live outside `/private/tmp`, which macOS clears of files untouched for a few days.
 
-Measured 2026-11-11 to 11-22 on an M1 Max with 32 GB: 344 variants measured (153 from stored releases, 191
+Measured 2026-11-11 to 11-25 on an M1 Max with 32 GB: 346 variants measured (155 from stored releases, 191
 on initial values) and 30 that take their family's figure. The median overhead is 1.4 GiB. The largest:
-Nemotron 3 Nano 4B 17.0 GiB (a 4096-token prefill), NU-Wave 2 15.6 GiB (30 s), Granite 4.0-H 1B 14.5 GiB
-(a 4096-token prefill), Real-ESRGAN ×4 14.5 GiB (1024², ×4), MossFormer2 SR 13.3 GiB, Marigold 10.8 GiB,
+NU-Wave 2 15.6 GiB (30 s), Real-ESRGAN ×4 14.5 GiB (1024², ×4), MossFormer2 SR 13.3 GiB, Marigold 10.8 GiB,
 SDXL and its LoRAs 10.6 GiB, HT Demucs 6s 9.8 GiB.
+
+The decoders measured at a 4096-token prefill take 1.9 to 2.4 GiB once the prefill holds one position's
+logits and one scan window (`mlx-runtime-gotchas.md`):
+
+| Variant | Before | After |
+|---|---|---|
+| Granite 4.0-H 1B | 14.5 GiB | 2.4 GiB |
+| Nemotron 3 Nano 4B | 17.0 GiB | 2.0 GiB |
+| Nemotron Nano 2 9B | one 21 GB buffer | 2.3 GiB |
+| Codestral Mamba 7B | 28.9 GB, past the cap | 1.9 GiB |
+| Gemma 3n E2B | 8.8 GiB | 2.2 GiB |
+| Gemma 3n E4B | 8.2 GiB | 2.3 GiB |
+
+The four with a stale figure are measured past the budget check at the options they were measured at
+before, since their old figures refuse them on the measuring machine.
 
 - A release that its own figure refuses on the measuring machine (Qwen3 32B, Qwen3-VL 8B and 32B, Open-Jev
   27B) is measured at the residency it took before its overhead was counted, past the budget check
@@ -132,17 +146,20 @@ SDXL and its LoRAs 10.6 GiB, HT Demucs 6s 9.8 GiB.
   figure.
 
 With the figures, the variants refused at their defaults went from 145 / 80 / 41 / 13 of 409 to
-251 / 143 / 98 / 58 of 411 at 8 / 16 / 24 / 32 GB.
+251 / 143 / 98 / 58 of 411 at 8 / 16 / 24 / 32 GB, and with the prefill figures from 252 / 144 / 99 / 58 to
+253 / 146 / 98 / 54 of 412. Codestral Mamba and Nemotron Nano 2 counted no overhead before theirs was
+measured, so each is now refused at more sizes: Codestral at 8, 16, and 24 GB, and Nemotron Nano 2 at 16,
+24, and 32 GB. At 32 GB the estimate places Nemotron Nano 2 resident by its weights alone (17.8 GB) and
+then refuses the placement with its overhead, where a streamed placement fits.
 
-Twenty-two variants take no figure because their reference request exceeds a Mac. Their defaults need
+Twenty variants take no figure because their reference request exceeds a Mac. Their defaults need
 tiling or a shorter input:
 - past the cap on initial values: SwinIR (classical ×2/×3/×4/×8, real-world ×4 M/L, ×4), HAT ×4 and HAT-L ×4,
   Real-HAT-GAN, video super-resolution and its clip backend, SD inpaint, the SD ×4 upscaler, SGMSE,
   STORM (28.7 GB at 30 s), and Resemble Enhance stage 2
-- past a 26 GiB cap with the weights held, above the 32 GB Mac's 26.8 GB working set: Codestral Mamba
-  (28.9 GB at a 4096-token prefill) and Qwen-Image 2.1 (33.6 GB)
-- one Metal buffer past the device's 20.1 GB limit: CMGAN (37 GB) and MP-SENet (283 GB) at 30 s, and
-  Nemotron Nano 2 (21 GB) at a 4096-token prefill
+- past a 26 GiB cap with the weights held, above the 32 GB Mac's 26.8 GB working set: Qwen-Image 2.1
+  (33.6 GB)
+- one Metal buffer past the device's 20.1 GB limit: CMGAN (37 GB) and MP-SENet (283 GB) at 30 s
 
 Not measured: the families the store holds only as layer cuts or partial directories (DeepSeek V4, LTX-2,
 Mixtral, Qwen2-MoE, Qwen3-MoE, Qwen4-Exp, Sana, Wan 2.2 Animate), releases refused at 32 GB before any

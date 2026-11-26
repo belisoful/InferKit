@@ -109,6 +109,29 @@ final class NFKMLXGraniteHybridTests: XCTestCase {
         }
     }
 
+    /// The prefill's last-position logits are the whole cached call's last row, and the cache each leaves
+    /// continues the same way, on the dense and the mixture geometry.
+    func testLastLogitsAreTheCachedCallsLastRow() throws {
+        try requireMLXRuntime()
+        for configuration in [tinyConfiguration, tinyMoEConfiguration] {
+            MLXRandom.seed(43)
+            let net = NFKMLXGraniteHybrid.makeNet(configuration)
+            try NFKMLXWeights.apply(net.parameters().flattened().map { ($0.0, MLXRandom.normal($0.1.shape) * 0.3) },
+                                    to: net)
+            let prompt = MLXArray((0 ..< 9).map { Int32(($0 * 29 + 3) % configuration.vocabularySize) }).reshaped([1, 9])
+            let next = MLXArray([Int32(7)]).reshaped([1, 1])
+            let wholeCache = NFKMLXGraniteCache(layerTypes: configuration.layerTypes)
+            let whole = net(prompt, cache: wholeCache)[0..., 8]
+            let wholeNext = net(next, cache: wholeCache)[0..., 0]
+            let lastCache = NFKMLXGraniteCache(layerTypes: configuration.layerTypes)
+            let last = net.lastLogits(prompt, cache: lastCache)
+            let lastNext = net.lastLogits(next, cache: lastCache)
+            XCTAssertEqual(last.shape, [1, configuration.vocabularySize])
+            XCTAssertLessThan(abs(last - whole).max().item(Float.self), 1e-5, "experts: \(configuration.expertCount)")
+            XCTAssertLessThan(abs(lastNext - wholeNext).max().item(Float.self), 1e-5, "experts: \(configuration.expertCount)")
+        }
+    }
+
     /// A byte-level tokenizer over the tiny vocabulary: a few words, and every other id decoding to its
     /// own bracketed number, so a reply's text names each token.
     private func byteLevelTokenizer() throws -> NFKTokenizer {

@@ -1569,6 +1569,10 @@ attention and feed-forward.
   its block, so `hidden.i` is block i's output and the last entry follows `norm_f`. At bf16 each block on the reference's own input reads at most 0.0010 of the
   reference's bf16-versus-float32 distance. In the reference arithmetic the mixer runs transformers'
   chunked scan itself (`NFKReferenceRounding.torchMamba2ChunkScan`), equal to torch's bit for bit.
+  The sequential scan forms each position's written input at its step, and every 64 steps its state waits on the
+  window's outputs; a cached call keeps an exact copy of its convolution's last inputs, which the layer's output
+  waits on. A 4096-token prefill therefore holds one window of states and no layer's whole input projection
+  (`testALongScanHoldsOneWindowOfStatesAtATime`; `mlx-runtime-gotchas.md`).
 - `NFKMLXGraniteHybrid` / `NFKMLXGraniteHybridNet` / `NFKMLXGraniteBackend` (`@objc`) — the Granite 4.0-H
   decoder (`GraniteMoeHybridForCausalLM`, IBM, Apache-2.0), the first hybrid Mamba-attention decoder. Most
   layers are the Mamba-2 **selective-scan mixer reused verbatim** from `NFKMLXMamba2Mixer`, and every
@@ -1609,7 +1613,8 @@ attention and feed-forward.
   end-of-sequence marker. It generates against per-layer caches (`NFKMLXGraniteCache`): a Mamba layer
   carries its convolution's last `kernel - 1` inputs and its scan's float32 state
   (`NFKMLXMamba2Cache`), and an attention layer its keys and values, under a causal mask offset by the
-  positions cached (NoPE, so nothing else moves). The prompt runs once and each new token alone. On
+  positions cached (NoPE, so nothing else moves). The prompt runs once and each new token alone, and the head
+  reads the last position alone (`lastLogits(_:cache:)`, `testLastLogitsAreTheCachedCallsLastRow`). On
   the tiny dense and mixture geometries the cached steps give the whole sequence's logits within
   1.4e-6, and the same steps from an empty cache differ by 0.84 and 0.70
   (`testCachedGenerationStepsMatchTheWholeSequence`). Before (to 2026-10-28) the backend reran the

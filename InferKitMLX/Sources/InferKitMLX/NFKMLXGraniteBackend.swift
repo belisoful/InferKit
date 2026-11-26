@@ -22,8 +22,8 @@ import MLXRandom
 /// tokenizer are not `Sendable`, so the crossing is made explicit, as the other language backends do.
 final class NFKGraniteBackendHolder: @unchecked Sendable {
     let logits: (MLXArray) -> MLXArray
-    /// The decoder's layer kinds and its cached step: the logits of the tokens given, which continue
-    /// the positions the cache holds. Nil runs the whole sequence through `logits` each step.
+    /// The decoder's layer kinds and its cached step: the logits `[batch, vocabulary]` at the last of the
+    /// tokens given, which continue the positions the cache holds. Nil runs the whole sequence through `logits` each step.
     let cached: (layerTypes: [NFKMLXGraniteLayerKind], logits: (MLXArray, NFKMLXGraniteCache) -> MLXArray)?
     let tokenizer: NFKTokenizer
     init(logits: @escaping (MLXArray) -> MLXArray,
@@ -60,7 +60,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     /// A backend over `net` that generates with the decoder's caches.
     convenience init(net: NFKMLXGraniteHybridNet, tokenizer: NFKTokenizer, identifier: String,
                      releaseDirectoryURL: URL? = nil) {
-        self.init(logits: { net($0) }, cached: (net.config.layerTypes, { net($0, cache: $1) }),
+        self.init(logits: { net($0) }, cached: (net.config.layerTypes, { net.lastLogits($0, cache: $1) }),
                   tokenizer: tokenizer, identifier: identifier, modules: [net],
                   releaseDirectoryURL: releaseDirectoryURL)
     }
@@ -343,7 +343,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
             if index == 0 {
                 kept?.finish(promptTokens, cache: cache)
             }
-            let next = sampling.next(logits[0, pending.count - 1], seed: seed, step: index)
+            let next = sampling.next(logits[0], seed: seed, step: index)
             // A failed evaluation samples as token 0.
             if NFKMLXErrorScope.hasFailed || stops.contains(next) { break }
             produced.append(next)

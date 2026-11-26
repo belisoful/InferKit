@@ -184,6 +184,16 @@ public final class NFKMLXGemma3nModel: Module {
                                                                perLayerInputs: perLayer, cache: cache))
     }
 
+    /// The logits `[batch, vocabulary]` at the last position of a prompt carrying at most one picture and
+    /// one clip. The head and its soft cap run over the last position alone.
+    func lastLogits(_ tokenIds: MLXArray, image: MLXArray? = nil, audioMel: MLXArray? = nil,
+                    cache: NFKMLXGemma3nCache? = nil) throws -> MLXArray {
+        let (embeddings, perLayer) = try fusedEmbeddings(tokenIds: tokenIds, image: image,
+                                                         audioMel: audioMel, audioValid: nil)
+        let hidden = decoder.hiddenStates(fromEmbeddings: embeddings, perLayerInputs: perLayer, cache: cache)
+        return decoder.logits(fromHidden: hidden[0..., (hidden.dim(1) - 1)...])[0..., 0]
+    }
+
     /// The ids a modality owns, embedded through its own table in place of the text embedding.
     private func replaced(_ embeddings: MLXArray, tokenIds: MLXArray,
                           embedder: NFKGemma3nMultimodalEmbedder, upperBound: Int32) -> MLXArray {

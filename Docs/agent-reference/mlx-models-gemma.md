@@ -196,6 +196,10 @@ quarter of the floor.
   1.0000000000, logit cosine 0.9999999999999682, cached greedy continuation 6/6 with worst step
   1 − cosine 5.0e-14; released E2B every one of the 30 hidden states 1.0000000000, logit cosine
   0.9999999999943566, argmax 6/6, cached continuation 11/11 token for token.
+  **Prefill head (2026-11-25):** a generation's prefill applies the tied head and its soft cap to the last
+  position alone (`NFKMLXGemma3nModel.lastLogits`, `testThePrefillsLastLogitsAreTheWholeCallsLastRow`). Over
+  every position of a 4096-token prompt the 262,144-entry vocabulary's float32 logits and soft cap took
+  8.8 GiB above the E2B's weights; the request now takes 2.2 GiB.
   **Conversations (2026-11-17):** `NFKMLXGemma3nBackend` keeps an `NFKMLXGemma3nPromptCache` per conversation
   through `NFKMLXConversationKeeper`, as Gemma 3 does: the key, else the unnamed conversation the prompt resumes
   furthest into, a memory-derived budget (the keys and values of the layers before the shared tail at the
