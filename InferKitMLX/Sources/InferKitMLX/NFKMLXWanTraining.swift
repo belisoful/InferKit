@@ -100,7 +100,7 @@ public enum NFKMLXWanSigmaSampler: Sendable, Equatable {
     /// timestep `1000t + 1`. The raw draw is `n`.
     case musubiShift(shift: Float, sigmoidScale: Float, minimum: Float, maximum: Float)
     /// VideoX-Fun's `--uniform_sampling`: an index uniform on `[low, high)` into the table diffusers'
-    /// `FlowMatchEulerDiscreteScheduler` builds at construction (``videoXFunTable(shift:)``), the timestep and
+    /// `FlowMatchEulerDiscreteScheduler` builds at construction (`videoXFunTable(shift:)`), the timestep and
     /// `σ` the table's entries at that index. The raw draw is the index. An A14B expert trains on its side of
     /// the table entry nearest timestep `1000 · boundary` (``videoXFunBoundaryIndex(shift:boundary:)``).
     /// Introduced in InferKit 0.4.0.

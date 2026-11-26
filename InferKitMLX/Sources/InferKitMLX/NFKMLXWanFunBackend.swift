@@ -129,10 +129,10 @@ extension NFKMLXWanFunGenerator {
     /// the control video under `NFKInputVideo` and a reference image under
     /// ``NFKMLXVideoInputKey/referenceImage``; for a Control-Camera release the trajectory under
     /// ``NFKMLXVideoInputKey/cameraTrajectory`` (required). Every picture is resized to the clip, and every
-    /// video resampled to the clip's rate, as ``preparedImage(_:width:height:)`` and
-    /// ``preparedVideo(_:frames:framesPerSecond:width:height:)`` describe. It returns an `NFKVideoAsset` (a
+    /// video resampled to the clip's rate, as `preparedImage(_:width:height:)` and
+    /// `preparedVideo(_:frames:framesPerSecond:width:height:)` describe. It returns an `NFKVideoAsset` (a
     /// QuickTime movie in the temporary directory) under `NFKOutputVideo`. Parameters: `NFKParameterFrameCount`,
-    /// `NFKParameterWidth`, `NFKParameterHeight` (``defaultClip``), `NFKParameterFramesPerSecond`
+    /// `NFKParameterWidth`, `NFKParameterHeight` (`defaultClip`), `NFKParameterFramesPerSecond`
     /// (``framesPerSecond``), `NFKParameterSeed` (0), `NFKParameterSteps` and `NFKParameterGuidanceScale`
     /// (``steps`` and ``guidance``). A request's values apply to that request only. Introduced in InferKit
     /// 0.4.0.

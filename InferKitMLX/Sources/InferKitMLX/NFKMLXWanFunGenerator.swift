@@ -70,7 +70,7 @@ public enum NFKMLXWanFunVariant: Int, CaseIterable, Sendable {
 
 /// A Wan 2.2 Fun release, assembled from its directory.
 ///
-/// @discussion The release layout is the original Wan one (``NFKMLXWanOriginalRelease``): umT5 as
+/// @discussion The release layout is the original Wan one (`NFKMLXWanOriginalRelease`): umT5 as
 /// `models_t5_umt5-xxl-enc-bf16.pth` with its tokenizer under `google/umt5-xxl/`, the autoencoder as
 /// `Wan2.2_VAE.pth` (5B) or `Wan2.1_VAE.pth` (A14B), and the transformer as `config.json` and
 /// `diffusion_pytorch_model.safetensors`, or `high_noise_model/` and `low_noise_model/` for an A14B release.

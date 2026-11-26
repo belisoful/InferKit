@@ -88,7 +88,7 @@ extension NFKMLXWanFunGenerator {
     /// reading their conditions.
     ///
     /// The customization path is four calls: ``trainingExample(video:prompt:conditions:)`` for each clip,
-    /// ``network(directoryURL:expert:quantizationBits:)`` to build, this to train, and
+    /// ``network(directoryURL:expert:quantizationBits:precision:)`` to build, this to train, and
     /// ``saveAdapters(of:to:preset:)`` to write the adapters, which a generator applies with
     /// ``addAdapter(at:scale:expert:)``. Introduced in InferKit 0.4.0.
     @discardableResult
