@@ -166,6 +166,7 @@ final class NFKMLXTorchParityTests: XCTestCase {
     }
 
     func testTheColorizerLoaderTranslatesTheRawNamesItself() throws {
+        try NFKMLXSupportLevels.skipIfRetired("colorizer-eccv16")
         // The eccv16 release stores Sequential slots and one transposed convolution in the
         // ConvTranspose layout; the loader's translation and per-key transpose must land the
         // identical parameters the converted file lands.

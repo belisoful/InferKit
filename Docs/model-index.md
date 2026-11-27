@@ -26,6 +26,31 @@ constructor yet names a model whose networks are at reference parity but whose p
 still internal to the package (reachable by its tests through `@testable import`); the missing public
 entry is listed so it is a known gap rather than an implied API.
 
+## Support levels
+
+[removal-candidates.md](removal-candidates.md) ("Applied levels") defines the levels and records why each model
+holds its level. A model not listed is at level 0. A listed model keeps its code, its factories, its
+download path, and its tiny-geometry and unit tests. Only the released-weight tests named here skip, and
+`IK_TEST_RETIRED=1` runs them.
+
+| Model | Level | Released-weight tests retired | Released weights still tested |
+| --- | --- | --- | --- |
+| Colorizer ECCV-16 | 3 | `colorizer-eccv16` | none |
+| Zero-DCE | 3 | `zero-dce` | none |
+| SAM, the original | 3 | `sam-vit-b`, `sam-vit-l`, `sam-vit-h` | none |
+| Hunyuan-MT 7B | 3 | `hunyuan-mt-7b` | none; Chimera 7B stays at level 0 |
+| Whisper large-v2 | 3 | `whisper-large-v2` | none; the other Whisper sizes stay at level 0 |
+| DeepSeek V4 Flash, V4 Pro | 3 | none existed | none |
+| Qwen2 dense | 3 | none existed | none |
+| SD3 Medium | 3 | none existed | none |
+| YOLOv8 | 2 | `yolov8s`, `yolov8m`, `yolov8l`, `yolov8x` | nano |
+| Depth Anything V2 | 2 | `depth-anything-v2-base`, `depth-anything-v2-large` | small |
+| Gemma 2 | 2 | `gemma-2-9b`, `gemma-2-27b` | 2B |
+| M2M-100 | 2 | `m2m100-1.2b` | 418M |
+| Gemma 3n | 2 | `gemma3n-e4b` | E2B |
+| RT-DETR v1 | 2 | `rtdetr-r18vd`, `rtdetr-r34vd`, `rtdetr-r101vd` | r50vd |
+| Stable Diffusion 2.1 base, BiSeNet V1, SimpleBaseline pose, Colorizer SIGGRAPH-17, fast style transfer, Demucs v2, Parakeet-TDT v2, Qwen2-MoE, Mixtral, FastSpeech2 with HiFi-GAN, TripoSR, LTX-2.3, Chronos-Bolt | 2 | none; each already tests one size at one precision | the one size |
+
 ## Image to image
 
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Copy-and-paste (Swift · Objective-C) | Base backend |

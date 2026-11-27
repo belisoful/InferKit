@@ -758,6 +758,7 @@ final class NFKMLXTranslationTests: XCTestCase {
     }
 
     func testM2M100_1_2BMatchesTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("m2m100-1.2b")
         try checkM2M100(weightsKey: "IK_VAL_M2M100_1_2B", recordKey: "IK_PARITY_M2M100_1_2B", variant: .m1_2B, name: "m2m100-1.2b")
     }
 
@@ -1753,16 +1754,19 @@ final class NFKMLXTranslationTests: XCTestCase {
     }
 
     func testHunyuanMTBF16MatchesTheBFloat16Reference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("hunyuan-mt-7b")
         try checkHYMT(weightsKey: "IK_VAL_HUNYUAN_MT_7B", recordKey: "IK_PARITY_HUNYUAN_MT_7B", release: .hunyuanMT,
                       precision: .checkpoint, name: "hunyuan-mt-7b")
     }
 
     func testHunyuanMTChineseToEnglishMatchesTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("hunyuan-mt-7b")
         try checkHYMT(weightsKey: "IK_VAL_HUNYUAN_MT_7B", recordKey: "IK_PARITY_HUNYUAN_MT_7B_ZH", release: .hunyuanMT,
                       precision: .checkpoint, source: "zh", target: "en", name: "hunyuan-mt-7b-zh-en")
     }
 
     func testHunyuanMTStreamedAtFloat32MatchesTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("hunyuan-mt-7b")
         try checkHYMT(weightsKey: "IK_VAL_HUNYUAN_MT_7B", recordKey: "IK_PARITY_HUNYUAN_MT_7B_F32", release: .hunyuanMT,
                       precision: .float32, name: "hunyuan-mt-7b-f32")
     }

@@ -4829,6 +4829,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // prediction and the Lab round trip that recombines it with the original lightness. The record
     // carries the reference's ab, so a mismatch says which.
     func testColorizerMatchesTheReferenceColorization() throws {
+        try NFKMLXSupportLevels.skipIfRetired("colorizer-eccv16")
         try requireMLXRuntime()
         let (inputTensor, referenceOutput) = try record("IK_PARITY_COLORIZER")
         let arrays = try loadArrays(url: URL(fileURLWithPath: config["IK_PARITY_COLORIZER"]!))
@@ -4856,6 +4857,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     }
 
     func testZeroDCEMatchesTheReferenceEnhancement() throws {
+        try NFKMLXSupportLevels.skipIfRetired("zero-dce")
         try requireMLXRuntime()
         try assertImageParity("IK_PARITY_ZERODCE", model: "zero-dce") {
             try NFKMLXZeroDCE.backend(weightsURL: self.weights("IK_VAL_ZERODCE"))
@@ -5164,6 +5166,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // Depth Anything's Base encoder: the same code as Small at a different width and depth, so what
     // this really checks is that the preset matches the release it claims to.
     func testDepthAnythingBaseMatchesTheReferenceMap() throws {
+        try NFKMLXSupportLevels.skipIfRetired("depth-anything-v2-base")
         try requireMLXRuntime()
         let (inputTensor, referenceOutput) = try record("IK_PARITY_DEPTH_BASE")
         let backend = try NFKMLXDepthAnything.backend(variant: .base, weightsURL: weights("IK_VAL_DEPTH_BASE"))
@@ -5182,6 +5185,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // YOLOv8s: the same depth as the nano model at twice the width. The releases scale by two
     // independent multiples, so a size is only right if both were read correctly.
     func testYOLOSmallMatchesTheReferencePredictions() throws {
+        try NFKMLXSupportLevels.skipIfRetired("yolov8s")
         try requireMLXRuntime()
         let (inputTensor, referenceOutput) = try record("IK_PARITY_YOLO_SMALL")
 
@@ -5212,6 +5216,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
     // YOLOv8m is the first size where BOTH multiples change: wider stages and deeper C2f repeats.
     func testYOLOMediumMatchesTheReferencePredictions() throws {
+        try NFKMLXSupportLevels.skipIfRetired("yolov8m")
         try requireMLXRuntime()
         let (inputTensor, referenceOutput) = try record("IK_PARITY_YOLO_MEDIUM")
 
@@ -5233,6 +5238,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
     // Depth Anything's Large encoder — the deepest released size, and the last unmeasured preset.
     func testDepthAnythingLargeMatchesTheReferenceMap() throws {
+        try NFKMLXSupportLevels.skipIfRetired("depth-anything-v2-large")
         try requireMLXRuntime()
         let (inputTensor, referenceOutput) = try record("IK_PARITY_DEPTH_LARGE")
         let backend = try NFKMLXDepthAnything.backend(variant: .large, weightsURL: weights("IK_VAL_DEPTH_LARGE"))
@@ -9313,6 +9319,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // repeat count fails the strict load with a shape rather than a number, which is what makes these
     // presets self-checking.
     func testYOLOLargeSizesMatchTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("yolov8l", "yolov8x")
         try requireMLXRuntime()
         let sizes: [(String, String, String, NFKMLXYOLOConfiguration)] = [
             ("l", "IK_VAL_YOLO_LARGE", "IK_PARITY_YOLO_LARGE", .large),
@@ -11450,6 +11457,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // uses a 1024×1024 plate, so `ResizeLongestSide` and the square padding are identities on both sides
     // and a mismatch here localizes to the ViT itself.
     func testSAMEncoderMatchesTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("sam-vit-b")
         try requireMLXRuntime()
         let (inputTensor, referenceOutput) = try record("IK_PARITY_SAM_ENCODER")
         let net = NFKMLXSAM.makeNet(.vitB)
@@ -11472,6 +11480,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // The full pipeline: encoder → prompt encoder → mask decoder, against the official predictor's mask
     // probabilities for the same plate and the same click point (w/2, h/3).
     func testSAMMaskMatchesTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("sam-vit-b")
         try requireMLXRuntime()
         let (inputTensor, referenceOutput) = try record("IK_PARITY_SAM_MASK")
         let net = NFKMLXSAM.makeNet(.vitB)
@@ -11501,6 +11510,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // logits and the reference's, plus both IoU vectors. A permutation shows up off-diagonal, an
     // inversion as a negative cosine, a genuine decoder divergence as small values everywhere.
     func testSAMDecoderTokenMatrixAgainstTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("sam-vit-b")
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_SAM_DECODER"], FileManager.default.fileExists(atPath: path) else {
             throw XCTSkip("set IK_PARITY_SAM_DECODER to a sam_decoder record")
@@ -12937,6 +12947,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // `IK_ECCV16_TRAIN_SRC=reference-sources/colorization/colorization-caffe IK_REF_SRC=sources/refsrc
     //  python run_reference.py eccv16_training out/eccv16-training.safetensors --checkpoint raw/colorizer_eccv16.pth`
     func testColorizerTrainingMatchesTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("colorizer-eccv16")
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_ECCV16_TRAINING"], FileManager.default.fileExists(atPath: path) else {
             throw XCTSkip("set IK_PARITY_ECCV16_TRAINING to a record from run_reference.py eccv16_training")

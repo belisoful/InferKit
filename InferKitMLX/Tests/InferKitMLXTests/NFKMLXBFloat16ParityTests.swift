@@ -1683,6 +1683,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // `IK_SPREAD_TARGETS`) lands anywhere from 5.6e-5 to 4.5e-4 from float32. So this port runs under the
     // same nudges too, and its median distance from float32 is held to twice the reference's median.
     func testGemma3nE4BInBFloat16MatchesTheBFloat16Reference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("gemma3n-e4b")
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA3N_E4B"], "IK_VAL_GEMMA3N_E4B"))
         try gemma3n("gemma3n-e4b", directory: directory, bf16: record("gemma3n_e4b_bf16_probeall.safetensors"),
@@ -5415,6 +5416,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // Gemma 2 27B cut to its first four layers (`IK_VAL_GEMMA2_27B_CUT4`): the one released size whose
     // query scale, `144^-0.5`, is not exact in bf16, so the scale must multiply in float32.
     func testGemma2_27BPrefixMatchesTheReferenceAtBothPrecisions() throws {
+        try NFKMLXSupportLevels.skipIfRetired("gemma-2-27b")
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA2_27B_CUT4"], "IK_VAL_GEMMA2_27B_CUT4"))
         try gemma2("gemma2-27b-cut4", directory: directory, bf16: record("gemma2_27b_cut4_bf16.safetensors"),
@@ -5703,6 +5705,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     // Gemma 2 9B cut to its first four layers (`IK_VAL_GEMMA2_9B_CUT4`).
     func testGemma2_9BPrefixMatchesTheReferenceAtBothPrecisions() throws {
+        try NFKMLXSupportLevels.skipIfRetired("gemma-2-9b")
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA2_9B_CUT4"], "IK_VAL_GEMMA2_9B_CUT4"))
         try gemma2("gemma2-9b-cut4", directory: directory, bf16: record("gemma2_9b_cut4_bf16.safetensors"),

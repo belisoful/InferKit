@@ -327,6 +327,10 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
             ("gemma3n-e2b-bf16", "IK_VAL_GEMMA3N_E2B", "IK_PARITY_GEMMA3N_E2B_BF16", "IK_PARITY_GEMMA3N_E2B", 30),
             ("gemma3n-e4b", "IK_VAL_GEMMA3N_E4B", "IK_PARITY_GEMMA3N_E4B", "IK_PARITY_GEMMA3N_E4B_F32", 35),
         ] {
+            if NFKMLXSupportLevels.isRetired(name) {
+                print("SKIP \(name): retired by support level")
+                continue
+            }
             guard let release = config[valKey], let record = config[parityKey], let exactRecord = config[exactKey] else {
                 print("SKIP \(name): set \(valKey), \(parityKey), and \(exactKey) (IK_GEMMA_DTYPE=bfloat16 run_reference.py gemma3n)")
                 continue
@@ -503,6 +507,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
             ("large-v3-turbo", "IK_VAL_WHISPER_LARGE_V3_TURBO", "IK_PARITY_WHISPER_LARGE_V3_TURBO", .largeV3Turbo),
         ]
         for (name, weightsKey, parityKey, geometry) in sizes {
+            if NFKMLXSupportLevels.isRetired("whisper-\(name)") { print("SKIP whisper-\(name): retired by support level"); continue }
             guard let arrays = try? record(parityKey) else { print("SKIP whisper-\(name): no \(parityKey)"); continue }
             let waveform = try XCTUnwrap(arrays["waveform"]).asArray(Float.self)
             let referenceTokens = try XCTUnwrap(arrays["output"]).asArray(Int32.self)
@@ -531,6 +536,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     // SAM's ViT-L and ViT-H encoders, and the mask each predicts through the shared decoder, against
     // the official predictor on a 1024×1024 plate.
     func testSAMLargerEncodersMatchTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("sam-vit-l", "sam-vit-h")
         try requireMLXRuntime()
         let mean = MLXArray([Float(123.675), 116.28, 103.53])
         let deviation = MLXArray([Float(58.395), 57.12, 57.375])
@@ -842,6 +848,7 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
     // ResNet-18-vd and ResNet-34-vd backbones at half CSP expansion, and ResNet-101-vd with its wider
     // hybrid encoder.
     func testRTDetrRemainingSizesMatchTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("rtdetr-r18vd", "rtdetr-r34vd", "rtdetr-r101vd")
         try requireMLXRuntime()
         for (name, directoryKey, parityKey, configuration) in [
             ("r18vd", "IK_VAL_RTDETR_R18VD", "IK_PARITY_RTDETR_R18VD", NFKMLXRTDetrConfiguration.r18vd),

@@ -207,6 +207,7 @@ final class NFKMLXRealWeightsValidationTests: XCTestCase {
     // MARK: Image → image (colorization, low-light, style)
 
     func testColorizerAddsColorToAnImage() throws {
+        try NFKMLXSupportLevels.skipIfRetired("colorizer-eccv16")
         try requireMLXRuntime()
         let backend = try NFKMLXColorizer.backend(weightsURL: weights("IK_VAL_COLORIZER"))
         let input = try inputImage()
@@ -219,6 +220,7 @@ final class NFKMLXRealWeightsValidationTests: XCTestCase {
     }
 
     func testZeroDCEBrightensADarkImage() throws {
+        try NFKMLXSupportLevels.skipIfRetired("zero-dce")
         try requireMLXRuntime()
         let backend = try NFKMLXZeroDCE.backend(weightsURL: weights("IK_VAL_ZERODCE"))
         // The low-light model needs a dark plate; IK_VAL_DARK_IMAGE falls back to the standard input.
@@ -249,6 +251,7 @@ final class NFKMLXRealWeightsValidationTests: XCTestCase {
     // The released sam_vit_b checkpoint against the ViT-B geometry: every parameter must be covered, and
     // a point prompt must produce a mask that actually selects part of the image rather than all or none.
     func testSAMSegmentsFromAPointPrompt() throws {
+        try NFKMLXSupportLevels.skipIfRetired("sam-vit-b")
         try requireMLXRuntime()
         let backend = try NFKMLXSAM.backend(variant: .vitB, weightsURL: weights("IK_VAL_SAM"))
         let input = try inputImage()

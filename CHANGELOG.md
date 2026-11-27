@@ -125,6 +125,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Superseded releases move to their support levels
+
+- The levels in `Docs/removal-candidates.md` apply. Colorizer ECCV-16, Zero-DCE, the original SAM,
+  Hunyuan-MT 7B, and Whisper large-v2 are at level 3. YOLOv8 keeps nano, Depth Anything V2 small, Gemma 2 2B,
+  M2M-100 418M, Gemma 3n E2B, and RT-DETR v1 r50vd, each at level 2. Every model still builds, loads, and
+  downloads as before; only the retired releases' released-weight tests stop running. `Docs/model-index.md` and the
+  customization ledger list each model's level.
+
 #### Released models follow their publishers' newest commits where measured, Mistral Small 3 and Mixtral keep their measured commits, and Stable Diffusion 2.1 base downloads from a mirror
 
 - `NFKMLXGemmaLanguage.measuredRevisions` names the Gemma 4 E2B, E4B, and 12B commits whose `tokenizer.json`
