@@ -41,7 +41,10 @@ final class NFKMLXWanDancerTests: XCTestCase {
     }
 
     func testTheResamplerFollowsSciPy() {
-        let x = (0 ..< 1000).map { sin(Double($0) * 0.37) + 0.3 * cos(Double($0) * 1.9) }
+        let x: [Double] = (0 ..< 1000).map { (i: Int) -> Double in
+            let t = Double(i)
+            return sin(t * 0.37) + 0.3 * cos(t * 1.9)
+        }
         let halved = NFKMLXWanDancerMusic.resamplePoly(x, up: 1, down: 2)
         XCTAssertEqual(halved.count, 500)
         let raised = NFKMLXWanDancerMusic.resamplePoly(x, up: 735, down: 512)
