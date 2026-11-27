@@ -2203,6 +2203,12 @@
       "24" : "staged 30926543728 refused",
       "32" : "staged 30926543728 refused"
     },
+    "wan2.2-vace-fun-a14b/default" : {
+      "8" : "streamed 11361920418 refused",
+      "16" : "streamed 11361920418 refused",
+      "24" : "streamed 11361920418 refused",
+      "32" : "streamed 17808259200 fits"
+    },
     "wav2vec2-base-960h/wav2vec2-base-960h" : {
       "8" : "resident 2319544960 fits",
       "16" : "resident 2319544960 fits",

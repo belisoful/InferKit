@@ -199,7 +199,7 @@ enum NFKMLXCatalogVideo {
     // MARK: - Video generation
 
     static var generators: [NFKMLXCatalogEntry] {
-        [ltxVideo] + ltx2Entries + wanEntries + wanExpertEntries + wanAnimateEntries + wanFunEntries + [wanS2V]
+        [ltxVideo] + ltx2Entries + wanEntries + wanExpertEntries + wanAnimateEntries + wanFunEntries + [wanVACEFun, wanS2V]
     }
 
     /// The options a text-to-video generator reads.
@@ -451,7 +451,7 @@ enum NFKMLXCatalogVideo {
     /// The six Wan 2.2 Fun releases, one per ``NFKMLXWanFunVariant``. ``NFKMLXWanFunGenerator/register()``
     /// registers them all.
     static var wanFunEntries: [NFKMLXCatalogEntry] {
-        NFKMLXWanFunVariant.allCases.map { variant in
+        NFKMLXWanFunVariant.allCases.filter { !$0.isVACE }.map { variant in
             let kind = variant.rawValue % 3
             let size = variant.hasExperts ? "A14B" : "5B"
             let displayName = "Wan 2.2 Fun \(size) " + ["Control", "InP", "Control-Camera"][kind]
@@ -495,6 +495,35 @@ enum NFKMLXCatalogVideo {
                 source: NFKMLXCatalogImage.hubRelease(variant.releaseRepo, components: variant.releaseComponents),
                 residencies: NFKMLXCatalogImage.streamedStageResidencies)
         }
+    }
+
+    /// Wan 2.2 VACE-Fun A14B, ``NFKMLXWanFunGenerator`` with ``NFKMLXWanFunVariant/vaceA14B``.
+    static var wanVACEFun: NFKMLXCatalogEntry {
+        let variant = NFKMLXWanFunVariant.vaceA14B
+        return NFKMLXCatalogImage.model(
+            variant.modelName, "Wan 2.2 VACE-Fun A14B", family: "wan-fun-a14b",
+            summary: "Two diffusion transformers with VACE control blocks that film a clip following a control video, or fill a masked video, with subject reference images.",
+            tasks: [NFKModelTaskVideoGeneration],
+            inputs: promptInputs + [
+                .input(NFKInputVideo, title: "Control video",
+                       help: "The pose, depth, or edge video the clip follows, resampled to the frame rate."),
+                .input(NFKMLXVideoInputKey.referenceImage, title: "Subject image",
+                       help: "A picture of the subject, read as a frame of context ahead of the clip."),
+                .input(NFKInputImage, title: "Start image", help: "A start image the clip keeps as its first frame."),
+                .input(NFKMLXVideoInputKey.lastImage, title: "End image",
+                       help: "An end image the clip keeps as its last frame, after a start image."),
+                .input(NFKMLXVideoInputKey.inpaintVideo, title: "Inpainting video",
+                       help: "A video whose frames the mask keeps, resampled to the frame rate."),
+                .input(NFKMLXVideoInputKey.inpaintMask, title: "Inpainting mask",
+                       help: "A video, white where the clip is generated and black where the inpainting video is kept."),
+            ],
+            outputs: [clipOutput("The generated clip as a QuickTime movie.")],
+            parameters: videoOptions(frames: 81, width: 832, height: 480, framesPerSecond: 16,
+                                     frameRateHelp: "The rate every video is resampled to and the clip plays at.",
+                                     steps: 50, guidance: 5),
+            license: .apache2(),
+            source: NFKMLXCatalogImage.hubRelease(variant.releaseRepo, components: variant.releaseComponents),
+            residencies: NFKMLXCatalogImage.streamedStageResidencies)
     }
 
     /// Wan 2.2 S2V-14B, ``NFKMLXWanS2VGenerator``.

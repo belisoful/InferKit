@@ -85432,6 +85432,488 @@
       ]
     },
     {
+      "displayName" : "Wan 2.2 VACE-Fun A14B",
+      "engine" : "mlx",
+      "family" : "wan-fun-a14b",
+      "id" : "wan2.2-vace-fun-a14b",
+      "inputModalities" : [
+        "text",
+        "video",
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to film.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The pose, depth, or edge video the clip follows, resampled to the frame rate.",
+          "key" : "video",
+          "required" : false,
+          "title" : "Control video",
+          "valueType" : "video"
+        },
+        {
+          "help" : "A picture of the subject, read as a frame of context ahead of the clip.",
+          "key" : "NFKMLXInputReferenceImage",
+          "required" : false,
+          "title" : "Subject image"
+        },
+        {
+          "help" : "A start image the clip keeps as its first frame.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Start image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "An end image the clip keeps as its last frame, after a start image.",
+          "key" : "NFKMLXInputLastImage",
+          "required" : false,
+          "title" : "End image"
+        },
+        {
+          "help" : "A video whose frames the mask keeps, resampled to the frame rate.",
+          "key" : "NFKMLXInputInpaintVideo",
+          "required" : false,
+          "title" : "Inpainting video"
+        },
+        {
+          "help" : "A video, white where the clip is generated and black where the inpainting video is kept.",
+          "key" : "NFKMLXInputInpaintMask",
+          "required" : false,
+          "title" : "Inpainting mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 81,
+          "help" : "The frames generated.",
+          "key" : "frameCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Frames"
+        },
+        {
+          "default" : 832,
+          "help" : "The clip width in pixels.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 480,
+          "help" : "The clip height in pixels.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 16,
+          "help" : "The rate every video is resampled to and the clip plays at.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Frame rate"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 50,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 5,
+          "help" : "The classifier-free guidance weight. Above 1 the clip guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 81219901882,
+                "residentBytes" : 81219901882
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 34675185792,
+                "residentBytes" : 34675185792
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 34675185792,
+                "residentBytes" : 34675185792
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 69350371584,
+                "residentBytes" : 69350371584
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 34675185792,
+                "residentBytes" : 34675185792
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 18498955392,
+                "residentBytes" : 18498955392
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14185293952,
+                "residentBytes" : 14185293952
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12028463232,
+                "residentBytes" : 12028463232
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated clip as a QuickTime movie.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan2.2-vace-fun-a14b",
+      "requirements" : {
+        "minimumMemoryBytes" : 45847238928,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Two diffusion transformers with VACE control blocks that film a clip following a control video, or fill a masked video, with subject reference images.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan 2.2 VACE-Fun A14B",
+          "downloadBytes" : 81241635029,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11361920418
+                },
+                "id" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "title" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 507609880
+                },
+                "id" : "Wan2.1_VAE.pth",
+                "title" : "Wan2.1_VAE.pth"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 34675185792,
+                  "checkpoint" : 34675185792,
+                  "float32" : 69350371584
+                },
+                "id" : "high_noise_model",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 702788608,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 28111544320,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 17254645760,
+                "title" : "high_noise_model"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 34675185792,
+                  "checkpoint" : 34675185792,
+                  "float32" : 69350371584
+                },
+                "id" : "low_noise_model",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 702788608,
+                  "checkpoint" : 702788608,
+                  "float32" : 1405577216
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 28111544320,
+                  "checkpoint" : 28111544320,
+                  "float32" : 56223088640
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 17254645760,
+                "title" : "low_noise_model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 45847238928,
+          "peakBytes" : 34675185792,
+          "precision" : "bfloat16",
+          "registryName" : "wan2.2-vace-fun-a14b",
+          "residentBytes" : 34675185792,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 11361920418,
+                "optional" : false,
+                "path" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "role" : "weights",
+                "sha256" : "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "google/umt5-xxl/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 16837417,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+              },
+              {
+                "bytes" : 61728,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6623,
+                "optional" : true,
+                "path" : "google/umt5-xxl/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 507609880,
+                "optional" : false,
+                "path" : "Wan2.1_VAE.pth",
+                "role" : "weights",
+                "sha256" : "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"
+              },
+              {
+                "bytes" : 325,
+                "optional" : false,
+                "path" : "high_noise_model/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 34675325000,
+                "optional" : false,
+                "path" : "high_noise_model/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "66c61b736c5674deeeef17861e494d3652cc9b1463a9656bf18c2c72d2c5f007"
+              },
+              {
+                "bytes" : 325,
+                "optional" : false,
+                "path" : "low_noise_model/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 34675325000,
+                "optional" : false,
+                "path" : "low_noise_model/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "0bf791adfb8330d451d2f5c03577b2a8fb780453f8ef05e23a8fa91f27a2134d"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "4438caabbfdd7437bbb0283d86cb200d1b7223ba",
+            "repository" : "alibaba-pai/Wan2.2-VACE-Fun-A14B",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "wav2vec 2.0 Base",
       "engine" : "mlx",
       "family" : "wav2vec2",
