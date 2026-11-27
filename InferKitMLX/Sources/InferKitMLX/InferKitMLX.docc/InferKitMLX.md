@@ -631,6 +631,7 @@ The figures have three limits:
 - ``NFKMLXWanFunPipeline``
 - ``NFKMLXWanFunConditions``
 - ``NFKMLXWanCameraTrajectory``
+- ``NFKMLXWanVACEConditions``
 - ``NFKMLXWanS2VGenerator``
 - ``NFKMLXWanS2VNet``
 - ``NFKMLXWanS2VConfiguration``

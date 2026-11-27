@@ -214,6 +214,20 @@ final class MLXModelSnippetExamples: XCTestCase {
 
     // Docs/examples.md: Wan 2.2 Fun. The generator needs a release directory; the conditions and the camera
     // trajectory build without one.
+    // Docs/examples.md: Wan 2.2 VACE-Fun. The generator needs a release directory; the conditions and the recipe
+    // build without one.
+    func testExampleWanVACEFun() throws {
+        try requireMLXRuntime()
+        XCTAssertEqual(NFKMLXWanFunVariant.vaceA14B.releaseRepo, "alibaba-pai/Wan2.2-VACE-Fun-A14B")
+        XCTAssertEqual(NFKMLXWanFunVariant.vaceA14B.modelName, "wan2.2-vace-fun-a14b")
+        XCTAssertTrue(NFKMLXWanFunVariant.vaceA14B.isVACE && NFKMLXWanFunVariant.vaceA14B.hasExperts)
+        let conditions = NFKMLXWanVACEConditions(controlVideo: MLXRandom.uniform(low: 0, high: 1, [9, 32, 32, 3]),
+                                                 subjectImages: [MLXRandom.uniform(low: 0, high: 1, [32, 32, 3])])
+        XCTAssertEqual(conditions.subjectImages.count, 1)
+        XCTAssertEqual(NFKMLXWanFunGenerator.referencePreset(variant: .vaceA14B, expert: .highNoise).targets,
+                       .vaceAttentionAndFeedForward)
+    }
+
     // Docs/examples.md: Wan 2.2 S2V. The generator needs a release directory; the clip size and the prompt cleanup
     // compute without one.
     func testExampleWanS2V() throws {

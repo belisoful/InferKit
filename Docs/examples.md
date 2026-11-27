@@ -3814,6 +3814,32 @@ about 70 GB; `generator(directoryURL:residency:precision:quantizationBits:)` pac
 load holds one expert at a time. The sampler is at reference parity against VideoX-Fun's own pipelines over
 small random releases in the released layout.
 
+### Wan 2.2 VACE-Fun (`NFKMLXWanFunGenerator`, `.vaceA14B`)
+
+Wan 2.2 VACE-Fun A14B films a clip that follows a control video, or fills the masked part of a video, while
+subject reference images keep a character or an object: its VACE blocks read them as a context beside the
+clip. The generator reads alibaba-pai's own release directory, in the original Wan layout:
+
+```swift
+let vace = try NFKMLXWanFunGenerator.generator(directoryURL: vaceRelease, residency: .automatic)
+let clip = try vace.video(forPrompt: "a dancer on a pier at dusk",
+                          vace: NFKMLXWanVACEConditions(controlVideo: poseFrames, subjectImages: [dancer]),
+                          frames: 81, width: 832, height: 480)   // [frames, H, W, 3] in 0...1
+```
+
+The defaults are VideoX-Fun's: Euler at a flow shift of 12, 50 steps, guidance 5, the high-noise expert at and
+above timestep 875. Its VACE blocks train with LoRA as DiffSynth-Studio's VACE-Fun script trains them:
+
+```swift
+let vaceExample = try vace.trainingExample(video: clipFrames, prompt: caption,
+                                           vace: NFKMLXWanVACEConditions(controlVideo: poseFrames))
+let vacePreset = NFKMLXWanFunGenerator.vaceDiffSynthPreset(expert: .lowNoise)
+let vaceNet = try NFKMLXWanFunGenerator.network(directoryURL: vaceRelease, expert: .lowNoise, quantizationBits: 4)
+try NFKMLXWanFunGenerator.fineTune(vaceNet, examples: { _ in [vaceExample] }, preset: vacePreset, steps: 1_000)
+try NFKMLXWanFunGenerator.saveAdapters(of: vaceNet, to: vaceLoRAURL, preset: vacePreset)
+try vace.addAdapter(at: vaceLoRAURL, scale: 1, expert: .lowNoise)
+```
+
 ### Wan 2.2 S2V (`NFKMLXWanS2VGenerator`)
 
 Wan 2.2 S2V-14B films the person in a reference image speaking or singing a speech track. The clip is as long

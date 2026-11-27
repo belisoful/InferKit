@@ -780,6 +780,10 @@ models.
   condition channels, `ref_conv` tokens ahead of the clip, and a camera adapter. At reference parity against
   VideoX-Fun's own `Wan2_2FunControlPipeline` and `Wan2_2FunInpaintPipeline`; the A14B releases fine-tune with
   LoRA as DiffSynth-Studio does, the 5B releases as VideoX-Fun's `train_control_lora` does.
+- **Wan 2.2 VACE-Fun A14B** (`NFKMLXWanFunGenerator`, `NFKMLXWanFunVariant.vaceA14B`, `wan2.2-vace-fun-a14b`;
+  alibaba-pai, Apache-2.0): two 14B experts whose VACE blocks read a control video, or a video kept outside a
+  mask, and subject reference images (`NFKMLXWanVACEConditions`), at reference parity against VideoX-Fun's own
+  `Wan2_2VaceFunPipeline`; LoRA fine-tuning of the VACE blocks as DiffSynth-Studio trains them.
 - **`NFKMLXWanS2VGenerator`** — Wan 2.2 S2V-14B (Wan-AI, Apache-2.0, `wan2.2-s2v-14b`): a reference image of a
   person speaking or singing a speech track, segment after segment as long as the speech, optionally driven by a
   pose video or started from the reference image. wav2vec2-large-xlsr-53 reads the speech; the transformer

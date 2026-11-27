@@ -1912,6 +1912,8 @@
 	XCTAssertNotNil(error);
 	[NFKMLXReferenceModels registerAll];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"wan2.2-fun-a14b-control-camera"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"wan2.2-vace-fun-a14b"]);
+	XCTAssertNotEqual(NFKMLXWanFunVariantVaceA14B, NFKMLXWanFunVariantControlA14B);
 }
 
 // Docs/examples.md: Wan 2.2 S2V. The generator assembles the original-layout release directory; its backend reads

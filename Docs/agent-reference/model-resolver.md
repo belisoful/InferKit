@@ -252,7 +252,7 @@ The loaders below read one release, or a model type no judge can tell apart, and
   `NFKMLXTrellisRelease`).
 - The diffusers pipelines state `_class_name`, not `model_type`, so no repository matches them by type.
   Wan 2.2 Animate 2 is one of them: its two releases share one geometry and differ in the scheduler.
-- The Wan 2.2 Fun releases (`NFKMLXWanFunGenerator`). A 5B release's root `config.json` states the original
+- The Wan 2.2 Fun and VACE-Fun releases (`NFKMLXWanFunGenerator`). A 5B release's root `config.json` states the original
   Wan code's `model_type` (`ti2v`, or `i2v` for InP), which Wan-AI's own original-layout releases share and this
   loader does not read, and two of its three weight files are pickles (`.pth`) that the judgment's safetensors
   header reading cannot size or list. An A14B release has no root `config.json`; its experts' sit in

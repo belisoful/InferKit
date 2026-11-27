@@ -407,6 +407,51 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     train on test-dev examples the generator builds, save in each trainer's layout, merge back into a fresh network
     from the factory (within 1e-4 at float32), and load through `addAdapter(at:scale:expert:)`. A 14B expert trains
     over a packed base (`network(directoryURL:expert:quantizationBits:precision:)`, QLoRA).
+- Wan 2.2 VACE-Fun A14B (`NFKMLXWanFunGenerator`, `NFKMLXWanFunVariant.vaceA14B`, `wan2.2-vace-fun-a14b`;
+  `alibaba-pai/Wan2.2-VACE-Fun-A14B` @4438caab, Apache-2.0, 81.2 GB) — the Fun A14B layout with VACE blocks in each
+  expert. Measured at reference parity against VideoX-Fun's own `Wan2_2VaceFunPipeline` (aigc-apps/VideoX-Fun at
+  98fffa9). The defaults are `examples/wan2.2_vace_fun/predict_*.py`'s with `config/wan2.2/wan_civitai_t2v.yaml`:
+  Euler at a flow shift of 12 (`NFKMLXFlowMatchConfiguration.wanVACEFun`), 50 steps, guidance 5, the high-noise
+  expert at and above timestep 875, and 81 frames of 480 × 832 at 16 fps.
+  - **The VACE blocks** (`NFKMLXWanConfiguration.vaceLayers`, `vace_blocks`, `vace_patch_embedding`) are Wan blocks
+    that run ahead of the main loop over a 96-channel context (`forward_vace`). The context is patchified. The
+    first control block adds its projection (`before_proj`) to the clip's tokens, and each later one reads the
+    previous one's output. All of them share the main blocks' modulation, text, and rotary tables. Each output's
+    `after_proj` is a hint, which the block `vace_layers` names (0, 5, …, 35) adds after itself at
+    `vace_context_scale`. The released names map as the main blocks' do, under `vace_blocks.N`.
+  - **The context** (`NFKMLXWanVACEConditions`, `NFKMLXWanFunPipeline.prepareVACE`) follows `vace_encode_frames`,
+    `vace_encode_masks`, and `vace_latent`:
+    - the input is the control video, or the video where the mask (binarized at 0.5) keeps it, in `-1...1`;
+    - its part outside the mask and its part inside it encode separately into 32 channels;
+    - each subject image encodes alone, with zeros for its inside part, as a latent frame ahead of the clip;
+    - the mask folds each 8 × 8 pixel block into 64 channels, resampled to the latent frames by nearest-exact
+      interpolation, with zeros for the subject frames;
+    - the noise covers the subject frames too, and they drop before the decode.
+
+    A start and an end image are the video and mask `get_image_to_video_latent` builds.
+  - **Measured on a test-dev release** (`Tools/wan-fun-testdev/make_testdev.py` on the release's small files, both
+    reduced blocks VACE-fed). `run_reference.py wan_vace_fun_pipeline` (videoxfun env) runs 9 frames of 32 × 48,
+    three steps, and guidance 5, twice: a control video with one subject image, then a video kept outside a
+    rectangle on frames 2 onward. Token ids are exact and the prompt features 0.9999999999999197. The control run
+    reads its VACE context at 0.9999999999997381, the final latents at 0.9999999999998047, and the clip at
+    0.9999999999966065; the masked run reads 0.9999999999986078, 0.9999999999998026, and 0.9999999999965555. Each
+    step's expert matches. The generator through each residency gives the pipeline's latents. A staged load and a
+    streamed block compute exactly as held ones; an 8-bit pack holds the latents above 0.999.
+  - **Released transformers held by shape** (`testEveryFunReleaseMatchesItsLoader`, `wan22-vace-fun-a14b-high` and
+    `-low`): 1331 tensors each, 236 of them the VACE blocks', none missing, unconsumed, or mismatched.
+  - Runtime: the Fun A14B staging, streaming, and packing. A packed load packs the VACE blocks' linear layers with
+    the main blocks'. A streamed transformer streams its main blocks; the eight VACE blocks (5.6 GB of an expert's
+    34.7 GB at bfloat16) stay held, because the layer stream walks one block list.
+- Wan 2.2 VACE-Fun LoRA fine-tuning (`NFKMLXWanFunGenerator.vaceDiffSynthPreset(expert:)`) — DiffSynth-Studio's
+  recipe (1e8ae1d, `lora/Wan2.2-VACE-Fun-A14B.sh`): the Fun A14B recipe on the expert's side of 0.358, on the VACE
+  blocks alone (`--lora_base_model vace`, `NFKMLXWanLoRATargets.vaceAttentionAndFeedForward`).
+  `trainingExample(video:prompt:vace:)` builds the clip's latents, led by each subject image's latent
+  (`WanVideoUnit_InputVideoEmbedder`), and the context the sampler prepares (`WanVideoUnit_VACE`). The loss reads
+  every frame. Measured (`run_reference.py wan_vace_fun_lora_diffsynth`, wantrain-diffsynth env: DiffSynth's own
+  `WanModel` and `VaceWanModel`, split from the test-dev's low-noise expert, the LoRA on the VACE model):
+  prediction 0.9999999999999534, loss 3.1937010 against 3.1937015, and the lowest of the 20 adapter gradient
+  cosines 0.999999999907. `testAVACEFunExpertTrainsSavesAndReloadsThroughItsFactory` saves in DiffSynth's layout, merges
+  into a fresh expert from the factory (20 layers), and loads through `addAdapter(at:scale:expert:)`.
 - `NFKMLXWanS2VGenerator` (`@objc`) — Wan 2.2 S2V-14B (`Wan-AI/Wan2.2-S2V-14B` @dab4e9c5, Apache-2.0), speech-to-video:
   a reference image of a person speaking or singing a speech track, optionally driven by a pose video. Measured at
   reference parity against Wan-Video/Wan2.2's own `WanS2V.generate` (1ea34ff). The release is the original layout

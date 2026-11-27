@@ -2140,6 +2140,10 @@ alternatives.
     Control-Camera at 5B and A14B, read from alibaba-pai's original-layout directories and at reference parity
     against VideoX-Fun's own pipelines on test-dev releases, with LoRA fine-tuning against DiffSynth-Studio
     (A14B) and VideoX-Fun (5B).
+    **Wan 2.2 VACE-Fun is SHIPPED** (`NFKMLXWanFunGenerator`, `wan2.2-vace-fun-a14b`): two experts with VACE blocks
+    that follow a control video or fill a masked video with subject reference images, at reference parity against
+    VideoX-Fun's own `Wan2_2VaceFunPipeline` on a test-dev release, with LoRA fine-tuning of the VACE blocks against
+    DiffSynth-Studio.
     **Wan 2.2 S2V is SHIPPED** (`NFKMLXWanS2VGenerator`, `wan2.2-s2v-14b`): a reference image speaking or singing a
     speech track, read from Wan-AI's original-layout directory and at reference parity against Wan-Video/Wan2.2's own
     `WanS2V.generate` on a test-dev release, pose-driven segments included, with LoRA fine-tuning against
