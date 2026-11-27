@@ -597,7 +597,20 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "Tongyi-MAI/Z-Image-Turbo", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 48969, sha256: nil),
         NFKMLXMeasuredFile(location: "Tongyi-MAI/Z-Image-Turbo", revision: nil, path: "vae/config.json", bytes: 805, sha256: nil),
         NFKMLXMeasuredFile(location: "Tongyi-MAI/Z-Image-Turbo", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 167666902, sha256: "f5b59a26851551b67ae1fe58d32e76486e1e812def4696a4bea97f16604d40a3"),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "Wan2.1_VAE.pth", bytes: 507609880, sha256: "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "config.json", bytes: 250, sha256: nil),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "global_model.safetensors", bytes: 34490546744, sha256: "d0f15c7766d5c208ae4bc2bcfff0ac1d795f32b251e7ae567dd13043316b3bba"),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "google/umt5-xxl/special_tokens_map.json", bytes: 6623, sha256: nil),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "google/umt5-xxl/spiece.model", bytes: 4548313, sha256: "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "google/umt5-xxl/tokenizer.json", bytes: 16837417, sha256: "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "google/umt5-xxl/tokenizer_config.json", bytes: 61728, sha256: nil),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "local_model.safetensors", bytes: 34490546744, sha256: "7dda4250388673516a899954ad1de2f471a37607016c4fce66f4d8978af0a8ae"),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth", bytes: 4772359047, sha256: "628c9998b613391f193eb67ff68da9667d75f492911e4eb3decf23460a158c38"),
+        NFKMLXMeasuredFile(location: "Wan-AI/Wan-Dancer-14B", revision: nil, path: "models_t5_umt5-xxl-enc-bf16.pth", bytes: 11361920418, sha256: "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", revision: nil, path: "model_index.json", bytes: 400, sha256: nil),
+    ]
+
+    private static let measuredFiles19: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", revision: nil, path: "scheduler/scheduler_config.json", bytes: 751, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", revision: nil, path: "text_encoder/config.json", bytes: 854, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", revision: nil, path: "text_encoder/model.safetensors.index.json", bytes: 22476, sha256: nil),
@@ -608,9 +621,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 73296, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", revision: nil, path: "vae/config.json", bytes: 724, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 507591892, sha256: "d6e524b3fffede1787a74e81b30976dce5400c4439ba64222168e607ed19e793"),
-    ]
-
-    private static let measuredFiles19: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-14B-Diffusers", revision: nil, path: "model_index.json", bytes: 400, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-14B-Diffusers", revision: nil, path: "scheduler/scheduler_config.json", bytes: 751, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.1-T2V-14B-Diffusers", revision: nil, path: "text_encoder/config.json", bytes: 854, sha256: nil),
@@ -626,6 +636,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Diffusers", revision: nil, path: "image_encoder/model.safetensors", bytes: 1261596224, sha256: "e672f7dcb7f46458f8edc218669bc25d7ab1fc48bec53e8bd5b957bc1386a5e4"),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Diffusers", revision: nil, path: "model_index.json", bytes: 560, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Diffusers", revision: nil, path: "modular_model_index.json", bytes: 2081, sha256: nil),
+    ]
+
+    private static let measuredFiles20: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Diffusers", revision: nil, path: "scheduler/scheduler_config.json", bytes: 978, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Diffusers", revision: nil, path: "text_encoder/config.json", bytes: 806, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Diffusers", revision: nil, path: "text_encoder/model.safetensors.index.json", bytes: 22512, sha256: nil),
@@ -636,9 +649,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Diffusers", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 119890, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Diffusers", revision: nil, path: "vae/config.json", bytes: 898, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Diffusers", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 507591892, sha256: "d6e524b3fffede1787a74e81b30976dce5400c4439ba64222168e607ed19e793"),
-    ]
-
-    private static let measuredFiles20: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Distilled-Diffusers", revision: nil, path: "image_encoder/config.json", bytes: 498, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Distilled-Diffusers", revision: nil, path: "image_encoder/model.safetensors", bytes: 1261596224, sha256: "e672f7dcb7f46458f8edc218669bc25d7ab1fc48bec53e8bd5b957bc1386a5e4"),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Distilled-Diffusers", revision: nil, path: "model_index.json", bytes: 564, sha256: nil),
@@ -654,6 +664,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Distilled-Diffusers", revision: nil, path: "vae/config.json", bytes: 898, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-Animate-2-14B-Distilled-Diffusers", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 507591892, sha256: "d6e524b3fffede1787a74e81b30976dce5400c4439ba64222168e607ed19e793"),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-I2V-A14B-Diffusers", revision: nil, path: "model_index.json", bytes: 600, sha256: nil),
+    ]
+
+    private static let measuredFiles21: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-I2V-A14B-Diffusers", revision: nil, path: "scheduler/scheduler_config.json", bytes: 820, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-I2V-A14B-Diffusers", revision: nil, path: "text_encoder/config.json", bytes: 855, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-I2V-A14B-Diffusers", revision: nil, path: "text_encoder/model.safetensors.index.json", bytes: 22476, sha256: nil),
@@ -664,9 +677,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-I2V-A14B-Diffusers", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 97307, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-I2V-A14B-Diffusers", revision: nil, path: "transformer_2/config.json", bytes: 495, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-I2V-A14B-Diffusers", revision: nil, path: "transformer_2/diffusion_pytorch_model.safetensors.index.json", bytes: 97307, sha256: nil),
-    ]
-
-    private static let measuredFiles21: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-I2V-A14B-Diffusers", revision: nil, path: "vae/config.json", bytes: 724, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-I2V-A14B-Diffusers", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 507591892, sha256: "d6e524b3fffede1787a74e81b30976dce5400c4439ba64222168e607ed19e793"),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-S2V-14B", revision: nil, path: "Wan2.1_VAE.pth", bytes: 507609880, sha256: "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"),
@@ -682,6 +692,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-S2V-14B", revision: nil, path: "wav2vec2-large-xlsr-53-english/preprocessor_config.json", bytes: 262, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-S2V-14B", revision: nil, path: "wav2vec2-large-xlsr-53-english/pytorch_model.bin", bytes: 1262069143, sha256: "7b7688644eeefe1f5760bb4c4a61d085793a3740159fdbf19fd37c5d4f3729bf"),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-S2V-14B", revision: nil, path: "wav2vec2-large-xlsr-53-english/special_tokens_map.json", bytes: 85, sha256: nil),
+    ]
+
+    private static let measuredFiles22: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-S2V-14B", revision: nil, path: "wav2vec2-large-xlsr-53-english/vocab.json", bytes: 300, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-T2V-A14B-Diffusers", revision: nil, path: "model_index.json", bytes: 498, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-T2V-A14B-Diffusers", revision: nil, path: "scheduler/scheduler_config.json", bytes: 820, sha256: nil),
@@ -692,9 +705,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-T2V-A14B-Diffusers", revision: nil, path: "tokenizer/tokenizer_config.json", bytes: 61758, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-T2V-A14B-Diffusers", revision: nil, path: "transformer/config.json", bytes: 495, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-T2V-A14B-Diffusers", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 97307, sha256: nil),
-    ]
-
-    private static let measuredFiles22: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-T2V-A14B-Diffusers", revision: nil, path: "transformer_2/config.json", bytes: 495, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-T2V-A14B-Diffusers", revision: nil, path: "transformer_2/diffusion_pytorch_model.safetensors.index.json", bytes: 97307, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-T2V-A14B-Diffusers", revision: nil, path: "vae/config.json", bytes: 724, sha256: nil),
@@ -710,6 +720,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-TI2V-5B-Diffusers", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 73297, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-TI2V-5B-Diffusers", revision: nil, path: "vae/config.json", bytes: 1701, sha256: nil),
         NFKMLXMeasuredFile(location: "Wan-AI/Wan2.2-TI2V-5B-Diffusers", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 2818777808, sha256: "62cd18f19438e35b32ac63020e2852f566e9b02f46b6cdbd87972a356e3c6f4b"),
+    ]
+
+    private static let measuredFiles23: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "ZefanCai/Open-Jev-27B-v1.1", revision: "28cf73067d5b337860bbef3c85b8b82ba8730956", path: "package/checkpoint/adapter/adapter_config.json", bytes: 1170, sha256: nil),
         NFKMLXMeasuredFile(location: "ZefanCai/Open-Jev-27B-v1.1", revision: "28cf73067d5b337860bbef3c85b8b82ba8730956", path: "package/checkpoint/adapter/adapter_model.safetensors", bytes: 61907944, sha256: "1c857224bd3609c6a71eacf7f71dd021115fcc0f791936b1fc332e915b548a81"),
         NFKMLXMeasuredFile(location: "ZefanCai/Open-Jev-27B-v1.1", revision: "28cf73067d5b337860bbef3c85b8b82ba8730956", path: "package/checkpoint/head.pt", bytes: 22221, sha256: "76e382f122abfa4e0c467d860a8d142d2fb6d2a98dc0ef9e19870bfc6eb296b4"),
@@ -720,9 +733,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "ZefanCai/Open-Jev-2B", revision: "0c7aa498b1627be8da4acf34c863ff0ee0a92785", path: "package/checkpoint/head.pt", bytes: 9997, sha256: "3532cd576c58d5ad5bf17c3e9f2df4be8c70e08c07fa6bb7fa673dcd7b401f2a"),
         NFKMLXMeasuredFile(location: "ZefanCai/Open-Jev-2B", revision: "0c7aa498b1627be8da4acf34c863ff0ee0a92785", path: "package/checkpoint/model.json", bytes: 186, sha256: nil),
         NFKMLXMeasuredFile(location: "ZefanCai/Open-Jev-2B", revision: "0c7aa498b1627be8da4acf34c863ff0ee0a92785", path: "package/checkpoint/temperature.json", bytes: 161, sha256: nil),
-    ]
-
-    private static let measuredFiles23: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "ZefanCai/Open-Jev-9B", revision: "47e966881e489511c0c7f5633a9e1960a676a551", path: "package/checkpoint/adapter/adapter_config.json", bytes: 1170, sha256: nil),
         NFKMLXMeasuredFile(location: "ZefanCai/Open-Jev-9B", revision: "47e966881e489511c0c7f5633a9e1960a676a551", path: "package/checkpoint/adapter/adapter_model.safetensors", bytes: 23613816, sha256: "f85650a8fb97c6d0ac3e948cdca2f30a0ca6ace8b8a43aebca1c152fe38aeb75"),
         NFKMLXMeasuredFile(location: "ZefanCai/Open-Jev-9B", revision: "47e966881e489511c0c7f5633a9e1960a676a551", path: "package/checkpoint/head.pt", bytes: 18189, sha256: "229fe9800384e824135e59d1af59bda7346da031aea61640be5f456b9be6ce70"),
@@ -738,6 +748,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-Control", revision: nil, path: "google/umt5-xxl/tokenizer_config.json", bytes: 61728, sha256: nil),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-Control", revision: nil, path: "models_t5_umt5-xxl-enc-bf16.pth", bytes: 11361920418, sha256: "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-Control-Camera", revision: nil, path: "Wan2.2_VAE.pth", bytes: 2818839170, sha256: "20eb789667fa5e60e7516bf509512f6cb61f01b0aa0695eadaea930c13892b36"),
+    ]
+
+    private static let measuredFiles24: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-Control-Camera", revision: nil, path: "config.json", bytes: 381, sha256: nil),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-Control-Camera", revision: nil, path: "diffusion_pytorch_model.safetensors", bytes: 10491690400, sha256: "5d85c374cc1ccef0ce4347a934ea23ce2ff58e9f621891c1385c029e47c2b75b"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-Control-Camera", revision: nil, path: "google/umt5-xxl/special_tokens_map.json", bytes: 6623, sha256: nil),
@@ -748,9 +761,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-InP", revision: nil, path: "Wan2.2_VAE.pth", bytes: 2818839170, sha256: "20eb789667fa5e60e7516bf509512f6cb61f01b0aa0695eadaea930c13892b36"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-InP", revision: nil, path: "config.json", bytes: 251, sha256: nil),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-InP", revision: nil, path: "diffusion_pytorch_model.safetensors", bytes: 10000937656, sha256: "680a45b769e2e6ed0ef3710a32ad824baa85d546e534b6f49adcd2b32d42d29a"),
-    ]
-
-    private static let measuredFiles24: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-InP", revision: nil, path: "google/umt5-xxl/special_tokens_map.json", bytes: 6623, sha256: nil),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-InP", revision: nil, path: "google/umt5-xxl/spiece.model", bytes: 4548313, sha256: "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-5B-InP", revision: nil, path: "google/umt5-xxl/tokenizer.json", bytes: 16837417, sha256: "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"),
@@ -766,6 +776,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-Control", revision: nil, path: "low_noise_model/config.json", bytes: 606, sha256: nil),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-Control", revision: nil, path: "low_noise_model/diffusion_pytorch_model.safetensors", bytes: 28579237064, sha256: "d82bc21cd703e089eee4f6fabc25e90ebbd00965623fdc5e83d46d01dbeac2c3"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-Control", revision: nil, path: "models_t5_umt5-xxl-enc-bf16.pth", bytes: 11361920418, sha256: "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"),
+    ]
+
+    private static let measuredFiles25: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera", revision: nil, path: "Wan2.1_VAE.pth", bytes: 507609880, sha256: "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera", revision: nil, path: "google/umt5-xxl/special_tokens_map.json", bytes: 6623, sha256: nil),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera", revision: nil, path: "google/umt5-xxl/spiece.model", bytes: 4548313, sha256: "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"),
@@ -776,9 +789,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera", revision: nil, path: "low_noise_model/config.json", bytes: 606, sha256: nil),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera", revision: nil, path: "low_noise_model/diffusion_pytorch_model.safetensors", bytes: 29584580312, sha256: "277a7b0374f9d0d5ba0e769fa9648687301cfff8b32d32c9b57d122dbea24c02"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera", revision: nil, path: "models_t5_umt5-xxl-enc-bf16.pth", bytes: 11361920418, sha256: "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"),
-    ]
-
-    private static let measuredFiles25: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-InP", revision: nil, path: "Wan2.1_VAE.pth", bytes: 507609880, sha256: "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-InP", revision: nil, path: "google/umt5-xxl/special_tokens_map.json", bytes: 6623, sha256: nil),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-Fun-A14B-InP", revision: nil, path: "google/umt5-xxl/spiece.model", bytes: 4548313, sha256: "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"),
@@ -794,6 +804,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-VACE-Fun-A14B", revision: nil, path: "google/umt5-xxl/spiece.model", bytes: 4548313, sha256: "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-VACE-Fun-A14B", revision: nil, path: "google/umt5-xxl/tokenizer.json", bytes: 16837417, sha256: "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-VACE-Fun-A14B", revision: nil, path: "google/umt5-xxl/tokenizer_config.json", bytes: 61728, sha256: nil),
+    ]
+
+    private static let measuredFiles26: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-VACE-Fun-A14B", revision: nil, path: "high_noise_model/config.json", bytes: 325, sha256: nil),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-VACE-Fun-A14B", revision: nil, path: "high_noise_model/diffusion_pytorch_model.safetensors", bytes: 34675325000, sha256: "66c61b736c5674deeeef17861e494d3652cc9b1463a9656bf18c2c72d2c5f007"),
         NFKMLXMeasuredFile(location: "alibaba-pai/Wan2.2-VACE-Fun-A14B", revision: nil, path: "low_noise_model/config.json", bytes: 325, sha256: nil),
@@ -804,9 +817,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "alibabasglab/MossFormer2_SR_48K", revision: nil, path: "last_best_checkpoint_g.pt", bytes: 220712702, sha256: "0bdd13c21466f5963d9d1f86a9d84fc6196868318fe22c6b0a750f041805adda"),
         NFKMLXMeasuredFile(location: "alibabasglab/MossFormer2_SR_48K", revision: nil, path: "last_best_checkpoint_m.pt", bytes: 218471889, sha256: "6cbadb2b6b839e444bb65223c69eea162c8ad08f36e9d0a64144672c4095ab36"),
         NFKMLXMeasuredFile(location: "alirezamsh/small100", revision: nil, path: "config.json", bytes: 890, sha256: nil),
-    ]
-
-    private static let measuredFiles26: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "alirezamsh/small100", revision: nil, path: "model.safetensors", bytes: 1330973772, sha256: "dd3b845a36ea4ed90437fd0b9b477e30c21f144d3658679fd5c945e3c96b0fbc"),
         NFKMLXMeasuredFile(location: "alirezamsh/small100", revision: nil, path: "pytorch_model.bin", bytes: 1331029275, sha256: "681bc87ca4e49c3cda5a853d1d530805e2bf4b340657d87fd4925d6622f063a6"),
         NFKMLXMeasuredFile(location: "alirezamsh/small100", revision: nil, path: "sentencepiece.bpe.model", bytes: 2423393, sha256: "d8f7c76ed2a5e0822be39f0a4f95a55eb19c78f4593ce609e2edbc2aea4d380a"),
@@ -822,6 +832,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-dev", revision: nil, path: "tokenizer/tokenizer_config.json", bytes: 705, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-dev", revision: nil, path: "tokenizer/vocab.json", bytes: 1059962, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-dev", revision: nil, path: "tokenizer_2/spiece.model", bytes: 791656, sha256: nil),
+    ]
+
+    private static let measuredFiles27: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-dev", revision: nil, path: "transformer/config.json", bytes: 378, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-dev", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 121262, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-dev", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 167666902, sha256: nil),
@@ -832,9 +845,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-schnell", revision: nil, path: "tokenizer/tokenizer_config.json", bytes: 705, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-schnell", revision: nil, path: "tokenizer/vocab.json", bytes: 1059962, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-schnell", revision: nil, path: "tokenizer_2/spiece.model", bytes: 791656, sha256: nil),
-    ]
-
-    private static let measuredFiles27: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-schnell", revision: nil, path: "transformer/config.json", bytes: 321, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-schnell", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 120822, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.1-schnell", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 167666902, sha256: nil),
@@ -850,6 +860,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-4B", revision: nil, path: "transformer/config.json", bytes: 541, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-4B", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors", bytes: 7751109744, sha256: "9f29f9edcfdae452a653ffb51a534ca4decd389952c225724ff3b94042612a6e"),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-4B", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 168120878, sha256: "ca70d2202afe6415bdbcb8793ba8cd99fd159cfe6192381504d6c4d3036e0f04"),
+    ]
+
+    private static let measuredFiles28: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9B", revision: nil, path: "model_index.json", bytes: 446, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9B", revision: nil, path: "text_encoder/config.json", bytes: 1538, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9B", revision: nil, path: "text_encoder/model.safetensors.index.json", bytes: 32914, sha256: nil),
@@ -860,9 +873,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9B", revision: nil, path: "tokenizer/tokenizer_config.json", bytes: 5404, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9B", revision: nil, path: "tokenizer/vocab.json", bytes: 2776833, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9B", revision: nil, path: "transformer/config.json", bytes: 542, sha256: nil),
-    ]
-
-    private static let measuredFiles28: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9B", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 24875, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9B", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 168120878, sha256: "ca70d2202afe6415bdbcb8793ba8cd99fd159cfe6192381504d6c4d3036e0f04"),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9b-kv", revision: nil, path: "model_index.json", bytes: 446, sha256: nil),
@@ -878,6 +888,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9b-kv", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 24875, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-9b-kv", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 168120878, sha256: "ca70d2202afe6415bdbcb8793ba8cd99fd159cfe6192381504d6c4d3036e0f04"),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-4B", revision: nil, path: "model_index.json", bytes: 422, sha256: nil),
+    ]
+
+    private static let measuredFiles29: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-4B", revision: nil, path: "text_encoder/config.json", bytes: 1536, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-4B", revision: nil, path: "text_encoder/model.safetensors.index.json", bytes: 32855, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-4B", revision: nil, path: "tokenizer/added_tokens.json", bytes: 707, sha256: nil),
@@ -888,9 +901,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-4B", revision: nil, path: "tokenizer/vocab.json", bytes: 2776833, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-4B", revision: nil, path: "transformer/config.json", bytes: 531, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-4B", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors", bytes: 7751109744, sha256: "e109674697ffa1a3983126e32512f5428a9442bd8df59f9c95566ee90a473bb6"),
-    ]
-
-    private static let measuredFiles29: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-4B", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 168120878, sha256: "ca70d2202afe6415bdbcb8793ba8cd99fd159cfe6192381504d6c4d3036e0f04"),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-9B", revision: nil, path: "model_index.json", bytes: 422, sha256: nil),
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-9B", revision: nil, path: "text_encoder/config.json", bytes: 1538, sha256: nil),
@@ -906,6 +916,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "black-forest-labs/FLUX.2-klein-base-9B", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 168120878, sha256: "ca70d2202afe6415bdbcb8793ba8cd99fd159cfe6192381504d6c4d3036e0f04"),
         NFKMLXMeasuredFile(location: "camenduru/big-lama", revision: "3576f52d03463061e999fb534f2d0a6c2f2212e9", path: "big-lama/models/best.ckpt", bytes: 410046389, sha256: "fccb7adffd53ec0974ee5503c3731c2c2f1e7e07856fd9228cdcc0b46fd5d423"),
         NFKMLXMeasuredFile(location: "com-kotobalabs/open-jev-deberta-v3-large", revision: "188ee67a5c93122b916e5acd5bdb0cb3623e380a", path: "added_tokens.json", bytes: 80, sha256: nil),
+    ]
+
+    private static let measuredFiles30: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "com-kotobalabs/open-jev-deberta-v3-large", revision: "188ee67a5c93122b916e5acd5bdb0cb3623e380a", path: "config.json", bytes: 826, sha256: nil),
         NFKMLXMeasuredFile(location: "com-kotobalabs/open-jev-deberta-v3-large", revision: "188ee67a5c93122b916e5acd5bdb0cb3623e380a", path: "head.safetensors", bytes: 12591412, sha256: "f101be67c5808a810abbcede9ebe702f7e4af4aa6f7298bb243842ce9e3a295a"),
         NFKMLXMeasuredFile(location: "com-kotobalabs/open-jev-deberta-v3-large", revision: "188ee67a5c93122b916e5acd5bdb0cb3623e380a", path: "model.safetensors", bytes: 1736094384, sha256: "3f1d5bc3b6d3dc412ea2c499446fcbd212242d79baf16bc0eda155b4ebbac806"),
@@ -916,9 +929,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "convaiinnovations/laya", revision: "246177e5cb70334c9831c0730864a93c836aac8f", path: "model.safetensors", bytes: 842609210, sha256: "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c"),
         NFKMLXMeasuredFile(location: "convaiinnovations/laya", revision: "246177e5cb70334c9831c0730864a93c836aac8f", path: "multilingual/encoder/config.json", bytes: 1938, sha256: nil),
         NFKMLXMeasuredFile(location: "convaiinnovations/laya", revision: "246177e5cb70334c9831c0730864a93c836aac8f", path: "multilingual/model.safetensors", bytes: 643835514, sha256: "9d628fd971b700382ac6f65920a86f149777b2e748e0c955fb3b19695aa8f204"),
-    ]
-
-    private static let measuredFiles30: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "convaiinnovations/laya", revision: "246177e5cb70334c9831c0730864a93c836aac8f", path: "multilingual/rl_agent_config.json", bytes: 472, sha256: nil),
         NFKMLXMeasuredFile(location: "convaiinnovations/laya", revision: "246177e5cb70334c9831c0730864a93c836aac8f", path: "multilingual/tokenizer/tokenizer.json", bytes: 34363188, sha256: "609d8f4c067cd3950f88594c5a802616cea245823836ef5848ee4fc40aab5b6f"),
         NFKMLXMeasuredFile(location: "convaiinnovations/laya", revision: "246177e5cb70334c9831c0730864a93c836aac8f", path: "multilingual/tokenizer/tokenizer_config.json", bytes: 524, sha256: nil),
@@ -934,6 +944,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4-Flash-0731", revision: nil, path: "generation_config.json", bytes: 170, sha256: nil),
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4-Flash-0731", revision: nil, path: "model.safetensors.index.json", bytes: 5602871, sha256: nil),
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4-Flash-0731", revision: nil, path: "tokenizer.json", bytes: 6367146, sha256: nil),
+    ]
+
+    private static let measuredFiles31: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4-Flash-0731", revision: nil, path: "tokenizer_config.json", bytes: 801, sha256: nil),
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4-Pro-0813", revision: nil, path: "config.json", bytes: 1967, sha256: nil),
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4-Pro-0813", revision: nil, path: "generation_config.json", bytes: 170, sha256: nil),
@@ -944,9 +957,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4.1-Flash", revision: nil, path: "config.json", bytes: 3311, sha256: nil),
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4.1-Flash", revision: nil, path: "model.safetensors.index.json", bytes: 7470294, sha256: nil),
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4.1-Flash", revision: nil, path: "tokenizer.json", bytes: 6367257, sha256: nil),
-    ]
-
-    private static let measuredFiles31: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "deepseek-ai/DeepSeek-V4.1-Flash", revision: nil, path: "tokenizer_config.json", bytes: 801, sha256: nil),
         NFKMLXMeasuredFile(location: "depth-anything/DA3-BASE", revision: nil, path: "model.safetensors", bytes: 541518028, sha256: "e01067dc1659613083d9145a9a2547ccdbe6ccbbf83c4fe7b3e8a4e2bdae78b5"),
         NFKMLXMeasuredFile(location: "depth-anything/DA3-LARGE", revision: nil, path: "model.safetensors", bytes: 1643843860, sha256: "eaf2ae06df55889ad23eb245c82e2dd2a30c0cbf7e3d873a118fa5ed27a3e421"),
@@ -962,6 +972,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "diffusers/LTX-2.3-Diffusers", revision: nil, path: "model_index.json", bytes: 623, sha256: nil),
         NFKMLXMeasuredFile(location: "diffusers/LTX-2.3-Diffusers", revision: nil, path: "scheduler/scheduler_config.json", bytes: 487, sha256: nil),
         NFKMLXMeasuredFile(location: "diffusers/LTX-2.3-Diffusers", revision: nil, path: "text_encoder/config.json", bytes: 2960, sha256: nil),
+    ]
+
+    private static let measuredFiles32: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "diffusers/LTX-2.3-Diffusers", revision: nil, path: "text_encoder/model.safetensors.index.json", bytes: 108642, sha256: nil),
         NFKMLXMeasuredFile(location: "diffusers/LTX-2.3-Diffusers", revision: nil, path: "tokenizer/special_tokens_map.json", bytes: 662, sha256: nil),
         NFKMLXMeasuredFile(location: "diffusers/LTX-2.3-Diffusers", revision: nil, path: "tokenizer/tokenizer.json", bytes: 33384568, sha256: "4667f2089529e8e7657cfb6d1c19910ae71ff5f28aa7ab2ff2763330affad795"),
@@ -972,9 +985,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "diffusers/LTX-2.3-Diffusers", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 1452233194, sha256: "425f0dfa227dee5d0ff3d9720563370810409a439c302ca74f0f944057ce55c5"),
         NFKMLXMeasuredFile(location: "diffusers/LTX-2.3-Diffusers", revision: nil, path: "vocoder/config.json", bytes: 1478, sha256: nil),
         NFKMLXMeasuredFile(location: "diffusers/LTX-2.3-Diffusers", revision: nil, path: "vocoder/diffusion_pytorch_model.safetensors", bytes: 258305056, sha256: "c99dde145a982974bc4c39608b3b929f232f0126a55d8326a47ad54f486ae23c"),
-    ]
-
-    private static let measuredFiles32: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "espnet/fastspeech2_conformer_with_hifigan", revision: nil, path: "config.json", bytes: 6103, sha256: nil),
         NFKMLXMeasuredFile(location: "espnet/fastspeech2_conformer_with_hifigan", revision: nil, path: "pytorch_model.bin", bytes: 336971193, sha256: "4c9d7bd71f026b7d60d5e7ec5e92edb5fdabe68ff88dc0cea696c2f2dd7fee0f"),
         NFKMLXMeasuredFile(location: "espnet/fastspeech2_conformer_with_hifigan", revision: nil, path: "vocab.json", bytes: 809, sha256: nil),
@@ -990,6 +1000,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/hubert-large-ls960-ft", revision: "ece5fabbf034c1073acae96d5401b25be96709d8", path: "tokenizer_config.json", bytes: 138, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/hubert-large-ls960-ft", revision: "ece5fabbf034c1073acae96d5401b25be96709d8", path: "vocab.json", bytes: 291, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/hubert-xlarge-ll60k", revision: "b0cef767123fe004883915a053f538f1737a1e47", path: "config.json", bytes: 1601, sha256: nil),
+    ]
+
+    private static let measuredFiles33: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/hubert-xlarge-ll60k", revision: "b0cef767123fe004883915a053f538f1737a1e47", path: "preprocessor_config.json", bytes: 212, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/hubert-xlarge-ll60k", revision: "b0cef767123fe004883915a053f538f1737a1e47", path: "pytorch_model.bin", bytes: 3850305733, sha256: "6131dc27f4508595daa1a13fec4aa1f6b4a579b5d93550bae26c13a83221f8a7"),
         NFKMLXMeasuredFile(location: "facebook/hubert-xlarge-ls960-ft", revision: "86a09e67e0c8d074533992379242405825516eca", path: "config.json", bytes: 1487, sha256: nil),
@@ -1000,9 +1013,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/m2m100_1.2B", revision: nil, path: "config.json", bytes: 909, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/m2m100_1.2B", revision: nil, path: "generation_config.json", bytes: 233, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/m2m100_1.2B", revision: nil, path: "pytorch_model.bin", bytes: 4958230644, sha256: "a58ef8f42362ef12adeddc600b3425f1e2bbd019cfa6aae6b0051e2e3e055cd4"),
-    ]
-
-    private static let measuredFiles33: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/m2m100_1.2B", revision: nil, path: "sentencepiece.bpe.model", bytes: 2423393, sha256: "d8f7c76ed2a5e0822be39f0a4f95a55eb19c78f4593ce609e2edbc2aea4d380a"),
         NFKMLXMeasuredFile(location: "facebook/m2m100_1.2B", revision: nil, path: "tokenizer_config.json", bytes: 271, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/m2m100_1.2B", revision: nil, path: "vocab.json", bytes: 3708092, sha256: nil),
@@ -1018,6 +1028,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/nllb-200-1.3B", revision: nil, path: "sentencepiece.bpe.model", bytes: 4852054, sha256: "14bb8dfb35c0ffdea7bc01e56cea38b9e3d5efcdcb9c251d6b40538e1aab555a"),
         NFKMLXMeasuredFile(location: "facebook/nllb-200-1.3B", revision: nil, path: "special_tokens_map.json", bytes: 3548, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/nllb-200-1.3B", revision: nil, path: "tokenizer_config.json", bytes: 564, sha256: nil),
+    ]
+
+    private static let measuredFiles34: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/nllb-200-3.3B", revision: nil, path: "config.json", bytes: 808, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/nllb-200-3.3B", revision: nil, path: "generation_config.json", bytes: 189, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/nllb-200-3.3B", revision: nil, path: "pytorch_model.bin.index.json", bytes: 90035, sha256: nil),
@@ -1028,9 +1041,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/nllb-200-distilled-1.3B", revision: nil, path: "generation_config.json", bytes: 189, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/nllb-200-distilled-1.3B", revision: nil, path: "pytorch_model.bin", bytes: 5482882236, sha256: "7e40f838a5aad3d60e9254632ab876bda44340386ca7ebad3e099db7432b04e1"),
         NFKMLXMeasuredFile(location: "facebook/nllb-200-distilled-1.3B", revision: nil, path: "sentencepiece.bpe.model", bytes: 4852054, sha256: "14bb8dfb35c0ffdea7bc01e56cea38b9e3d5efcdcb9c251d6b40538e1aab555a"),
-    ]
-
-    private static let measuredFiles34: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/nllb-200-distilled-1.3B", revision: nil, path: "special_tokens_map.json", bytes: 3548, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/nllb-200-distilled-1.3B", revision: nil, path: "tokenizer_config.json", bytes: 564, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/nllb-200-distilled-600M", revision: nil, path: "config.json", bytes: 846, sha256: nil),
@@ -1046,6 +1056,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/sam2.1-hiera-base-plus", revision: nil, path: "sam2.1_hiera_base_plus.pt", bytes: 323606802, sha256: "a2345aede8715ab1d5d31b4a509fb160c5a4af1970f199d9054ccfb746c004c5"),
         NFKMLXMeasuredFile(location: "facebook/sam2.1-hiera-large", revision: nil, path: "sam2.1_hiera_large.pt", bytes: 898083611, sha256: "2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318"),
         NFKMLXMeasuredFile(location: "facebook/sam2.1-hiera-small", revision: nil, path: "sam2.1_hiera_small.pt", bytes: 184416285, sha256: "6d1aa6f30de5c92224f8172114de081d104bbd23dd9dc5c58996f0cad5dc4d38"),
+    ]
+
+    private static let measuredFiles35: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/sam2.1-hiera-tiny", revision: nil, path: "sam2.1_hiera_tiny.pt", bytes: 156008466, sha256: "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69"),
         NFKMLXMeasuredFile(location: "facebook/sam3", revision: nil, path: "config.json", bytes: 25843, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/sam3", revision: nil, path: "merges.txt", bytes: 524619, sha256: nil),
@@ -1056,9 +1069,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/sam3.1", revision: nil, path: "config.json", bytes: 25843, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/sam3.1", revision: nil, path: "merges.txt", bytes: 524619, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/sam3.1", revision: nil, path: "sam3.1_multiplex.pt", bytes: 3502755717, sha256: "0567debeec80ba4ac6369540c6c248025283cb3ff2b92827509e57e2b3541cb6"),
-    ]
-
-    private static let measuredFiles35: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/sam3.1", revision: nil, path: "special_tokens_map.json", bytes: 588, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/sam3.1", revision: nil, path: "tokenizer_config.json", bytes: 799, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/sam3.1", revision: nil, path: "vocab.json", bytes: 862328, sha256: nil),
@@ -1074,6 +1084,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vitg-fpc64-384-ssv2", revision: nil, path: "config.json", bytes: 14948, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vitg-fpc64-384-ssv2", revision: nil, path: "model.safetensors", bytes: 4512302192, sha256: "fb15cc4a23907575ec2205e20e0b6997692a9ade3a12afdaf8a2f04f9ce5a72b"),
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vitg-fpc64-384-ssv2", revision: nil, path: "video_preprocessor_config.json", bytes: 1464, sha256: nil),
+    ]
+
+    private static let measuredFiles36: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vith-fpc64-256", revision: nil, path: "config.json", bytes: 785, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vith-fpc64-256", revision: nil, path: "model.safetensors", bytes: 2615800136, sha256: "ad0d49df6565ffeb7f837023ee149e27362d24c06332fa4a504e169d86b16eb0"),
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vith-fpc64-256", revision: nil, path: "video_preprocessor_config.json", bytes: 1298, sha256: nil),
@@ -1084,9 +1097,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vitl-fpc32-256-diving48", revision: nil, path: "model.safetensors", bytes: 1501501984, sha256: "b0dec8132070562db7bd5ee0ba650d51f76f9b31157c5e87e4c593f98e81155c"),
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vitl-fpc32-256-diving48", revision: nil, path: "video_preprocessor_config.json", bytes: 1464, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vitl-fpc64-256", revision: nil, path: "config.json", bytes: 785, sha256: nil),
-    ]
-
-    private static let measuredFiles36: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vitl-fpc64-256", revision: nil, path: "model.safetensors", bytes: 1303947864, sha256: "25466aef85727d16546c6cf8c99f12fcfad9cbca8225d45f23685e2e025b786b"),
         NFKMLXMeasuredFile(location: "facebook/vjepa2-vitl-fpc64-256", revision: nil, path: "video_preprocessor_config.json", bytes: 1298, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/w2v-bert-2.0", revision: "da985ba0987f70aaeb84a80f2851cfac8c697a7b", path: "config.json", bytes: 1874, sha256: nil),
@@ -1102,6 +1112,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-base-960h", revision: "22aad52d435eb6dbaf354bdad9b0da84ce7d6156", path: "vocab.json", bytes: 291, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-960h", revision: "bdeaacdf88f7a155f50a2704bc967aa81fbbb2ab", path: "config.json", bytes: 843, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-960h", revision: "bdeaacdf88f7a155f50a2704bc967aa81fbbb2ab", path: "preprocessor_config.json", bytes: 159, sha256: nil),
+    ]
+
+    private static let measuredFiles37: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-960h", revision: "bdeaacdf88f7a155f50a2704bc967aa81fbbb2ab", path: "pytorch_model.bin", bytes: 1262009187, sha256: "7aef99395c7b7ab5b78b6d00bdf71aebd93a7340b72d614303d598de8f94a10f"),
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-960h", revision: "bdeaacdf88f7a155f50a2704bc967aa81fbbb2ab", path: "tokenizer_config.json", bytes: 163, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-960h", revision: "bdeaacdf88f7a155f50a2704bc967aa81fbbb2ab", path: "vocab.json", bytes: 291, sha256: nil),
@@ -1112,9 +1125,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-960h-lv60-self", revision: "54074b1c16f4de6a5ad59affb4caa8f2ea03a119", path: "vocab.json", bytes: 291, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-lv60", revision: "0cde644b64dac88d8416bec1c92a4099b850ba0b", path: "config.json", bytes: 1553, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-lv60", revision: "0cde644b64dac88d8416bec1c92a4099b850ba0b", path: "preprocessor_config.json", bytes: 158, sha256: nil),
-    ]
-
-    private static let measuredFiles37: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-lv60", revision: "0cde644b64dac88d8416bec1c92a4099b850ba0b", path: "pytorch_model.bin", bytes: 1269737156, sha256: "1d095321ee151b9cbeeb2f325d104bf1813b795c9bbbee58efcde34f701d0386"),
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-xlsr-53", revision: "c3f9d884181a224a6ac87bf8885c84d1cff3384f", path: "config.json", bytes: 1768, sha256: nil),
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-large-xlsr-53", revision: "c3f9d884181a224a6ac87bf8885c84d1cff3384f", path: "preprocessor_config.json", bytes: 212, sha256: nil),
@@ -1130,6 +1140,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "facebook/wav2vec2-xls-r-300m", revision: "1a640f32ac3e39899438a2931f9924c02f080a54", path: "pytorch_model.bin", bytes: 1269737156, sha256: "d5e490574712ad0a6736923b9ed11d4cd51c78609c36205f704fc4e87b11d2e0"),
         NFKMLXMeasuredFile(location: "google/embeddinggemma-300m", revision: nil, path: "2_Dense/model.safetensors", bytes: 9437272, sha256: "c327f2acb00149676ade24a75e11eb6ebbd367f9ee050267ba56829d2979f702"),
         NFKMLXMeasuredFile(location: "google/embeddinggemma-300m", revision: nil, path: "3_Dense/model.safetensors", bytes: 9437272, sha256: "ffb6cc5162e11e2ce6bc2367e121ee3bbbc4e82e1ee26826bd7573d4948d81b8"),
+    ]
+
+    private static let measuredFiles38: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "google/embeddinggemma-300m", revision: nil, path: "model.safetensors", bytes: 1211486072, sha256: "cbf5a78393b6a033e0b8a63a57549964f7ed5c6fbeb4ba0694214f36123f2fd2"),
         NFKMLXMeasuredFile(location: "google/embeddinggemma-300m", revision: nil, path: "tokenizer.json", bytes: 33385008, sha256: "6852f8d561078cc0cebe70ca03c5bfdd0d60a45f9d2e0e1e4cc05b68e9ec329e"),
         NFKMLXMeasuredFile(location: "google/gemma-3-12b-it", revision: nil, path: "config.json", bytes: 916, sha256: nil),
@@ -1140,9 +1153,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "google/gemma-3-1b-it", revision: nil, path: "model.safetensors", bytes: 1999811208, sha256: "3d4ef8d71c14db7e448a09ebe891cfb6bf32c57a9b44499ae0d1c098e48516b6"),
         NFKMLXMeasuredFile(location: "google/gemma-3-1b-it", revision: nil, path: "tokenizer.json", bytes: 33384568, sha256: "4667f2089529e8e7657cfb6d1c19910ae71ff5f28aa7ab2ff2763330affad795"),
         NFKMLXMeasuredFile(location: "google/gemma-3-1b-it", revision: nil, path: "tokenizer_config.json", bytes: 1156999, sha256: nil),
-    ]
-
-    private static let measuredFiles38: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "google/gemma-3-270m-it", revision: nil, path: "chat_template.jinja", bytes: 1532, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-3-270m-it", revision: nil, path: "config.json", bytes: 1352, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-3-270m-it", revision: nil, path: "model.safetensors", bytes: 536223056, sha256: "700b710a9a99c295ed546647aa81cacf9f81f4c573ea2be613a0e2517a44afab"),
@@ -1158,6 +1168,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "google/gemma-3-4b-it", revision: nil, path: "tokenizer_config.json", bytes: 1156999, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-3n-E2B-it", revision: nil, path: "config.json", bytes: 4254, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-3n-E2B-it", revision: nil, path: "model.safetensors.index.json", bytes: 159338, sha256: nil),
+    ]
+
+    private static let measuredFiles39: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "google/gemma-3n-E2B-it", revision: nil, path: "tokenizer.json", bytes: 33442559, sha256: "c4c19736bf24d1c6805cf49340e31bd02c70fb7857a2cb31065c90c2b5719c4e"),
         NFKMLXMeasuredFile(location: "google/gemma-3n-E4B-it", revision: nil, path: "config.json", bytes: 4536, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-3n-E4B-it", revision: nil, path: "model.safetensors.index.json", bytes: 171423, sha256: nil),
@@ -1168,9 +1181,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "google/gemma-4-12B-it", revision: "43c9d014b231474fa7212dbb48a762566c2b255d", path: "tokenizer.json", bytes: 32157161, sha256: "9788bdb6a021b3170357cd3587b5d622b1177561ad3c5bf43d73728fd71aeacb"),
         NFKMLXMeasuredFile(location: "google/gemma-4-12B-it", revision: "43c9d014b231474fa7212dbb48a762566c2b255d", path: "tokenizer_config.json", bytes: 3089, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-4-26B-A4B-it", revision: nil, path: "chat_template.jinja", bytes: 18683, sha256: nil),
-    ]
-
-    private static let measuredFiles39: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "google/gemma-4-26B-A4B-it", revision: nil, path: "config.json", bytes: 3815, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-4-26B-A4B-it", revision: nil, path: "model.safetensors.index.json", bytes: 103196, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-4-26B-A4B-it", revision: nil, path: "tokenizer.json", bytes: 32169626, sha256: "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"),
@@ -1186,6 +1196,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "google/gemma-4-E2B-it", revision: "4adf15748de9e1a0097b6274cee9c15836c41c37", path: "tokenizer.json", bytes: 32155733, sha256: "ab26b2add729e6f645bd869f228f14190a06615538f3be6f7786f33d13d78ad2"),
         NFKMLXMeasuredFile(location: "google/gemma-4-E2B-it", revision: "4adf15748de9e1a0097b6274cee9c15836c41c37", path: "tokenizer_config.json", bytes: 3082, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-4-E4B-it", revision: "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c", path: "chat_template.jinja", bytes: 18569, sha256: nil),
+    ]
+
+    private static let measuredFiles40: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "google/gemma-4-E4B-it", revision: "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c", path: "config.json", bytes: 5145, sha256: nil),
         NFKMLXMeasuredFile(location: "google/gemma-4-E4B-it", revision: "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c", path: "model.safetensors", bytes: 15992595884, sha256: "cfbd3d2f1cd71bd471c37fe2bf8546d5028d41e5736f64e1ca6c6b8893125503"),
         NFKMLXMeasuredFile(location: "google/gemma-4-E4B-it", revision: "4ecc2ba63bcac23ba4a767fc87025b1450f84c9c", path: "tokenizer.json", bytes: 32156428, sha256: "91d9cf86906f78e197021fda88214d448e5c120665d0243a8e776e046986c6bc"),
@@ -1196,9 +1209,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "google/madlad400-3b-mt", revision: nil, path: "spiece.model", bytes: 4427844, sha256: "ef11ac9a22c7503492f56d48dce53be20e339b63605983e9f27d2cd0e0f3922c"),
         NFKMLXMeasuredFile(location: "google/madlad400-7b-mt", revision: nil, path: "config.json", bytes: 805, sha256: nil),
         NFKMLXMeasuredFile(location: "google/madlad400-7b-mt", revision: nil, path: "generation_config.json", bytes: 142, sha256: nil),
-    ]
-
-    private static let measuredFiles40: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "google/madlad400-7b-mt", revision: nil, path: "model.safetensors.index.json", bytes: 100943, sha256: nil),
         NFKMLXMeasuredFile(location: "google/madlad400-7b-mt", revision: nil, path: "spiece.model", bytes: 4427844, sha256: "ef11ac9a22c7503492f56d48dce53be20e339b63605983e9f27d2cd0e0f3922c"),
         NFKMLXMeasuredFile(location: "google/siglip2-base-patch16-224", revision: nil, path: "model.safetensors", bytes: 1500800904, sha256: "612923381c76ec5a9bed335d1c48827e3f2e506ac31b044b63b2031fadee6a0b"),
@@ -1214,6 +1224,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "google/siglip2-so400m-patch14-224", revision: nil, path: "model.safetensors", bytes: 4541963488, sha256: "2041e5330b3db96299b26bc3a6506c7fa8d5e61d5c94f267dd8aa4cfb12c1050"),
         NFKMLXMeasuredFile(location: "google/siglip2-so400m-patch14-384", revision: nil, path: "model.safetensors", bytes: 4544143072, sha256: "9f4f4a49f908ef0c979bce8ff5a5c0e88882dc6c5dc4304387cbbd152558e2c2"),
         NFKMLXMeasuredFile(location: "google/siglip2-so400m-patch16-256", revision: nil, path: "model.safetensors", bytes: 4542792928, sha256: "810ddc85ac019e6b2738b9130ae3602e41eb093a848a297a0ad296ca1f39dc67"),
+    ]
+
+    private static let measuredFiles41: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "google/siglip2-so400m-patch16-384", revision: nil, path: "model.safetensors", bytes: 4544267488, sha256: "422750e06216f053d85d4176fb6a9d4c5e71ded2d1b7c7e0e6c2efd909a1e427"),
         NFKMLXMeasuredFile(location: "google/siglip2-so400m-patch16-512", revision: nil, path: "model.safetensors", bytes: 4546331880, sha256: "a621bd212e1b3329b428595f9693217e19587afe826adf3e5c241a16392e8973"),
         NFKMLXMeasuredFile(location: "google/timesfm-2.5-200m-pytorch", revision: "1d952420fba87f3c6dee4f240de0f1a0fbc790e3", path: "config.json", bytes: 475, sha256: nil),
@@ -1224,9 +1237,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "google/translategemma-12b-it", revision: nil, path: "generation_config.json", bytes: 156, sha256: nil),
         NFKMLXMeasuredFile(location: "google/translategemma-12b-it", revision: nil, path: "model.safetensors.index.json", bytes: 108642, sha256: nil),
         NFKMLXMeasuredFile(location: "google/translategemma-12b-it", revision: nil, path: "special_tokens_map.json", bytes: 662, sha256: nil),
-    ]
-
-    private static let measuredFiles41: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "google/translategemma-12b-it", revision: nil, path: "tokenizer.json", bytes: 33384570, sha256: "7d4046bf0505a327dd5a0abbb427ecd4fc82f99c2ceaa170bc61ecde12809b0c"),
         NFKMLXMeasuredFile(location: "google/translategemma-12b-it", revision: nil, path: "tokenizer_config.json", bytes: 1155415, sha256: nil),
         NFKMLXMeasuredFile(location: "google/translategemma-27b-it", revision: nil, path: "added_tokens.json", bytes: 35, sha256: nil),
@@ -1242,6 +1252,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "google/translategemma-4b-it", revision: nil, path: "config.json", bytes: 2618, sha256: nil),
         NFKMLXMeasuredFile(location: "google/translategemma-4b-it", revision: nil, path: "generation_config.json", bytes: 156, sha256: nil),
         NFKMLXMeasuredFile(location: "google/translategemma-4b-it", revision: nil, path: "model.safetensors.index.json", bytes: 90594, sha256: nil),
+    ]
+
+    private static let measuredFiles42: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "google/translategemma-4b-it", revision: nil, path: "special_tokens_map.json", bytes: 662, sha256: nil),
         NFKMLXMeasuredFile(location: "google/translategemma-4b-it", revision: nil, path: "tokenizer.json", bytes: 33384570, sha256: "7d4046bf0505a327dd5a0abbb427ecd4fc82f99c2ceaa170bc61ecde12809b0c"),
         NFKMLXMeasuredFile(location: "google/translategemma-4b-it", revision: nil, path: "tokenizer_config.json", bytes: 1155415, sha256: nil),
@@ -1252,9 +1265,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/af_bella.pt", bytes: 523425, sha256: "8cb64e02fcc8de0327a8e13817e49c76c945ecf0052ceac97d3081480e8e48d6"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/af_heart.pt", bytes: 523425, sha256: "0ab5709b8ffab19bfd849cd11d98f75b60af7733253ad0d67b12382a102cb4ff"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/af_jessica.pt", bytes: 523435, sha256: "cdfdccb8cc975aa34ee6b89642963b0064237675de0e41a30ae64cc958dd4e87"),
-    ]
-
-    private static let measuredFiles42: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/af_kore.pt", bytes: 523420, sha256: "8bfbc512321c3db49dff984ac675fa5ac7eaed5a96cc31104d3a9080e179d69d"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/af_nicole.pt", bytes: 523430, sha256: "c5561808bcf5250fe8c5f5de32caf2d94f27e57e95befdb098c5c85991d4c5da"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/af_nova.pt", bytes: 523420, sha256: "e0233676ddc21908c37a1f102f6b88a59e4e5c1bd764983616eb9eda629dbcd2"),
@@ -1270,6 +1280,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/am_onyx.pt", bytes: 523420, sha256: "e8452be16cd0f6da7b4579eaf7b1e4506e92524882053d86d72b96b9a7fed584"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/am_puck.pt", bytes: 523420, sha256: "dd1d8973f4ce4b7d8ae407c77a435f485dabc052081b80ea75c4f30b84f36223"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/am_santa.pt", bytes: 523425, sha256: "7f2f7582fa2b1f160e90aafe6d0b442a685e773608b6667e545d743b073e97a7"),
+    ]
+
+    private static let measuredFiles43: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/bf_alice.pt", bytes: 523425, sha256: "d292651b6af6c0d81705c2580dcb4463fccc0ff7b8d618a471dbb4e45655b3f3"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/bf_emma.pt", bytes: 523420, sha256: "d0a423deabf4a52b4f49318c51742c54e21bb89bbbe9a12141e7758ddb5da701"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/bf_isabella.pt", bytes: 523440, sha256: "cdd4c37003805104d1d08fb1e05855c8fb2c68de24ca6e71f264a30aaa59eefd"),
@@ -1280,9 +1293,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/bm_lewis.pt", bytes: 523425, sha256: "b5204750dcba01029d2ac9cec17aec3b20a6d64073c579d694a23cb40effbd0e"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/ef_dora.pt", bytes: 523420, sha256: "d9d69b0f8a2b87a345f269d89639f89dfbd1a6c9da0c498ae36dd34afcf35530"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/em_alex.pt", bytes: 523420, sha256: "5eac53f767c3f31a081918ba531969aea850bed18fe56419b804d642c6973431"),
-    ]
-
-    private static let measuredFiles43: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/em_santa.pt", bytes: 523430, sha256: "aa8620cb96cec705823efca0d956a63e158e09ad41aca934d354b7f0778f63cb"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/ff_siwis.pt", bytes: 523425, sha256: "8073bf2d2c4b9543a90f2f0fd2144de4ed157e2d4b79ddeb0d5123066171fbc9"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/hf_alpha.pt", bytes: 523425, sha256: "06906fe05746d13a79c5c01e21fd7233b05027221a933c9ada650f5aafc8f044"),
@@ -1298,6 +1308,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/jm_kumo.pt", bytes: 523425, sha256: "98340afd68b1cee84fe0cd95528cfa6d4b39e416aa75a9df64049d52c8b55896"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/pf_dora.pt", bytes: 523425, sha256: "07e4ff987c5d5a8c3995efd15cc4f0db7c4c15e881b198d8ab7f67ecf51f5eb7"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/pm_alex.pt", bytes: 523425, sha256: "cf0ba8c573c2480fc54123683a35cf1e2ae130428e441eb91f9149bdb188a526"),
+    ]
+
+    private static let measuredFiles44: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/pm_santa.pt", bytes: 523430, sha256: "d42103169c5c872abbafb9129133af7e942bb9d272c3cc3b95c203e7d7198c29"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/zf_xiaobei.pt", bytes: 523435, sha256: "9b76be63dab4f4f96962030acc0126a9aee9728608fbbe115e2b58a2bd504df6"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/zf_xiaoni.pt", bytes: 523430, sha256: "95b49f169bf1640f4f43c25e13daa39f7b98d15d00823e83ef5c14b3ced59e49"),
@@ -1308,9 +1321,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/zm_yunxia.pt", bytes: 523430, sha256: "bb2b03b08e84d64e1214440ce3b624987fac177f2eeb5bab8571799a3d980acd"),
         NFKMLXMeasuredFile(location: "hexgrad/Kokoro-82M", revision: nil, path: "voices/zm_yunyang.pt", bytes: 523435, sha256: "5238ac22e0c7f8b6cdd2eddd6e444b8a700b73c4674d9a047d59a94ff96379a2"),
         NFKMLXMeasuredFile(location: "https://colorizers.s3.us-east-2.amazonaws.com/colorization_release_v2-9b330a0b.pth", revision: nil, path: "colorization_release_v2-9b330a0b.pth", bytes: 128976165, sha256: nil),
-    ]
-
-    private static let measuredFiles44: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "https://colorizers.s3.us-east-2.amazonaws.com/siggraph17-df00044c.pth", revision: nil, path: "siggraph17-df00044c.pth", bytes: 136787426, sha256: nil),
         NFKMLXMeasuredFile(location: "https://dl.dropboxusercontent.com/s/4j4z58wuv8o0mfz/models.zip", revision: nil, path: "models.zip", bytes: 81977417, sha256: nil),
         NFKMLXMeasuredFile(location: "https://dl.fbaipublicfiles.com/adiyoss/denoiser/dns48-11decc9d8e3f0998.th", revision: nil, path: "dns48-11decc9d8e3f0998.th", bytes: 75478395, sha256: nil),
@@ -1326,6 +1336,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "https://download.pytorch.org/models/deeplabv3_resnet50_coco-cd0a2569.pth", revision: nil, path: "deeplabv3_resnet50_coco-cd0a2569.pth", bytes: 168312152, sha256: nil),
         NFKMLXMeasuredFile(location: "https://drive.usercontent.google.com/download?id=11t0cQYx6ZadKQjmfGnqxUUH2UEk5Yzk7&export=download", revision: nil, path: "nuwave2_02_16_13_epoch=629.ckpt", bytes: 20887965, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/CoinCheung/BiSeNet/releases/download/0.0.0/model_final_v1_city_new.pth", revision: nil, path: "model_final_v1_city_new.pth", bytes: 53839165, sha256: nil),
+    ]
+
+    private static let measuredFiles45: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "https://github.com/CoinCheung/BiSeNet/releases/download/0.0.0/model_final_v2_city.pth", revision: nil, path: "model_final_v2_city.pth", bytes: 21086917, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DIV2K_s48w8_SwinIR-M_x2.pth", revision: nil, path: "001_classicalSR_DIV2K_s48w8_SwinIR-M_x2.pth", bytes: 59019939, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/001_classicalSR_DIV2K_s48w8_SwinIR-M_x3.pth", revision: nil, path: "001_classicalSR_DIV2K_s48w8_SwinIR-M_x3.pth", bytes: 59758497, sha256: nil),
@@ -1336,9 +1349,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/002_lightweightSR_DIV2K_s64w8_SwinIR-S_x4.pth", revision: nil, path: "002_lightweightSR_DIV2K_s64w8_SwinIR-S_x4.pth", bytes: 17225941, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth", revision: nil, path: "003_realSR_BSRGAN_DFOWMFC_s64w8_SwinIR-L_x4_GAN.pth", bytes: 142473939, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/JingyunLiang/SwinIR/releases/download/v0.0/003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.pth", revision: nil, path: "003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.pth", bytes: 67129861, sha256: nil),
-    ]
-
-    private static let measuredFiles45: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "https://github.com/Li-Chongyi/Zero-DCE/raw/master/Zero-DCE_code/snapshots/Epoch99.pth", revision: nil, path: "Epoch99.pth", bytes: 320017, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/Li-Chongyi/Zero-DCE_extension/raw/main/Zero-DCE%2B%2B/snapshots_Zero_DCE%2B%2B/Epoch99.pth", revision: nil, path: "Epoch99.pth", bytes: 52395, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3.pth", revision: nil, path: "rvm_mobilenetv3.pth", bytes: 15217721, sha256: nil),
@@ -1354,6 +1364,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11x.pt", revision: nil, path: "yolo11x.pt", bytes: 114636239, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12l.pt", revision: nil, path: "yolo12l.pt", bytes: 53699086, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12m.pt", revision: nil, path: "yolo12m.pt", bytes: 40904955, sha256: nil),
+    ]
+
+    private static let measuredFiles46: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12n.pt", revision: nil, path: "yolo12n.pt", bytes: 5595063, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12s.pt", revision: nil, path: "yolo12s.pt", bytes: 19006455, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo12x.pt", revision: nil, path: "yolo12x.pt", bytes: 119322638, sha256: nil),
@@ -1364,9 +1377,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10s.pt", revision: nil, path: "yolov10s.pt", bytes: 16623111, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov10x.pt", revision: nil, path: "yolov10x.pt", bytes: 64395854, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8l.pt", revision: nil, path: "yolov8l.pt", bytes: 87792836, sha256: nil),
-    ]
-
-    private static let measuredFiles46: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8m.pt", revision: nil, path: "yolov8m.pt", bytes: 52136884, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt", revision: nil, path: "yolov8n.pt", bytes: 6549796, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8s.pt", revision: nil, path: "yolov8s.pt", bytes: 22588772, sha256: nil),
@@ -1382,6 +1392,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26s.pt", revision: nil, path: "yolo26s.pt", bytes: 20422725, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo26x.pt", revision: nil, path: "yolo26x.pt", bytes: 118667365, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth", revision: nil, path: "RealESRGAN_x4plus.pth", bytes: 67040989, sha256: nil),
+    ]
+
+    private static let measuredFiles47: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth", revision: nil, path: "RealESRGAN_x2plus.pth", bytes: 67061725, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth", revision: nil, path: "RealESRGAN_x4plus_anime_6B.pth", bytes: 17938799, sha256: nil),
         NFKMLXMeasuredFile(location: "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth", revision: nil, path: "realesr-animevideov3.pth", bytes: 2504012, sha256: nil),
@@ -1392,9 +1405,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt", revision: nil, path: "ViT-B-16.pt", bytes: 350837078, sha256: nil),
         NFKMLXMeasuredFile(location: "https://openaipublic.azureedge.net/clip/models/b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836/ViT-L-14.pt", revision: nil, path: "ViT-L-14.pt", bytes: 932768134, sha256: nil),
         NFKMLXMeasuredFile(location: "https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt", revision: nil, path: "medium.pt", bytes: 1528008539, sha256: nil),
-    ]
-
-    private static let measuredFiles47: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt", revision: nil, path: "tiny.pt", bytes: 75572083, sha256: nil),
         NFKMLXMeasuredFile(location: "https://openaipublic.azureedge.net/main/whisper/models/81f7c96c852ee8fc832187b0132e569d6c3065a3252ed18e56effd0b6a73e524/large-v2.pt", revision: nil, path: "large-v2.pt", bytes: 3086999982, sha256: nil),
         NFKMLXMeasuredFile(location: "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt", revision: nil, path: "small.pt", bytes: 483617219, sha256: nil),
@@ -1410,6 +1420,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx", revision: nil, path: "nmp.onnx", bytes: 230444, sha256: nil),
         NFKMLXMeasuredFile(location: "https://raw.githubusercontent.com/yxlu-0102/MP-SENet/main/best_ckpt/g_best_dns", revision: nil, path: "g_best_dns", bytes: 9138054, sha256: nil),
         NFKMLXMeasuredFile(location: "https://zenodo.org/records/3987831/files/Cnn14_mAP%3D0.431.pth?download=1", revision: nil, path: "Cnn14_mAP=0.431.pth", bytes: 327428481, sha256: nil),
+    ]
+
+    private static let measuredFiles48: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "hubertsiuzdak/snac_24khz", revision: nil, path: "pytorch_model.bin", bytes: 79488254, sha256: "4b8164cc6606bfa627f1a784734c1e539891518f1191ed9194fe1e3b9b4bff40"),
         NFKMLXMeasuredFile(location: "hubertsiuzdak/snac_32khz", revision: nil, path: "pytorch_model.bin", bytes: 218308802, sha256: "bfee2f057c1e287443786bedab377b5176b430e911417683977b7af71ea3ba65"),
         NFKMLXMeasuredFile(location: "hubertsiuzdak/snac_44khz", revision: nil, path: "pytorch_model.bin", bytes: 218308802, sha256: "b0a676cbdc8d1cc53186f6d777bc956fb7932ceacdc657a4c3741646e9e7ead0"),
@@ -1420,9 +1433,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "ibm-granite/granite-4.0-h-1b", revision: nil, path: "tokenizer.json", bytes: 7153421, sha256: nil),
         NFKMLXMeasuredFile(location: "ibm-granite/granite-4.0-h-1b", revision: nil, path: "tokenizer_config.json", bytes: 17659, sha256: nil),
         NFKMLXMeasuredFile(location: "ibm-granite/granite-4.0-h-tiny", revision: nil, path: "chat_template.jinja", bytes: 6418, sha256: nil),
-    ]
-
-    private static let measuredFiles48: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "ibm-granite/granite-4.0-h-tiny", revision: nil, path: "config.json", bytes: 1796, sha256: nil),
         NFKMLXMeasuredFile(location: "ibm-granite/granite-4.0-h-tiny", revision: nil, path: "generation_config.json", bytes: 147, sha256: nil),
         NFKMLXMeasuredFile(location: "ibm-granite/granite-4.0-h-tiny", revision: nil, path: "merges.txt", bytes: 916646, sha256: nil),
@@ -1438,6 +1448,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "ibm-granite/granite-speech-3.3-2b", revision: nil, path: "model-00002-of-00004.safetensors", bytes: 1992453224, sha256: "a6fb9326afc6776e711662437ae38957b898b38716772ad24f6ef0a3c3e06694"),
         NFKMLXMeasuredFile(location: "ibm-granite/granite-speech-3.3-2b", revision: nil, path: "model-00003-of-00004.safetensors", bytes: 1998075896, sha256: "9aa9c5af42824c1b0b928b98b5526fd745448a2e57a31d261753a7770b489143"),
         NFKMLXMeasuredFile(location: "ibm-granite/granite-speech-3.3-2b", revision: nil, path: "model-00004-of-00004.safetensors", bytes: 35696040, sha256: "102d069fe3ff523609ca1e535fb494e0987e69f571438ab3c67e3dcd8f3cecb0"),
+    ]
+
+    private static let measuredFiles49: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "ibm-granite/granite-speech-3.3-2b", revision: nil, path: "model.safetensors.index.json", bytes: 84324, sha256: nil),
         NFKMLXMeasuredFile(location: "ibm-granite/granite-speech-3.3-2b", revision: nil, path: "tokenizer.json", bytes: 3476763, sha256: nil),
         NFKMLXMeasuredFile(location: "ibm-granite/granite-speech-3.3-2b", revision: nil, path: "tokenizer_config.json", bytes: 5438, sha256: nil),
@@ -1448,9 +1461,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "madebyollin/taesd", revision: nil, path: "taesd_encoder.safetensors", bytes: 4895600, sha256: "160d90c61c3a5ce50fe2cbe6404b3429f5763772d61b38523cc37e1525b4e19f"),
         NFKMLXMeasuredFile(location: "microsoft/Florence-2-base", revision: nil, path: "config.json", bytes: 2430, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/Florence-2-base", revision: nil, path: "model.safetensors", bytes: 463221266, sha256: "03075d2d2d2bbd3e180b9ba0afae4aa8563226e2d32911656966e05b2f2ee060"),
-    ]
-
-    private static let measuredFiles49: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/Florence-2-base", revision: nil, path: "tokenizer.json", bytes: 1355863, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/Florence-2-base-ft", revision: nil, path: "config.json", bytes: 2430, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/Florence-2-base-ft", revision: nil, path: "model.safetensors", bytes: 463221266, sha256: "58757d657ff44051314c8030b68e04cb1bb618ca9a4885418f111f6fb708185a"),
@@ -1466,6 +1476,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "microsoft/Phi-4-multimodal-instruct", revision: nil, path: "generation_config.json", bytes: 190, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/Phi-4-multimodal-instruct", revision: nil, path: "merges.txt", bytes: 2418348, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/Phi-4-multimodal-instruct", revision: nil, path: "model.safetensors.index.json", bytes: 239890, sha256: nil),
+    ]
+
+    private static let measuredFiles50: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/Phi-4-multimodal-instruct", revision: nil, path: "special_tokens_map.json", bytes: 473, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/Phi-4-multimodal-instruct", revision: nil, path: "tokenizer.json", bytes: 15524479, sha256: "4c1b9f641d4f8b7247b8d5007dd3b6a9f6a87cb5123134fe0d326f14d10c0585"),
         NFKMLXMeasuredFile(location: "microsoft/Phi-4-multimodal-instruct", revision: nil, path: "tokenizer_config.json", bytes: 3248, sha256: nil),
@@ -1476,9 +1489,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-image-large", revision: "25e0d31ffbebe4b5a97464dd851910efc3002d96", path: "ckpts/slat_dec_mesh_swin8_B_64l8m256c_fp16.safetensors", bytes: 181903412, sha256: "3e87aba94b5786407eb06d0502c1ed0885a0027a3f2b8537bfe15b0a92c01859"),
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-image-large", revision: "25e0d31ffbebe4b5a97464dd851910efc3002d96", path: "ckpts/slat_flow_img_dit_L_64l8p2_fp16.json", bytes: 442, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-image-large", revision: "25e0d31ffbebe4b5a97464dd851910efc3002d96", path: "ckpts/slat_flow_img_dit_L_64l8p2_fp16.safetensors", bytes: 1203755136, sha256: "693fb2a58ad497bd222007301eeec49d14d60f8c12d2f2f00c221fa747b4c66c"),
-    ]
-
-    private static let measuredFiles50: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-image-large", revision: "25e0d31ffbebe4b5a97464dd851910efc3002d96", path: "ckpts/ss_dec_conv3d_16l8_fp16.json", bytes: 245, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-image-large", revision: "25e0d31ffbebe4b5a97464dd851910efc3002d96", path: "ckpts/ss_dec_conv3d_16l8_fp16.safetensors", bytes: 147591972, sha256: "1c76d4a40519aa2d711cc263a8404105231ac26db31d946bed48b84fee79009a"),
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-image-large", revision: "25e0d31ffbebe4b5a97464dd851910efc3002d96", path: "ckpts/ss_flow_img_dit_L_16l8_fp16.json", bytes: 385, sha256: nil),
@@ -1494,6 +1504,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-text-large", revision: "4aad9f4a110329a410974d7f41ce5333a9a1fc87", path: "ckpts/ss_flow_txt_dit_L_16l8_fp16.json", bytes: 384, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-text-large", revision: "4aad9f4a110329a410974d7f41ce5333a9a1fc87", path: "ckpts/ss_flow_txt_dit_L_16l8_fp16.safetensors", bytes: 1105604976, sha256: "fbe712778a6a62fb7df44467972939b3c33e503fd971076caa4cd673e1aa37a3"),
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-text-large", revision: "4aad9f4a110329a410974d7f41ce5333a9a1fc87", path: "pipeline.json", bytes: 2131, sha256: nil),
+    ]
+
+    private static let measuredFiles51: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-text-xlarge", revision: "e0b00432b8e3a8ecee0df806ab1df9f7281f2be4", path: "ckpts/slat_flow_txt_dit_XL_64l8p2_fp16.json", bytes: 441, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-text-xlarge", revision: "e0b00432b8e3a8ecee0df806ab1df9f7281f2be4", path: "ckpts/slat_flow_txt_dit_XL_64l8p2_fp16.safetensors", bytes: 2151142688, sha256: "4819e388063d58f3a7f0939836ec435fed262cd8a0565226ce8e43da1bbfa55e"),
         NFKMLXMeasuredFile(location: "microsoft/TRELLIS-text-xlarge", revision: "e0b00432b8e3a8ecee0df806ab1df9f7281f2be4", path: "ckpts/ss_flow_txt_dit_XL_16l8_fp16.json", bytes: 419, sha256: nil),
@@ -1504,9 +1517,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "microsoft/table-transformer-detection", revision: nil, path: "preprocessor_config.json", bytes: 273, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/table-transformer-structure-recognition", revision: nil, path: "config.json", bytes: 1469, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/table-transformer-structure-recognition", revision: nil, path: "model.safetensors", bytes: 115434268, sha256: "f581da65a586591124cac9545b09b93e4e8bf28ce3a8357af6ac15ce94fce16b"),
-    ]
-
-    private static let measuredFiles51: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/table-transformer-structure-recognition", revision: nil, path: "preprocessor_config.json", bytes: 274, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/table-transformer-structure-recognition-v1.1-all", revision: nil, path: "config.json", bytes: 76761, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/table-transformer-structure-recognition-v1.1-all", revision: nil, path: "model.safetensors", bytes: 115437156, sha256: "9df416575a3a36ebd0129342d4f597f14d6e5170268f3d52d28584ab4466a501"),
@@ -1522,6 +1532,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-handwritten", revision: nil, path: "model.safetensors", bytes: 1333384464, sha256: "25a40cddc7e6120140a3d5b9e3dd3878a92ada7b4f312953ab22edc19c2a5acc"),
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-handwritten", revision: nil, path: "preprocessor_config.json", bytes: 224, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-handwritten", revision: nil, path: "pytorch_model.bin", bytes: 1333508485, sha256: "d1091e5a98ff3b31cddcaa21423171be74e6d270128896e9edd0f6394e2a9978"),
+    ]
+
+    private static let measuredFiles52: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-handwritten", revision: nil, path: "vocab.json", bytes: 898822, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-printed", revision: nil, path: "config.json", bytes: 4126, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-printed", revision: nil, path: "merges.txt", bytes: 456318, sha256: nil),
@@ -1532,9 +1545,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-stage1", revision: nil, path: "config.json", bytes: 4207, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-stage1", revision: nil, path: "merges.txt", bytes: 456318, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-stage1", revision: nil, path: "model.safetensors", bytes: 1537156244, sha256: "881612edf38f0bd647f22e22fced77a71f379219ed9043ad121ab0b1e5f762f9"),
-    ]
-
-    private static let measuredFiles52: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-stage1", revision: nil, path: "preprocessor_config.json", bytes: 224, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-stage1", revision: nil, path: "pytorch_model.bin", bytes: 1537279879, sha256: "538c8d13a3370e1e5532584f695fb4e800983662b1274cb46b1c438d6e156081"),
         NFKMLXMeasuredFile(location: "microsoft/trocr-base-stage1", revision: nil, path: "vocab.json", bytes: 898822, sha256: nil),
@@ -1550,6 +1560,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-handwritten", revision: nil, path: "vocab.json", bytes: 898822, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-printed", revision: nil, path: "config.json", bytes: 4209, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-printed", revision: nil, path: "merges.txt", bytes: 456318, sha256: nil),
+    ]
+
+    private static let measuredFiles53: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-printed", revision: nil, path: "model.safetensors", bytes: 2432558500, sha256: "8d770e31b1d58a033bd023ddd5790764c78fc2ab8074c605c49bba1c4a938616"),
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-printed", revision: nil, path: "preprocessor_config.json", bytes: 224, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-printed", revision: nil, path: "pytorch_model.bin", bytes: 2432726799, sha256: "747198fc8a7368adc59f341b1ded2e9b0be3cbcc832df220c45813951cdc1ff2"),
@@ -1560,9 +1573,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-stage1", revision: nil, path: "preprocessor_config.json", bytes: 224, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-stage1", revision: nil, path: "pytorch_model.bin", bytes: 2432726799, sha256: "d8138061c487ffd92c232458ebe10934334d3a8dff064772288eefd576e96c37"),
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-stage1", revision: nil, path: "vocab.json", bytes: 898822, sha256: nil),
-    ]
-
-    private static let measuredFiles53: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-str", revision: nil, path: "config.json", bytes: 4475, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-str", revision: nil, path: "merges.txt", bytes: 456356, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-large-str", revision: nil, path: "preprocessor_config.json", bytes: 267, sha256: nil),
@@ -1578,6 +1588,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "microsoft/trocr-small-printed", revision: nil, path: "pytorch_model.bin", bytes: 245933041, sha256: "159af16f37cabaed74eb4c950994b4958811b9f815e85a6dced10220ec550635"),
         NFKMLXMeasuredFile(location: "microsoft/trocr-small-printed", revision: nil, path: "sentencepiece.bpe.model", bytes: 1356293, sha256: "6f5e2fefcf793761a76a6bfb8ad35489f9c203b25557673284b6d032f41043f4"),
         NFKMLXMeasuredFile(location: "microsoft/trocr-small-stage1", revision: nil, path: "config.json", bytes: 4211, sha256: nil),
+    ]
+
+    private static let measuredFiles54: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "microsoft/trocr-small-stage1", revision: nil, path: "preprocessor_config.json", bytes: 276, sha256: nil),
         NFKMLXMeasuredFile(location: "microsoft/trocr-small-stage1", revision: nil, path: "pytorch_model.bin", bytes: 245933041, sha256: "35ee4bee78f7686e15e5eaf9de5b0788ae28c53fa756883afd3405924f6c49c5"),
         NFKMLXMeasuredFile(location: "microsoft/trocr-small-stage1", revision: nil, path: "sentencepiece.bpe.model", bytes: 1356293, sha256: "6f5e2fefcf793761a76a6bfb8ad35489f9c203b25557673284b6d032f41043f4"),
@@ -1588,9 +1601,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "mistralai/Mamba-Codestral-7B-v0.1", revision: nil, path: "config.json", bytes: 1011, sha256: nil),
         NFKMLXMeasuredFile(location: "mistralai/Mamba-Codestral-7B-v0.1", revision: nil, path: "model.safetensors.index.json", bytes: 45172, sha256: nil),
         NFKMLXMeasuredFile(location: "mistralai/Mamba-Codestral-7B-v0.1", revision: nil, path: "tokenizer.json", bytes: 1961706, sha256: nil),
-    ]
-
-    private static let measuredFiles54: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "mistralai/Mistral-Small-24B-Instruct-2501", revision: "9527884be6e5616bdd54de542f9ae13384489724", path: "config.json", bytes: 623, sha256: nil),
         NFKMLXMeasuredFile(location: "mistralai/Mistral-Small-24B-Instruct-2501", revision: "9527884be6e5616bdd54de542f9ae13384489724", path: "generation_config.json", bytes: 160, sha256: nil),
         NFKMLXMeasuredFile(location: "mistralai/Mistral-Small-24B-Instruct-2501", revision: "9527884be6e5616bdd54de542f9ae13384489724", path: "model.safetensors.index.json", bytes: 29894, sha256: nil),
@@ -1606,6 +1616,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "mistralai/Voxtral-Mini-3B-2507", revision: nil, path: "model-00002-of-00002.safetensors", bytes: 4379088336, sha256: "0a103ba715bc0d656e94bf79d637d4f8f0f4fe6d76fb1d4db7ee46c6b940f631"),
         NFKMLXMeasuredFile(location: "mistralai/Voxtral-Mini-3B-2507", revision: nil, path: "model.safetensors.index.json", bytes: 68088, sha256: nil),
         NFKMLXMeasuredFile(location: "mistralai/Voxtral-Mini-3B-2507", revision: nil, path: "tekken.json", bytes: 14894206, sha256: "4aaf3836c2a5332f029ce85a7a62255c966f47b6797ef81dedd0ade9c862e4a8"),
+    ]
+
+    private static let measuredFiles55: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "nvidia/Cosmos-0.1-Tokenizer-CI16x16", revision: nil, path: "autoencoder.jit", bytes: 163398552, sha256: "a3208f9e14bd0118cf3ce1df2a3007f5f091aded7d0250b7e221c7dc2f9ba05c"),
         NFKMLXMeasuredFile(location: "nvidia/Cosmos-0.1-Tokenizer-CI8x8", revision: nil, path: "autoencoder.jit", bytes: 153952128, sha256: "145699135f1bde4aaf651a4a715e281e0efe112833ee740ffeaa608f45d1c304"),
         NFKMLXMeasuredFile(location: "nvidia/Cosmos-0.1-Tokenizer-CV4x8x8", revision: nil, path: "autoencoder.jit", bytes: 147121671, sha256: "4261ac70dd478e884009c163d096f3b02b13c7fef6ff425f2d294334b0d9a6bf"),
@@ -1616,9 +1629,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "nvidia/Cosmos-0.1-Tokenizer-DV4x8x8", revision: nil, path: "autoencoder.jit", bytes: 211093069, sha256: "eea104b84fee21d170fb20f99027c076ffd97e37b8d43a6a8f6135a2a61cfaf1"),
         NFKMLXMeasuredFile(location: "nvidia/Cosmos-0.1-Tokenizer-DV8x16x16", revision: nil, path: "autoencoder.jit", bytes: 223570501, sha256: "f7268fc1de7d90dd377b17aa987d5a73d8c5613faa0bc531da3afc794bc5522c"),
         NFKMLXMeasuredFile(location: "nvidia/Cosmos-0.1-Tokenizer-DV8x8x8", revision: nil, path: "autoencoder.jit", bytes: 213071541, sha256: "ccf00856bc49c9e1c5ca6b01f47ef65d35bcdb37d58724641a3ea45751714724"),
-    ]
-
-    private static let measuredFiles55: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0", revision: nil, path: "frame_vad_multilingual_marblenet_v2.0.nemo", bytes: 501760, sha256: "84bda37e925ac6fd740c2ced55642cb79f94f81348e1fa0db992ca50d4b09706"),
         NFKMLXMeasuredFile(location: "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", revision: nil, path: "chat_template.jinja", bytes: 10504, sha256: nil),
         NFKMLXMeasuredFile(location: "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16", revision: nil, path: "config.json", bytes: 1430, sha256: nil),
@@ -1634,6 +1644,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "nvidia/bigvgan_v2_24khz_100band_256x", revision: nil, path: "bigvgan_generator.pt", bytes: 450088331, sha256: "6f9c5715550c9d0f11159ceb8935638da5aeb19e27d1e63677632df095e376f5"),
         NFKMLXMeasuredFile(location: "nvidia/canary-1b-v2", revision: nil, path: "canary-1b-v2.nemo", bytes: 6358958080, sha256: "ae5ef1bf06812a95a1594a8f5f0ee9c51f35418e5ba96939fa6b98ab00431094"),
         NFKMLXMeasuredFile(location: "nvidia/canary-1b-v2", revision: nil, path: "tokenizer.json", bytes: 2189980, sha256: nil),
+    ]
+
+    private static let measuredFiles56: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "nvidia/nemotron-speech-streaming-en-0.6b", revision: "ebe59e5a817142986528bbbee5dba8db7b38ed50", path: "config.json", bytes: 1284, sha256: nil),
         NFKMLXMeasuredFile(location: "nvidia/nemotron-speech-streaming-en-0.6b", revision: "ebe59e5a817142986528bbbee5dba8db7b38ed50", path: "generation_config.json", bytes: 192, sha256: nil),
         NFKMLXMeasuredFile(location: "nvidia/nemotron-speech-streaming-en-0.6b", revision: "ebe59e5a817142986528bbbee5dba8db7b38ed50", path: "model.safetensors", bytes: 2472413604, sha256: "bddd8a7300826efd19cf7e01f1c7db8402bed6786fc4c7739632894f69c71473"),
@@ -1644,9 +1657,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "nvidia/parakeet-tdt-0.6b-v3", revision: nil, path: "parakeet-tdt-0.6b-v3.nemo", bytes: 2509332480, sha256: "3cbdc85877e668ca7b82d0d56770eb1fac76691f55d6b97545e8d61ca588d10d"),
         NFKMLXMeasuredFile(location: "nvidia/segformer-b0-finetuned-ade-512-512", revision: nil, path: "pytorch_model.bin", bytes: 15092257, sha256: "0f4df97633cbedd558ecffa3ad228ace5af37e082678390b45a9d22745787c61"),
         NFKMLXMeasuredFile(location: "nyanko7/nafnet-models", revision: nil, path: "NAFNet-GoPro-width32.pth", bytes: 68671121, sha256: "19394e6155d12ef6371d1d57496f87f0ec88f92bdffa27c0792690722d5d1a5c"),
-    ]
-
-    private static let measuredFiles56: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "nyanko7/nafnet-models", revision: nil, path: "NAFNet-GoPro-width64.pth", bytes: 271778961, sha256: "329d3ab4077b8d6b7ff61de376e483714667960bf85be027bf4335cda701196f"),
         NFKMLXMeasuredFile(location: "nyanko7/nafnet-models", revision: nil, path: "NAFNet-REDS-width64.pth", bytes: 271756689, sha256: "175fe8b3cdf3abedfbc87769779c3d9f491e05bb2e73ea9d627883f90a4b2df3"),
         NFKMLXMeasuredFile(location: "nyanko7/nafnet-models", revision: nil, path: "NAFNet-SIDD-width32.pth", bytes: 116861841, sha256: "89c70e808d1783b6c07911306e106aaf0d4f7f3da8c61078b99ff7f8929a26f4"),
@@ -1662,6 +1672,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "openai/clip-vit-large-patch14", revision: "32bd64288804d66eefd0ccbe215aa642df71cc41", path: "vocab.json", bytes: 961143, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/clip-vit-large-patch14-336", revision: "ce19dc912ca5cd21c8a653c79e251e808ccabcd1", path: "merges.txt", bytes: 524657, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/clip-vit-large-patch14-336", revision: "ce19dc912ca5cd21c8a653c79e251e808ccabcd1", path: "vocab.json", bytes: 862328, sha256: nil),
+    ]
+
+    private static let measuredFiles57: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "openai/gpt-oss-20b", revision: nil, path: "chat_template.jinja", bytes: 16738, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/gpt-oss-20b", revision: nil, path: "config.json", bytes: 1806, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/gpt-oss-20b", revision: nil, path: "generation_config.json", bytes: 177, sha256: nil),
@@ -1672,9 +1685,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "openai/whisper-base", revision: "e37978b90ca9030d5170a5c07aadb050351a65bb", path: "merges.txt", bytes: 493869, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/whisper-base", revision: "e37978b90ca9030d5170a5c07aadb050351a65bb", path: "vocab.json", bytes: 835550, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/whisper-large", revision: "4ef9b41f0d4fe232daafdb5f76bb1dd8b23e01d7", path: "added_tokens.json", bytes: 34604, sha256: nil),
-    ]
-
-    private static let measuredFiles57: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "openai/whisper-large", revision: "4ef9b41f0d4fe232daafdb5f76bb1dd8b23e01d7", path: "merges.txt", bytes: 493869, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/whisper-large", revision: "4ef9b41f0d4fe232daafdb5f76bb1dd8b23e01d7", path: "vocab.json", bytes: 835550, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/whisper-large-v2", revision: "ae4642769ce2ad8fc292556ccea8e901f1530655", path: "added_tokens.json", bytes: 34604, sha256: nil),
@@ -1690,6 +1700,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "openai/whisper-medium", revision: "abdf7c39ab9d0397620ccaea8974cc764cd0953e", path: "merges.txt", bytes: 493869, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/whisper-medium", revision: "abdf7c39ab9d0397620ccaea8974cc764cd0953e", path: "vocab.json", bytes: 835550, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/whisper-small", revision: "973afd24965f72e36ca33b3055d56a652f456b4d", path: "added_tokens.json", bytes: 34604, sha256: nil),
+    ]
+
+    private static let measuredFiles58: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "openai/whisper-small", revision: "973afd24965f72e36ca33b3055d56a652f456b4d", path: "merges.txt", bytes: 493869, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/whisper-small", revision: "973afd24965f72e36ca33b3055d56a652f456b4d", path: "vocab.json", bytes: 835550, sha256: nil),
         NFKMLXMeasuredFile(location: "openai/whisper-tiny", revision: "169d4a4341b33bc18d8881c4b69c2e104e1cc0af", path: "added_tokens.json", bytes: 34604, sha256: nil),
@@ -1700,9 +1713,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "perplexity-ai/pplx-decider-flash-v1.2", revision: "281b36bf3a1107754a1c9ad5ae30851ac83579c3", path: "decision_config.json", bytes: 5435, sha256: nil),
         NFKMLXMeasuredFile(location: "perplexity-ai/pplx-decider-flash-v1.2", revision: "281b36bf3a1107754a1c9ad5ae30851ac83579c3", path: "joint_config.json", bytes: 248, sha256: nil),
         NFKMLXMeasuredFile(location: "perplexity-ai/pplx-decider-flash-v1.2", revision: "281b36bf3a1107754a1c9ad5ae30851ac83579c3", path: "model.safetensors.index.json", bytes: 61898, sha256: nil),
-    ]
-
-    private static let measuredFiles58: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "perplexity-ai/pplx-decider-flash-v1.2", revision: "281b36bf3a1107754a1c9ad5ae30851ac83579c3", path: "readout.safetensors", bytes: 1305712, sha256: "6751578171026190d4db8078e97162b404fd984646e0e9aec13844e4dd5b1711"),
         NFKMLXMeasuredFile(location: "perplexity-ai/pplx-decider-flash-v1.2", revision: "281b36bf3a1107754a1c9ad5ae30851ac83579c3", path: "tokenizer.json", bytes: 19989506, sha256: "2f4dd754486e96054d0c841ddde816748be0116cbbc8ba8b5311ae4853432a21"),
         NFKMLXMeasuredFile(location: "perplexity-ai/pplx-decider-flash-v1.2", revision: "281b36bf3a1107754a1c9ad5ae30851ac83579c3", path: "tokenizer_config.json", bytes: 1268, sha256: nil),
@@ -1718,6 +1728,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "piddnad/DDColor-models", revision: nil, path: "ddcolor_modelscope.pth", bytes: 911950059, sha256: "17c460d7e55b32a598370621d77173be59e03c24b0823f06821db23a50c263ce"),
         NFKMLXMeasuredFile(location: "piddnad/DDColor-models", revision: nil, path: "ddcolor_paper.pth", bytes: 911950059, sha256: "789781789db1bafc2165e1cf9658580f871cce64a81901ec49127877813f10b9"),
         NFKMLXMeasuredFile(location: "prs-eth/marigold-depth-v1-0", revision: nil, path: "text_encoder/model.safetensors", bytes: 1361597016, sha256: "1e4aa519f64dc6386f88221a66c106a09fa027b47a20cc0e126687695f2a6669"),
+    ]
+
+    private static let measuredFiles59: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "prs-eth/marigold-depth-v1-0", revision: nil, path: "unet/diffusion_pytorch_model.safetensors", bytes: 3463772592, sha256: "3416c9fde3f826a4cc29f1e65f6dc6c82aa01fa9d4efa89c27a35ca85ab96048"),
         NFKMLXMeasuredFile(location: "prs-eth/marigold-depth-v1-0", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 334643276, sha256: "a1d993488569e928462932c8c38a0760b874d166399b14414135bd9c42df5815"),
         NFKMLXMeasuredFile(location: "sd2-community/stable-diffusion-2-1-base", revision: "4e63672c03103b6c636b8fb4119ba982469b2955", path: "text_encoder/model.fp16.safetensors", bytes: 680821096, sha256: "681c555376658c81dc273f2d737a2aeb23ddb6d1d8e5b3a7064636d359a22668"),
@@ -1728,9 +1741,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "sd2-community/stable-diffusion-2-1-base", revision: "4e63672c03103b6c636b8fb4119ba982469b2955", path: "tokenizer/vocab.json", bytes: 1059962, sha256: nil),
         NFKMLXMeasuredFile(location: "sd2-community/stable-diffusion-2-1-base", revision: "4e63672c03103b6c636b8fb4119ba982469b2955", path: "unet/config.json", bytes: 911, sha256: nil),
         NFKMLXMeasuredFile(location: "sd2-community/stable-diffusion-2-1-base", revision: "4e63672c03103b6c636b8fb4119ba982469b2955", path: "unet/diffusion_pytorch_model.fp16.safetensors", bytes: 1731904736, sha256: "28ec9cf3b239c0751c201b1f6fb46b551df5862731b30a37aa1360101cb3fbab"),
-    ]
-
-    private static let measuredFiles59: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "sd2-community/stable-diffusion-2-1-base", revision: "4e63672c03103b6c636b8fb4119ba982469b2955", path: "unet/diffusion_pytorch_model.safetensors", bytes: 3463726498, sha256: "6dfae3e5f7d459b50f4b0850ead945972c75bb0e1897628933e169eb43974214"),
         NFKMLXMeasuredFile(location: "sd2-community/stable-diffusion-2-1-base", revision: "4e63672c03103b6c636b8fb4119ba982469b2955", path: "vae/config.json", bytes: 553, sha256: nil),
         NFKMLXMeasuredFile(location: "sd2-community/stable-diffusion-2-1-base", revision: "4e63672c03103b6c636b8fb4119ba982469b2955", path: "vae/diffusion_pytorch_model.fp16.safetensors", bytes: 167335342, sha256: "3e4c08995484ee61270175e9e7a072b66a6e4eeb5f0c266667fe1f45b90daf9a"),
@@ -1746,6 +1756,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/sdxl-turbo", revision: nil, path: "tokenizer/special_tokens_map.json", bytes: 586, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/sdxl-turbo", revision: nil, path: "tokenizer/tokenizer_config.json", bytes: 704, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/sdxl-turbo", revision: nil, path: "tokenizer/vocab.json", bytes: 1059962, sha256: nil),
+    ]
+
+    private static let measuredFiles60: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/sdxl-turbo", revision: nil, path: "tokenizer_2/merges.txt", bytes: 524619, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/sdxl-turbo", revision: nil, path: "tokenizer_2/special_tokens_map.json", bytes: 460, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/sdxl-turbo", revision: nil, path: "tokenizer_2/tokenizer_config.json", bytes: 855, sha256: nil),
@@ -1756,9 +1769,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/sdxl-turbo", revision: nil, path: "vae/config.json", bytes: 607, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/sdxl-turbo", revision: nil, path: "vae/diffusion_pytorch_model.fp16.safetensors", bytes: 167335342, sha256: "02ee4bd18e5d16e7fe5fc5b85b4aefa2cba6db28897f674226c9d6ddd2f34f06"),
         NFKMLXMeasuredFile(location: "stabilityai/sdxl-turbo", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 334643268, sha256: "716971093e3428c9156906fcbcc5500abf005317c5f4d3a5bb3fa28c45e1e071"),
-    ]
-
-    private static let measuredFiles60: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-audio-open-1.0", revision: nil, path: "LICENSE.md", bytes: 11852, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-audio-open-1.0", revision: nil, path: "model_index.json", bytes: 498, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-audio-open-1.0", revision: nil, path: "projection_model/config.json", bytes: 181, sha256: nil),
@@ -1774,6 +1784,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/stable-audio-open-1.0", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors", bytes: 4227806200, sha256: "65ae9715febfeb2dc9f33aa506c2bda69fd2ddf8ebc483fb2df090df4ca506fd"),
         NFKMLXMeasuredFile(location: "stabilityai/stable-audio-open-1.0", revision: nil, path: "vae/config.json", bytes: 350, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-audio-open-1.0", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 624490240, sha256: "2131cdb52020b2473707465449d8bdb4f6cca61c93150a947baca02bc58ffd7b"),
+    ]
+
+    private static let measuredFiles61: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3-medium-diffusers", revision: nil, path: "model_index.json", bytes: 706, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3-medium-diffusers", revision: nil, path: "scheduler/scheduler_config.json", bytes: 141, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3-medium-diffusers", revision: nil, path: "text_encoder/config.json", bytes: 574, sha256: nil),
@@ -1784,9 +1797,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3-medium-diffusers", revision: nil, path: "text_encoder_3/model.safetensors.index.json", bytes: 19885, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3-medium-diffusers", revision: nil, path: "tokenizer/merges.txt", bytes: 524619, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3-medium-diffusers", revision: nil, path: "tokenizer/special_tokens_map.json", bytes: 588, sha256: nil),
-    ]
-
-    private static let measuredFiles61: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3-medium-diffusers", revision: nil, path: "tokenizer/tokenizer_config.json", bytes: 705, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3-medium-diffusers", revision: nil, path: "tokenizer/vocab.json", bytes: 1059962, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3-medium-diffusers", revision: nil, path: "tokenizer_2/merges.txt", bytes: 524619, sha256: nil),
@@ -1802,6 +1812,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "scheduler/scheduler_config.json", bytes: 141, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "text_encoder/config.json", bytes: 574, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "text_encoder/model.safetensors", bytes: 247323896, sha256: "71e183d11db0c6b6282a4d9e0abb74125edc8692393e89ed8ee5571005f35cb1"),
+    ]
+
+    private static let measuredFiles62: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "text_encoder_2/config.json", bytes: 570, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "text_encoder_2/model.safetensors", bytes: 1389382176, sha256: "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "text_encoder_3/config.json", bytes: 740, sha256: nil),
@@ -1812,9 +1825,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "tokenizer/vocab.json", bytes: 1059962, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "tokenizer_2/merges.txt", bytes: 524619, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "tokenizer_2/special_tokens_map.json", bytes: 576, sha256: nil),
-    ]
-
-    private static let measuredFiles62: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "tokenizer_2/tokenizer_config.json", bytes: 856, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "tokenizer_2/vocab.json", bytes: 1059962, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large", revision: nil, path: "tokenizer_3/spiece.model", bytes: 791656, sha256: "d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86"),
@@ -1830,6 +1840,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "text_encoder/model.safetensors", bytes: 247323896, sha256: "71e183d11db0c6b6282a4d9e0abb74125edc8692393e89ed8ee5571005f35cb1"),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "text_encoder_2/config.json", bytes: 570, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "text_encoder_2/model.safetensors", bytes: 1389382176, sha256: "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"),
+    ]
+
+    private static let measuredFiles63: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "text_encoder_3/config.json", bytes: 740, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "text_encoder_3/model.safetensors.index.json", bytes: 19885, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "tokenizer/merges.txt", bytes: 524619, sha256: nil),
@@ -1840,9 +1853,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "tokenizer_2/special_tokens_map.json", bytes: 576, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "tokenizer_2/tokenizer_config.json", bytes: 856, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "tokenizer_2/vocab.json", bytes: 1059962, sha256: nil),
-    ]
-
-    private static let measuredFiles63: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "tokenizer_3/spiece.model", bytes: 791656, sha256: "d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86"),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "transformer/config.json", bytes: 397, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-large-turbo", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors.index.json", bytes: 126867, sha256: nil),
@@ -1858,6 +1868,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "text_encoder_3/model.safetensors.index.json", bytes: 19885, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "tokenizer/merges.txt", bytes: 524619, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "tokenizer/special_tokens_map.json", bytes: 588, sha256: nil),
+    ]
+
+    private static let measuredFiles64: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "tokenizer/tokenizer_config.json", bytes: 705, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "tokenizer/vocab.json", bytes: 1059962, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "tokenizer_2/merges.txt", bytes: 524619, sha256: nil),
@@ -1868,9 +1881,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "transformer/config.json", bytes: 524, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "transformer/diffusion_pytorch_model.safetensors", bytes: 4939433672, sha256: "f81eb93a348be218af757dd095cbda45090380d9bbda91049442e0e40bb4cc95"),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "vae/config.json", bytes: 809, sha256: nil),
-    ]
-
-    private static let measuredFiles64: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-3.5-medium", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 167666902, sha256: "8f53304a79335b55e13ec50f63e5157fee4deb2f30d5fae0654e2b2653c109dc"),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-x4-upscaler", revision: nil, path: "unet/diffusion_pytorch_model.safetensors", bytes: 1893675621, sha256: "b6dc05aaae1ba43c230612932492a81e431126582481fd6c7d94c6b15f9ce584"),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-x4-upscaler", revision: nil, path: "vae/diffusion_pytorch_model.safetensors", bytes: 221326504, sha256: "33478c297ec29218100f8ee86007b3ab4c2701896d5ca5c9e3a84fc29f678183"),
@@ -1886,6 +1896,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-xl-base-1.0", revision: nil, path: "tokenizer_2/special_tokens_map.json", bytes: 460, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-xl-base-1.0", revision: nil, path: "tokenizer_2/tokenizer_config.json", bytes: 725, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-xl-base-1.0", revision: nil, path: "tokenizer_2/vocab.json", bytes: 1059962, sha256: nil),
+    ]
+
+    private static let measuredFiles65: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-xl-base-1.0", revision: nil, path: "unet/config.json", bytes: 1680, sha256: nil),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-xl-base-1.0", revision: nil, path: "unet/diffusion_pytorch_model.fp16.safetensors", bytes: 5135149760, sha256: "83e012a805b84c7ca28e5646747c90a243c65c8ba4f070e2d7ddc9d74661e139"),
         NFKMLXMeasuredFile(location: "stabilityai/stable-diffusion-xl-base-1.0", revision: nil, path: "unet/diffusion_pytorch_model.safetensors", bytes: 10270077736, sha256: "357650fbfb3c7b4d94c1f5fd7664da819ad1ff5a839430484b4ec422d03f710a"),
@@ -1896,9 +1909,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-inpainting", revision: nil, path: "text_encoder/config.json", bytes: 617, sha256: nil),
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-inpainting", revision: nil, path: "text_encoder/model.fp16.safetensors", bytes: 246144864, sha256: "77795e2023adcf39bc29a884661950380bd093cf0750a966d473d1718dc9ef4e"),
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-inpainting", revision: nil, path: "tokenizer/merges.txt", bytes: 524619, sha256: nil),
-    ]
-
-    private static let measuredFiles65: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-inpainting", revision: nil, path: "tokenizer/special_tokens_map.json", bytes: 472, sha256: nil),
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-inpainting", revision: nil, path: "tokenizer/tokenizer_config.json", bytes: 806, sha256: nil),
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-inpainting", revision: nil, path: "tokenizer/vocab.json", bytes: 1059962, sha256: nil),
@@ -1914,6 +1924,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-v1-5", revision: nil, path: "tokenizer/vocab.json", bytes: 1059962, sha256: nil),
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-v1-5", revision: nil, path: "unet/config.json", bytes: 743, sha256: nil),
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-v1-5", revision: nil, path: "unet/diffusion_pytorch_model.fp16.safetensors", bytes: 1719125304, sha256: "c83908253f9a64d08c25fc90874c9c8aef9a329ce1ca5fb909d73b0c83d1ea21"),
+    ]
+
+    private static let measuredFiles66: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-v1-5", revision: nil, path: "unet/diffusion_pytorch_model.safetensors", bytes: 3438167540, sha256: "19da7aaa4b880e59d56843f1fcb4dd9b599c28a1d9d9af7c1143057c8ffae9f1"),
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-v1-5", revision: nil, path: "vae/config.json", bytes: 547, sha256: nil),
         NFKMLXMeasuredFile(location: "stable-diffusion-v1-5/stable-diffusion-v1-5", revision: nil, path: "vae/diffusion_pytorch_model.fp16.safetensors", bytes: 167335342, sha256: "4fbcf0ebe55a0984f5a5e00d8c4521d52359af7229bb4d81890039d2aa16dd7c"),
@@ -1924,9 +1937,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "tencent/HY-MT1.5-1.8B", revision: nil, path: "model.safetensors", bytes: 4077072784, sha256: "07736f560253d8c991616060fb2d855420957c268fa7d32fa8593df2f83b21ab"),
         NFKMLXMeasuredFile(location: "tencent/HY-MT1.5-1.8B", revision: nil, path: "tokenizer.json", bytes: 9527287, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/HY-MT1.5-1.8B", revision: nil, path: "tokenizer_config.json", bytes: 165815, sha256: nil),
-    ]
-
-    private static let measuredFiles66: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "tencent/HY-MT1.5-7B", revision: nil, path: "config.json", bytes: 1349, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/HY-MT1.5-7B", revision: nil, path: "generation_config.json", bytes: 217, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/HY-MT1.5-7B", revision: nil, path: "model.safetensors.index.json", bytes: 29790, sha256: nil),
@@ -1942,6 +1952,9 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "tencent/Hunyuan-MT-Chimera-7B", revision: nil, path: "model.safetensors.index.json", bytes: 27605, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/Hunyuan-MT-Chimera-7B", revision: nil, path: "tokenizer.json", bytes: 16388221, sha256: "4185389a69284fdd3ebf737c6120bbeee36cbed9763151fa5bac5986a39e05d4"),
         NFKMLXMeasuredFile(location: "tencent/Hunyuan-MT-Chimera-7B", revision: nil, path: "tokenizer_config.json", bytes: 892, sha256: nil),
+    ]
+
+    private static let measuredFiles67: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "tencent/Hy-MT2-1.8B", revision: nil, path: "config.json", bytes: 1348, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/Hy-MT2-1.8B", revision: nil, path: "generation_config.json", bytes: 221, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/Hy-MT2-1.8B", revision: nil, path: "model.safetensors", bytes: 4077072784, sha256: "29e9117a44c79f81857613601968ff482d8a23c2d6736a1710bba9e5ca4762e5"),
@@ -1952,9 +1965,6 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredFile(location: "tencent/Hy-MT2-30B-A3B", revision: nil, path: "tokenizer.json", bytes: 9527108, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/Hy-MT2-30B-A3B", revision: nil, path: "tokenizer_config.json", bytes: 165617, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/Hy-MT2-7B", revision: nil, path: "config.json", bytes: 1349, sha256: nil),
-    ]
-
-    private static let measuredFiles67: [NFKMLXMeasuredFile] = [
         NFKMLXMeasuredFile(location: "tencent/Hy-MT2-7B", revision: nil, path: "generation_config.json", bytes: 217, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/Hy-MT2-7B", revision: nil, path: "model.safetensors.index.json", bytes: 29790, sha256: nil),
         NFKMLXMeasuredFile(location: "tencent/Hy-MT2-7B", revision: nil, path: "tokenizer.json", bytes: 16388221, sha256: "4185389a69284fdd3ebf737c6120bbeee36cbed9763151fa5bac5986a39e05d4"),
@@ -2382,6 +2392,7 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredVariant(model: "voxtral-mini-3b", variant: "2507", status: .measured, note: nil, commit: "3060fe34b35ba5d44202ce9ff3c097642914f8f3", downloadBytes: 9371437967, parameterCount: 4676271104, tensorBytes: ["": ["BF16": 9348702208, "F32": 7680000]], opaqueBytes: [:], layers: ["": NFKMLXMeasuredLayers(count: 30, largestBytes: ["BF16": 213921792], totalBytes: ["BF16": 6417653760])], quantizableElements: ["": 4265607168], geometry: NFKMLXMeasuredGeometry(layerCount: 30, attentionHeads: 32, keyValueHeads: 8, headDimension: 128, hiddenSize: 3072, maximumPositions: 131072, vocabularySize: 131072)),
         NFKMLXMeasuredVariant(model: "w2v-bert-2.0", variant: "2.0", status: .measured, note: nil, commit: "da985ba0987f70aaeb84a80f2851cfac8c697a7b", downloadBytes: 2322065885, parameterCount: 580493120, tensorBytes: ["": ["F32": 2321972480]], opaqueBytes: [:], layers: ["": NFKMLXMeasuredLayers(count: 24, largestBytes: ["F32": 96721152], totalBytes: ["F32": 2321307648])], quantizableElements: ["": 503316480], geometry: NFKMLXMeasuredGeometry(layerCount: 24, attentionHeads: 16, hiddenSize: 1024)),
         NFKMLXMeasuredVariant(model: "wan", variant: "default", status: .measured, note: nil, commit: "0fad780a534b6463e45facd96134c9f345acfa5b", downloadBytes: 28912050400, parameterCount: 7226799667, tensorBytes: ["text_encoder": ["F32": 22723641344], "transformer": ["F32": 5675987200], "vae": ["F32": 507570124]], opaqueBytes: [:], layers: ["text_encoder": NFKMLXMeasuredLayers(count: 24, largestBytes: ["F32": 771792896], totalBytes: ["F32": 18523029504]), "transformer": NFKMLXMeasuredLayers(count: 30, largestBytes: ["F32": 185762816], totalBytes: ["F32": 5572884480])], quantizableElements: ["text_encoder": 5680709632, "transformer": 1392082944]),
+        NFKMLXMeasuredVariant(model: "wan-dancer-14b", variant: "default", status: .measured, note: nil, commit: "85ce88dd8d025459dcf0fe93982d6da8b9002957", downloadBytes: 85644437164, parameterCount: nil, tensorBytes: ["global_model.safetensors": ["BF16": 34490396928], "local_model.safetensors": ["BF16": 34490396928]], opaqueBytes: ["Wan2.1_VAE.pth": 507609880, "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth": 4772359047, "models_t5_umt5-xxl-enc-bf16.pth": 11361920418], layers: ["global_model.safetensors": NFKMLXMeasuredLayers(count: 40, largestBytes: ["BF16": 807676928], totalBytes: ["BF16": 32307077120]), "local_model.safetensors": NFKMLXMeasuredLayers(count: 40, largestBytes: ["BF16": 807676928], totalBytes: ["BF16": 32307077120])], quantizableElements: ["global_model.safetensors": 17162436608, "local_model.safetensors": 17162436608]),
         NFKMLXMeasuredVariant(model: "wan2.1-t2v-14b", variant: "default", status: .measured, note: nil, commit: "38ec498cb3208fb688890f8cc7e94ede2cbd7f68", downloadBytes: 80390081524, parameterCount: 20096294451, tensorBytes: ["text_encoder": ["F32": 22723641344], "transformer": ["F32": 57153966336], "vae": ["F32": 507570124]], opaqueBytes: [:], layers: ["text_encoder": NFKMLXMeasuredLayers(count: 24, largestBytes: ["F32": 771792896], totalBytes: ["F32": 18523029504]), "transformer": NFKMLXMeasuredLayers(count: 40, largestBytes: ["F32": 1405577216], totalBytes: ["F32": 56223088640])], quantizableElements: ["text_encoder": 5680709632, "transformer": 14051246080]),
         NFKMLXMeasuredVariant(model: "wan2.2-animate-14b", variant: "default", status: .measured, note: nil, commit: "7d48412d7b903ff3a89f4f5a960d99e1899605a1", downloadBytes: 45925700726, parameterCount: 22833447731, tensorBytes: ["image_encoder": ["BF16": 1261532160], "text_encoder": ["BF16": 11361820672], "transformer": ["BF16": 32789757568], "vae": ["F32": 507570124]], opaqueBytes: [:], layers: ["image_encoder": NFKMLXMeasuredLayers(count: 32, largestBytes: ["BF16": 39354880], totalBytes: ["BF16": 1259356160]), "text_encoder": NFKMLXMeasuredLayers(count: 24, largestBytes: ["BF16": 385896448], totalBytes: ["BF16": 9261514752]), "transformer": NFKMLXMeasuredLayers(count: 40, largestBytes: ["BF16": 807676928], totalBytes: ["BF16": 32307077120])], quantizableElements: ["image_encoder": 629145600, "text_encoder": 5680709632, "transformer": 16313876480]),
         NFKMLXMeasuredVariant(model: "wan2.2-animate-14b-distilled", variant: "default", status: .measured, note: nil, commit: "59e4141466bcb1bf9733eca1bc78be6891c9fbdf", downloadBytes: 45925700325, parameterCount: 22833447731, tensorBytes: ["image_encoder": ["BF16": 1261532160], "text_encoder": ["BF16": 11361820672], "transformer": ["BF16": 32789757568], "vae": ["F32": 507570124]], opaqueBytes: [:], layers: ["image_encoder": NFKMLXMeasuredLayers(count: 32, largestBytes: ["BF16": 39354880], totalBytes: ["BF16": 1259356160]), "text_encoder": NFKMLXMeasuredLayers(count: 24, largestBytes: ["BF16": 385896448], totalBytes: ["BF16": 9261514752]), "transformer": NFKMLXMeasuredLayers(count: 40, largestBytes: ["BF16": 807676928], totalBytes: ["BF16": 32307077120])], quantizableElements: ["image_encoder": 629145600, "text_encoder": 5680709632, "transformer": 16313876480]),
@@ -2402,10 +2413,10 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredVariant(model: "wav2vec2-large-960h-lv60-self", variant: "wav2vec2-large-960h-lv60-self", status: .measured, note: nil, commit: "54074b1c16f4de6a5ad59affb4caa8f2ea03a119", downloadBytes: 1262057463, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 1262055246], geometry: NFKMLXMeasuredGeometry(layerCount: 24, attentionHeads: 16, hiddenSize: 1024, vocabularySize: 32)),
         NFKMLXMeasuredVariant(model: "wav2vec2-large-lv60", variant: "wav2vec2-large-lv60", status: .measured, note: nil, commit: "0cde644b64dac88d8416bec1c92a4099b850ba0b", downloadBytes: 1269738867, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 1269737156], geometry: NFKMLXMeasuredGeometry(layerCount: 24, attentionHeads: 16, hiddenSize: 1024, vocabularySize: 32)),
         NFKMLXMeasuredVariant(model: "wav2vec2-large-xlsr-53", variant: "wav2vec2-large-xlsr-53", status: .measured, note: nil, commit: "c3f9d884181a224a6ac87bf8885c84d1cff3384f", downloadBytes: 1269739136, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 1269737156], geometry: NFKMLXMeasuredGeometry(layerCount: 24, attentionHeads: 16, hiddenSize: 1024, vocabularySize: 32)),
-        NFKMLXMeasuredVariant(model: "wav2vec2-xls-r-1b", variant: "wav2vec2-xls-r-1b", status: .measured, note: nil, commit: "35eaea9a0ed0f97592277d79208e40ab8917d1e3", downloadBytes: 3862392954, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 3862391172], geometry: NFKMLXMeasuredGeometry(layerCount: 48, attentionHeads: 16, hiddenSize: 1280)),
     ]
 
     private static let measuredVariants15: [NFKMLXMeasuredVariant] = [
+        NFKMLXMeasuredVariant(model: "wav2vec2-xls-r-1b", variant: "wav2vec2-xls-r-1b", status: .measured, note: nil, commit: "35eaea9a0ed0f97592277d79208e40ab8917d1e3", downloadBytes: 3862392954, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 3862391172], geometry: NFKMLXMeasuredGeometry(layerCount: 48, attentionHeads: 16, hiddenSize: 1280)),
         NFKMLXMeasuredVariant(model: "wav2vec2-xls-r-2b", variant: "wav2vec2-xls-r-2b", status: .measured, note: nil, commit: "3b6d89d0fabead7da552eaaa07549c7c9c36d303", downloadBytes: 8652068079, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 8652066332], geometry: NFKMLXMeasuredGeometry(layerCount: 48, attentionHeads: 16, hiddenSize: 1920)),
         NFKMLXMeasuredVariant(model: "wav2vec2-xls-r-300m", variant: "wav2vec2-xls-r-300m", status: .measured, note: nil, commit: "1a640f32ac3e39899438a2931f9924c02f080a54", downloadBytes: 1269738936, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 1269737156], geometry: NFKMLXMeasuredGeometry(layerCount: 24, attentionHeads: 16, hiddenSize: 1024)),
         NFKMLXMeasuredVariant(model: "whisper-base", variant: "base", status: .measured, note: nil, commit: "e37978b90ca9030d5170a5c07aadb050351a65bb", downloadBytes: 146626830, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 145262807], geometry: NFKMLXMeasuredGeometry(layerCount: 6, vocabularySize: 51865)),
@@ -2430,10 +2441,10 @@ extension NFKMLXCatalogMeasurements {
         NFKMLXMeasuredVariant(model: "yolo26l", variant: "default", status: .measured, note: nil, commit: nil, downloadBytes: 53211173, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 53211173]),
         NFKMLXMeasuredVariant(model: "yolo26m", variant: "default", status: .measured, note: nil, commit: nil, downloadBytes: 44255705, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 44255705]),
         NFKMLXMeasuredVariant(model: "yolo26n", variant: "default", status: .measured, note: nil, commit: nil, downloadBytes: 5544453, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 5544453]),
-        NFKMLXMeasuredVariant(model: "yolo26s", variant: "default", status: .measured, note: nil, commit: nil, downloadBytes: 20422725, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 20422725]),
     ]
 
     private static let measuredVariants16: [NFKMLXMeasuredVariant] = [
+        NFKMLXMeasuredVariant(model: "yolo26s", variant: "default", status: .measured, note: nil, commit: nil, downloadBytes: 20422725, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 20422725]),
         NFKMLXMeasuredVariant(model: "yolo26x", variant: "default", status: .measured, note: nil, commit: nil, downloadBytes: 118667365, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 118667365]),
         NFKMLXMeasuredVariant(model: "yolov10b", variant: "default", status: .measured, note: nil, commit: nil, downloadBytes: 41679663, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 41679663]),
         NFKMLXMeasuredVariant(model: "yolov10l", variant: "default", status: .measured, note: nil, commit: nil, downloadBytes: 52425230, parameterCount: nil, tensorBytes: [:], opaqueBytes: ["": 52425230]),

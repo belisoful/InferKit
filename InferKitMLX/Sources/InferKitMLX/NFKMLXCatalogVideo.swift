@@ -199,7 +199,7 @@ enum NFKMLXCatalogVideo {
     // MARK: - Video generation
 
     static var generators: [NFKMLXCatalogEntry] {
-        [ltxVideo] + ltx2Entries + wanEntries + wanExpertEntries + wanAnimateEntries + wanFunEntries + [wanVACEFun, wanS2V]
+        [ltxVideo] + ltx2Entries + wanEntries + wanExpertEntries + wanAnimateEntries + wanFunEntries + [wanVACEFun, wanS2V, wanDancer]
     }
 
     /// The options a text-to-video generator reads.
@@ -561,6 +561,38 @@ enum NFKMLXCatalogVideo {
             license: .apache2(),
             source: NFKMLXCatalogImage.hubRelease(NFKMLXWanS2VGenerator.releaseRepo,
                                                   components: NFKMLXWanS2VGenerator.releaseComponents),
+            residencies: NFKMLXCatalogImage.streamedStageResidencies)
+    }
+
+    static var wanDancer: NFKMLXCatalogEntry {
+        NFKMLXCatalogImage.model(
+            NFKMLXWanDancerGenerator.modelName, "Wan-Dancer 14B", family: "wan-dancer",
+            summary: "A diffusion transformer that films the person in a reference image dancing to a music track, planning keyframes over the whole track and then rendering it at 30 frames a second.",
+            tasks: [NFKModelTaskVideoGeneration],
+            inputs: [NFKMLXCatalogImage.imageInput("The dancer; the clip pads the picture to its size.", title: "Reference image"),
+                     .input(NFKInputAudio, required: true, title: "Music",
+                            help: "The music the dance follows, at any rate; the video is as long as it, less 0.2 s."),
+                     .input(NFKInputPrompt, required: true, title: "Prompt",
+                            help: "The dance's style for the keyframe stage; its frame rate is appended."),
+                     .input(NFKMLXVideoInputKey.localPrompt, title: "Local prompt",
+                            help: "The dance's style for the 30-frame-a-second stage; the prompt by default."),
+                     .input(NFKInputNegativePrompt, title: "Negative prompt",
+                            help: "What to steer away from; the release's own by default.")],
+            outputs: [clipOutput("The dance as a QuickTime movie at 30 frames per second, the music not muxed.")],
+            parameters: [
+                NFKMLXCatalogImage.widthOption(720, help: "The clip's width."),
+                NFKMLXCatalogImage.heightOption(1280, help: "The clip's height."),
+                NFKMLXCatalogImage.seedOption(0),
+                NFKMLXCatalogImage.stepsOption(24),
+                .option(NFKMLXGenerationParameterKey.keyframeSteps, title: "Keyframe steps",
+                        help: "The steps of the keyframe stage.", defaultValue: 48, minimum: 1, step: 1),
+                NFKMLXCatalogImage.guidanceOption(5, help: "The classifier-free guidance weight; the unconditional pass skips block 9."),
+                .option(NFKMLXGenerationParameterKey.flowShift, kind: NFKModelOptionKindNumber,
+                        title: "Flow shift", help: "The shift of the sampler's schedule.", defaultValue: 5.0, minimum: 1),
+            ],
+            license: .apache2(),
+            source: NFKMLXCatalogImage.hubRelease(NFKMLXWanDancerGenerator.releaseRepo,
+                                                  components: NFKMLXWanDancerGenerator.releaseComponents),
             residencies: NFKMLXCatalogImage.streamedStageResidencies)
     }
 

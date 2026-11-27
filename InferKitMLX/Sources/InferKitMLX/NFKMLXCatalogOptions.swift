@@ -336,6 +336,13 @@ struct NFKMLXLoadProfile {
                                       defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true,
                                       widenedStages: [NFKMLXWanOriginalRelease.textEncoderFile: NFKModelPrecisionFloat32],
                                       streamedStages: [""], halvesSteps: true)],
+        // Wan-Dancer widens umT5 where the budget holds it, streams the blocks of a transformer it cannot hold, or
+        // packs the blocks' linear layers to 2 to 8 bits.
+        "wan-dancer": [NFKMLXLoadProfile(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                         defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true,
+                                         widenedStages: [NFKMLXWanOriginalRelease.textEncoderFile: NFKModelPrecisionFloat32],
+                                         streamedStages: [NFKMLXWanDancerGenerator.stageFiles.global,
+                                                          NFKMLXWanDancerGenerator.stageFiles.local], halvesSteps: true)],
         "minimax-music": [.diffusionPipeline()],
         "stable-audio": [.diffusionPipeline()],
     ]

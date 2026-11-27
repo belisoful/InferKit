@@ -79750,6 +79750,464 @@
       ]
     },
     {
+      "displayName" : "Wan-Dancer 14B",
+      "engine" : "mlx",
+      "family" : "wan-dancer",
+      "id" : "wan-dancer-14b",
+      "inputModalities" : [
+        "image",
+        "audio",
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The dancer; the clip pads the picture to its size.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Reference image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "The music the dance follows, at any rate; the video is as long as it, less 0.2 s.",
+          "key" : "audio",
+          "required" : true,
+          "title" : "Music",
+          "valueType" : "audio"
+        },
+        {
+          "help" : "The dance's style for the keyframe stage; its frame rate is appended.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The dance's style for the 30-frame-a-second stage; the prompt by default.",
+          "key" : "NFKMLXInputLocalPrompt",
+          "required" : false,
+          "title" : "Local prompt"
+        },
+        {
+          "help" : "What to steer away from; the release's own by default.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 720,
+          "help" : "The clip's width.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 1280,
+          "help" : "The clip's height.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 24,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 48,
+          "help" : "The steps of the keyframe stage.",
+          "key" : "NFKMLXParameterKeyframeSteps",
+          "kind" : "json",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Keyframe steps"
+        },
+        {
+          "default" : 5,
+          "help" : "The classifier-free guidance weight; the unconditional pass skips block 9.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 5,
+          "help" : "The shift of the sampler's schedule.",
+          "key" : "NFKMLXParameterFlowShift",
+          "kind" : "number",
+          "minimum" : 1,
+          "stage" : "request",
+          "title" : "Flow shift"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 85622683201,
+                "residentBytes" : 85622683201
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 39770365855,
+                "residentBytes" : 39770365855
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 39770365855,
+                "residentBytes" : 39770365855
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 74260762783,
+                "residentBytes" : 74260762783
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 39770365855,
+                "residentBytes" : 39770365855
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 23680581535,
+                "residentBytes" : 23680581535
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19389972383,
+                "residentBytes" : 19389972383
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17244667807,
+                "residentBytes" : 17244667807
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 15099363231,
+                "residentBytes" : 15099363231
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12954058655,
+                "residentBytes" : 12954058655
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361920418,
+                "residentBytes" : 11361920418
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "video"
+      ],
+      "outputs" : [
+        {
+          "help" : "The dance as a QuickTime movie at 30 frames per second, the music not muxed.",
+          "key" : "video",
+          "required" : true,
+          "title" : "Clip",
+          "valueType" : "video"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 12 in place of 24: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 12
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "wan-dancer-14b",
+      "requirements" : {
+        "minimumMemoryBytes" : 51841568413,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "A diffusion transformer that films the person in a reference image dancing to a music track, planning keyframes over the whole track and then rendering it at 30 frames a second.",
+      "tasks" : [
+        "video-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Wan-Dancer 14B",
+          "downloadBytes" : 85644437164,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11361920418
+                },
+                "id" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "title" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "widenedPrecision" : "float32"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 39770365855,
+                  "checkpoint" : 39770365855,
+                  "float32" : 74260762783
+                },
+                "id" : "global_model.safetensors",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 807676928,
+                  "checkpoint" : 807676928,
+                  "float32" : 1615353856
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 32307077120,
+                  "checkpoint" : 32307077120,
+                  "float32" : 64614154240
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 17162436608,
+                "title" : "global_model.safetensors, Wan2.1_VAE.pth, models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 34490396928,
+                  "checkpoint" : 34490396928,
+                  "float32" : 68980793856
+                },
+                "id" : "local_model.safetensors",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 807676928,
+                  "checkpoint" : 807676928,
+                  "float32" : 1615353856
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 32307077120,
+                  "checkpoint" : 32307077120,
+                  "float32" : 64614154240
+                },
+                "layerCount" : 40,
+                "quantizableElements" : 17162436608,
+                "title" : "local_model.safetensors"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 51841568413,
+          "peakBytes" : 39770365855,
+          "precision" : "bfloat16",
+          "registryName" : "wan-dancer-14b",
+          "residentBytes" : 39770365855,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 11361920418,
+                "optional" : false,
+                "path" : "models_t5_umt5-xxl-enc-bf16.pth",
+                "role" : "weights",
+                "sha256" : "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d"
+              },
+              {
+                "bytes" : 4548313,
+                "optional" : false,
+                "path" : "google/umt5-xxl/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "e3909a67b780650b35cf529ac782ad2b6b26e6d1f849d3fbb6a872905f452458"
+              },
+              {
+                "bytes" : 16837417,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6e197b4d3dbd71da14b4eb255f4fa91c9c1f2068b20a2de2472967ca3d22602b"
+              },
+              {
+                "bytes" : 61728,
+                "optional" : true,
+                "path" : "google/umt5-xxl/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6623,
+                "optional" : true,
+                "path" : "google/umt5-xxl/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 250,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 507609880,
+                "optional" : false,
+                "path" : "Wan2.1_VAE.pth",
+                "role" : "weights",
+                "sha256" : "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981"
+              },
+              {
+                "bytes" : 4772359047,
+                "optional" : false,
+                "path" : "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
+                "role" : "weights",
+                "sha256" : "628c9998b613391f193eb67ff68da9667d75f492911e4eb3decf23460a158c38"
+              },
+              {
+                "bytes" : 34490546744,
+                "optional" : false,
+                "path" : "global_model.safetensors",
+                "role" : "weights",
+                "sha256" : "d0f15c7766d5c208ae4bc2bcfff0ac1d795f32b251e7ae567dd13043316b3bba"
+              },
+              {
+                "bytes" : 34490546744,
+                "optional" : false,
+                "path" : "local_model.safetensors",
+                "role" : "weights",
+                "sha256" : "7dda4250388673516a899954ad1de2f471a37607016c4fce66f4d8978af0a8ae"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "85ce88dd8d025459dcf0fe93982d6da8b9002957",
+            "repository" : "Wan-AI/Wan-Dancer-14B",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "Wan 2.1 T2V 14B",
       "engine" : "mlx",
       "family" : "wan",

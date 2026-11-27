@@ -459,6 +459,16 @@ enum NFKMLXOptionRegistrations {
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }
+        registerDirectoryModels(registryNames(families: ["wan-dancer"]),
+                                consumes: residency.union([NFKModelLoadOptionPrecision]).union(quantizationKeys)) {
+            url, _, options in
+            let generator = try NFKMLXWanDancerGenerator.generator(
+                directoryURL: url, residency: options.residency, precision: options.precision ?? .checkpoint,
+                bits: (options.quantizationBits ?? 0) == 0 ? nil : options.quantizationBits,
+                groupSize: options.quantizationGroupSize)
+            report(generator.holdsStagesResident, to: options)
+            return generator.inferenceBackend()
+        }
         registerDirectoryModels(registryNames(families: ["ltx-video"]), consumes: adapted) { url, _, options in
             let generator = try NFKMLXLTXVideoGenerator.generator(directoryURL: url, residency: options.residency,
                                                                   adapters: options.adapters())

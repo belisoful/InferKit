@@ -368,7 +368,10 @@ def geometry(repo, revision, files):
 
 # The original Wan layout keeps umT5 and the autoencoder as files at the release's root beside its
 # transformer (`NFKMLXWanOriginalRelease`); each loads as a stage of its own, so each is its own directory.
-ROOT_FILE_DIRECTORIES = {"models_t5_umt5-xxl-enc-bf16.pth", "Wan2.1_VAE.pth", "Wan2.2_VAE.pth"}
+# Wan-Dancer adds the CLIP checkpoint and keeps its two transformers as root files too.
+ROOT_FILE_DIRECTORIES = {"models_t5_umt5-xxl-enc-bf16.pth", "Wan2.1_VAE.pth", "Wan2.2_VAE.pth",
+                         "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth", "global_model.safetensors",
+                         "local_model.safetensors"}
 
 
 def directory_of(path):

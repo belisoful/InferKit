@@ -323,6 +323,16 @@ extension NFKMLXLoadPlan {
                                                 NFKMLXWanOriginalRelease.wan21AutoencoderFile: .float32],
                                   stages: [[NFKMLXWanOriginalRelease.textEncoderFile], [NFKMLXWanS2VGenerator.wav2vec2Directory],
                                            ["", NFKMLXWanOriginalRelease.wan21AutoencoderFile]]),
+        // Wan-Dancer keeps the original layout's root files beside two transformers, each a stage with the
+        // autoencoder and the CLIP vision tower that both stages read.
+        "wan-dancer": NFKMLXLoadPlan(precision: .stored,
+                                     directories: [NFKMLXWanOriginalRelease.textEncoderFile: .bfloat16,
+                                                   NFKMLXWanOriginalRelease.wan21AutoencoderFile: .float32,
+                                                   NFKMLXWanDancerGenerator.imageEncoderFile: .float32],
+                                     stages: [[NFKMLXWanOriginalRelease.textEncoderFile],
+                                              [NFKMLXWanDancerGenerator.stageFiles.global, NFKMLXWanOriginalRelease.wan21AutoencoderFile,
+                                               NFKMLXWanDancerGenerator.imageEncoderFile],
+                                              [NFKMLXWanDancerGenerator.stageFiles.local]]),
         "wan-animate": NFKMLXLoadPlan(precision: .stored,
                                       stages: [["text_encoder", "image_encoder"], ["transformer", "vae"]]),
         "minimax-music": NFKMLXLoadPlan(precision: .stored, directories: ["transformer": .float32],

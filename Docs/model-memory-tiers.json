@@ -2119,6 +2119,12 @@
       "24" : "resident 3637935360 fits",
       "32" : "resident 3637935360 fits"
     },
+    "wan-dancer-14b/default" : {
+      "8" : "streamed 11361920418 refused",
+      "16" : "streamed 11361920418 refused",
+      "24" : "streamed 11361920418 refused",
+      "32" : "streamed 18336858368 fits"
+    },
     "wan/default" : {
       "8" : "staged 19470458880 refused",
       "16" : "staged 19470458880 refused",
