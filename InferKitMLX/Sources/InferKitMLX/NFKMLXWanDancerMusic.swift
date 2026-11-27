@@ -36,7 +36,7 @@ public enum NFKMLXWanDancerMusic {
     /// music at 15360 Hz.
     public static func features(samples: [Float], sampleRate rate: Int) -> MLXArray {
         let rows = featureRows(samples: samples, sampleRate: rate)
-        return MLXArray(rows.flatMap { $0 }, [rows.count, featureCount])
+        return MLXArray(rows.flatMap { (row: [Float]) -> [Float] in row }, [rows.count, featureCount])
     }
 
     static func featureRows(samples: [Float], sampleRate rate: Int) -> [[Float]] {
@@ -53,11 +53,16 @@ public enum NFKMLXWanDancerMusic {
             powerSpectrogram(tempoData, fftSize: fftSize, hop: hop), rate: Double(tempoRate), fftSize: fftSize,
             bands: 128))), rate: Double(tempoRate), hop: hop, startTempo: 120)
         let beats = Set(beatTrack(envelope, rate: assumedRate, hop: hop, startTempo: startTempo, tightness: 100))
-        let frames = envelope.count
-        precondition(mfcc.count == frames && chroma.count == frames, "the features disagree on the frame count")
-        return (0 ..< frames).map { t in
-            [Float(envelope[t])] + mfcc[t].map(Float.init) + chroma[t].map(Float.init)
-                + [peaks.contains(t) ? 1 : 0, beats.contains(t) ? 1 : 0]
+        let frames: Int = envelope.count
+        let framesAgree: Bool = mfcc.count == frames && chroma.count == frames
+        precondition(framesAgree, "the features disagree on the frame count")
+        return (0 ..< frames).map { (t: Int) -> [Float] in
+            var row: [Float] = [Float(envelope[t])]
+            row.append(contentsOf: mfcc[t].map { (value: Double) -> Float in Float(value) })
+            row.append(contentsOf: chroma[t].map { (value: Double) -> Float in Float(value) })
+            row.append(peaks.contains(t) ? Float(1) : Float(0))
+            row.append(beats.contains(t) ? Float(1) : Float(0))
+            return row
         }
     }
 
@@ -69,7 +74,8 @@ public enum NFKMLXWanDancerMusic {
         guard source != target else { return samples.map { Double(Float($0)) } }
         let divisor = greatestCommonDivisor(source, target)
         let up = target / divisor, down = source / divisor
-        let count = Int((Double(samples.count) * Double(target) / Double(source)).rounded(.up))
+        let scaledCount: Double = Double(samples.count) * Double(target) / Double(source)
+        let count = Int(scaledCount.rounded(.up))
         var output = resamplePoly(samples, up: up, down: down)
         if output.count > count {
             output.removeLast(output.count - count)
@@ -116,15 +122,15 @@ public enum NFKMLXWanDancerMusic {
     static func firwinKaiser(count: Int, cutoff: Double, beta: Double) -> [Double] {
         let alpha = 0.5 * Double(count - 1)
         let normalizer = besselI0(beta)
-        let taps = (0 ..< count).map { n -> Double in
-            let m = Double(n) - alpha
-            let argument = cutoff * m
-            let sinc = argument == 0 ? 1 : sin(Double.pi * argument) / (Double.pi * argument)
-            let ratio = m / alpha
+        let taps = (0 ..< count).map { (n: Int) -> Double in
+            let m: Double = Double(n) - alpha
+            let argument: Double = cutoff * m
+            let sinc: Double = argument == 0 ? 1 : sin(Double.pi * argument) / (Double.pi * argument)
+            let ratio: Double = m / alpha
             return cutoff * sinc * besselI0(beta * Swift.max(0, 1 - ratio * ratio).squareRoot()) / normalizer
         }
         let total = taps.reduce(0, +)
-        return taps.map { $0 / total }
+        return taps.map { (tap: Double) -> Double in tap / total }
     }
 
     static func besselI0(_ x: Double) -> Double {
@@ -142,7 +148,7 @@ public enum NFKMLXWanDancerMusic {
 
     /// A periodic Hann window (`scipy.signal.get_window("hann", n, fftbins=True)`).
     static func periodicHann(_ count: Int) -> [Double] {
-        (0 ..< count).map { 0.5 - 0.5 * cos(2 * Double.pi * Double($0) / Double(count)) }
+        (0 ..< count).map { (n: Int) -> Double in 0.5 - 0.5 * cos(2 * Double.pi * Double(n) / Double(count)) }
     }
 
     /// The frames `[1 + count / hop][fftSize]` of a centered STFT: the signal zero-padded by half a
@@ -150,8 +156,8 @@ public enum NFKMLXWanDancerMusic {
     static func centeredFrames(_ samples: [Double], fftSize: Int, hop: Int) -> [[Double]] {
         let pad = fftSize / 2
         let frames = 1 + samples.count / hop
-        return (0 ..< frames).map { t in
-            (0 ..< fftSize).map { i in
+        return (0 ..< frames).map { (t: Int) -> [Double] in
+            (0 ..< fftSize).map { (i: Int) -> Double in
                 let index = t * hop + i - pad
                 return index >= 0 && index < samples.count ? samples[index] : 0
             }
@@ -161,10 +167,14 @@ public enum NFKMLXWanDancerMusic {
     /// `|stft(y)|²` `[frames][fftSize / 2 + 1]` with a periodic Hann window, stored as float32.
     static func powerSpectrogram(_ samples: [Double], fftSize: Int, hop: Int, power: Double = 2) -> [[Double]] {
         let window = periodicHann(fftSize)
-        return centeredFrames(samples, fftSize: fftSize, hop: hop).map { frame in
-            let spectrum = NFKMLXRealFFT.forward(zip(frame, window).map { $0 * $1 })
-            return spectrum.map { bin in
-                let magnitude = Double(Float(bin.re)) * Double(Float(bin.re)) + Double(Float(bin.im)) * Double(Float(bin.im))
+        return centeredFrames(samples, fftSize: fftSize, hop: hop).map { (frame: [Double]) -> [Double] in
+            let spectrum = NFKMLXRealFFT.forward(zip(frame, window).map { (sample: Double, weight: Double) -> Double in
+                sample * weight
+            })
+            return spectrum.map { (bin: (re: Double, im: Double)) -> Double in
+                let re: Double = Double(Float(bin.re))
+                let im: Double = Double(Float(bin.im))
+                let magnitude: Double = re * re + im * im
                 return Double(Float(power == 2 ? magnitude : magnitude.squareRoot()))
             }
         }
@@ -187,14 +197,17 @@ public enum NFKMLXWanDancerMusic {
     static func melFilterbank(rate: Double, fftSize: Int, bands: Int) -> [[Double]] {
         let bins = fftSize / 2 + 1
         let low = hertzToMel(0), high = hertzToMel(rate / 2)
-        let edges = (0 ..< bands + 2).map { melToHertz(low + (high - low) * Double($0) / Double(bands + 1)) }
-        let frequencies = (0 ..< bins).map { rate / 2 * Double($0) / Double(bins - 1) }
-        return (0 ..< bands).map { band in
-            let lowerWidth = edges[band + 1] - edges[band], upperWidth = edges[band + 2] - edges[band + 1]
-            let area = 2 / (edges[band + 2] - edges[band])
-            return frequencies.map { f in
-                let lower = -(edges[band] - f) / lowerWidth
-                let upper = (edges[band + 2] - f) / upperWidth
+        let edges = (0 ..< bands + 2).map { (index: Int) -> Double in
+            melToHertz(low + (high - low) * Double(index) / Double(bands + 1))
+        }
+        let frequencies = (0 ..< bins).map { (bin: Int) -> Double in rate / 2 * Double(bin) / Double(bins - 1) }
+        return (0 ..< bands).map { (band: Int) -> [Double] in
+            let lowerWidth: Double = edges[band + 1] - edges[band]
+            let upperWidth: Double = edges[band + 2] - edges[band + 1]
+            let area: Double = 2 / (edges[band + 2] - edges[band])
+            return frequencies.map { (f: Double) -> Double in
+                let lower: Double = -(edges[band] - f) / lowerWidth
+                let upper: Double = (edges[band + 2] - f) / upperWidth
                 return Double(Float(Swift.max(0, Swift.min(lower, upper)) * area))
             }
         }
@@ -220,9 +233,14 @@ public enum NFKMLXWanDancerMusic {
     /// librosa's `power_to_db(S)`: `10 log10(max(S, 1e-10))`, floored 80 dB below the loudest value,
     /// stored as float32.
     static func powerToDecibels(_ power: [[Double]]) -> [[Double]] {
-        let decibels = power.map { $0.map { Double(Float(10 * log10(Swift.max($0, 1e-10)))) } }
-        let floor = (decibels.flatMap { $0 }.max() ?? 0) - 80
-        return decibels.map { $0.map { Swift.max($0, floor) } }
+        let decibels = power.map { (frame: [Double]) -> [Double] in
+            frame.map { (value: Double) -> Double in Double(Float(10 * log10(Swift.max(value, 1e-10)))) }
+        }
+        let loudest: Double = decibels.flatMap { (frame: [Double]) -> [Double] in frame }.max() ?? 0
+        let floor: Double = loudest - 80
+        return decibels.map { (frame: [Double]) -> [Double] in
+            frame.map { (value: Double) -> Double in Swift.max(value, floor) }
+        }
     }
 
     /// The first `count` coefficients of SciPy's orthonormal DCT-II over the mel bands, per frame.
@@ -248,7 +266,9 @@ public enum NFKMLXWanDancerMusic {
         var envelope = [Double](repeating: 0, count: frames)
         for t in shift ..< frames {
             let current = decibels[t - shift + 1], previous = decibels[t - shift]
-            let rise = zip(current, previous).reduce(0.0) { $0 + Swift.max(0, $1.0 - $1.1) }
+            let rise = zip(current, previous).reduce(0.0) { (sum: Double, pair: (Double, Double)) -> Double in
+                sum + Swift.max(0, pair.0 - pair.1)
+            }
             envelope[t] = Double(Float(rise / Double(current.count)))
         }
         return envelope
@@ -256,16 +276,16 @@ public enum NFKMLXWanDancerMusic {
 
     // MARK: - Onsets and beats
 
-    static let float32Tiny = Double(Float.leastNormalMagnitude)
+    static let float32Tiny: Double = Double(Float.leastNormalMagnitude)
 
     /// librosa's `onset_detect` over an envelope: normalized to `[0, 1]`, then `peak_pick` with the
     /// windows `0.03`, `0`, `0.1` and `0.1` seconds and a wait of `0.03` seconds at `rate`, delta 0.07.
     static func onsetPeaks(_ envelope: [Double], rate: Double, hop: Int) -> [Int] {
         guard let low = envelope.min() else { return [] }
-        let normalized = envelope.map { Double(Float($0 - low)) }
+        let normalized = envelope.map { (value: Double) -> Double in Double(Float(value - low)) }
         guard normalized.contains(where: { $0 != 0 }) else { return [] }
-        let scale = (normalized.max() ?? 0) + float32Tiny
-        let x = normalized.map { Double(Float($0 / scale)) }
+        let scale: Double = (normalized.max() ?? 0) + float32Tiny
+        let x = normalized.map { (value: Double) -> Double in Double(Float(value / scale)) }
         func frames(_ seconds: Double) -> Int { Int((seconds * rate / Double(hop)).rounded(.down)) }
         return peakPick(x, preMaximum: frames(0.03), postMaximum: 1, preAverage: frames(0.1),
                         postAverage: frames(0.1) + 1, delta: 0.07, wait: frames(0.03))
@@ -342,13 +362,15 @@ public enum NFKMLXWanDancerMusic {
             var frame = [Double](repeating: 0, count: fftLength)
             for i in 0 ..< window { frame[i] = Double(Float(padded[t + i])) * hann[i] }
             let spectrum = NFKMLXRealFFT.forward(frame)
-            let power = spectrum.map { $0.re * $0.re + $0.im * $0.im }
-            let autocorrelation = NFKMLXRealFFT.inverse(power.map { (re: $0, im: 0.0) }, count: fftLength)
-            let peak = autocorrelation[0 ..< window].map { Swift.abs($0) }.max() ?? 0
+            let power = spectrum.map { (bin: (re: Double, im: Double)) -> Double in bin.re * bin.re + bin.im * bin.im }
+            let bins = power.map { (value: Double) -> (re: Double, im: Double) in (re: value, im: 0.0) }
+            let autocorrelation = NFKMLXRealFFT.inverse(bins, count: fftLength)
+            let peak = autocorrelation[0 ..< window].map { (value: Double) -> Double in Swift.abs(value) }.max() ?? 0
             let length = peak < Double.leastNormalMagnitude ? 1 : peak
             for i in 0 ..< window { sum[i] += autocorrelation[i] / length }
         }
-        return sum.map { $0 / Double(Swift.max(count, 1)) }
+        let frames = Double(Swift.max(count, 1))
+        return sum.map { (value: Double) -> Double in value / frames }
     }
 
     /// librosa's `beat_track(onset_envelope:, start_bpm:, tightness:)`: the tempo re-estimated from the
@@ -359,11 +381,17 @@ public enum NFKMLXWanDancerMusic {
         let bpm = tempo(envelope, rate: rate, hop: hop, startTempo: startTempo)
         let framesPerBeat = Double(Float((rate / Double(hop) * 60 / bpm).rounded(.toNearestOrEven)))
         let count = envelope.count
-        let mean = envelope.reduce(0, +) / Double(count)
-        let deviation = (envelope.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(count - 1)).squareRoot()
-        let normalized = envelope.map { Double(Float($0 / (Double(Float(deviation)) + float32Tiny))) }
+        let mean: Double = envelope.reduce(0, +) / Double(count)
+        let squares: Double = envelope.reduce(0) { (sum: Double, value: Double) -> Double in
+            sum + (value - mean) * (value - mean)
+        }
+        let deviation: Double = (squares / Double(count - 1)).squareRoot()
+        let divisor: Double = Double(Float(deviation)) + float32Tiny
+        let normalized = envelope.map { (value: Double) -> Double in Double(Float(value / divisor)) }
         let span = Int(framesPerBeat)
-        let window = (-span ... span).map { exp(-0.5 * pow(Double($0) * 32 / framesPerBeat, 2)) }
+        let window = (-span ... span).map { (offset: Int) -> Double in
+            exp(-0.5 * pow(Double(offset) * 32 / framesPerBeat, 2))
+        }
         let width = window.count
         var local = [Double](repeating: 0, count: count)
         for i in 0 ..< count {
@@ -406,9 +434,17 @@ public enum NFKMLXWanDancerMusic {
             isPeak[i] = cumulative[i] > cumulative[i - 1] && cumulative[i] >= cumulative[i + 1]
         }
         if count > 1 { isPeak[count - 1] = cumulative[count - 1] > cumulative[count - 2] }
-        let peakScores = (0 ..< count).filter { isPeak[$0] }.map { cumulative[$0] }.sorted()
-        let median = peakScores.isEmpty ? 0 : (peakScores.count % 2 == 1 ? peakScores[peakScores.count / 2]
-            : (peakScores[peakScores.count / 2 - 1] + peakScores[peakScores.count / 2]) / 2)
+        let peakScores: [Double] = (0 ..< count).filter { (i: Int) -> Bool in isPeak[i] }
+            .map { (i: Int) -> Double in cumulative[i] }.sorted()
+        let middle = peakScores.count / 2
+        let median: Double
+        if peakScores.isEmpty {
+            median = 0
+        } else if peakScores.count % 2 == 1 {
+            median = peakScores[middle]
+        } else {
+            median = (peakScores[middle - 1] + peakScores[middle]) / 2
+        }
         let cut = 0.5 * median
         var tail = count - 1
         var n = count - 1
@@ -425,8 +461,8 @@ public enum NFKMLXWanDancerMusic {
             beats[n] = true
             n = backlink[n]
         }
-        let beatScores = (0 ..< count).filter { beats[$0] }.map { local[$0] }
-        let hann = (0 ..< 5).map { 0.5 - 0.5 * cos(2 * Double.pi * Double($0) / 4) }
+        let beatScores = (0 ..< count).filter { (i: Int) -> Bool in beats[i] }.map { (i: Int) -> Double in local[i] }
+        let hann = (0 ..< 5).map { (n: Int) -> Double in 0.5 - 0.5 * cos(2 * Double.pi * Double(n) / 4) }
         var smoothed = [Double]()
         for i in 0 ..< Swift.min(beatScores.count + 2, count) {
             var sum = 0.0
@@ -436,7 +472,8 @@ public enum NFKMLXWanDancerMusic {
             }
             smoothed.append(sum)
         }
-        let rms = smoothed.isEmpty ? 0 : (smoothed.reduce(0) { $0 + $1 * $1 } / Double(smoothed.count)).squareRoot()
+        let energy: Double = smoothed.reduce(0) { (sum: Double, value: Double) -> Double in sum + value * value }
+        let rms: Double = smoothed.isEmpty ? 0 : (energy / Double(smoothed.count)).squareRoot()
         let floor = 0.5 * rms
         n = 0
         while n < count && local[n] <= floor {
@@ -448,7 +485,7 @@ public enum NFKMLXWanDancerMusic {
             beats[n] = false
             n -= 1
         }
-        return (0 ..< count).filter { beats[$0] }
+        return (0 ..< count).filter { (i: Int) -> Bool in beats[i] }
     }
 
     // MARK: - Chroma
@@ -468,22 +505,26 @@ public enum NFKMLXWanDancerMusic {
             for t in 0 ..< frames { chroma[t][pitchClass] += row[t] }
         }
         let steps = [0.4, 0.2, 0.1, 0.05]
-        let quantized = chroma.map { column -> [Double] in
-            let values = column.map { Double(Float($0)) }
-            let total = values.reduce(0) { $0 + Swift.abs($1) }
-            let length = total < float32Tiny ? 1 : total
-            return values.map { value in
-                let normalized = Double(Float(value / length))
-                return steps.reduce(0.0) { $0 + (normalized > $1 ? 0.25 : 0) }
+        let quantized = chroma.map { (column: [Double]) -> [Double] in
+            let values = column.map { (value: Double) -> Double in Double(Float(value)) }
+            let total: Double = values.reduce(0) { (sum: Double, value: Double) -> Double in sum + Swift.abs(value) }
+            let length: Double = total < float32Tiny ? 1 : total
+            return values.map { (value: Double) -> Double in
+                let normalized: Double = Double(Float(value / length))
+                return steps.reduce(0.0) { (sum: Double, step: Double) -> Double in
+                    sum + (normalized > step ? 0.25 : 0)
+                }
             }
         }
         let smoothing = 41 + 2
-        var window = (0 ..< smoothing).map { 0.5 - 0.5 * cos(2 * Double.pi * Double($0) / Double(smoothing - 1)) }
+        var window = (0 ..< smoothing).map { (n: Int) -> Double in
+            0.5 - 0.5 * cos(2 * Double.pi * Double(n) / Double(smoothing - 1))
+        }
         let windowSum = window.reduce(0, +)
-        window = window.map { $0 / windowSum }
+        window = window.map { (weight: Double) -> Double in weight / windowSum }
         let center = smoothing / 2
-        return (0 ..< frames).map { t -> [Double] in
-            let smoothed = (0 ..< 12).map { c -> Double in
+        return (0 ..< frames).map { (t: Int) -> [Double] in
+            let smoothed = (0 ..< 12).map { (c: Int) -> Double in
                 var sum = 0.0
                 for k in 0 ..< smoothing {
                     let source = t + center - k
@@ -491,9 +532,10 @@ public enum NFKMLXWanDancerMusic {
                 }
                 return Double(Float(sum))
             }
-            let length = smoothed.reduce(0) { $0 + $1 * $1 }.squareRoot()
-            let divisor = length < float32Tiny ? 1 : length
-            return smoothed.map { Double(Float($0 / divisor)) }
+            let length: Double = smoothed.reduce(0) { (sum: Double, value: Double) -> Double in sum + value * value }
+                .squareRoot()
+            let divisor: Double = length < float32Tiny ? 1 : length
+            return smoothed.map { (value: Double) -> Double in Double(Float(value / divisor)) }
         }
     }
 
@@ -504,8 +546,8 @@ public enum NFKMLXWanDancerMusic {
         let bins = fftSize / 2 + 1
         var pitches = [Float](), strengths = [Float]()
         for frame in magnitudes {
-            let reference = 0.1 * (frame.max() ?? 0)
-            let gated = frame.map { $0 > reference ? $0 : 0 }
+            let reference: Double = 0.1 * (frame.max() ?? 0)
+            let gated = frame.map { (value: Double) -> Double in value > reference ? value : 0 }
             for bin in 1 ..< bins - 1 {
                 let frequency = rate * Double(bin) / Double(fftSize)
                 guard frequency >= 150, frequency < Swift.min(4000, rate / 2) else { continue }
@@ -518,19 +560,25 @@ public enum NFKMLXWanDancerMusic {
                 strengths.append(Float(frame[bin] + Double(Float(0.5 * gradient * shift))))
             }
         }
-        let positive = zip(pitches, strengths).filter { $0.0 > 0 }
+        let positive = zip(pitches, strengths).filter { (pair: (Float, Float)) -> Bool in pair.0 > 0 }
         guard !positive.isEmpty else { return 0 }
-        let sorted = positive.map { $0.1 }.sorted()
-        let median = sorted.count % 2 == 1 ? sorted[sorted.count / 2]
-            : (sorted[sorted.count / 2 - 1] + sorted[sorted.count / 2]) / 2
-        let selected = positive.filter { $0.1 >= median }.map { $0.0 }
+        let sorted: [Float] = positive.map { (pair: (Float, Float)) -> Float in pair.1 }.sorted()
+        let middle = sorted.count / 2
+        let median: Float
+        if sorted.count % 2 == 1 {
+            median = sorted[middle]
+        } else {
+            median = (sorted[middle - 1] + sorted[middle]) / 2
+        }
+        let selected = positive.filter { (pair: (Float, Float)) -> Bool in pair.1 >= median }
+            .map { (pair: (Float, Float)) -> Float in pair.0 }
         return pitchTuning(selected, binsPerOctave: binsPerOctave)
     }
 
     /// librosa's `pitch_tuning(resolution: 0.01)`: the left edge of the fullest of 100 histogram bins of
     /// the frequencies' deviations from the grid, computed in float32 as librosa computes them.
     static func pitchTuning(_ frequencies: [Float], binsPerOctave: Int) -> Double {
-        let edges = (0 ... 100).map { Double($0) * 0.01 + -0.5 }
+        let edges = (0 ... 100).map { (index: Int) -> Double in Double(index) * 0.01 + -0.5 }
         var counts = [Int](repeating: 0, count: 100)
         for frequency in frequencies where frequency > 0 {
             var residual = Float(binsPerOctave) * log2(frequency / Float(440.0 / 16))
@@ -555,10 +603,12 @@ public enum NFKMLXWanDancerMusic {
                           tuning: Double) -> [[Double]] {
         let minimum = 440 * pow(2, (24.0 - 69) / 12) * pow(2, tuning / Double(binsPerOctave))
         let octaves = (bins + binsPerOctave - 1) / binsPerOctave
-        let ratios = (0 ..< binsPerOctave).map { pow(2, Double($0) / Double(binsPerOctave)) }
-        let frequencies = (0 ..< bins).map { minimum * pow(2, Double($0 / binsPerOctave)) * ratios[$0 % binsPerOctave] }
-        let logs = frequencies.map { log2($0) }
-        let alpha = (0 ..< bins).map { index -> Double in
+        let ratios = (0 ..< binsPerOctave).map { (n: Int) -> Double in pow(2, Double(n) / Double(binsPerOctave)) }
+        let frequencies = (0 ..< bins).map { (index: Int) -> Double in
+            minimum * pow(2, Double(index / binsPerOctave)) * ratios[index % binsPerOctave]
+        }
+        let logs = frequencies.map { (frequency: Double) -> Double in log2(frequency) }
+        let alpha = (0 ..< bins).map { (index: Int) -> Double in
             let bandsPerOctave: Double
             if index == 0 {
                 bandsPerOctave = 1 / (logs[1] - logs[0])
@@ -567,10 +617,12 @@ public enum NFKMLXWanDancerMusic {
             } else {
                 bandsPerOctave = 2 / (logs[index + 1] - logs[index - 1])
             }
-            let ratio = pow(2, 2 / bandsPerOctave)
+            let ratio: Double = pow(2, 2 / bandsPerOctave)
             return (ratio - 1) / (ratio + 1)
         }
-        func lengths(rate: Double) -> [Double] { (0 ..< bins).map { 1 / alpha[$0] * rate / frequencies[$0] } }
+        func lengths(rate: Double) -> [Double] {
+            (0 ..< bins).map { (index: Int) -> Double in 1 / alpha[index] * rate / frequencies[index] }
+        }
         var signal = samples, octaveRate = rate, octaveHop = hop
         var responses = [[[Double]]]()
         for octave in 0 ..< octaves {
@@ -588,14 +640,16 @@ public enum NFKMLXWanDancerMusic {
                 signal = resampled(signal, from: 2, to: 1, scale: true)
             }
         }
-        let frames = responses.map { $0.first?.count ?? 0 }.min() ?? 0
+        let frames = responses.map { (response: [[Double]]) -> Int in response.first?.count ?? 0 }.min() ?? 0
         let fullLengths = lengths(rate: rate)
         var output = [[Double]](repeating: [], count: bins)
         for (octave, response) in responses.enumerated() {
             let upper = bins - binsPerOctave * octave
             for (row, index) in (Swift.max(0, upper - binsPerOctave) ..< upper).enumerated() {
                 let scale = fullLengths[index].squareRoot()
-                output[index] = response[row][0 ..< frames].map { Double(Float($0 / scale)) }
+                output[index] = response[row][0 ..< frames].map { (value: Double) -> Double in
+                    Double(Float(value / scale))
+                }
             }
         }
         return output
@@ -613,7 +667,7 @@ public enum NFKMLXWanDancerMusic {
     static func waveletBasis(frequencies: [Double], lengths: [Double], rate: Double) -> (rows: [SparseRow], fftSize: Int) {
         var size = 1
         while Double(size) < (lengths.max() ?? 1) { size *= 2 }
-        let rows = zip(frequencies, lengths).map { frequency, length -> SparseRow in
+        let rows = zip(frequencies, lengths).map { (frequency: Double, length: Double) -> SparseRow in
             let start = Int((-length / 2).rounded(.down)), end = Int((length / 2).rounded(.down))
             let count = end - start
             let hann = periodicHann(count)
@@ -623,17 +677,23 @@ public enum NFKMLXWanDancerMusic {
                 re.append(cos(phase) * hann[i])
                 im.append(sin(phase) * hann[i])
             }
-            let norm = zip(re, im).reduce(0) { $0 + ($1.0 * $1.0 + $1.1 * $1.1).squareRoot() }
+            let norm: Double = zip(re, im).reduce(0) { (sum: Double, pair: (Double, Double)) -> Double in
+                sum + (pair.0 * pair.0 + pair.1 * pair.1).squareRoot()
+            }
             let offset = (size - count) / 2
             var paddedRe = [Double](repeating: 0, count: size), paddedIm = [Double](repeating: 0, count: size)
             for i in 0 ..< count {
                 paddedRe[offset + i] = Double(Float(re[i] / norm)) * (length / Double(size))
                 paddedIm[offset + i] = Double(Float(im[i] / norm)) * (length / Double(size))
             }
-            let spectrum = NFKMLXRealFFT.complexForward(re: paddedRe.map { Double(Float($0)) },
-                                                        im: paddedIm.map { Double(Float($0)) })
+            let storedRe = paddedRe.map { (value: Double) -> Double in Double(Float(value)) }
+            let storedIm = paddedIm.map { (value: Double) -> Double in Double(Float(value)) }
+            let spectrum = NFKMLXRealFFT.complexForward(re: storedRe, im: storedIm)
             let kept = size / 2 + 1
-            let magnitudes = (0 ..< kept).map { (spectrum.re[$0] * spectrum.re[$0] + spectrum.im[$0] * spectrum.im[$0]).squareRoot() }
+            let magnitudes = (0 ..< kept).map { (i: Int) -> Double in
+                let re: Double = spectrum.re[i], im: Double = spectrum.im[i]
+                return (re * re + im * im).squareRoot()
+            }
             let total = magnitudes.reduce(0, +)
             let sortedMagnitudes = magnitudes.sorted()
             var cumulative = 0.0, cutoffIndex = 0
@@ -662,7 +722,10 @@ public enum NFKMLXWanDancerMusic {
         let frames = centeredFrames(signal, fftSize: fftSize, hop: hop)
         var output = [[Double]](repeating: [Double](repeating: 0, count: frames.count), count: basis.count)
         for (t, frame) in frames.enumerated() {
-            let spectrum = NFKMLXRealFFT.forward(frame).map { (re: Double(Float($0.re)), im: Double(Float($0.im))) }
+            typealias Bin = (re: Double, im: Double)
+            let spectrum = NFKMLXRealFFT.forward(frame).map { (bin: Bin) -> Bin in
+                (re: Double(Float(bin.re)), im: Double(Float(bin.im)))
+            }
             for (r, row) in basis.enumerated() {
                 var re = 0.0, im = 0.0
                 for (k, index) in row.indices.enumerated() {
@@ -721,7 +784,7 @@ enum NFKMLXRealFFT {
     /// The non-negative frequencies `[n / 2 + 1]` of a real signal's transform.
     static func forward(_ x: [Double]) -> [(re: Double, im: Double)] {
         let result = complexForward(re: x, im: [Double](repeating: 0, count: x.count))
-        return (0 ... x.count / 2).map { (re: result.re[$0], im: result.im[$0]) }
+        return (0 ... x.count / 2).map { (k: Int) -> (re: Double, im: Double) in (re: result.re[k], im: result.im[k]) }
     }
 
     /// The real signal of length `count` whose non-negative frequencies are `spectrum`.
