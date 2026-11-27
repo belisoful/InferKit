@@ -203,9 +203,18 @@ public enum NFKMLXWanDancerMusic {
     /// The mel power spectrogram `[frames][bands]`, stored as float32.
     static func melSpectrogram(_ power: [[Double]], rate: Double, fftSize: Int, bands: Int) -> [[Double]] {
         let bank = melFilterbank(rate: rate, fftSize: fftSize, bands: bands)
-        return power.map { frame in
-            bank.map { filter in Double(Float(zip(filter, frame).reduce(0) { $0 + $1.0 * $1.1 })) }
+        return power.map { (frame: [Double]) -> [Double] in
+            bank.map { (filter: [Double]) -> Double in dotProduct(filter, frame) }
         }
+    }
+
+    /// `Σ a[i]·b[i]`, summed left to right in double precision and stored as float32.
+    static func dotProduct(_ a: [Double], _ b: [Double]) -> Double {
+        var sum = 0.0
+        for (x, y) in zip(a, b) {
+            sum += x * y
+        }
+        return Double(Float(sum))
     }
 
     /// librosa's `power_to_db(S)`: `10 log10(max(S, 1e-10))`, floored 80 dB below the loudest value,
@@ -219,14 +228,15 @@ public enum NFKMLXWanDancerMusic {
     /// The first `count` coefficients of SciPy's orthonormal DCT-II over the mel bands, per frame.
     static func cepstrum(_ decibels: [[Double]], count: Int) -> [[Double]] {
         guard let bands = decibels.first?.count else { return [] }
-        let basis = (0 ..< count).map { k in
-            (0 ..< bands).map { n in
-                2 * cos(Double.pi * Double(k) * Double(2 * n + 1) / Double(2 * bands))
-                    * (k == 0 ? (1 / Double(4 * bands)).squareRoot() : (1 / Double(2 * bands)).squareRoot())
+        let basis = (0 ..< count).map { (k: Int) -> [Double] in
+            let scale: Double = k == 0 ? (1 / Double(4 * bands)).squareRoot() : (1 / Double(2 * bands)).squareRoot()
+            return (0 ..< bands).map { (n: Int) -> Double in
+                let angle: Double = Double.pi * Double(k) * Double(2 * n + 1) / Double(2 * bands)
+                return 2 * cos(angle) * scale
             }
         }
-        return decibels.map { frame in
-            basis.map { row in Double(Float(zip(row, frame).reduce(0) { $0 + $1.0 * $1.1 })) }
+        return decibels.map { (frame: [Double]) -> [Double] in
+            basis.map { (row: [Double]) -> Double in dotProduct(row, frame) }
         }
     }
 
