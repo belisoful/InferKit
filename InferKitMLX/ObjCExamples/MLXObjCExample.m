@@ -1953,6 +1953,38 @@
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:NFKMLXWanS2VGenerator.modelName]);
 }
 
+- (void)testObjectiveCReachesWanDancer
+{
+	for (NSString *selector in @[ @"generatorWithDirectoryURL:error:", @"generatorWithDirectoryURL:residency:error:",
+								  @"generatorWithDirectoryURL:residency:precision:quantizationBits:error:",
+								  @"generatorWithDirectoryURL:precision:error:",
+								  @"generatorWithRepo:revision:cacheDirectoryURL:residency:error:",
+								  @"generatorWithRepo:revision:cacheDirectoryURL:residency:completionHandler:",
+								  @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:",
+								  @"backendWithDirectoryURL:residency:precision:quantizationBits:error:",
+								  @"backendWithRepo:revision:cacheDirectoryURL:residency:error:",
+								  @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:",
+								  @"register" ]) {
+		XCTAssertTrue([NFKMLXWanDancerGenerator respondsToSelector:NSSelectorFromString(selector)], @"+%@", selector);
+	}
+	for (NSString *selector in @[ @"inferenceBackend",
+								  @"framesForPrompt:localPrompt:negativePrompt:referenceImage:music:sampleRate:seed:error:",
+								  @"setGlobalSteps:", @"setLocalSteps:", @"setGuidance:", @"setShift:", @"setWidth:", @"setHeight:",
+								  @"setSkipsBlock:", @"streamedLayerCount", @"quantizationBits", @"holdsStagesResident",
+								  @"addAdapterAtURL:scale:global:error:", @"removeAdapters", @"adapterCount" ]) {
+		XCTAssertTrue([NFKMLXWanDancerGenerator instancesRespondToSelector:NSSelectorFromString(selector)], @"-%@", selector);
+	}
+	XCTAssertEqualObjects(NFKMLXVideoInputKey.localPrompt, @"NFKMLXInputLocalPrompt");
+	XCTAssertEqualObjects(NFKMLXGenerationParameterKey.keyframeSteps, @"NFKMLXParameterKeyframeSteps");
+	XCTAssertEqual(NFKMLXWanDancerGenerator.framesPerClip, 149);
+	NSError *error = nil;
+	XCTAssertNil([NFKMLXWanDancerGenerator generatorWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent-wan-dancer"]
+														   residency:NFKMLXResidencyAutomatic error:&error]);
+	XCTAssertNotNil(error);
+	[NFKMLXReferenceModels registerAll];
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:NFKMLXWanDancerGenerator.modelName]);
+}
+
 // LTX-2: each release by its variant, the registry name and the repository its download factories read.
 - (void)testLTX2VariantsNameTheirReleases
 {

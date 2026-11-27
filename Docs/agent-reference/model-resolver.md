@@ -260,6 +260,9 @@ The loaders below read one release, or a model type no judge can tell apart, and
 - Wan 2.2 S2V-14B (`NFKMLXWanS2VGenerator`). Its root `config.json` states `model_type` `s2v` under the original
   Wan code's `WanModel_S2V` keys, which no other loader reads, and its umT5 and autoencoder are pickles (`.pth`)
   that the judgment's safetensors header reading cannot size or list. The loader is tied to the one release.
+- Wan-Dancer-14B (`NFKMLXWanDancerGenerator`). Its root `config.json` states `model_type` `i2v` for two
+  transformers (`global_model.safetensors`, `local_model.safetensors`) whose Dancer modules no other loader reads,
+  and its umT5, autoencoder, and CLIP are pickles (`.pth`). The loader is tied to the one release.
 
 `testEveryStoredReleaseIsReadByItsOwnFamilysJudgment` judges each shipped release whose directory the
 validation store holds with safetensors weights against its own entry: the Qwen3 sizes, gpt-oss,

@@ -636,6 +636,15 @@ The figures have three limits:
 - ``NFKMLXWanS2VNet``
 - ``NFKMLXWanS2VConfiguration``
 - ``NFKMLXWanS2VTrainingExample``
+- ``NFKMLXWanDancerGenerator``
+- ``NFKMLXWanDancerNet``
+- ``NFKMLXWanDancerConfiguration``
+- ``NFKMLXWanDancerInputs``
+- ``NFKMLXWanDancerClip``
+- ``NFKMLXWanDancerMusic``
+- ``NFKMLXWanDancerPicture``
+- ``NFKMLXWanDancerKeyframeVideo``
+- ``NFKMLXWanDancerTrainingExample``
 - ``NFKMLXQwenImageGenerator``
 - ``NFKMLXQwenImage``
 - ``NFKMLXQwenImageNet``

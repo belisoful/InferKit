@@ -3791,6 +3791,23 @@
       "note": "Wan2.2-S2V-14B in the original Wan layout (Apache-2.0, @dab4e9c5): only the small files are fetched; the transformer is held by shape under shapes/wan22-s2v-14b. The end-to-end parity runs on a test-dev release, the release's own layout, names and stored types at a small geometry with seeded random weights: Tools/wan-s2v-testdev/make_testdev.py --release <this directory> --out <dir> (with IK_WAN22_SRC set) -> IK_VAL_WAN22_S2V_TESTDEV. Record: run_reference.py wan_s2v_pipeline --checkpoint <test-dev dir> -> IK_PARITY_WAN22_S2V_PIPELINE, under the wans2v oracle env with IK_WAN22_SRC set."
     },
     {
+      "key": "WAN_DANCER",
+      "repo": "Wan-AI/Wan-Dancer-14B",
+      "directory": "../InferKit/Wan-Dancer-14B",
+      "files": [
+        "config.json",
+        "configuration.json",
+        "google/umt5-xxl/spiece.model",
+        "google/umt5-xxl/tokenizer.json",
+        "google/umt5-xxl/tokenizer_config.json",
+        "google/umt5-xxl/special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_WAN_DANCER_FILES": ""
+      },
+      "note": "Wan-Dancer-14B (Apache-2.0, @85ce88dd): only the small files are fetched; the two transformers are held by shape under shapes/wan-dancer-14b-global and -local. The end-to-end parity runs on a test-dev release, the release's own file names, key names and stored types at a small geometry with seeded random weights: Tools/wan-dancer-testdev/make_testdev.py --release <this directory> --out <dir> (with IK_WAN_DANCER_SRC set) -> IK_VAL_WAN_DANCER_TESTDEV. Record: run_reference.py wan_dancer_pipeline --checkpoint <test-dev dir> -> IK_PARITY_WAN_DANCER_PIPELINE, under the wandancer oracle env with IK_WAN_DANCER_SRC set."
+    },
+    {
       "key": "QWEN_IMAGE",
       "repo": "Qwen/Qwen-Image-2.1",
       "directory": "qwen-image-2.1",
@@ -6622,6 +6639,16 @@
         "wan_s2v_pipeline"
       ]
     },
+    "wandancer": {
+      "path": "wandancervenv",
+      "create": "/opt/homebrew/opt/python@3.12/bin/python3.12 -m venv ~/.inferkit-validation/wandancervenv && ~/.inferkit-validation/wandancervenv/bin/pip install torch==2.6.0 torchvision==0.21.0 transformers==4.46.2 diffusers==0.34.0 librosa==0.10.2.post1 numpy==1.26.4 einops safetensors sentencepiece protobuf ftfy loguru imageio 'imageio[ffmpeg]' moviepy modelscope accelerate pandas soundfile opencv-python-headless peft==0.21.2",
+      "note": "Wan-Video/Wan-Dancer at e6c87a9 (IK_WAN_DANCER_SRC), its README's pins (torch 2.6, torchvision 0.21, transformers 4.46.2, diffusers 0.34) and librosa 0.10.2, the last librosa with the `librosa.beat.tempo` its music features call (librosa 1.0 removed it). Tools/wan-dancer-testdev/dancer_shims.py answers the sequence-parallel imports (xfuser, yunchang) as rank 0 of a world of one, builds the music encoder's attention on the host, and reads the music encoder in the eight spans the released eight-way sequence parallelism reads; the oracles run the scripts' sequence-parallel path, the only one on which model_fn_wan_video reads the world size.",
+      "modes": [
+        "wan_dancer_music",
+        "wan_dancer_planning",
+        "wan_dancer_pipeline"
+      ]
+    },
     "wananimate": {
       "path": "wananimatevenv",
       "create": "/opt/homebrew/bin/python3.12 -m venv ~/.inferkit-validation/wananimatevenv && ~/.inferkit-validation/wananimatevenv/bin/pip install 'diffusers>=0.40' 'transformers>=4.57' torch safetensors accelerate scipy",
@@ -6944,7 +6971,8 @@
         "wan_vace_fun_lora_diffsynth",
         "wan_lora_diffsynth",
         "wan_lora_diffsynth_experts",
-        "wan_animate_lora_diffsynth"
+        "wan_animate_lora_diffsynth",
+        "wan_dancer_lora_diffsynth"
       ]
     },
     "wantrain_musubi": {
@@ -6999,6 +7027,11 @@
       "repo": "Wan-AI/Wan2.2-S2V-14B",
       "directory": "wan22-s2v-14b",
       "note": "The Wan 2.2 S2V-14B transformer in the original Wan layout (bf16): 1260 tensors. NFKMLXWanS2VTests.testTheReleasedTransformerMatchesItsLoader holds it to the module its config.json builds."
+    },
+    {
+      "repo": "Wan-AI/Wan-Dancer-14B",
+      "directory": "wan-dancer-14b-global",
+      "note": "The Wan-Dancer-14B transformers (bf16): 1424 tensors each (wan-dancer-14b-global and -local, read from global_model.safetensors and local_model.safetensors). NFKMLXWanDancerTests.testBothReleasedTransformersMatchTheLoader holds each to the module its config.json builds."
     },
     {
       "repo": "alibaba-pai/Wan2.2-Fun-5B-InP",
@@ -8232,6 +8265,24 @@
       "record": "reference/wan-s2v-lora-diffsynth.safetensors",
       "environment": "wantrain_diffsynth",
       "command": "wan_s2v_lora_diffsynth --checkpoint $IK_VAL_WAN22_S2V_TESTDEV (DiffSynth's FlowMatchSFTLoss over model_fn_wan_video, which hands the audio_embeds call to model_fn_wans2v, on its own WanS2VModel over the test-dev weights under its q,k,v,o,ffn.0,ffn.2 LoRA at rank 4, alpha 8: the first frame kept clean as the reference, one segment of audio buckets, the blank motion clip dropped, a pose latent; the draws, the prediction, the loss, and each adapter's initialization and gradient under the release's names)"
+    },
+    {
+      "key": "IK_PARITY_WAN_DANCER_LORA_DIFFSYNTH",
+      "record": "reference/wan-dancer-lora-diffsynth.safetensors",
+      "environment": "wantrain_diffsynth",
+      "command": "wan_dancer_lora_diffsynth --checkpoint $IK_VAL_WAN_DANCER_TESTDEV (DiffSynth's FlowMatchSFTLoss over its own WanToDance model_fn_wan_video on its own WanModel over each stage's test-dev weights under its q,k,v,o,ffn.0,ffn.2 LoRA at rank 4, alpha 8, in eval mode and without sequence parallelism: the local model at 30 fps and the global model at 7.5 fps, each with a random latent, keyframe condition, CLIP features, music, and prompt; the draws, the prediction, the loss, and each adapter's initialization and gradient under the release's names)"
+    },
+    {
+      "key": "IK_PARITY_WAN_DANCER_MUSIC",
+      "record": "reference/wan-dancer-music.safetensors",
+      "environment": "wandancer",
+      "command": "wan_dancer_music (get_music_base_feature's librosa 0.10.2 calls on a synthesized 20 s 15360 Hz clip: every seam with the constant-Q decimation through polyphase, and the features through librosa's own soxr path)"
+    },
+    {
+      "key": "IK_PARITY_WAN_DANCER_PLANNING",
+      "record": "reference/wan-dancer-planning.safetensors",
+      "environment": "wandancer",
+      "command": "wan_dancer_planning (gen_video_local.py's process_global_video_firstlastframe masks for six track lengths over a 38-frame global video, and get_music_clip_149f's clips of three synthesized tracks with moviepy's container duration)"
     },
     {
       "key": "IK_PARITY_WAN22_VACE_FUN_LORA_DIFFSYNTH",

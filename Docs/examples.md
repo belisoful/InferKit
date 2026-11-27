@@ -3872,6 +3872,42 @@ try NFKMLXWanS2VGenerator.saveAdapters(of: s2vNet, to: s2vLoRAURL)
 try s2v.addAdapter(at: s2vLoRAURL, scale: 1)  // Objective-C: addAdapterAtURL:scale:error:
 ```
 
+### Wan-Dancer (`NFKMLXWanDancerGenerator`)
+
+Wan-Dancer-14B films the dancer in a reference image dancing to a music track, as long as the track. A global stage
+plans keyframes over the whole track at a reduced frame rate, then a local stage renders it at 30 frames a second
+in 149-frame segments keyed by them. The generator reads Wan-AI's own release directory:
+
+```swift
+let dancer = try NFKMLXWanDancerGenerator.generator(directoryURL: dancerRelease, residency: .automatic)
+let picture = NFKMLXWanDancerPicture(rgb: dancerPixels, width: 720, height: 1280)   // 8-bit RGB
+let dance = try dancer.video(prompt: kPopStylePrompt, reference: picture, music: musicSamples,
+                             sampleRate: 44_100, seed: 0)   // [frames, H, W, 3] in 0...1 at 30 fps
+let keyframes = try dancer.keyframeVideo(prompt: kPopStylePrompt, reference: picture, music: musicSamples,
+                                         sampleRate: 44_100, seed: 0)   // the global stage alone
+let backend = dancer.inferenceBackend()   // NFKInputImage, NFKInputAudio in, NFKOutputVideo out
+```
+
+The defaults are the released scripts': 720 × 1280 clips, 48 keyframe and 24 local steps of DiffSynth-Studio's
+flow match at shift 5, and guidance 5 whose unconditional pass skips block 9. The release is 85 GB; a staged load
+holds umT5 and each transformer one at a time, and `generator(directoryURL:residency:precision:quantizationBits:)`
+packs the transformers. The music features (`NFKMLXWanDancerMusic.features(samples:sampleRate:)`) port librosa's,
+and the sampler is at reference parity against Wan-Video/Wan-Dancer's own pipeline over a small random release in
+the released layout.
+
+Either transformer trains with LoRA as DiffSynth-Studio's Wan-Dancer scripts train it, on examples the generator builds from a clip,
+its keyframes, and its music:
+
+```swift
+let dancerClip = NFKMLXWanDancerClip(keyframes: clipKeyframes, keyframeMask: keyframeMask, reference: referenceImage,
+                                     music: NFKMLXWanDancerMusic.features(samples: clipMusic, sampleRate: 44_100), fps: 30)
+let dancerExample = try dancer.trainingExample(video: clipFrames, prompt: caption + ", 帧率是30fps。", clip: dancerClip)
+let dancerNet = try NFKMLXWanDancerGenerator.network(directoryURL: dancerRelease, stage: "local")
+try NFKMLXWanDancerGenerator.fineTune(dancerNet, examples: { _ in [dancerExample] }, steps: 1_000)
+try NFKMLXWanDancerGenerator.saveAdapters(of: dancerNet, to: dancerLoRAURL)
+try dancer.addAdapter(at: dancerLoRAURL, scale: 1, global: false)  // Objective-C: addAdapterAtURL:scale:global:error:
+```
+
 ### V-JEPA 2 video features (`NFKMLXVJEPA2`)
 
 V-JEPA 2 is a self-supervised video encoder: a clip (or a single image) becomes a mean-pooled feature

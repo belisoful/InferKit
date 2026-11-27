@@ -535,6 +535,92 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `testS2VTrainsSavesAndReloadsThroughItsFactory` trains on an example the generator builds, saves in DiffSynth's
   layout (the release's names, `.default`, the scale in the up projection), merges back into a fresh network from
   the factory (`NFKMLXWanLoRA.merge(adapterURL:into:)`, 28 layers), and loads through `addAdapter(at:scale:)`.
+- `NFKMLXWanDancerGenerator` (`@objc`) — Wan-Dancer-14B (`Wan-AI/Wan-Dancer-14B` @85ce88dd, Apache-2.0),
+  music-to-dance: a reference image of a dancer dancing to a music track. Measured at reference parity against
+  Wan-Video/Wan-Dancer's own pipeline (e6c87a9, a DiffSynth-Studio fork). The release is the original layout beside
+  two transformers: umT5, `Wan2.1_VAE.pth`, open-clip's `models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth`
+  (float32, 4.8 GB, the vision tower read), and `global_model.safetensors` and `local_model.safetensors` (34.5 GB
+  each at bfloat16) under one `config.json`. The defaults are the released scripts': 720 × 1280 clips of 149 frames,
+  48 global and 24 local steps of DiffSynth-Studio's flow match at shift 5 (`sigma_min` 0, `extra_one_step`),
+  guidance 5 with the unconditional pass skipping block 9 (`enable_skip_layer`), and the scripts' negative prompt.
+  - **The two stages** follow `gen_video_global.py` and `gen_video_local.py`. The global stage plans one 149-frame
+    clip over the whole track at `30 / round(T / 149)` frames a second, the reference image its first keyframe, its
+    prompt ending `帧率是<fps:.4f>`, and decodes each latent frame alone (`enable_vae_decode_framewise`). The local
+    stage renders the track in 149-frame segments at 30 frames a second: each segment's keyframes are the global
+    frames `process_global_video_firstlastframe` names (`total / N` frames apart, the last segment's final frame,
+    each segment's last frame the next one's first), its music the segment's clip as `get_music_clip_149f` cuts it
+    (written and read as 16-bit PCM, `floor(x · 32768)` as libsndfile converts), its prompt ending `, 帧率是30fps。`,
+    its seed `10 · segment + seed`. The segments concatenate, trimmed to the track's container duration (to the
+    hundredth, as ffmpeg reports it) less 0.2 s. The scripts' MP4 round trip of the global video is not modeled.
+  - **The transformer** (`NFKMLXWanDancerNet`, `WanModel` with `dit_model_type=1`) is the Wan 2.1 I2V-14B block in
+    the fork's layout (its RMS norm rounds before the scale) over a context of the reference image's projected CLIP
+    tokens (`img_emb_refimage`), the first keyframe's (`img_emb`), and the text. The image-to-video cross-attention
+    splits that context at token 257, so the reference image feeds the image branch and the keyframe's tokens join
+    the text. The global stage reads its own patch embedding and head (`enable_unimodel`) and spreads its rotary
+    frames `30 / (fps + 1e-6)` apart by interpolating the complex128 rotary rows (`get_single_freqs`). The music
+    encoder (`music_projection`, two pre-norm `MusicEncoderLayer`s whose query and key inputs are rotated before
+    torch's `MultiheadAttention` projects them) reads the 35 features; its output is interpolated bilinearly to
+    149 × 4800 and then to eight tokens a latent frame at the model width. After each of the eight injected blocks,
+    each group of `h·w/8` tokens attends to one music token, so the injector adds that token's projected value.
+  - **The sequence-parallel path.** The released scripts run eight-way Ulysses sequence parallelism, and
+    `model_fn_wan_video` reads the world size only on that path. Each rank encodes its eighth of the music
+    features (truncated to a multiple of eight), which changes the encoder's result; `musicEncoderSpans` (8)
+    reproduces it. Every other split (the attention, the tokens, the music injection) computes what one process
+    computes.
+  - **The music front end** (`NFKMLXWanDancerMusic`) ports `get_music_base_feature` under librosa 0.10.2: the onset
+    envelope, 20 MFCCs, CENS chroma over a 252-bin constant-Q transform at the estimated tuning, the onset peaks,
+    and the dynamic-programming beats from a tempo prior read off a 22050 Hz load, all computed as though the
+    15360 Hz samples were at 22050 Hz, as the reference computes them. librosa resamples with soxr; this resamples
+    with SciPy's `resample_poly`. Music at 15360 Hz loads without a resample; the chroma differs by the octave
+    decimation alone. Against librosa with the polyphase decimation: mel 1.0000000000001592, envelope
+    0.9999999999999877, MFCC 0.9999999999999947, CQT 0.9999999999999410, chroma 1.0000000000000000, the tuning
+    equal, and every onset and beat exact (40 and 19). Against librosa's own soxr path: chroma 0.9999923753114697,
+    every other feature as above. Measured on the reference's own tracks, replacing soxr in the load as well costs
+    the MFCCs 0.9988 to 0.9995 and up to 2 onsets and 2 beats.
+  - **Measured on a test-dev release** (`Tools/wan-dancer-testdev/make_testdev.py`): the release's `config.json` at 48
+    wide over 2 heads and 28 blocks (so every injector and block 9 exist), ffn 96, text 32; umT5 at 32 wide over the
+    released vocabulary; the Wan 2.1 autoencoder at its released width; CLIP's vision tower at its released width
+    over 3 blocks. `run_reference.py wan_dancer_pipeline` (the `wandancer` env, `dancer_oracles.pipeline`) runs the
+    fork's `WanVideoPipeline.__call__` unchanged, one global and one local call at 3 steps, 17 frames, 256 × 448,
+    on the sequence-parallel path in a world of one. Results, global then local:
+    - prompt features 0.9999999999998900 and 0.9999999999998799;
+    - keyframe CLIP 0.9999999999954577 and 0.9999999999953713, reference CLIP 0.9999999999954577 in both;
+    - the keyframe condition 0.9999999999948832 and 0.9999999999954617;
+    - music tokens 0.9999999999999976 and 0.9999999999999941;
+    - the first step's two calls 0.9999999999998230 / 0.9999999999998480 and 0.9999999999997364 / 0.9999999999997790;
+    - the final latents 0.9999999999996806 and 0.9999999999996153;
+    - the decoded clip 0.9999999999687290 (frame by frame) and 0.9999999999652606 (in DiffSynth-Studio's tiles,
+      clamped after blending).
+
+    The local stage's planning is exact against the script's own functions (`run_reference.py wan_dancer_planning`):
+    the keyframe masks of six track lengths and the music clips of three tracks. Both released transformers are held
+    by shape (`testBothReleasedTransformersMatchTheLoader`, `IK_SHAPES_ROOT` `wan-dancer-14b-global` and `-local`):
+    1424 tensors each, none missing, unconsumed, or mismatched. The generator gives the reference's latents through
+    every residency (0.9999999999996153): a staged load and a streamed block compute exactly as held ones, and an
+    8-bit pack of each block's feed-forward output (32-wide groups, the widest the test-dev's 48 width admits)
+    holds 0.9999999999513278. No released-weight run: the release is 85 GB.
+  - Runtime: staged residency (umT5, then each transformer with the autoencoder, the CLIP tower one copy both
+    stages read). A streamed transformer reads the blocks the plan cannot hold from its release file on every pass,
+    and `quantizationBits` 2 to 8 packs the blocks' linear layers as each loads. Precision is `.checkpoint` or
+    `.float32`, and umT5 widens to float32 where the plan affords it. The music features reach the model at the
+    bfloat16 the scripts hand them over at. No key-value cache, draft, or streamed partial output; the backend
+    reports progress per request. The backend returns the video without the music.
+- Wan-Dancer LoRA fine-tuning (`NFKMLXWanDancerGenerator.fineTune`, `NFKMLXWanDancerTraining.swift`) —
+  DiffSynth-Studio's own Wan-Dancer recipe (1e8ae1d, `lora/Wan-Dancer-14B-local.sh` and `-global.sh`, its
+  `wantodance` modules in `wan_video_dit.py` and `model_fn_wan_video`): `NFKMLXWanTrainingPreset.diffSynth` at rank 32
+  and alpha 32 on `q,k,v,o,ffn.0,ffn.2`, which PEFT's name match takes to both attentions and the feed-forward of
+  every block and the music injectors' four projections, each stage on its own transformer file. Wan-Video's fork
+  publishes inference only. DiffSynth trains without sequence parallelism and in the eval mode `freeze_except`
+  leaves the transformer in, so its music encoder reads the whole track in one span and drops nothing; the example
+  (`trainingExample(video:prompt:clip:)`, the clip's latents with its keyframe condition, CLIP features, music, and
+  frame rate) sets `musicEncoderSpans` to 1. Measured (`run_reference.py wan_dancer_lora_diffsynth`, the
+  wantrain-diffsynth env, DiffSynth's own `WanModel` with its WanToDance modules over the test-dev weights under its
+  LoRA, `FlowMatchSFTLoss` over its `model_fn_wan_video`): the local stage's prediction 0.9999999999997966, loss
+  0.16400957 against 0.16400956, the lowest adapter gradient cosine 0.999999999999; the global stage's prediction
+  0.9999999999998244, loss 1.8738124 against 1.8738124, the lowest gradient cosine 0.999999999998; 312 adapters each
+  (28 blocks × 10, 8 injectors × 4).
+  `testTheTransformerTrainsSavesAndReloadsThroughItsFactory` trains on an example the generator builds, saves in
+  DiffSynth's layout, merges back into a fresh network (312 layers), and loads through `addAdapter(at:scale:global:)`.
 - `NFKMLXVJEPA2` (`@objc`) — V-JEPA 2 (`VJEPA2Model` and `VJEPA2ForVideoClassification`, Meta, MIT), a
   self-supervised video ViT that maps a clip to a per-token feature sequence for retrieval or as a video
   encoder for a vision-language model; the classification releases add an attentive pooler and a linear

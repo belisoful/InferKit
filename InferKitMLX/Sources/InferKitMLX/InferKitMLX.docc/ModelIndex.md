@@ -1053,6 +1053,7 @@ let backend = try NFKMLXStableAudioGenerator.backend(directoryURL: dir)
 | Wan 2.2 Fun (Control, InP, Control-Camera; 5B and A14B) | ``NFKMLXWanFunGenerator`` | ``NFKMLXWanTransformerNet`` | an original-layout release directory (`alibaba-pai/Wan2.2-Fun-5B-Control` and its five siblings); ``NFKMLXWanFunVariant`` | `wan2.2-fun-5b-control` · `-5b-inp` · `-5b-control-camera` · `wan2.2-fun-a14b-control` · `-a14b-inp` · `-a14b-control-camera`; `generator(directoryURL:residency:precision:quantizationBits:)` | ``NFKMLXGenerationBackend`` (`NFKInputPrompt` + `NFKInputVideo` or ``NFKMLXVideoInputKey/cameraTrajectory`` → `NFKOutputVideo`) |
 | Wan 2.2 VACE-Fun A14B | ``NFKMLXWanFunGenerator`` | ``NFKMLXWanTransformerNet`` | the original-layout release directory (`alibaba-pai/Wan2.2-VACE-Fun-A14B`); ``NFKMLXWanFunVariant/vaceA14B`` | `wan2.2-vace-fun-a14b`; `generator(directoryURL:residency:precision:quantizationBits:)` | ``NFKMLXGenerationBackend`` (`NFKInputPrompt` + `NFKInputVideo` and ``NFKMLXVideoInputKey/referenceImage`` → `NFKOutputVideo`) |
 | Wan 2.2 S2V 14B (speech to video) | ``NFKMLXWanS2VGenerator`` | ``NFKMLXWanS2VNet`` | the original-layout release directory (`Wan-AI/Wan2.2-S2V-14B`) | `wan2.2-s2v-14b`; `generator(directoryURL:residency:precision:quantizationBits:)` | ``NFKMLXGenerationBackend`` (`NFKInputPrompt` + `NFKInputImage` + `NFKInputAudio` → `NFKOutputVideo`) |
+| Wan-Dancer 14B (music to dance) | ``NFKMLXWanDancerGenerator`` | ``NFKMLXWanDancerNet`` | the release directory (`Wan-AI/Wan-Dancer-14B`) | `wan-dancer-14b`; `generator(directoryURL:residency:precision:quantizationBits:)` | ``NFKMLXGenerationBackend`` (`NFKInputPrompt` + `NFKInputImage` + `NFKInputAudio` → `NFKOutputVideo`) |
 | Stable Diffusion 3 / 3.5 | ``NFKMLXSD3Generator``, ``NFKMLXSD3Pipeline`` | ``NFKMLXSD3TransformerNet`` + ``NFKMLXSDAutoencoder`` + CLIP-L, CLIP-G and T5-XXL | `NFKMLXSD3Configuration`, the autoencoder configuration, and the flow shift, each read from the release | `sd3` · `sd3-medium` · `sd3.5-large` · `sd3.5-large-turbo` (4 steps, guidance 0); `backend(directoryURL:)`, `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
 | FLUX.1 (text-to-image) | ``NFKMLXFlux`` | ``NFKMLXFluxTextEncoder`` + ``NFKMLXFluxPipeline`` | read from the diffusers release directory | `flux.1-schnell`; `backend(directoryURL:)`, `flux(directoryURL:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
 | FLUX.1 (transformer + sampler) | ``NFKMLXFluxPipeline`` | ``NFKMLXFluxTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) | `NFKMLXFluxConfiguration.dev` / `.schnell`; `NFKMLXFlowMatchConfiguration.flux` / `.fluxSchnell`; text from CLIP-L (pooled) + T5-XXL | Swift API (`generate(promptEmbeds:pooled:…)`) | ``NFKMLXFlowMatchScheduler`` |
@@ -1144,6 +1145,12 @@ let backend = try NFKMLXWanS2VGenerator.backend(directoryURL: releaseDirectory)
 let s2v = try NFKMLXWanS2VGenerator.generator(directoryURL: releaseDirectory, residency: .automatic)
 let clip = try s2v.video(forPrompt: "a singer on a stage", referenceImage: portrait, audio: speechSamples)
 // Objective-C: [NFKMLXWanS2VGenerator backendWithDirectoryURL:dir error:&error]
+
+// Wan-Dancer (a dancer's image + music → a dance video; registered as wan-dancer-14b)
+let backend = try NFKMLXWanDancerGenerator.backend(directoryURL: releaseDirectory)
+let dancer = try NFKMLXWanDancerGenerator.generator(directoryURL: releaseDirectory, residency: .automatic)
+let dance = try dancer.video(prompt: stylePrompt, reference: picture, music: musicSamples, sampleRate: 44_100, seed: 0)
+// Objective-C: [NFKMLXWanDancerGenerator backendWithDirectoryURL:dir error:&error]
 
 // Qwen-Image 2.1 (text-to-image; registered as qwen-image-2.1)
 let backend = try NFKMLXQwenImageGenerator.backend(directoryURL: releaseDirectory)

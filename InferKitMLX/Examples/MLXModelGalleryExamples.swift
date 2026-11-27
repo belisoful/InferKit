@@ -1293,6 +1293,27 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(clip.shape, [5, 32, 32, 3], "the first segment drops its first three frames")
     }
 
+    // MARK: Music → dance video (Wan-Dancer)
+
+    func testMusicToDanceTransformer() throws {
+        try requireMLXRuntime()
+        // The released generator assembles from its release directory through
+        // NFKMLXWanDancerGenerator.generator(directoryURL:residency:), then video(prompt:…:reference:music:…) or
+        // inferenceBackend(). Here a tiny Wan-Dancer transformer predicts one velocity for a 2-frame latent from supplied
+        // text, CLIP features, a keyframe condition, and music features, at the global stage's reduced frame rate.
+        NFKMLXRandom.seed(17)
+        let net = NFKMLXWanDancerNet(NFKMLXWanDancerConfiguration(
+            dim: 48, inChannels: 36, outChannels: 16, heads: 2, layers: 10, ffnDim: 96, textDim: 10, imageDim: 32,
+            musicInjectLayers: [0, 9]))
+        let inputs = NFKMLXWanDancerInputs(condition: MLXRandom.normal([20, 2, 4, 8]),
+                                           keyframeFeatures: MLXRandom.normal([257, 32]),
+                                           referenceFeatures: MLXRandom.normal([257, 32]),
+                                           music: MLXRandom.normal([64, NFKMLXWanDancerMusic.featureCount]), fps: 7.5)
+        let velocity = net(MLXRandom.normal([16, 2, 4, 8]), text: MLXRandom.normal([512, 10]), t: 500, inputs: inputs,
+                           skipsBlock: true)
+        XCTAssertEqual(velocity.shape, [16, 2, 4, 8])
+    }
+
     // MARK: Control video, start and end images, or a camera → video (Wan 2.2 Fun)
 
     func testControlledVideoPipeline() throws {

@@ -2148,6 +2148,10 @@ alternatives.
     speech track, read from Wan-AI's original-layout directory and at reference parity against Wan-Video/Wan2.2's own
     `WanS2V.generate` on a test-dev release, pose-driven segments included, with LoRA fine-tuning against
     DiffSynth-Studio.
+    **Wan-Dancer is SHIPPED** (`NFKMLXWanDancerGenerator`, `wan-dancer-14b`): a reference image dancing to a music
+    track, keyframes planned over the whole track and rendered at 30 frames a second, read from Wan-AI's release
+    directory and at reference parity against Wan-Video/Wan-Dancer's own pipeline on a test-dev release, librosa's
+    music features ported, with LoRA fine-tuning against DiffSynth-Studio.
 
 One port waits on weight access here rather than on engineering: pyannote diarization (gated
 `pyannote/segmentation-3.0`). It needs a credential the way the gated Stable Diffusion 2.1 base does,

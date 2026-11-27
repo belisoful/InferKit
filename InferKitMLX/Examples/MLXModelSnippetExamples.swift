@@ -243,6 +243,20 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertEqual(NFKMLXWanS2VGenerator.releaseRepo, "Wan-AI/Wan2.2-S2V-14B")
     }
 
+    func testExampleWanDancer() throws {
+        try requireMLXRuntime()
+        XCTAssertThrowsError(try NFKMLXWanDancerGenerator.generator(
+            directoryURL: URL(fileURLWithPath: "/nonexistent-wan-dancer"), residency: .automatic))
+        XCTAssertTrue(NFKMLXWanDancerGenerator.instancesRespond(to: NSSelectorFromString(
+            "framesForPrompt:localPrompt:negativePrompt:referenceImage:music:sampleRate:seed:error:")))
+        XCTAssertTrue(NFKMLXWanDancerGenerator.instancesRespond(to: NSSelectorFromString("addAdapterAtURL:scale:global:error:")))
+        let music = (0 ..< 15360).map { Float(sin(Double($0) * 0.03)) * 0.4 }
+        let features = NFKMLXWanDancerMusic.features(samples: music, sampleRate: NFKMLXWanDancerMusic.sampleRate)
+        XCTAssertEqual(features.shape, [31, NFKMLXWanDancerMusic.featureCount], "30 frames a second of music")
+        XCTAssertEqual(NFKMLXWanDancerGenerator.framesPerClip, 149)
+        XCTAssertEqual(NFKMLXWanDancerGenerator.releaseRepo, "Wan-AI/Wan-Dancer-14B")
+    }
+
     func testExampleWanFun() throws {
         try requireMLXRuntime()
         XCTAssertThrowsError(try NFKMLXWanFunGenerator.generator(

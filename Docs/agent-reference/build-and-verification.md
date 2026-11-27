@@ -243,9 +243,9 @@ The causes and their fixes:
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 3548 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  170 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #   70 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXTests        …    # 3556 — the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  172 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #   71 — the Objective-C ones
    ```
 
    Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as

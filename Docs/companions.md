@@ -790,6 +790,12 @@ models.
   (`NFKMLXWanS2VNet`) adds the reference image's tokens, the previous segment's frame-packed motion, and per-frame
   audio cross-attention to the Wan block. Read from the original-layout release directory, at reference parity
   against Wan-Video/Wan2.2's own `WanS2V.generate`; LoRA fine-tuning as DiffSynth-Studio trains it.
+- **`NFKMLXWanDancerGenerator`** — Wan-Dancer-14B (Wan-AI, Apache-2.0, `wan-dancer-14b`): a reference image of a
+  dancer dancing to a music track, as long as the track. A global stage plans keyframes over the whole track at a
+  reduced frame rate, and a local stage renders it at 30 frames a second in 149-frame segments keyed by them. The
+  transformer (`NFKMLXWanDancerNet`) adds the reference image's CLIP tokens, a music encoder over 35 librosa features
+  (`NFKMLXWanDancerMusic`), and music injection to the Wan 2.1 image-to-video block. Read from the release directory,
+  at reference parity against Wan-Video/Wan-Dancer's own pipeline; LoRA fine-tuning as DiffSynth-Studio trains it.
 - **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
   3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
   a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`). Released Wan LoRAs merge into
