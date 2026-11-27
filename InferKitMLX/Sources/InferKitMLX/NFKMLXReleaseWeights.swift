@@ -202,8 +202,11 @@ enum NFKMLXReleaseWeights {
     }
 
     /// The weight files a release directory holds, single or sharded. Transformers releases name
-    /// them `model.safetensors`; diffusers components name them `diffusion_pytorch_model.safetensors`.
+    /// them `model.safetensors`; diffusers components name them `diffusion_pytorch_model.safetensors`. A
+    /// `.safetensors` file is its own weights, for a release that keeps several models side by side in one
+    /// directory (Wan-Dancer's `global_model.safetensors` and `local_model.safetensors`).
     static func files(inDirectory directory: URL) throws -> [URL] {
+        if directory.pathExtension == "safetensors" { return [directory] }
         for base in ["model", "diffusion_pytorch_model"] {
             let single = directory.appendingPathComponent("\(base).safetensors")
             if FileManager.default.fileExists(atPath: single.path) { return [single] }

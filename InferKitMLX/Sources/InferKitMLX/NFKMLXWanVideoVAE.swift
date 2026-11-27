@@ -807,8 +807,9 @@ public final class NFKMLXWanVideoVAENet: Module {
         return (convInOut, midOut, up0)
     }
 
-    /// Decodes a latent `[1, T', H', W', zDim]` to a video `[1, T, H, W, inChannels]`.
-    public func decode(_ latent: MLXArray) -> MLXArray {
+    /// Decodes a latent `[1, T', H', W', zDim]` to a video `[1, T, H, W, inChannels]`, clamped to `-1...1`
+    /// where `clamped`. DiffSynth-Studio's tiled decode clamps only the blended tiles.
+    public func decode(_ latent: MLXArray, clamped: Bool = true) -> MLXArray {
         let frames = latent.dim(1)
         let cache = NFKWanCache()
         let x = postQuantConv(latent, cache: .empty)
@@ -820,6 +821,7 @@ public final class NFKMLXWanVideoVAENet: Module {
             eval([decoded] + cache.heldFrames)
             chunks.append(decoded)
         }
-        return clip(unpatchify(concatenated(chunks, axis: 1)), min: -1, max: 1)
+        let video = unpatchify(concatenated(chunks, axis: 1))
+        return clamped ? clip(video, min: -1, max: 1) : video
     }
 }

@@ -34168,5 +34168,146 @@ CHECKPOINT_MODELS["gemma4_conversation"] = run_gemma4_conversation
 CHECKPOINT_MODELS["nemotron_h_conversation"] = run_nemotron_h_conversation
 
 
+def _wan_dancer_oracles():
+    """`Tools/wan-dancer-testdev/dancer_oracles.py`, which reads the fork at `IK_WAN_DANCER_SRC` under its CPU shims."""
+    directory = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "wan-dancer-testdev")
+    if directory not in sys.path:
+        sys.path.insert(0, directory)
+    import dancer_oracles
+    return dancer_oracles
+
+
+def _wan_dancer_record(record, output):
+    globals()["_extra"] = {key: value.clone() for key, value in record.items()}
+    return record[output].clone()
+
+
+def run_wan_dancer_music(image):
+    """Wan-Dancer's music features (Wan-Video/Wan-Dancer at e6c87a9, `gen_video_global.get_music_base_feature`)
+    under librosa 0.10.2 in the `wandancer` env, for a synthesized 15360 Hz clip: every seam with the constant-Q
+    decimation through `polyphase` (`poly.*`, the resampler the port runs) and the features through librosa's
+    own soxr path (`ref.*`). `dancer_oracles.music`. `image` unused.
+    """
+    return _wan_dancer_record(_wan_dancer_oracles().music(), "ref.features")
+
+
+def run_wan_dancer_planning(image):
+    """Wan-Dancer's local-stage planning as `gen_video_local.py` computes it: the keyframe masks of
+    `process_global_video_firstlastframe` over a 38-frame global video for six track lengths, and the music clips of
+    `get_music_clip_149f` for three synthesized tracks, with the container duration moviepy reads.
+    `dancer_oracles.planning`, in the `wandancer` env. `image` unused.
+    """
+    return _wan_dancer_record(_wan_dancer_oracles().planning(), "masks.600")
+
+
+def run_wan_dancer_pipeline(image, checkpoint):
+    """Wan-Dancer's own pipeline (the fork's `WanVideoPipeline.__call__`) on a test-dev release
+    (`Tools/wan-dancer-testdev/make_testdev.py`), in the `wandancer` env with `IK_WAN_DANCER_SRC` set: one global-stage
+    and one local-stage call as the released scripts make them, at 3 steps, 17 frames, and 256 × 448, on the scripts'
+    sequence-parallel path in a world of one with the music encoder read in eight spans. The record holds each call's
+    inputs, noise, first-step predictions, per-step latents, conditions, music tokens, and decoded video.
+    `dancer_oracles.pipeline`. `image` unused.
+    """
+    return _wan_dancer_record(_wan_dancer_oracles().pipeline(checkpoint), "local.decoded")
+
+
+def run_wan_dancer_lora_diffsynth(image, checkpoint):
+    """DiffSynth-Studio's Wan-Dancer-14B LoRA objective (modelscope/DiffSynth-Studio at 1e8ae1d,
+    `lora/Wan-Dancer-14B-local.sh` and `-global.sh`), under the `wantrain-diffsynth` env, over a test-dev release
+    directory (`Tools/wan-dancer-testdev/make_testdev.py`): DiffSynth's own `WanModel` with its WanToDance modules
+    (the release's `model_configs.py` keywords at the test-dev geometry) loaded from each stage's safetensors under its
+    names, adapted by its `add_lora_to_model` (rank 4, alpha 8, the scripts' `q,k,v,o,ffn.0,ffn.2`, which also reach
+    the music injectors' attentions), in the eval mode `freeze_except` leaves it in, and its `FlowMatchSFTLoss` over its
+    `model_fn_wan_video`, at float32. DiffSynth trains without sequence parallelism, so its music encoder reads the
+    whole track in one span. Two cases: the local model at 30 frames a second and the global model at 7.5, which reads
+    its own patch embedding and head. The inputs are random: the clip's latents, a 20-channel keyframe condition, the
+    keyframe's and the reference image's CLIP features, a 512-token prompt, and music features. The record holds the
+    inputs, the draws, the prediction, the loss, and each adapter's initialization and gradient under the release's
+    names (`<case>.lora::<name>.lora_a` `[in, rank]`, `lora_b` `[rank, out]`). `image` unused.
+    """
+    import json as json_module
+
+    from diffsynth.diffusion.flow_match import FlowMatchScheduler
+    from diffsynth.diffusion.loss import FlowMatchSFTLoss
+    from diffsynth.diffusion.training_module import DiffusionTrainingModule
+    from diffsynth.models.wan_video_dit import WanModel
+    from diffsynth.pipelines.wan_video import model_fn_wan_video
+    from safetensors.torch import load_file
+
+    with open(os.path.join(checkpoint, "config.json")) as handle:
+        config = json_module.load(handle)
+    scheduler = FlowMatchScheduler("Wan")
+    scheduler.set_timesteps(1000, training=True)
+    extra = {}
+    for case, fps, seed in (("local", 30.0, 171), ("global", 7.5, 181)):
+        model = WanModel(has_image_input=True, patch_size=[1, 2, 2], in_dim=config["in_dim"], dim=config["dim"],
+                         ffn_dim=config["ffn_dim"], freq_dim=config["freq_dim"], text_dim=config["text_dim"],
+                         out_dim=config["out_dim"], num_heads=config["num_heads"], num_layers=config["num_layers"],
+                         eps=config["eps"], wantodance_enable_music_inject=True,
+                         wantodance_music_inject_layers=[0, 4, 8, 12, 16, 20, 24, 27], wantodance_enable_refimage=True,
+                         has_ref_conv=True, wantodance_enable_refface=False, wantodance_enable_global=True,
+                         wantodance_enable_dynamicfps=True, wantodance_enable_unimodel=True)
+        model.load_state_dict({k: v.float() for k, v in load_file(
+            os.path.join(checkpoint, f"{case}_model.safetensors")).items()}, strict=False)
+        model = model.float().eval()
+        # peft draws the down projections from torch's global generator.
+        torch.manual_seed(seed)
+        model = DiffusionTrainingModule.add_lora_to_model(None, model, ["q", "k", "v", "o", "ffn.0", "ffn.2"], 4, 8)
+        generator = torch.Generator().manual_seed(seed)
+        for name, parameter in model.named_parameters():
+            if "lora_B" in name:
+                parameter.data = torch.randn(parameter.shape, generator=generator) * 0.1
+        for name, parameter in model.named_parameters():
+            parameter.requires_grad_("lora_" in name)
+        frames, height, width = 3, 8, 16
+        latent = torch.randn(16, frames, height, width, generator=generator)
+        condition = torch.randn(20, frames, height, width, generator=generator)
+        text = torch.randn(512, config["text_dim"], generator=generator)
+        keyframe = torch.randn(257, 1280, generator=generator)
+        reference = torch.randn(257, 1280, generator=generator)
+        music = torch.randn(160, 35, generator=generator)
+        call = dict(context=text.unsqueeze(0), clip_feature=keyframe.unsqueeze(0), y=condition.unsqueeze(0),
+                    wantodance_refimage_feature=reference.unsqueeze(0), wantodance_fps=fps, music_feature=music)
+        inputs = dict(input_latents=latent.unsqueeze(0), max_timestep_boundary=1, min_timestep_boundary=0, **call)
+        pipe = type("Pipeline", (), {})()
+        pipe.scheduler, pipe.torch_dtype, pipe.device = scheduler, torch.float32, "cpu"
+        pipe.in_iteration_models, pipe.dit = ("dit",), model
+        pipe.model_fn = model_fn_wan_video
+        torch.manual_seed(seed + 1)
+        loss = FlowMatchSFTLoss(pipe, **inputs)
+        loss.backward()
+        torch.manual_seed(seed + 1)
+        index = torch.randint(0, len(scheduler.timesteps), (1,))
+        noise = torch.randn_like(latent.unsqueeze(0))[0]
+        timestep = scheduler.timesteps[index]
+        sigma = scheduler.sigmas[torch.argmin((scheduler.timesteps - timestep).abs())]
+        noisy = (1 - sigma) * latent + sigma * noise
+        with torch.no_grad():
+            prediction = model_fn_wan_video(dit=model, latents=noisy.unsqueeze(0), timestep=timestep, **call)[0]
+        extra.update({f"{case}.index": index.float(), f"{case}.timestep": timestep.float().reshape(1),
+                      f"{case}.sigma": sigma.float().reshape(1),
+                      f"{case}.weight": scheduler.training_weight(timestep).float().reshape(1),
+                      f"{case}.latent": latent, f"{case}.condition": condition, f"{case}.text": text,
+                      f"{case}.keyframe": keyframe, f"{case}.reference": reference, f"{case}.music": music,
+                      f"{case}.noise": noise, f"{case}.fps": torch.tensor([fps]),
+                      f"{case}.prediction": prediction.float(), f"{case}.loss": loss.detach().reshape(1)})
+        for name, module in model.named_modules():
+            if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+                a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+                extra[f"{case}.lora::{name}.lora_a"] = a.detach().t().contiguous().float()
+                extra[f"{case}.lora::{name}.lora_b"] = b.detach().t().contiguous().float()
+                extra[f"{case}.grad::{name}.lora_a"] = a.grad.detach().t().contiguous().float()
+                extra[f"{case}.grad::{name}.lora_b"] = b.grad.detach().t().contiguous().float()
+        print(case, "loss", float(loss), "adapters", sum(1 for k in extra if k.startswith(f"{case}.lora::")) // 2)
+    globals()["_extra"] = {key: value.clone().contiguous() for key, value in extra.items()}
+    return extra["local.prediction"].clone()
+
+
+MODELS["wan_dancer_music"] = run_wan_dancer_music
+MODELS["wan_dancer_planning"] = run_wan_dancer_planning
+CHECKPOINT_MODELS["wan_dancer_pipeline"] = run_wan_dancer_pipeline
+CHECKPOINT_MODELS["wan_dancer_lora_diffsynth"] = run_wan_dancer_lora_diffsynth
+
+
 if __name__ == "__main__":
     sys.exit(main())

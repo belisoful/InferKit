@@ -139,6 +139,7 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXWanAnimateGenerator.register()
         NFKMLXWanFunGenerator.register()
         NFKMLXWanS2VGenerator.register()
+        NFKMLXWanDancerGenerator.register()
         NFKMLXZImageGenerator.register()
         NFKMLXQwenImageGenerator.register()
         NFKMLXSD3Generator.register()
