@@ -15,6 +15,7 @@ enum NFKMLXSupportLevels {
     static let retired: [String: Int] = [
         "colorizer-eccv16": 3,
         "zero-dce": 3,
+        "ltx-video-0.9.0": 3,
         "sam-vit-b": 3,
         "sam-vit-l": 3,
         "sam-vit-h": 3,

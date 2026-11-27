@@ -120,6 +120,9 @@ arithmetic as before.
     (1,120 tokens) and 256 caption tokens: float32 base build 7.69 GB, step peak
     9.92 GB, 4.8–6.0 s a step; 4-bit QLoRA build 1.62 GB peak, step peak 3.58 GB, 4.1–4.6 s a step, 29,360,128
     trainable parameters either way (2026-11-26, M1 Max).
+  - Support level 3 since 2026-11-27 ([removal-candidates.md](../removal-candidates.md)): this step and the four
+    reference-parity tests on the released 0.9.0 weights skip by default, and `IK_TEST_RETIRED=1` runs them. The
+    oracle, the train → save → reload round trip, and the data-adapter test keep running.
 - `NFKMLXLTX2TransformerNet` — the LTX-2 audio-video transformer (`LTX2VideoTransformer3DModel`,
   Lightricks). One transformer denoises a video latent and an AUDIO latent together, so a generated
   clip carries its own sound. The LTX-Video DiT above is the video-only ancestor; this is a different

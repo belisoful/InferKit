@@ -81,6 +81,7 @@ tables in [the model index](model-index.md) and the
 | --- | --- | --- | --- |
 | Colorizer ECCV-16 | `colorizer-eccv16` | 3 | nothing; DDColor tests `NFKLabColor`, and the pose loader test keeps the raw `.pth` ConvTranspose2d layout |
 | Zero-DCE | `zero-dce` | 3 | nothing; its loss (`NFKMLXZeroDCELoss`) is tested through Zero-DCE++'s training parity |
+| LTX-Video 0.9.0 | `ltx-video-0.9.0` | 3 | nothing; LTX-2.3 and LTX-2.5 test the newer Lightricks release, SD3.5 and Wan test T5, and its staging check reads shapes only. Its LoRA recipe keeps its tiny-geometry tests against the keyed objective record and its round trip; its released-weight step skips |
 | SAM, the original | `sam-vit-b` | 3 | nothing; SAM 2's decoder test covers the prompt encoder and two-way blocks SAM 2 and Sa2VA reuse |
 | SAM, the original | `sam-vit-l` | 3 | |
 | SAM, the original | `sam-vit-h` | 3 | |
@@ -116,8 +117,6 @@ until another shipped model covers the three.
 
 Held for a prerequisite:
 
-- LTX-Video 0.9.0 to level 3: its LoRA recipe ships at level 0 first, and the retirement then skips the
-  recipe's released-weight step with the four parity tests.
 - RT-DETR v1 to level 3: the `rtdetr-r18vd` live entry moves to `rtdetr-v2-r18vd`.
 - U²-Net to level 3: the `u2netp` live entry moves to IS-Net or is dropped.
 - RIFE HDv3 to level 3: RIFE v4 gains the clip backend `rife-clip` provides.
@@ -147,7 +146,7 @@ Held for a prerequisite:
 | Model | Successor | Why it is weak |
 | --- | --- | --- |
 | Demucs v2 (`NFKMLXDemucs`) | HT Demucs v4 | the speech denoiser runs on the same `NFKMLXDemucsNet`, so one of the two must keep a released-weight test |
-| LTX-Video 0.9.0 | LTX-2 | held for level 3 (below): `NFKMLXLTX2Generator` ships and stages, and LTX-Video's staging check reads shapes only |
+| LTX-Video 0.9.0 | LTX-2 | applied at level 3 after its LoRA recipe shipped: `NFKMLXLTX2Generator` ships and stages, and LTX-Video's staging check reads shapes only |
 | SD ×4 upscaler (`NFKMLXSDUpscaler`) | Real-ESRGAN, HAT (different method) | no same-method successor; shares the SD UNet and autoencoder |
 | BasicVSR (`NFKMLXVideoSR`) | none shipped | old, but the only video super-resolution model |
 | Stable Diffusion 2.1 | SDXL-Turbo, SD3 / 3.5 | SD 1.5, 2.1, SDXL base, SDXL-Turbo, and LCM Dreamshaper are one pipeline body. The tie-breaker keeps SDXL-Turbo and SDXL base as the newer SDXL releases, each with a released-weight end-to-end test (Turbo alone, base under the Lightning adapter). SD 1.5 is older than 2.1 but rule 3 holds it: SD inpainting, the IP-Adapter, the LCM-LoRA pairing, and the LoRA recipe run on its UNet, and the distillations are untrainable. Nothing shipped reuses 2.1, and Stability AI withdrew its repository, so 2.1 is at level 2 (see "Applied levels") |

@@ -359,6 +359,7 @@ final class NFKMLXLTXVideoTrainingTests: XCTestCase {
     // latent grid and 256 caption tokens, over the float32 base and a 4-bit one, with each build's memory, each
     // step's peak, and each step's time printed.
     func testLTXVideoLoRAStepsOnReleasedWeights() throws {
+        try NFKMLXSupportLevels.skipIfRetired("ltx-video-0.9.0")
         guard let path = config["IK_VAL_LTX_TF"], FileManager.default.fileExists(atPath: path) else {
             throw XCTSkip("set IK_VAL_LTX_TF to LTX-Video 0.9.0's transformer directory")
         }

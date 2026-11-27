@@ -37,6 +37,7 @@ download path, and its tiny-geometry and unit tests. Only the released-weight te
 | --- | --- | --- | --- |
 | Colorizer ECCV-16 | 3 | `colorizer-eccv16` | none |
 | Zero-DCE | 3 | `zero-dce` | none |
+| LTX-Video 0.9.0 | 3 | `ltx-video-0.9.0` | none; its LoRA recipe keeps its tiny-geometry tests and round trip |
 | SAM, the original | 3 | `sam-vit-b`, `sam-vit-l`, `sam-vit-h` | none |
 | Hunyuan-MT 7B | 3 | `hunyuan-mt-7b` | none; Chimera 7B stays at level 0 |
 | Whisper large-v2 | 3 | `whisper-large-v2` | none; the other Whisper sizes stay at level 0 |

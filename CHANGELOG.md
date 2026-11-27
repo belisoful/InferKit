@@ -125,6 +125,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### LTX-Video 0.9.0 moves to support level 3
+
+- LTX-Video 0.9.0 and its LoRA recipe stay shipped; its four reference-parity tests and the recipe's step on
+  the released weights skip by default, and `IK_TEST_RETIRED=1` runs them. LTX-2.3 and LTX-2.5 cover the
+  newer Lightricks release. The recipe's oracle, round trip, and data-adapter tests keep running.
+
 #### Superseded releases move to their support levels
 
 - The levels in `Docs/removal-candidates.md` apply. Colorizer ECCV-16, Zero-DCE, the original SAM,

@@ -563,6 +563,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // must reconstruct the same video from a given latent. The recorded encoder seams (conv_in, the first
     // down block, the mid block) localize any mismatch in the 3D convolutions / patchify.
     func testLTXVideoVAEMatchesTheReferenceEncodeAndDecode() throws {
+        try NFKMLXSupportLevels.skipIfRetired("ltx-video-0.9.0")
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_LTX_VAE"], FileManager.default.fileExists(atPath: path) else {
             throw XCTSkip("set IK_PARITY_LTX_VAE to an ltx-vae record")
@@ -610,6 +611,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // the adaLN self-attention, the cross-attention to text, and the velocity prediction must match the
     // reference. Seams (rope, proj_in, first block) localize any mismatch.
     func testLTXTransformerMatchesTheReferenceVelocity() throws {
+        try NFKMLXSupportLevels.skipIfRetired("ltx-video-0.9.0")
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_LTX_TF"], FileManager.default.fileExists(atPath: path) else {
             throw XCTSkip("set IK_PARITY_LTX_TF to an ltx-transformer record")
@@ -653,6 +655,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // The T5-XXL text encoder — the last LTX stage — verified against transformers. Seams (the embedding
     // and the first block) localize any mismatch in the relative-position bias / T5LayerNorm / gated FFN.
     func testLTXT5EncoderMatchesTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("ltx-video-0.9.0")
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_LTX_T5"], FileManager.default.fileExists(atPath: path) else {
             throw XCTSkip("set IK_PARITY_LTX_T5 to an ltx-t5 record")
@@ -2526,6 +2529,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // output and the base at ltx_transformer's 0.99999999999 floored to ten nines; the change at the float32
     // default.
     func testLTXVideoHeldAdaptersMatchTheReference() throws {
+        try NFKMLXSupportLevels.skipIfRetired("ltx-video-0.9.0")
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_LTXV_ADAPTERS"], let release = config["IK_VAL_LTX_TF"] else {
             throw XCTSkip("set IK_PARITY_LTXV_ADAPTERS (run_reference.py ltxv_adapters) and IK_VAL_LTX_TF")

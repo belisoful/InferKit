@@ -51,6 +51,7 @@ round trip keep running. A training test that loads a retired release's weights 
 | --- | --- | --- | --- |
 | Colorizer ECCV-16 | 3 | `colorizer-eccv16` | none |
 | Zero-DCE | 3 | `zero-dce` | none |
+| LTX-Video 0.9.0 | 3 | `ltx-video-0.9.0` | none; its LoRA recipe keeps its tiny-geometry tests and round trip |
 | SAM, the original | 3 | `sam-vit-b`, `sam-vit-l`, `sam-vit-h` | none |
 | Hunyuan-MT 7B | 3 | `hunyuan-mt-7b` | none; Chimera 7B stays at level 0 |
 | Whisper large-v2 | 3 | `whisper-large-v2` | none; the other Whisper sizes stay at level 0 |
@@ -243,7 +244,7 @@ residual or the velocity objective is known, and the working set is what rules i
 | Model | Outcome | Level | Reach | What decides it |
 | --- | --- | --- | --- | --- |
 | `NFKMLXSANATransformerNet` | trainable | LoRA | partial | The measured `Sana_600M` release holds with the backbone frozen. NVlabs' own script is unread, which item 5 of the minimum set needs. |
-| `NFKMLXLTXTransformer` | ships | LoRA | public | Lightricks' LTX-Video-Trainer recipe (`ltxv_2b_lora.yaml`, `LTXV_2B_0.9.0`): LoRA rank 32 on `to_q`/`to_k`/`to_v`/`to_out.0` of both attentions, over the float32 release or a 4/8-bit base (QLoRA), the trainer's shifted logit-normal sampler, integer per-token timesteps, masked MSE, and AdamW at 2e-4. The objective, gradients, and saved file are held to the trainer's own code (`ltxv_loss`). On the released transformer, a 49-frame 512×320 step peaks at 9.92 GB at float32 and 3.58 GB at 4 bits, about 5 s a step, with each block recomputed in the backward pass. |
+| `NFKMLXLTXTransformer` | ships | LoRA | public | Lightricks' LTX-Video-Trainer recipe (`ltxv_2b_lora.yaml`, `LTXV_2B_0.9.0`): LoRA rank 32 on `to_q`/`to_k`/`to_v`/`to_out.0` of both attentions, over the float32 release or a 4/8-bit base (QLoRA), the trainer's shifted logit-normal sampler, integer per-token timesteps, masked MSE, and AdamW at 2e-4. The objective, gradients, and saved file are held to the trainer's own code (`ltxv_loss`). On the released transformer, a 49-frame 512×320 step peaks at 9.92 GB at float32 and 3.58 GB at 4 bits, about 5 s a step, with each block recomputed in the backward pass. The release is at support level 3: this step skips by default, and `IK_TEST_RETIRED=1` runs it. |
 | `NFKMLXLTX2TransformerNet` | ships | LoRA | public | Lightricks' `ltx-trainer` recipe: LoRA on `to_q`/`to_k`/`to_v`/`to_out.0` of all six attentions, over a float or 4/8-bit base (QLoRA, `NFKMLXQuantizedLoRALinear`), the trainer's own sampler, objective, and AdamW. The objective is held to `ltx_core`'s model under peft (`ltx2_loss`). On the released `transformer_full/` at 4 bits a 32 GB machine trains it: build 11.3 GB, step peak 17.5 GB, 36–61 s a step for a 49-frame 512×320 clip, with each block recomputed in the backward pass as the trainer's recipes do. |
 | `NFKMLXLTX2ConnectorsNet` | offline | — | public | 3.2B; the trainer holds it frozen and trains only through the transformer it conditions. |
 | `NFKMLXLTX2VideoDecoderNet`, `NFKMLXLTX2AudioDecoderNet`, `NFKMLXLTX2VideoEncoderNet`, `NFKMLXLTX2AudioEncoderNet` | untrainable | — | public | Lightricks publishes no autoencoder training code; `ltx-trainer` freezes both autoencoders and encodes its data through them, which the encoders do here (`trainingExample`). |
