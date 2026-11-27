@@ -2,14 +2,15 @@
 """Builds a Wan 2.2 Fun test-dev release: the original Wan layout the alibaba-pai Fun releases ship (their
 file names, key names, and stored dtypes) at a small geometry with seeded random weights.
 
-The Fun releases (Control, InP, Control-Camera, at 5B and A14B) are 24 to 71 GB, so the port's end-to-end
+The Fun releases (Control, InP, Control-Camera, at 5B and A14B, and VACE-Fun A14B) are 24 to 81 GB, so the port's end-to-end
 parity is measured on this directory: VideoX-Fun's `Wan2_2FunControlPipeline` / `Wan2_2FunInpaintPipeline`
 and the InferKitMLX generator both load it, and `run_reference.py wan_fun_pipeline --checkpoint <out>`
 records the reference.
 
 Every component is built by VideoX-Fun's own class and saved as the release stores it:
 
-- the transformer (`Wan2_2Transformer3DModel`) from the release's own `config.json`, the size keys
+- the transformer (`Wan2_2Transformer3DModel`, or `VaceWanTransformer3DModel` for a VACE-Fun release, whose
+  control blocks then feed every kept block) from the release's own `config.json`, the size keys
   reduced (a 5B InP release keeps its released 3072 width and 24 heads, the value VideoX-Fun's Inpaint
   pipeline reads to take its 5B path), its state dict under the original names in `diffusion_pytorch_model.safetensors` at bfloat16
   (`high_noise_model/` and `low_noise_model/` for an A14B release, on different seeds);
@@ -29,6 +30,7 @@ Usage (the `videoxfun` oracle env, with `IK_VIDEOX_FUN_SRC` set):
 
 import argparse
 import hashlib
+import inspect
 import json
 import os
 import shutil
@@ -82,6 +84,9 @@ def reduced_config(path):
     in_dim = config.get("in_dim", config.get("in_channels"))
     if config.get("dim") == 3072 and in_dim == 100 and not config.get("add_control_adapter", False):
         overrides = {key: value for key, value in overrides.items() if key not in ("dim", "num_heads")}
+    # A VACE release's control blocks feed blocks the reduced stack keeps: every one.
+    if "vace_layers" in config:
+        config["vace_layers"] = list(range(overrides["num_layers"]))
     for key, value in overrides.items():
         if key == "text_dim" and key not in config:
             config[key] = value
@@ -104,8 +109,10 @@ def write_transformer(models, release, out, name, seed):
     keys = {key: value for key, value in config.items() if not key.startswith("_")}
     keys.setdefault("in_channels", keys.get("in_dim"))
     keys.setdefault("hidden_size", keys.get("dim"))
-    model = models.Wan2_2Transformer3DModel(**{k: v for k, v in keys.items()
-                                               if k in models.Wan2_2Transformer3DModel.__init__.__code__.co_varnames})
+    transformer_class = models.VaceWanTransformer3DModel if "vace_layers" in config else models.Wan2_2Transformer3DModel
+    # `register_to_config` wraps a constructor, so its parameters are read through the wrapper's signature.
+    accepted = inspect.signature(transformer_class.__init__).parameters
+    model = transformer_class(**{k: v for k, v in keys.items() if k in accepted})
     randomized(model.float(), seed, SCALES["transformer"])
     state = {key: value.to(torch.bfloat16).contiguous() for key, value in model.state_dict().items()
              if not key.startswith("img_emb.")}
@@ -150,6 +157,8 @@ def main():
     manifest = {}
     for root, _, files in os.walk(out):
         for file in sorted(files):
+            if file == "testdev-manifest.json":
+                continue
             path = os.path.join(root, file)
             with open(path, "rb") as handle:
                 manifest[os.path.relpath(path, out)] = hashlib.sha256(handle.read()).hexdigest()

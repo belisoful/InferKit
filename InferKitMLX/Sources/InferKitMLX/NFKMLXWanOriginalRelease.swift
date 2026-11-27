@@ -54,8 +54,8 @@ enum NFKMLXWanOriginalRelease {
             return renamed.value + name.dropFirst(renamed.key.count)
         }
         let parts = name.split(separator: ".").map(String.init)
-        guard parts.count >= 3, parts[0] == "blocks", Int(parts[1]) != nil else { return name }
-        let block = "blocks.\(parts[1])"
+        guard parts.count >= 3, parts[0] == "blocks" || parts[0] == "vace_blocks", Int(parts[1]) != nil else { return name }
+        let block = "\(parts[0]).\(parts[1])"
         let rest = parts[2...].joined(separator: ".")
         for (site, module) in [("self_attn", "attn1"), ("cross_attn", "attn2")] where rest.hasPrefix(site + ".") {
             let tail = rest.dropFirst(site.count + 1)
@@ -125,7 +125,8 @@ enum NFKMLXWanOriginalRelease {
             referenceChannels: addsReference ? int("in_dim_ref_conv") ?? 16 : nil,
             controlAdapterChannels: addsAdapter ? int("in_dim_control_adapter") ?? 24 : nil,
             controlAdapterDownscale: int("downscale_factor_control_adapter") ?? 8,
-            formsSinusoidsInFloat64: true)
+            formsSinusoidsInFloat64: true, vaceLayers: json["vace_layers"] as? [Int],
+            vaceInChannels: int("vace_in_dim") ?? 96)
     }
 
     /// Loads an original transformer directory (one safetensors file or a shard index) into `net`.

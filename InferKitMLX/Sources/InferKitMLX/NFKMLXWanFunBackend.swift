@@ -32,8 +32,8 @@ extension NFKMLXWanFunGenerator {
     static func backendInputKeys(_ variant: NFKMLXWanFunVariant) -> Set<String> {
         var keys: Set<String> = [NFKInputPrompt, NFKInputNegativePrompt, NFKInputImage, NFKMLXVideoInputKey.lastImage,
                                  NFKMLXVideoInputKey.inpaintVideo, NFKMLXVideoInputKey.inpaintMask]
-        switch variant.rawValue % 3 {
-        case 0: keys.formUnion([NFKInputVideo, NFKMLXVideoInputKey.referenceImage])
+        switch variant.conditionKind {
+        case 0, nil: keys.formUnion([NFKInputVideo, NFKMLXVideoInputKey.referenceImage])
         case 2: keys.insert(NFKMLXVideoInputKey.cameraTrajectory)
         default: break
         }
@@ -102,6 +102,29 @@ extension NFKMLXWanFunGenerator {
         }
     }
 
+    /// A VACE-Fun clip's conditions from its pictures, each at the clip's size: the control video; otherwise an
+    /// inpainting video and mask, or a start and an end image as the inpainting video and mask
+    /// ``NFKMLXWanFunConditions/startImage(_:endImage:frames:)`` builds; and the reference image as the one subject
+    /// image. Without a control video or an inpainting video every pixel is generated from a blank video.
+    func vaceConditions(control: MLXArray?, start: MLXArray?, end: MLXArray?, reference: MLXArray?,
+                        inpaint: (video: MLXArray, mask: MLXArray)?, frames: Int, width: Int,
+                        height: Int) throws -> NFKMLXWanVACEConditions {
+        var conditions = NFKMLXWanVACEConditions(controlVideo: control, subjectImages: reference.map { [$0] } ?? [])
+        if let inpaint {
+            conditions.video = inpaint.video
+            conditions.mask = inpaint.mask
+        } else if let start {
+            let built = NFKMLXWanFunConditions.startImage(start, endImage: end, frames: frames)
+            conditions.video = built.video
+            conditions.mask = built.mask
+        } else if end != nil {
+            throw NFKMLXError.unsupportedConfiguration("an end image needs a start image")
+        } else if control == nil {
+            conditions.video = MLXArray.zeros([frames, height, width, 3])
+        }
+        return conditions
+    }
+
     /// The conditions of one clip from its pictures, each at the clip's size.
     func conditions(control: MLXArray?, start: MLXArray?, end: MLXArray?, reference: MLXArray?,
                     inpaint: (video: MLXArray, mask: MLXArray)?, trajectory: NFKMLXWanCameraTrajectory?,
@@ -128,7 +151,9 @@ extension NFKMLXWanFunGenerator {
     /// under ``NFKMLXVideoInputKey/inpaintVideo`` and ``NFKMLXVideoInputKey/inpaintMask``; for a Control release
     /// the control video under `NFKInputVideo` and a reference image under
     /// ``NFKMLXVideoInputKey/referenceImage``; for a Control-Camera release the trajectory under
-    /// ``NFKMLXVideoInputKey/cameraTrajectory`` (required). Every picture is resized to the clip, and every
+    /// ``NFKMLXVideoInputKey/cameraTrajectory`` (required); for VACE-Fun the control video under `NFKInputVideo`,
+    /// a subject image under ``NFKMLXVideoInputKey/referenceImage``, and the inpainting inputs, a blank video where
+    /// it reads none of them (`vaceConditions(control:start:end:reference:inpaint:frames:width:height:)`). Every picture is resized to the clip, and every
     /// video resampled to the clip's rate, as `preparedImage(_:width:height:)` and
     /// `preparedVideo(_:frames:framesPerSecond:width:height:)` describe. It returns an `NFKVideoAsset` (a
     /// QuickTime movie in the temporary directory) under `NFKOutputVideo`. Parameters: `NFKParameterFrameCount`,
@@ -168,9 +193,13 @@ extension NFKMLXWanFunGenerator {
                 }
                 inpaint = (video, mask.mean(axis: -1))
             }
-            let conditions = try self.conditions(
-                control: try clip(NFKInputVideo), start: try image(NFKInputImage),
-                end: try image(NFKMLXVideoInputKey.lastImage), reference: try image(NFKMLXVideoInputKey.referenceImage),
+            let control = try clip(NFKInputVideo), start = try image(NFKInputImage)
+            let end = try image(NFKMLXVideoInputKey.lastImage), reference = try image(NFKMLXVideoInputKey.referenceImage)
+            let vace = variant.isVACE
+                ? try self.vaceConditions(control: control, start: start, end: end, reference: reference, inpaint: inpaint,
+                                          frames: size.frames, width: size.width, height: size.height) : nil
+            let conditions = variant.isVACE ? NFKMLXWanFunConditions() : try self.conditions(
+                control: control, start: start, end: end, reference: reference,
                 inpaint: inpaint, trajectory: try Self.trajectory(request.input(forKey: NFKMLXVideoInputKey.cameraTrajectory)),
                 frames: size.frames, width: size.width, height: size.height)
             let saved = (steps, guidance)
@@ -178,7 +207,7 @@ extension NFKMLXWanFunGenerator {
             steps = parameter(NFKParameterSteps)?.intValue ?? steps
             guidance = parameter(NFKParameterGuidanceScale)?.floatValue ?? guidance
             job.reportProgress(0)
-            let result = try generate(prompt: prompt, negativePrompt: negative, conditions: conditions,
+            let result = try generate(prompt: prompt, negativePrompt: negative, conditions: conditions, vace: vace,
                                       frames: size.frames, width: size.width, height: size.height,
                                       seed: NFKMLXGenerationBackend.seed(request),
                                       progress: { job.reportProgress(0.99 * $0) }).clip
@@ -190,9 +219,9 @@ extension NFKMLXWanFunGenerator {
     }
 
     /// Generates a clip and returns its frames as `CGImage`s, the conditions given as pictures: the control
-    /// frames (a Control release), a start and an end image, a reference image, and a camera trajectory (a
-    /// Control-Camera release), each optional and resized to the clip. Objective-C reads each element as
-    /// `(__bridge CGImageRef)`. Introduced in InferKit 0.4.0.
+    /// frames (a Control or VACE-Fun release), a start and an end image, a reference image (a VACE-Fun release's
+    /// subject image), and a camera trajectory (a Control-Camera release), each optional and resized to the clip.
+    /// Objective-C reads each element as `(__bridge CGImageRef)`. Introduced in InferKit 0.4.0.
     @objc(framesForPrompt:negativePrompt:controlFrames:startImage:endImage:referenceImage:cameraTrajectory:frames:width:height:seed:error:)
     public func frames(forPrompt prompt: String, negativePrompt: String?, controlFrames: [Any]?, startImage: CGImage?,
                        endImage: CGImage?, referenceImage: CGImage?, cameraTrajectory: NFKMLXWanCameraTrajectory?,
@@ -210,12 +239,21 @@ extension NFKMLXWanFunGenerator {
                 try Self.prepared($0, width: size.width, height: size.height, filter: .bilinear)
             })
         }
-        let conditions = try self.conditions(control: control, start: try picture(startImage), end: try picture(endImage),
-                                             reference: try picture(referenceImage), inpaint: nil,
-                                             trajectory: cameraTrajectory, frames: size.frames, width: size.width,
-                                             height: size.height)
-        let clip = try video(forPrompt: prompt, negativePrompt: negativePrompt, conditions: conditions,
+        let clip: MLXArray
+        if variant.isVACE {
+            let vace = try vaceConditions(control: control, start: try picture(startImage), end: try picture(endImage),
+                                          reference: try picture(referenceImage), inpaint: nil, frames: size.frames,
+                                          width: size.width, height: size.height)
+            clip = try video(forPrompt: prompt, negativePrompt: negativePrompt, vace: vace, frames: size.frames,
+                             width: size.width, height: size.height, seed: seed)
+        } else {
+            let conditions = try self.conditions(control: control, start: try picture(startImage), end: try picture(endImage),
+                                                 reference: try picture(referenceImage), inpaint: nil,
+                                                 trajectory: cameraTrajectory, frames: size.frames, width: size.width,
+                                                 height: size.height)
+            clip = try video(forPrompt: prompt, negativePrompt: negativePrompt, conditions: conditions,
                              frames: size.frames, width: size.width, height: size.height, seed: seed)
+        }
         return try (0 ..< clip.dim(0)).map { try NFKMLXImageBridge.cgImage(from: clip[$0], options: NFKMLXImageOptions()) }
     }
 

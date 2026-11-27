@@ -241,9 +241,14 @@ public struct NFKMLXWanTrainingExample {
     /// trainer reads its first frame: where that frame is wholly kept, the noised latent keeps the masked video's
     /// latents there and those tokens read timestep 0; every later frame is generated. Introduced in InferKit 0.4.0.
     public var latentMask: MLXArray?
+    /// A Wan 2.2 VACE-Fun release's context `[96, R + F', h, w]`, read by its VACE blocks; the latent then leads
+    /// with the `R` subject images' latents. Introduced in InferKit 0.4.0.
+    public var vaceContext: MLXArray?
 
     public init(latent: MLXArray, logVariance: MLXArray? = nil, text: MLXArray, condition: MLXArray? = nil,
-                reference: MLXArray? = nil, camera: MLXArray? = nil, latentMask: MLXArray? = nil) {
+                reference: MLXArray? = nil, camera: MLXArray? = nil, latentMask: MLXArray? = nil,
+                vaceContext: MLXArray? = nil) {
+        self.vaceContext = vaceContext
         self.latentMask = latentMask
         self.latent = latent
         self.logVariance = logVariance
@@ -306,7 +311,8 @@ public struct NFKMLXWanObjective: Sendable {
         let x0 = clean(example, epsilon: epsilon)
         var noisy = (1 - draw.sigma) * x0 + draw.sigma * noise
         var conditioning = NFKWanConditioning(reference: example.reference?.asType(dtype),
-                                              cameraControl: example.camera?.asType(dtype))
+                                              cameraControl: example.camera?.asType(dtype),
+                                              vaceContext: example.vaceContext?.asType(dtype))
         if let mask = example.latentMask, let condition = example.condition, !(mask[0] .!= 0).any().item(Bool.self) {
             let z = x0.dim(0)
             let kept = concatenated([mask[0 ..< 1], MLXArray.ones([mask.dim(0) - 1, mask.dim(1), mask.dim(2)])], axis: 0)
@@ -319,6 +325,7 @@ public struct NFKMLXWanObjective: Sendable {
         // A transformer read from the original layout runs the original forward, as DiffSynth-Studio's and
         // VideoX-Fun's do.
         return net.config.formsSinusoidsInFloat64 || example.reference != nil || example.camera != nil
+            || example.vaceContext != nil
             ? net(input, text: example.text.asType(dtype), t: Double(draw.timestep), conditioning: conditioning)
             : net(input, text: example.text.asType(dtype), t: MLXArray([draw.timestep]))
     }
@@ -337,16 +344,22 @@ public enum NFKMLXWanLoRATargets: Sendable, Equatable {
     /// The query, key, and value projections of both attentions and both feed-forward projections, no output
     /// projection (VideoX-Fun's Wan 2.2 Fun recipes: `q,k,v,ffn.0,ffn.2`). Introduced in InferKit 0.4.0.
     case queryKeyValueAndFeedForward
+    /// The attention and feed-forward projections of a VACE transformer's control blocks alone
+    /// (DiffSynth-Studio's VACE-Fun recipe: `q,k,v,o,ffn.0,ffn.2` over `--lora_base_model vace`). Introduced in
+    /// InferKit 0.4.0.
+    case vaceAttentionAndFeedForward
 
     func contains(_ path: String) -> Bool {
-        guard path.hasPrefix("blocks.") else { return false }
+        let vace = path.hasPrefix("vace_blocks.")
+        guard path.hasPrefix("blocks.") || vace else { return false }
         let projections = ["to_q", "to_k", "to_v"].contains { path.hasSuffix(".\($0)") }
         let attention = projections || path.hasSuffix(".to_out.0")
         let feedForward = path.hasSuffix(".ffn.net.0.proj") || path.hasSuffix(".ffn.net.2")
         switch self {
-        case .attention: return attention
-        case .attentionAndFeedForward: return attention || feedForward
-        case .queryKeyValueAndFeedForward: return projections || feedForward
+        case .attention: return !vace && attention
+        case .attentionAndFeedForward: return !vace && (attention || feedForward)
+        case .queryKeyValueAndFeedForward: return !vace && (projections || feedForward)
+        case .vaceAttentionAndFeedForward: return vace && (attention || feedForward)
         }
     }
 }
@@ -632,10 +645,10 @@ extension NFKMLXWanVideoGenerator {
     /// inverted for the blocks' layers.
     static func originalName(_ path: String) throws -> String {
         let parts = path.split(separator: ".").map(String.init)
-        guard parts.count >= 4, parts[0] == "blocks" else {
+        guard parts.count >= 4, parts[0] == "blocks" || parts[0] == "vace_blocks" else {
             throw NFKMLXError.unsupportedConfiguration("\(path) is not a block layer a trainer's layout names")
         }
-        let block = "blocks.\(parts[1])"
+        let block = "\(parts[0]).\(parts[1])"
         let rest = parts[2...].joined(separator: ".")
         let names = ["attn1.to_q": "self_attn.q", "attn1.to_k": "self_attn.k", "attn1.to_v": "self_attn.v",
                      "attn1.to_out.0": "self_attn.o", "attn2.to_q": "cross_attn.q", "attn2.to_k": "cross_attn.k",

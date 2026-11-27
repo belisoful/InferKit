@@ -28288,6 +28288,122 @@ def run_wan_fun_pipeline(image, checkpoint):
 CHECKPOINT_MODELS["wan_fun_pipeline"] = run_wan_fun_pipeline
 
 
+def run_wan_vace_fun_pipeline(image, checkpoint):
+    """Wan 2.2 VACE-Fun A14B end to end through VideoX-Fun's own `Wan2_2VaceFunPipeline` (aigc-apps/VideoX-Fun at
+    98fffa9), over a test-dev release directory (`Tools/wan-fun-testdev/make_testdev.py` on the release's small
+    files) loaded as `examples/wan2.2_vace_fun/predict_v2v_control_ref.py` loads one: two `VaceWanTransformer3DModel`
+    experts (the high-noise one at and above `boundary` 0.875, `config/wan2.2/wan_civitai_t2v.yaml`'s), the Wan 2.1
+    autoencoder, umT5, and `FlowMatchEulerDiscreteScheduler` at the config's shift of 12. Everything runs at float32
+    on the CPU: 9 frames of 32 × 48, three steps, guidance 5, `vace_context_scale` 1.
+
+    Two runs: `` (no prefix) follows a control video under an all-generate mask with one subject reference image
+    ahead of the clip (the example's `predict_v2v_control_ref.py`); `mask.` keeps a video outside a rectangle on
+    frames 2 onward, with no control video and no reference. The record carries the inputs (`control_video`,
+    `inpaint_video`, `subject_image` in 0...1, `region_mask` `[F, H, W]`, 1 where generated), the starting latents (with the
+    reference frame), the prompt features cut at their lengths with their token ids, and per run the first call's
+    VACE context (`<run>input.vace_context`), the latents after each step, each transformer call's prediction, the
+    expert of every step, the final latents after the reference frames are dropped, and the decoded clip
+    (`<run>video`, `[F, H, W, 3]` in 0...1). `image` unused.
+    """
+    import contextlib
+    import json as json_module
+
+    from diffusers import FlowMatchEulerDiscreteScheduler
+    from transformers import AutoTokenizer
+
+    models, pipelines = _videox_fun()
+    torch.cuda.device = lambda device=None: contextlib.nullcontext()
+
+    def transformer(directory):
+        return models.VaceWanTransformer3DModel.from_pretrained(
+            directory, transformer_additional_kwargs={"dict_mapping": {"in_dim": "in_channels", "dim": "hidden_size"}},
+            torch_dtype=torch.float32).float().eval()
+    text_kwargs = {"vocab": 256384, "dim": 32, "dim_attn": 32, "dim_ffn": 64, "num_heads": 2, "num_layers": 2,
+                   "num_buckets": 32, "shared_pos": False, "dropout": 0.0}
+    text_encoder = models.WanT5EncoderModel.from_pretrained(
+        os.path.join(checkpoint, "models_t5_umt5-xxl-enc-bf16.pth"), additional_kwargs=text_kwargs,
+        torch_dtype=torch.float32).float().eval()
+    vae = models.AutoencoderKLWan.from_pretrained(
+        os.path.join(checkpoint, "Wan2.1_VAE.pth"),
+        additional_kwargs={"temporal_compression_ratio": 4, "spatial_compression_ratio": 8}).float().eval()
+    scheduler = FlowMatchEulerDiscreteScheduler(num_train_timesteps=1000, shift=12.0, use_dynamic_shifting=False,
+                                                base_shift=0.5, max_shift=1.15, base_image_seq_len=256,
+                                                max_image_seq_len=4096)
+    tokenizer = AutoTokenizer.from_pretrained(os.path.join(checkpoint, "google", "umt5-xxl"))
+    nets = [transformer(os.path.join(checkpoint, "low_noise_model")), transformer(os.path.join(checkpoint, "high_noise_model"))]
+    pipeline = pipelines.Wan2_2VaceFunPipeline(tokenizer=tokenizer, text_encoder=text_encoder, vae=vae,
+                                               transformer=nets[0], transformer_2=nets[1], scheduler=scheduler)
+
+    frames, height, width, steps, guidance, boundary = 9, 32, 48, 3, 5.0, 0.875
+    generator = np.random.default_rng(71)
+    control = torch.from_numpy(generator.random((frames, height, width, 3)).astype(np.float32))
+    video = torch.from_numpy(generator.random((frames, height, width, 3)).astype(np.float32))
+    subject = torch.from_numpy(generator.random((height, width, 3)).astype(np.float32))
+    prompt, negative = "A red fox  walking through fresh snow, cinematic", "worst quality, blurry"
+    torch.manual_seed(72)
+    latents = torch.randn(1, 16, 1 + (frames - 1) // 4 + 1, height // 8, width // 8)
+
+    def video_tensor(clip):                                                     # [F, H, W, 3] → [1, 3, F, H, W]
+        return clip.permute(3, 0, 1, 2).unsqueeze(0).contiguous()
+    region = torch.zeros(frames, height, width)
+    region[2:, height // 4:height // 2 + height // 8, width // 8:width // 2] = 1
+    extra = {"latents": latents[0].contiguous(), "control_video": control, "inpaint_video": video, "subject_image": subject,
+             "region_mask": region.contiguous()}
+
+    calls, experts, first = [], [], {}
+    for index, net in enumerate(nets):
+        def hook(module, args, kwargs, output, index=index):
+            if not first and kwargs.get("vace_context") is not None:
+                first["vace_context"] = kwargs["vace_context"][0].detach().clone()
+            experts.append(index)
+            calls.append(output.detach().clone())                               # [uncond, cond]
+        net.register_forward_hook(hook, with_kwargs=True)
+
+    runs = [("", dict(control_video=video_tensor(control), video=torch.zeros(1, 3, frames, height, width),
+                      mask_video=torch.full((1, 1, frames, height, width), 255.0),
+                      subject_ref_images=subject.permute(2, 0, 1)[:, None].unsqueeze(0).contiguous()), latents),
+            ("mask.", dict(video=video_tensor(video), mask_video=(region * 255)[None, None].contiguous()),
+             latents[:, :, 1:].contiguous())]
+    for prefix, conditions, start in runs:
+        calls.clear()
+        experts.clear()
+        first.clear()
+        stepped = []
+
+        def recording_step(pipe, index, timestep, values):
+            stepped.append(values["latents"][0].detach().clone())
+            return {}
+        with torch.no_grad():
+            final = pipeline(prompt, num_frames=frames, negative_prompt=negative, height=height, width=width,
+                             guidance_scale=guidance, num_inference_steps=steps, latents=start.clone(),
+                             output_type="latent", callback_on_step_end=recording_step, boundary=boundary,
+                             shift=12, vace_context_scale=1.0, **conditions).videos
+        extra[f"{prefix}input.vace_context"] = first["vace_context"].contiguous()
+        for index, value in enumerate(stepped):
+            extra[f"{prefix}step.{index}"] = value.contiguous()
+        for index, value in enumerate(calls):
+            extra[f"{prefix}call.{index}"] = value.contiguous()
+        extra[f"{prefix}experts"] = torch.tensor(experts, dtype=torch.int32)
+        extra[f"{prefix}final_latents"] = final[0].contiguous()
+        with torch.no_grad():
+            decoded = pipeline.vae.decode(final.to(pipeline.vae.dtype)).sample
+        extra[f"{prefix}video"] = (decoded[0] / 2 + 0.5).clamp(0, 1).permute(1, 2, 3, 0).contiguous()
+    for name, text in (("prompt", prompt), ("negative", negative)):
+        tokens = tokenizer(text, padding="max_length", max_length=512, truncation=True, add_special_tokens=True,
+                           return_tensors="pt")
+        extra[f"{name}_ids"] = tokens.input_ids[0].to(torch.int32)
+    with torch.no_grad():
+        embeds, negative_embeds = pipeline.encode_prompt(prompt=prompt, negative_prompt=negative,
+                                                         do_classifier_free_guidance=True, max_sequence_length=512,
+                                                         device=torch.device("cpu"))
+    extra.update({"prompt_embeds": embeds[0].contiguous(), "negative_embeds": negative_embeds[0].contiguous()})
+    globals()["_extra"] = extra
+    return extra["final_latents"].clone()
+
+
+CHECKPOINT_MODELS["wan_vace_fun_pipeline"] = run_wan_vace_fun_pipeline
+
+
 def _wan22_official():
     """Wan-Video/Wan2.2's own package, from `IK_WAN22_SRC`, with `Tools/wan-s2v-testdev/wan_shims.py` letting it
     run on the CPU at float32 (placeholders for two readers it imports, and a float `flash_attention`)."""
@@ -33572,6 +33688,94 @@ def run_wan_s2v_lora_diffsynth(image, checkpoint):
 
 
 CHECKPOINT_MODELS["wan_s2v_lora_diffsynth"] = run_wan_s2v_lora_diffsynth
+
+
+def run_wan_vace_fun_lora_diffsynth(image, checkpoint):
+    """DiffSynth-Studio's Wan 2.2 VACE-Fun A14B LoRA objective (modelscope/DiffSynth-Studio at 1e8ae1d,
+    `lora/Wan2.2-VACE-Fun-A14B.sh`), under the `wantrain-diffsynth` env, over the low-noise expert of a test-dev
+    release (`Tools/wan-fun-testdev/make_testdev.py` on the release's small files). DiffSynth splits a VACE
+    checkpoint into its own `WanModel` (the main transformer) and `VaceWanModel` (the `vace*` tensors,
+    `VaceWanModelDictConverter`), both under the release's names. The script adapts the VACE model alone
+    (`--lora_base_model vace`) with `add_lora_to_model` (rank 4, alpha 8 here, `q,k,v,o,ffn.0,ffn.2`).
+    `FlowMatchSFTLoss` runs over `model_fn_wan_video` on the low-noise side of the boundary
+    (`--min_timestep_boundary 0.358`), at float32. The inputs are random: a latent that leads with one reference
+    frame (`WanVideoUnit_InputVideoEmbedder` with `vace_reference_image`), its 96-channel VACE context, and a
+    512-token prompt. The record holds the inputs, the draws, the prediction, the loss, and each adapter's
+    initialization and gradient under the release's names. `image` unused.
+    """
+    import json as json_module
+
+    from diffsynth.diffusion.flow_match import FlowMatchScheduler
+    from diffsynth.diffusion.loss import FlowMatchSFTLoss
+    from diffsynth.diffusion.training_module import DiffusionTrainingModule
+    from diffsynth.models.wan_video_dit import WanModel
+    from diffsynth.models.wan_video_vace import VaceWanModel
+    from diffsynth.pipelines.wan_video import model_fn_wan_video
+    from safetensors.torch import load_file
+
+    directory = os.path.join(checkpoint, "low_noise_model")
+    with open(os.path.join(directory, "config.json")) as handle:
+        config = json_module.load(handle)
+    state = {k: v.float() for k, v in load_file(os.path.join(directory, "diffusion_pytorch_model.safetensors")).items()}
+    dit = WanModel(dim=config["dim"], in_dim=config["in_dim"], ffn_dim=config["ffn_dim"], out_dim=config["out_dim"],
+                   text_dim=config["text_dim"], freq_dim=config["freq_dim"], eps=config["eps"], patch_size=(1, 2, 2),
+                   num_heads=config["num_heads"], num_layers=config["num_layers"], has_image_input=False)
+    dit.load_state_dict({k: v for k, v in state.items() if not k.startswith("vace")})
+    vace = VaceWanModel(vace_layers=tuple(config["vace_layers"]), vace_in_dim=config["vace_in_dim"], patch_size=(1, 2, 2),
+                        has_image_input=False, dim=config["dim"], num_heads=config["num_heads"], ffn_dim=config["ffn_dim"],
+                        eps=config["eps"])
+    vace.load_state_dict({k: v for k, v in state.items() if k.startswith("vace")})
+    dit, vace = dit.float(), vace.float()
+    vace = DiffusionTrainingModule.add_lora_to_model(None, vace, ["q", "k", "v", "o", "ffn.0", "ffn.2"], 4, 8)
+    seed = 171
+    generator = torch.Generator().manual_seed(seed)
+    for name, parameter in vace.named_parameters():
+        if "lora_B" in name:
+            parameter.data = torch.randn(parameter.shape, generator=generator) * 0.1
+    for module in (dit, vace):
+        for name, parameter in module.named_parameters():
+            parameter.requires_grad_("lora_" in name)
+
+    latent = torch.randn(16, 3, 4, 6, generator=generator)
+    text = torch.randn(512, config["text_dim"], generator=generator)
+    context = torch.randn(config["vace_in_dim"], 3, 4, 6, generator=generator)
+    scheduler = FlowMatchScheduler("Wan")
+    scheduler.set_timesteps(1000, training=True)
+    inputs = dict(input_latents=latent.unsqueeze(0), context=text.unsqueeze(0), vace_context=context.unsqueeze(0),
+                  vace_scale=1.0, max_timestep_boundary=1, min_timestep_boundary=0.358)
+    pipe = type("Pipeline", (), {})()
+    pipe.scheduler, pipe.torch_dtype, pipe.device = scheduler, torch.float32, "cpu"
+    pipe.in_iteration_models, pipe.dit, pipe.vace = ("dit", "vace"), dit, vace
+    pipe.model_fn = model_fn_wan_video
+    torch.manual_seed(seed + 1)
+    loss = FlowMatchSFTLoss(pipe, **inputs)
+    loss.backward()
+
+    torch.manual_seed(seed + 1)
+    index = torch.randint(int(0.358 * len(scheduler.timesteps)), len(scheduler.timesteps), (1,))
+    noise = torch.randn_like(latent.unsqueeze(0))[0]
+    timestep = scheduler.timesteps[index]
+    sigma = scheduler.sigmas[torch.argmin((scheduler.timesteps - timestep).abs())]
+    noisy = (1 - sigma) * latent + sigma * noise
+    with torch.no_grad():
+        prediction = model_fn_wan_video(dit=dit, vace=vace, latents=noisy.unsqueeze(0), timestep=timestep,
+                                        context=text.unsqueeze(0), vace_context=context.unsqueeze(0), vace_scale=1.0)[0]
+    extra = {"index": index.float(), "timestep": timestep.float().reshape(1), "sigma": sigma.float().reshape(1),
+             "weight": scheduler.training_weight(timestep).float().reshape(1), "latent": latent.contiguous(),
+             "noise": noise.contiguous(), "text": text.contiguous(), "vace_context": context.contiguous(),
+             "prediction": prediction.float().contiguous(), "loss": loss.detach().reshape(1)}
+    for name, module in vace.named_modules():
+        if hasattr(module, "lora_A") and "default" in getattr(module, "lora_A", {}):
+            a, b = module.lora_A["default"].weight, module.lora_B["default"].weight
+            extra[f"lora::{name}.lora_a"] = a.detach().t().contiguous().float()
+            extra[f"lora::{name}.lora_b"] = b.detach().t().contiguous().float()
+            extra[f"grad::{name}.lora_a"] = a.grad.detach().t().contiguous().float()
+            extra[f"grad::{name}.lora_b"] = b.grad.detach().t().contiguous().float()
+    globals()["_extra"] = {key: value.clone() for key, value in extra.items()}
+    return extra["prediction"].clone()
+
+
+CHECKPOINT_MODELS["wan_vace_fun_lora_diffsynth"] = run_wan_vace_fun_lora_diffsynth
 
 
 def run_wan_fun_lora_videoxfun(image):

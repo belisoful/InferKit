@@ -138,6 +138,7 @@ final class NFKMLXWanFunTests: XCTestCase {
         guard let root = NFKMLXValidationConfig.environment["IK_SHAPES_ROOT"] else { throw XCTSkip("set IK_SHAPES_ROOT") }
         let names = ["wan22-fun-5b-control", "wan22-fun-5b-inp", "wan22-fun-5b-control-camera"]
             + ["control", "inp", "control-camera"].flatMap { ["wan22-fun-a14b-\($0)-high", "wan22-fun-a14b-\($0)-low"] }
+            + ["wan22-vace-fun-a14b-high", "wan22-vace-fun-a14b-low"]
         for name in names {
             let directory = URL(fileURLWithPath: root).appendingPathComponent(name)
             guard let data = try? Data(contentsOf: directory.appendingPathComponent("shapes.json")) else {

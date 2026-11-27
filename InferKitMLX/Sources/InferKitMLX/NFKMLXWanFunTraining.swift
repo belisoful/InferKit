@@ -19,7 +19,20 @@ extension NFKMLXWanFunGenerator {
     /// (``NFKMLXWanTrainingPreset/videoXFun(expert:)``), which DiffSynth-Studio does not train. Introduced in
     /// InferKit 0.4.0.
     public static func referencePreset(variant: NFKMLXWanFunVariant, expert: NFKMLXWanExpert) -> NFKMLXWanTrainingPreset {
-        variant.hasExperts ? diffSynthPreset(expert: expert) : .videoXFun()
+        if variant.isVACE {
+            return vaceDiffSynthPreset(expert: expert)
+        }
+        return variant.hasExperts ? diffSynthPreset(expert: expert) : .videoXFun()
+    }
+
+    /// DiffSynth-Studio's LoRA recipe for one expert of Wan 2.2 VACE-Fun A14B (`lora/Wan2.2-VACE-Fun-A14B.sh` at
+    /// 1e8ae1d): ``diffSynthPreset(expert:)`` (the index from the expert's side of 0.358, AdamW at 1e-4, rank 32) on
+    /// the VACE blocks alone (`--lora_base_model vace`, ``NFKMLXWanLoRATargets/vaceAttentionAndFeedForward``).
+    /// Introduced in InferKit 0.4.0.
+    public static func vaceDiffSynthPreset(expert: NFKMLXWanExpert) -> NFKMLXWanTrainingPreset {
+        var preset = diffSynthPreset(expert: expert)
+        preset.targets = .vaceAttentionAndFeedForward
+        return preset
     }
 
     /// DiffSynth-Studio's LoRA recipe for one expert of a Fun A14B release (`lora/Wan2.2-Fun-A14B-Control.sh`,
@@ -80,6 +93,35 @@ extension NFKMLXWanFunGenerator {
         return NFKMLXWanTrainingExample(latent: latent, text: features, condition: prepared.channels,
                                         reference: prepared.reference, camera: prepared.camera,
                                         latentMask: prepared.latentMask)
+    }
+
+    /// Encodes one clip as DiffSynth-Studio's VACE units prepare it for training: the frames through the autoencoder
+    /// to the normalized mean, led by each subject image's latent (`WanVideoUnit_InputVideoEmbedder` with
+    /// `vace_reference_image`), the prompt through umT5 at 512 tokens, and the VACE context the sampler prepares
+    /// from `conditions` (`WanVideoUnit_VACE`), at the clip's size.
+    ///
+    /// - Parameters:
+    ///   - video: the frames `[4k + 1, H, W, 3]` in `[0, 1]`, at a size the generator's tile divides.
+    ///   - text: the clip's caption, read as written.
+    ///   - conditions: the clip's control video (or video and mask) and subject images, at the clip's size.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public func trainingExample(video: MLXArray, prompt text: String,
+                                vace conditions: NFKMLXWanVACEConditions) throws -> NFKMLXWanTrainingExample {
+        let frames = video.dim(0), height = video.dim(1), width = video.dim(2)
+        let size = try clipSize(frames: frames, width: width, height: height)
+        guard size.frames == frames, size.width == width, size.height == height else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a training clip is 4k + 1 frames at sides the tile divides, not \(video.shape)")
+        }
+        let features = try encodedFeatures([text])[0]
+        let (latent, context) = try withPipeline { pipeline -> (MLXArray, MLXArray) in
+            let references = conditions.subjectImages.map { pipeline.encoded(($0 * 2 - 1).expandedDimensions(axis: 0)) }
+            let latent = concatenated(references + [pipeline.encoded(video * 2 - 1)], axis: 1)
+            let prepared = try pipeline.prepareVACE(conditions, frames: frames, height: height, width: width).prepared
+            return (latent, prepared.vaceContext!)
+        }
+        return NFKMLXWanTrainingExample(latent: latent, text: features, vaceContext: context)
     }
 
     /// Fine-tunes one transformer with LoRA as `preset`'s trainer does, returning each step's loss: the Wan

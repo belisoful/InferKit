@@ -50,12 +50,21 @@ public struct NFKMLXWanConfiguration: Sendable {
     /// implementation computes them (Wan-Video, VideoX-Fun); diffusers forms them in float32.
     /// Introduced in InferKit 0.4.0.
     public var formsSinusoidsInFloat64: Bool
+    /// The blocks a VACE transformer's control blocks feed (`vace_layers`, the eight of `[0, 5, …, 35]` in the
+    /// Wan 2.2 VACE-Fun releases), nil for a transformer without VACE. Introduced in InferKit 0.4.0.
+    public var vaceLayers: [Int]?
+    /// The VACE context's channels (`vace_in_dim`): the inactive and reactive latents and the folded mask, 96
+    /// over the Wan 2.1 autoencoder. Introduced in InferKit 0.4.0.
+    public var vaceInChannels: Int
 
     public init(inChannels: Int = 16, heads: Int = 40, headDim: Int = 128, layers: Int = 40,
                 ffnDim: Int = 13824, textDim: Int = 4096, freqDim: Int = 256,
                 patchSize: [Int] = [1, 2, 2], eps: Float = 1e-6, ropeTheta: Float = 10000.0,
                 outChannels: Int? = nil, referenceChannels: Int? = nil, controlAdapterChannels: Int? = nil,
-                controlAdapterDownscale: Int = 8, formsSinusoidsInFloat64: Bool = false) {
+                controlAdapterDownscale: Int = 8, formsSinusoidsInFloat64: Bool = false, vaceLayers: [Int]? = nil,
+                vaceInChannels: Int = 96) {
+        self.vaceLayers = vaceLayers
+        self.vaceInChannels = vaceInChannels
         self.referenceChannels = referenceChannels
         self.controlAdapterChannels = controlAdapterChannels
         self.controlAdapterDownscale = controlAdapterDownscale
@@ -166,13 +175,24 @@ final class NFKWanBlock: Module {
     @ModuleInfo(key: "norm2") var norm2: LayerNorm
     @ModuleInfo(key: "ffn") var ffn: NFKWanFeedForward
     @ParameterInfo(key: "scale_shift_table") var scaleShiftTable: MLXArray
+    /// A VACE control block's projection of the context ahead of its first block (`before_proj`).
+    @ModuleInfo(key: "before_proj") var beforeProj: Linear?
+    /// A VACE control block's projection of its output into the hint it hands its main block (`after_proj`).
+    @ModuleInfo(key: "after_proj") var afterProj: Linear?
 
     let norm1: LayerNorm
     let norm3: LayerNorm
     let eps: Float
 
-    init(_ config: NFKMLXWanConfiguration) {
+    /// A block; `vaceIndex` makes it a VACE control block, the first of which also projects the context.
+    init(_ config: NFKMLXWanConfiguration, vaceIndex: Int? = nil) {
         eps = config.eps
+        if let vaceIndex {
+            _afterProj.wrappedValue = Linear(config.innerDim, config.innerDim)
+            if vaceIndex == 0 {
+                _beforeProj.wrappedValue = Linear(config.innerDim, config.innerDim)
+            }
+        }
         _attn1.wrappedValue = NFKWanAttention(config)
         _attn2.wrappedValue = NFKWanAttention(config)
         _norm2.wrappedValue = LayerNorm(dimensions: config.innerDim, eps: config.eps, affine: true)
@@ -357,6 +377,10 @@ struct NFKWanConditioning {
     /// The camera embedding `[controlAdapterChannels, F, H · downscale, W · downscale]` the control
     /// adapter reads.
     var cameraControl: MLXArray?
+    /// A VACE transformer's context `[vaceInChannels, F, H, W]`, read by its control blocks.
+    var vaceContext: MLXArray?
+    /// The weight of the VACE hints (`vace_context_scale`).
+    var vaceScale: Float = 1
 }
 
 /// The Wan transformer.
@@ -368,6 +392,8 @@ public final class NFKMLXWanTransformerNet: Module {
     @ModuleInfo(key: "proj_out") var projOut: Linear
     @ModuleInfo(key: "ref_conv") var refConv: Conv2d?
     @ModuleInfo(key: "control_adapter") var controlAdapter: NFKWanControlAdapter?
+    @ModuleInfo(key: "vace_blocks") var vaceBlocks: [NFKWanBlock]?
+    @ModuleInfo(key: "vace_patch_embedding") var vacePatchEmbedding: Conv3d?
 
     let config: NFKMLXWanConfiguration
     let rope: NFKZImageRope
@@ -407,6 +433,11 @@ public final class NFKMLXWanTransformerNet: Module {
         _controlAdapter.wrappedValue = config.controlAdapterChannels.map {
             NFKWanControlAdapter(inChannels: $0, dim: config.innerDim, patch: (spatialPatch[0], spatialPatch[1]),
                                  downscale: config.controlAdapterDownscale)
+        }
+        _vaceBlocks.wrappedValue = config.vaceLayers.map { layers in layers.indices.map { NFKWanBlock(config, vaceIndex: $0) } }
+        _vacePatchEmbedding.wrappedValue = config.vaceLayers.map { _ in
+            Conv3d(inputChannels: config.vaceInChannels, outputChannels: config.innerDim,
+                   kernelSize: IntOrTriple(config.patchSize), stride: IntOrTriple(config.patchSize))
         }
     }
 
@@ -547,6 +578,29 @@ public final class NFKMLXWanTransformerNet: Module {
     /// rotary frame 0, shift the video's frames by one, read the timestep of the last video token (the
     /// original pads the per-token timesteps by repeating the last), and leave before the head's output is
     /// unpatchified. The camera adapter's output adds to the patch embedding.
+    /// The hint each VACE-fed block adds after it, keyed by block (`forward_vace`): the context patchified by
+    /// `vace_patch_embedding`, the first control block reading it projected (`before_proj`) plus the clip's
+    /// tokens, each later one the previous block's output, every block run as a Wan block over the same
+    /// modulation, text, and rotary tables, and each output projected by `after_proj` into its hint.
+    func vaceHints(_ conditioning: NFKWanConditioning, hidden: MLXArray, context: MLXArray, proj: MLXArray,
+                   cos: MLXArray, sin: MLXArray, tokens: NFKWanTokenModulation) -> [Int: MLXArray] {
+        guard let vaceBlocks, let vacePatchEmbedding, let layers = config.vaceLayers,
+              let vaceContext = conditioning.vaceContext else { return [:] }
+        let embedded = vacePatchEmbedding(vaceContext.transposed(1, 2, 3, 0).expandedDimensions(axis: 0).asType(hidden.dtype))
+        var c = embedded.reshaped([-1, config.innerDim])
+        var hints = [Int: MLXArray]()
+        for (index, block) in vaceBlocks.enumerated() {
+            if let beforeProj = block.beforeProj {
+                c = beforeProj(c) + hidden
+            }
+            c = block(c, context: context, temb: proj, cos: cos, sin: sin, tokens: tokens)
+            if let afterProj = block.afterProj {
+                hints[layers[index]] = afterProj(c)
+            }
+        }
+        return hints
+    }
+
     func callAsFunction(_ x: MLXArray, text: MLXArray, t: Double, conditioning: NFKWanConditioning) -> MLXArray {
         let c = config.outChannels, f = x.dim(1), h = x.dim(2), w = x.dim(3)
         let pt = config.patchSize[0], ph = config.patchSize[1], pw = config.patchSize[2]
@@ -589,6 +643,7 @@ public final class NFKMLXWanTransformerNet: Module {
         }
         let tokens = NFKWanTokenModulation(proj: proj.reshaped([values.count, 6, inner]), index: index)
         let context = conditionEmbedder.textEmbedder(text)
+        let hints = vaceHints(conditioning, hidden: hidden, context: context, proj: proj, cos: cosT, sin: sinT, tokens: tokens)
 
         for (blockIndex, block) in blocks.enumerated() {
             let input = hidden
@@ -602,6 +657,9 @@ public final class NFKMLXWanTransformerNet: Module {
                 continue
             }
             hidden = output
+            if let hint = hints[blockIndex] {
+                hidden = hidden + hint * conditioning.vaceScale
+            }
         }
 
         let head = NFKWanTokenModulation(proj: temb.reshaped([values.count, 1, inner]), index: index)

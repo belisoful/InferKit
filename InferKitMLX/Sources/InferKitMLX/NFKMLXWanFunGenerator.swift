@@ -30,22 +30,40 @@ public enum NFKMLXWanFunVariant: Int, CaseIterable, Sendable {
     case inpaintA14B = 4
     /// `alibaba-pai/Wan2.2-Fun-A14B-Control-Camera`.
     case cameraA14B = 5
+    /// `alibaba-pai/Wan2.2-VACE-Fun-A14B`: two 14B experts with VACE blocks, which read a control video or a
+    /// video kept outside a mask, and subject reference images (``NFKMLXWanVACEConditions``).
+    case vaceA14B = 6
 
     /// The registry name.
     public var modelName: String {
         ["wan2.2-fun-5b-control", "wan2.2-fun-5b-inp", "wan2.2-fun-5b-control-camera",
-         "wan2.2-fun-a14b-control", "wan2.2-fun-a14b-inp", "wan2.2-fun-a14b-control-camera"][rawValue]
+         "wan2.2-fun-a14b-control", "wan2.2-fun-a14b-inp", "wan2.2-fun-a14b-control-camera",
+         "wan2.2-vace-fun-a14b"][rawValue]
     }
 
     /// The Hugging Face repository the download factories read.
     public var releaseRepo: String {
         ["alibaba-pai/Wan2.2-Fun-5B-Control", "alibaba-pai/Wan2.2-Fun-5B-InP", "alibaba-pai/Wan2.2-Fun-5B-Control-Camera",
          "alibaba-pai/Wan2.2-Fun-A14B-Control", "alibaba-pai/Wan2.2-Fun-A14B-InP",
-         "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera"][rawValue]
+         "alibaba-pai/Wan2.2-Fun-A14B-Control-Camera", "alibaba-pai/Wan2.2-VACE-Fun-A14B"][rawValue]
     }
 
     /// Whether the release holds two 14B experts.
     public var hasExperts: Bool { rawValue >= 3 }
+
+    /// Whether the release is VACE-Fun, conditioned through its VACE blocks.
+    public var isVACE: Bool { self == .vaceA14B }
+
+    /// The conditions a Fun release reads beside the noise: 0 a control video, 1 an inpainting video, 2 a camera
+    /// trajectory; nil for VACE-Fun.
+    var conditionKind: Int? { isVACE ? nil : rawValue % 3 }
+
+    /// The flow-match schedule the release samples over: Euler at a shift of 5, or 12 for VACE-Fun.
+    var schedule: NFKMLXFlowMatchConfiguration { isVACE ? .wanVACEFun : .wan }
+
+    /// The fraction of the train timesteps at and above which an A14B release's high-noise expert runs: 0.900,
+    /// or 0.875 for VACE-Fun.
+    var boundary: Float { isVACE ? NFKMLXWanFunPipeline.vaceFunBoundary : 0.9 }
 
     /// The component files a download fetches.
     var releaseComponents: [NFKMLXReleaseComponent] {
@@ -165,6 +183,12 @@ public final class NFKMLXWanFunGenerator: NSObject {
         let experts = NFKMLXWanFunRelease.hasExperts(directory)
         let configuration = try NFKMLXWanOriginalRelease.transformerConfiguration(
             fromConfigURL: NFKMLXWanFunRelease.transformerDirectories(directory)[0].appendingPathComponent("config.json"))
+        if configuration.vaceLayers != nil {
+            guard experts else {
+                throw NFKMLXError.unsupportedConfiguration("a Wan 2.2 VACE-Fun release holds two experts")
+            }
+            return .vaceA14B
+        }
         let latent = experts ? 16 : 48
         let kind: Int
         if configuration.controlAdapterChannels != nil {
@@ -279,10 +303,14 @@ public final class NFKMLXWanFunGenerator: NSObject {
                 return NFKMLXWanFunPipeline(transformer: variant.hasExperts ? nil : try loadTransformer(0),
                                             highNoiseTransformer: nil, configuration: configurations[0],
                                             vae: autoencoder.net, latentsMean: autoencoder.mean,
-                                            latentsStd: autoencoder.std)
+                                            latentsStd: autoencoder.std, boundary: variant.boundary,
+                                            schedule: variant.schedule)
             },
             loadExperts: variant.hasExperts ? directories.indices.map { index in { try loadTransformer(index) } } : [])
         generator.quantizationBits = bits ?? 0
+        if variant.isVACE {
+            generator.guidance = 5
+        }
         generator.streamedLayerCount = streamed.reduce(0) { $0 + $1.count }
         if plan.holdsStagesResident {
             try generator.loadResident()
@@ -391,6 +419,18 @@ public final class NFKMLXWanFunGenerator: NSObject {
                      width: width, height: height, seed: seed).clip
     }
 
+    /// Generates a Wan 2.2 VACE-Fun clip for `prompt` under `conditions`, `[frames, height, width, 3]` in `[0, 1]`.
+    ///
+    /// @discussion The release follows the control video, or keeps the video outside the mask, and reads each
+    /// subject image as a frame of context ahead of the clip (``NFKMLXWanVACEConditions``), every picture at the
+    /// clip's size. `frames` rounds down to one more than a multiple of 4, and `width` and `height` down to
+    /// multiples of 16. Introduced in InferKit 0.4.0.
+    public func video(forPrompt prompt: String, negativePrompt: String? = nil, vace conditions: NFKMLXWanVACEConditions,
+                      frames: Int = 81, width: Int = 832, height: Int = 480, seed: UInt64 = 0) throws -> MLXArray {
+        try generate(prompt: prompt, negativePrompt: negativePrompt, conditions: NFKMLXWanFunConditions(), vace: conditions,
+                     frames: frames, width: width, height: height, seed: seed).clip
+    }
+
     /// The clip's size after rounding: frames to `4k + 1`, sides to the tile.
     func clipSize(frames: Int, width: Int, height: Int) throws -> (frames: Int, width: Int, height: Int) {
         let tile = variant.hasExperts ? 16 : 32
@@ -401,12 +441,15 @@ public final class NFKMLXWanFunGenerator: NSObject {
         return size
     }
 
-    func generate(prompt: String, negativePrompt: String?, conditions: NFKMLXWanFunConditions, frames: Int,
-                  width: Int, height: Int, seed: UInt64, noise: MLXArray? = nil,
-                  progress: ((Double) -> Void)? = nil) throws -> (clip: MLXArray, latent: MLXArray) {
+    func generate(prompt: String, negativePrompt: String?, conditions: NFKMLXWanFunConditions,
+                  vace: NFKMLXWanVACEConditions? = nil, frames: Int, width: Int, height: Int, seed: UInt64,
+                  noise: MLXArray? = nil, progress: ((Double) -> Void)? = nil) throws -> (clip: MLXArray, latent: MLXArray) {
         let size = try clipSize(frames: frames, width: width, height: height)
-        if variant.rawValue % 3 == 2, conditions.cameraEmbedding == nil {
+        if variant.conditionKind == 2, conditions.cameraEmbedding == nil {
             throw NFKMLXError.unsupportedConfiguration("a Control-Camera release needs a camera trajectory")
+        }
+        if variant.isVACE, vace == nil {
+            throw NFKMLXError.unsupportedConfiguration("a VACE-Fun release reads NFKMLXWanVACEConditions")
         }
         let guides = guidance > 1
         let prompts = [prompt] + (guides ? [negativePrompt ?? ""] : [])
@@ -415,10 +458,14 @@ public final class NFKMLXWanFunGenerator: NSObject {
                 prompts.map { NFKMLXWanFunRelease.features($0, encoder: encoder, segmenter: segmenter) }
             }
             NFKMLXGPU.clearCache()
-            let (prepared, start, timesteps) = try staging.use(pipelineStage) { pipeline in
-                (try pipeline.prepare(conditions, frames: size.frames, height: size.height, width: size.width),
-                 noise ?? pipeline.noise(frames: size.frames, height: size.height, width: size.width, seed: seed),
-                 pipeline.timesteps(steps))
+            let (prepared, references, start, timesteps) = try staging.use(pipelineStage) { pipeline in
+                let (prepared, references) = try vace.map {
+                    try pipeline.prepareVACE($0, frames: size.frames, height: size.height, width: size.width)
+                } ?? (try pipeline.prepare(conditions, frames: size.frames, height: size.height, width: size.width), 0)
+                return (prepared, references,
+                        noise ?? pipeline.noise(frames: size.frames, height: size.height, width: size.width, seed: seed,
+                                                leadingFrames: references),
+                        pipeline.timesteps(steps))
             }
             let stepCount = steps, guidance = self.guidance
             let report: (Int, MLXArray) -> Void = { index, _ in progress?(Double(index + 1) / Double(stepCount + 1)) }
@@ -441,8 +488,9 @@ public final class NFKMLXWanFunGenerator: NSObject {
                     }
                 }
             }
-            let decoded = latent
-            return (try staging.use(pipelineStage) { $0.decode(decoded) }, latent)
+            // A VACE-Fun clip's reference frames lead the latents and are dropped before the decode.
+            let decoded = latent[0..., references...]
+            return (try staging.use(pipelineStage) { $0.decode(decoded) }, decoded)
         }
     }
 }

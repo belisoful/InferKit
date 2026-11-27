@@ -93,8 +93,8 @@ public enum NFKMLXWanLoRA {
     /// does not have.
     static func textToVideoPath(original name: String) -> String? {
         let parts = name.split(separator: ".").map(String.init)
-        if parts.count >= 3, parts[0] == "blocks", Int(parts[1]) != nil {
-            let block = "blocks.\(parts[1])"
+        if parts.count >= 3, parts[0] == "blocks" || parts[0] == "vace_blocks", Int(parts[1]) != nil {
+            let block = "\(parts[0]).\(parts[1])"
             let rest = parts[2...].joined(separator: ".")
             let attention = ["q": "to_q", "k": "to_k", "v": "to_v", "o": "to_out.0",
                              "k_img": "add_k_proj", "v_img": "add_v_proj"]

@@ -41,7 +41,8 @@ enum NFKMLXWanBlockedLoad {
             for (key, entry) in try NFKMLXSafetensors.entries(inFile: url) {
                 let element = precision == .float32 ? 4 : (NFKMLXSafetensors.dtype(entry.dtype)?.size ?? 2)
                 let count = entry.shape.reduce(1, *)
-                let packs = block(ofKey: key) != nil && key.hasSuffix(".weight") && entry.shape.count == 2
+                let packs = (block(ofKey: key) != nil || key.hasPrefix("vace_blocks.")) && key.hasSuffix(".weight")
+                    && entry.shape.count == 2
                     && entry.shape[1] % groupSize == 0
                 let held = packs ? count * bits / 8 + 2 * (count / groupSize) * element : count * element
                 if let layer = block(ofKey: key)?.layer {
@@ -144,6 +145,10 @@ enum NFKMLXWanBlockedLoad {
         try NFKMLXWeights.apply(outside, to: net, strict: false, verifyShapes: true)
         for deltas in adapters {
             try NFKMLXWanLoRA.apply(deltas.filter { !$0.key.hasPrefix("blocks.") }, to: net)
+        }
+        // A VACE transformer's control blocks run beside the blocks on every pass and pack as they do.
+        for block in (net as? NFKMLXWanTransformerNet)?.vaceBlocks ?? [] {
+            try NFKMLXQuantization.quantize(module: block, bits: bits, groupSize: groupSize)
         }
         eval(net)
         NFKMLXGPU.clearCache()

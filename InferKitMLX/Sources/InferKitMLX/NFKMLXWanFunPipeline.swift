@@ -113,6 +113,10 @@ public final class NFKMLXWanFunPipeline {
         /// Whether every step blends the masked video's latents back where the mask is 0 (the reference's
         /// `not mask[:, :, 0].any()`).
         var blends: Bool
+        /// A VACE release's context `[96, R + F', h, w]` (``prepareVACE(_:frames:height:width:)``).
+        var vaceContext: MLXArray? = nil
+        /// The weight of the VACE hints (`vace_context_scale`).
+        var vaceScale: Float = 1
     }
 
     /// The autoencoder's standardized mean of a clip in `-1...1`, `[F, H, W, 3]` → `[z, F', h, w]`.
@@ -285,9 +289,10 @@ public final class NFKMLXWanFunPipeline {
                 throw NFKMLXError.unsupportedConfiguration("the pipeline holds no transformer for timestep \(t)")
             }
             let dtype = NFKReferenceRounding.parameterType(of: net)
-            let input = concatenated([latents, prepared.channels], axis: 0).asType(dtype)
+            let input = (prepared.channels.dim(0) == 0 ? latents : concatenated([latents, prepared.channels], axis: 0)).asType(dtype)
             var conditioning = NFKWanConditioning(
-                reference: prepared.reference?.asType(dtype), cameraControl: prepared.camera?.asType(dtype))
+                reference: prepared.reference?.asType(dtype), cameraControl: prepared.camera?.asType(dtype),
+                vaceContext: prepared.vaceContext?.asType(dtype), vaceScale: prepared.vaceScale)
             if let tokenScale {
                 conditioning.tokenTimesteps = (tokenScale.values.map { Double($0 * t) }, tokenScale.index)
             }
@@ -331,11 +336,12 @@ public final class NFKMLXWanFunPipeline {
         return video
     }
 
-    /// Standard-normal noise `[z, F', h, w]` for a clip, from `seed`.
-    func noise(frames: Int, height: Int, width: Int, seed: UInt64) -> MLXArray {
+    /// Standard-normal noise `[z, R + F', h, w]` for a clip with `leadingFrames` reference frames ahead of it,
+    /// from `seed`.
+    func noise(frames: Int, height: Int, width: Int, seed: UInt64, leadingFrames: Int = 0) -> MLXArray {
         let s = spatialCompression
         MLXRandom.seed(seed)
-        return MLXRandom.normal([latentChannels, (frames - 1) / 4 + 1, height / s, width / s])
+        return MLXRandom.normal([latentChannels, leadingFrames + (frames - 1) / 4 + 1, height / s, width / s])
     }
 }
 

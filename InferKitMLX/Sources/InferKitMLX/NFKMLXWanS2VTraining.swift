@@ -53,6 +53,7 @@ extension NFKMLXWanS2VGenerator {
         switch targets {
         case .attention, .attentionAndFeedForward: return ["q", "k", "v", "o"].contains(parts[3])
         case .queryKeyValueAndFeedForward: return ["q", "k", "v"].contains(parts[3])
+        case .vaceAttentionAndFeedForward: return false
         }
     }
 
