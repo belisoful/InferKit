@@ -38,7 +38,7 @@ extension NFKMLXFamilyJudge {
                 fixed["num_key_value_heads"] = heads
             }
             try NFKMLXRepositoryJudgment.verifyFixedFields(of: configuration, repository: name, fixed)
-            if let rotary, !((rotary as AnyObject).isEqual(10_000)) {
+            if let rotary, !NFKMLXRepositoryJudgment.statedValue(rotary, matches: 10_000) {
                 throw NFKMLXRepositoryJudgment.refusal(.unsupportedConfiguration,
                     "\(name) states a rotary base of \(rotary), where the loader builds 10000")
             }

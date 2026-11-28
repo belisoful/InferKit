@@ -284,7 +284,7 @@ struct NFKMLXRepositoryJudgment {
                                   _ fields: [String: Any]) throws {
         for (key, built) in fields.sorted(by: { $0.key < $1.key }) {
             guard let stated = configuration[key], !(stated is NSNull) else { continue }
-            if !(stated as AnyObject).isEqual(built) {
+            if !statedValue(stated, matches: built) {
                 throw refusal(.unsupportedConfiguration,
                     "\(repository) states \(key) \(stated), where the loader builds \(built)")
             }
@@ -299,6 +299,15 @@ struct NFKMLXRepositoryJudgment {
                     "\(repository) is quantized (\(key)), and this family's loader reads float weights only")
             }
         }
+    }
+
+    /// Whether a configuration's value equals the value the loader builds, as `-[NSObject isEqual:]`
+    /// compares their bridged objects.
+    static func statedValue(_ stated: Any, matches built: Any) -> Bool {
+        // A typed NSObjectProtocol keeps `isEqual` off AnyObject's dynamic member lookup, which the hosted
+        // runner's type checker resolves too slowly.
+        let object: NSObjectProtocol = stated as AnyObject as! NSObjectProtocol
+        return object.isEqual(built)
     }
 
     static func refusal(_ code: NFKModelResolutionError.Code, _ reason: String) -> NSError {

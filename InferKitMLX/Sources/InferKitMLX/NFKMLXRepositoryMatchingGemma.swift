@@ -151,7 +151,7 @@ extension NFKMLXFamilyJudge {
                 "\(name) tokenizes with a model other than the byte-fallback BPE Gemma's tokenizer reproduces")
         }
         for (key, form) in gemmaTokenizerForm.sorted(by: { $0.key < $1.key }) {
-            guard let stated = tokenizer[key], (stated as AnyObject).isEqual(form) else {
+            guard let stated = tokenizer[key], NFKMLXRepositoryJudgment.statedValue(stated, matches: form) else {
                 throw NFKMLXRepositoryJudgment.refusal(.unsupportedTokenizer,
                     "the \(key) of \(name)'s tokenizer is not the form Gemma's tokenizer reproduces")
             }
