@@ -1059,11 +1059,16 @@ final class MLXCustomizationExamples: XCTestCase {
 
         // A real run loads the release: NFKMLXFRCRN.network(weightsURL: releasedWeights).
         let net = try NFKMLXFRCRN.network(weightsURL: nil)
-        let clean = (0 ..< 2).flatMap { row in
-            NFKMLXTrainingData.speechLevelNormalized((0 ..< 16_000).map { sinf(2 * .pi * Float(200 + 90 * row) * Float($0) / 16_000) * 0.3 })
+        let clean: [Float] = (0 ..< 2).flatMap { (row: Int) -> [Float] in
+            let frequency = Float(200 + 90 * row)
+            let tone: [Float] = (0 ..< 16_000).map { (n: Int) -> Float in
+                sinf(2 * Float.pi * frequency * Float(n) / 16_000) * 0.3
+            }
+            return NFKMLXTrainingData.speechLevelNormalized(tone)
         }
         let cleanArray = MLXArray(clean, [2, 16_000])
-        let noisy = cleanArray + MLXArray((0 ..< 2 * 16_000).map { 0.01 * sinf(Float($0) * 1.7) }, [2, 16_000])
+        let noise: [Float] = (0 ..< 2 * 16_000).map { (n: Int) -> Float in 0.01 * sinf(Float(n) * 1.7) }
+        let noisy = cleanArray + MLXArray(noise, [2, 16_000])
         let history = try NFKMLXFRCRN.fineTune(net, examples: { _ in (noisy: noisy, clean: cleanArray) }, steps: 1)
         XCTAssertEqual(history.count, 1)
 
